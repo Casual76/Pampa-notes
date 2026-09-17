@@ -74,7 +74,7 @@ toglie quelli che nessuna riga cita più.
 | M3 endpoint personale + server companion WhisperX | fatto |
 | M4 lettore audio con i segmenti, riordino delle parti | fatto |
 | M5 export bundle e skill | fatto |
-| M6 raffinamento della trascrizione | da fare |
+| M6 raffinamento della trascrizione | fatto |
 | M7 DOCX, sdocx, share target completo | da fare |
 | M8 backup, onboarding, pubblicazione | da fare |
 
@@ -97,6 +97,36 @@ casi (sposta, separa, unisci).
 Il lettore (`SessionPlayer`) parla solo in tempo di sessione: dentro ci sono N file e un indice di
 playlist, ma chi tocca la frase del minuto quaranta sente il minuto quaranta della lezione, non
 della terza registrazione. La traduzione la fa `SessionAssembler.locate`.
+## Raffinamento
+
+L'unico posto in cui l'app manda del testo a un modello di chat, e fa una cosa sola: riscrivere
+quello che gli si da'. Non riassume, non risponde, non commenta.
+
+La guardia (`RefinementPrompts.GUARD`) e' la prima e l'ultima cosa che il modello legge, sempre, e
+non e' teorica: ognuno dei sei divieti e' una cosa che un modello fa da solo la prima volta che gli
+si passa una trascrizione senza dirgli niente. Il preset dice *quanto* ripulire; la guardia dice che
+non si sta rispondendo a niente.
+
+**La grezza resta.** Una raffinata nasce figlia della grezza (`parentId`) e non la sostituisce mai:
+un tocco sulla scheda «Grezza» la riporta a schermo, con i suoi tempi e il suo lettore. E' l'unica
+cosa che rende accettabile far riscrivere una fonte a una macchina. Una raffinata non ha segmenti,
+quindi non ha tempi: l'export lo dice invece di stampare un testo senza tempi come se fosse quello
+che era stato chiesto.
+
+Due difetti reali che il codice gestisce perche' sono capitati:
+
+- **Il limite di Groq.** Il piano gratuito da' 8000 token al minuto, e una lezione da tremila parole
+  sono due richieste che sulla seconda lo superano. Il servizio dice quanti secondi mancano:
+  `sendWithRetry` li aspetta, e la riga del lavoro lo scrive. Senza, il raffinamento di qualunque
+  lezione lunga falliva sempre, sul secondo pezzo.
+- **Quello che il modello aggiunge lo stesso.** Il blocco di codice intorno al testo e la frase di
+  servizio in apertura se ne vanno in `cleanUp`. Il preambolo si riconosce da due cose insieme —
+  parole di servizio *e* due punti finali — perche' le parole da sole tagliavano «Ecco, allora,
+  ricominciamo da dove eravamo», che era la prima frase della lezione.
+
+Il rapporto fra le parole ripulite e quelle grezze fuori da 0,6–1,3 marca la versione `SUSPICIOUS`:
+sotto ha riassunto, sopra ha aggiunto. Non si rifiuta il risultato, si segnala.
+
 ## Export
 
 Il motivo per cui l'app esiste. Un pacchetto ZIP con dentro, in ordine di importanza:

@@ -63,6 +63,7 @@ import dev.pampa.pampanotes.core.db.SegmentEntity
 import dev.pampa.pampanotes.core.db.TranscriptKind
 import dev.pampa.pampanotes.core.db.TranscriptStatus
 import dev.pampa.pampanotes.core.model.Dates
+import dev.pampa.pampanotes.core.settings.RefinementPreset
 import dev.pampa.pampanotes.player.PlaybackState
 import dev.pampa.pampanotes.ui.common.Formats
 import dev.pampa.pampanotes.ui.common.jobPhaseText
@@ -77,6 +78,7 @@ fun SessionRoute(
   val state by viewModel.uiState.collectAsStateWithLifecycle()
   val playback by viewModel.playback.collectAsStateWithLifecycle()
   val following by viewModel.followPlayback.collectAsStateWithLifecycle()
+  val refineDefaults by viewModel.refineDefaults.collectAsStateWithLifecycle()
 
   SessionScreen(
     state = state,
@@ -98,6 +100,9 @@ fun SessionRoute(
     onMerge = { viewModel.mergeIntoPrevious(onOpenSession) },
     onDeletePart = { partId -> viewModel.deletePart(partId, onBack) },
     onDeleteSession = { viewModel.deleteSession(onBack) },
+    refineDefaults = refineDefaults,
+    onPrepareRefinement = viewModel::prepareRefinement,
+    onRefine = viewModel::refine,
   )
 }
 
@@ -122,10 +127,14 @@ private fun SessionScreen(
   onMerge: () -> Unit,
   onDeletePart: (String) -> Unit,
   onDeleteSession: () -> Unit,
+  refineDefaults: RefineDefaults,
+  onPrepareRefinement: () -> Unit,
+  onRefine: (RefinementPreset, String) -> Unit,
 ) {
   val listState = rememberLazyListState()
   var renaming by remember { mutableStateOf(false) }
   var confirmingDelete by remember { mutableStateOf(false) }
+  var refining by remember { mutableStateOf(false) }
 
   val paragraphs = remember(state.segments) { paragraphsOf(state.segments) }
   // Quale paragrafo si sta ascoltando: l'ultimo cominciato.
@@ -148,6 +157,7 @@ private fun SessionScreen(
   )
 
   val renameLabel = stringResource(R.string.session_rename)
+  val refineLabel = stringResource(R.string.refine_action)
   val mergeLabel = stringResource(R.string.session_merge)
   val deleteLabel = stringResource(R.string.session_delete)
   val moreLabel = stringResource(R.string.action_more)
@@ -173,6 +183,14 @@ private fun SessionScreen(
         actions = {
           buildList {
             add(FluidContextAction(label = renameLabel) { renaming = true })
+            if (state.raw != null && state.job == null) {
+              add(
+                FluidContextAction(label = refineLabel) {
+                  onPrepareRefinement()
+                  refining = true
+                },
+              )
+            }
             if (state.canMerge) add(FluidContextAction(label = mergeLabel) { onMerge() })
             add(FluidContextAction(label = deleteLabel, destructive = true) { confirmingDelete = true })
           }
@@ -198,7 +216,10 @@ private fun SessionScreen(
   ) {
     jobItem(state, onCancelJob)
     partsSection(state, onSeek, onMovePart, onMovePartTo, onSplitAt, onDeletePart)
-    transcriptSection(state, onTranscribe, onShowTranscript)
+    transcriptSection(state, onTranscribe, onShowTranscript) {
+      onPrepareRefinement()
+      refining = true
+    }
     transcriptBody(state, paragraphs, activeParagraph, playback.positionMs, onSeek)
   }
 
@@ -210,6 +231,19 @@ private fun SessionScreen(
       onConfirm = { title, date ->
         renaming = false
         onRename(title, date)
+      },
+    )
+  }
+
+  if (refining) {
+    RefineSheet(
+      initialPreset = refineDefaults.preset,
+      initialCustomPrompt = refineDefaults.customPrompt,
+      hasKey = refineDefaults.hasKey,
+      onDismiss = { refining = false },
+      onConfirm = { preset, prompt ->
+        refining = false
+        onRefine(preset, prompt)
       },
     )
   }
@@ -241,6 +275,7 @@ private fun headerItemCount(state: SessionUiState): Int {
   if (state.parts.isNotEmpty()) count++
   if (state.untranscribed.isNotEmpty()) count++
   if (state.transcripts.size > 1) count++
+  if (state.raw != null && state.transcripts.size == 1 && state.job == null) count++
   if (state.activeTranscript?.status == TranscriptStatus.SUSPICIOUS) count++
   // Lo stato vuoto e il tasto "Trascrivi" non si contano: esistono solo quando di paragrafi non ce
   // n'e' nessuno, e allora non c'e' niente da inseguire.
@@ -346,6 +381,7 @@ private fun LazyListScope.transcriptSection(
   state: SessionUiState,
   onTranscribe: () -> Unit,
   onShowTranscript: (String) -> Unit,
+  onRefine: () -> Unit,
 ) {
   if (state.transcripts.size > 1) {
     item(key = "versions") {
@@ -358,6 +394,20 @@ private fun LazyListScope.transcriptSection(
           val index = labels.indexOf(label)
           state.transcripts.getOrNull(index)?.let { onShowTranscript(it.id) }
         },
+      )
+    }
+  }
+
+  // Offerto solo quando non esiste ancora una versione ripulita: rifarla sta nel menu in alto, dove
+  // vanno le cose che si fanno una volta ogni tanto.
+  if (state.raw != null && state.transcripts.size == 1 && state.job == null) {
+    item(key = "refine") {
+      FluidButton(
+        text = stringResource(R.string.refine_action),
+        onClick = onRefine,
+        style = FluidButtonStyle.Plain,
+        fillWidth = true,
+        modifier = Modifier.fillMaxWidth(),
       )
     }
   }

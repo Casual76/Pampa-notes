@@ -442,4 +442,28 @@
     <item quantity="one">%d note inside</item>
     <item quantity="other">%d notes inside</item>
   </plurals>
+
+  <!-- Refinement -->
+  <string name="notification_refining">Cleaning up the transcript</string>
+  <string name="notification_refined_title">Transcript cleaned up</string>
+  <string name="notification_refined_check">Cleaned up, but worth checking</string>
+  <string name="error_no_transcript">This session has no transcript to clean up yet.</string>
+  <string name="error_no_model">No model available for the clean-up.</string>
+  <string name="refine_title">Clean up the transcript</string>
+  <string name="refine_action">Clean up</string>
+  <string name="refine_redo">Do it again</string>
+  <string name="refine_explain">A model removes the filler words and adds punctuation. It does not summarise and does not add anything, and the raw version stays right here.</string>
+  <string name="refine_preset_label">How much to change</string>
+  <string name="refine_preset_clean">Clean</string>
+  <string name="refine_preset_structured">Structured</string>
+  <string name="refine_preset_custom">Custom</string>
+  <string name="refine_preset_clean_detail">Filler words out, punctuation in, a break where the subject changes. The sentences stay as they are.</string>
+  <string name="refine_preset_structured_detail">Headings and lists too, but only where the speaker actually made them.</string>
+  <string name="refine_preset_custom_detail">Your instructions, after the ones that stop the model from answering instead of cleaning up.</string>
+  <string name="refine_custom_hint">For example: translate technical terms into plain English</string>
+  <string name="refine_no_key">This needs a Groq key: it lives in Settings, Services.</string>
+  <string name="settings_refinement_model">Model for the clean-up</string>
+  <string name="settings_refinement_model_detail">Empty: picks the best one Groq offers</string>
+  <string name="settings_refinement_preset">How to clean up, by default</string>
+  <string name="job_phase_refining">Cleaning up piece %1$d of %2$d</string>
 </resources>

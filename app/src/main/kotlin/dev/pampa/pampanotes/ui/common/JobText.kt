@@ -58,6 +58,15 @@ fun jobPhaseText(job: JobEntity): String {
       )
     }
 
+    "refining" -> {
+      val position = parts.getOrNull(1).orEmpty().split('/')
+      stringResource(
+        R.string.job_phase_refining,
+        position.getOrNull(0)?.toIntOrNull() ?: 1,
+        position.getOrNull(1)?.toIntOrNull() ?: 1,
+      )
+    }
+
     "waiting" -> stringResource(R.string.job_phase_waiting, parts.getOrNull(1)?.toIntOrNull() ?: 0)
     "stitching" -> stringResource(R.string.job_state_stitching)
     else -> jobStateLabel(job.state)

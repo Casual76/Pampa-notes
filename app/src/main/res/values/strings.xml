@@ -472,4 +472,28 @@
     <item quantity="one">%d nota dentro</item>
     <item quantity="other">%d note dentro</item>
   </plurals>
+
+  <!-- Raffinamento -->
+  <string name="notification_refining">Sto ripulendo la trascrizione</string>
+  <string name="notification_refined_title">Trascrizione ripulita</string>
+  <string name="notification_refined_check">Ripulita, ma da controllare</string>
+  <string name="error_no_transcript">Questa sessione non ha ancora una trascrizione da ripulire.</string>
+  <string name="error_no_model">Nessun modello disponibile per il raffinamento.</string>
+  <string name="refine_title">Ripulisci la trascrizione</string>
+  <string name="refine_action">Ripulisci</string>
+  <string name="refine_redo">Rifai</string>
+  <string name="refine_explain">Un modello toglie gli intercalari e mette la punteggiatura. Non riassume e non aggiunge niente, e la versione grezza resta qui accanto.</string>
+  <string name="refine_preset_label">Quanto intervenire</string>
+  <string name="refine_preset_clean">Pulita</string>
+  <string name="refine_preset_structured">Strutturata</string>
+  <string name="refine_preset_custom">Personalizzata</string>
+  <string name="refine_preset_clean_detail">Via gli intercalari, punteggiatura, a capo dove cambia argomento. Le frasi restano quelle.</string>
+  <string name="refine_preset_structured_detail">In più titoli ed elenchi, ma solo dove chi parla li ha fatti davvero.</string>
+  <string name="refine_preset_custom_detail">Le tue istruzioni, dopo quelle che impediscono al modello di rispondere invece di ripulire.</string>
+  <string name="refine_custom_hint">Per esempio: traduci i termini tecnici in italiano corrente</string>
+  <string name="refine_no_key">Serve la chiave di Groq: sta in Impostazioni, Servizi.</string>
+  <string name="settings_refinement_model">Modello per il raffinamento</string>
+  <string name="settings_refinement_model_detail">Vuoto: sceglie il migliore che Groq offre</string>
+  <string name="settings_refinement_preset">Come ripulire, di default</string>
+  <string name="job_phase_refining">Sto ripulendo il pezzo %1$d di %2$d</string>
 </resources>

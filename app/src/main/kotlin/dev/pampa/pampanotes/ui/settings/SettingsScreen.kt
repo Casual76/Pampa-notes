@@ -35,6 +35,7 @@ import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.BuildConfig
 import dev.pampa.pampanotes.R
+import dev.pampa.pampanotes.core.settings.RefinementPreset
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
 import dev.pampa.pampanotes.ui.common.jobErrorText
 
@@ -65,6 +66,11 @@ fun SettingsRoute(onBack: () -> Unit, viewModel: SettingsViewModel = hiltViewMod
     TranscriptionProviderId.CUSTOM to stringResource(R.string.provider_custom),
   )
   val autoLabel = stringResource(R.string.language_auto)
+  val presetLabels = mapOf(
+    RefinementPreset.CLEAN to stringResource(R.string.refine_preset_clean),
+    RefinementPreset.STRUCTURED to stringResource(R.string.refine_preset_structured),
+    RefinementPreset.CUSTOM to stringResource(R.string.refine_preset_custom),
+  )
   val languages = listOf("auto", "it", "en", "fr", "de", "es", "la")
 
   FluidScreen(
@@ -277,6 +283,28 @@ fun SettingsRoute(onBack: () -> Unit, viewModel: SettingsViewModel = hiltViewMod
       )
     }
     item { FluidSectionFootnote(text = stringResource(R.string.settings_vocabulary_detail)) }
+
+    // --- Raffinamento ---
+    item { FluidSectionHeader(title = stringResource(R.string.settings_section_refinement)) }
+    item { FluidSectionFootnote(text = stringResource(R.string.refine_explain)) }
+    item {
+      FluidSegmentedControl(
+        options = RefinementPreset.entries.toList(),
+        selected = settings.refinementPreset,
+        onSelect = viewModel::setRefinementPreset,
+        label = { presetLabels.getValue(it) },
+      )
+    }
+    item {
+      FluidTextField(
+        value = settings.refinementModel,
+        onValueChange = viewModel::setRefinementModel,
+        label = stringResource(R.string.settings_refinement_model),
+        placeholder = "openai/gpt-oss-120b",
+        modifier = Modifier.fillMaxWidth(),
+      )
+    }
+    item { FluidSectionFootnote(text = stringResource(R.string.settings_refinement_model_detail)) }
 
     // --- Aspetto ---
     item { FluidSectionHeader(title = stringResource(R.string.settings_section_appearance)) }

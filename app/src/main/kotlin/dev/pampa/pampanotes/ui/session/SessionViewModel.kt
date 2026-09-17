@@ -15,7 +15,12 @@ import dev.pampa.pampanotes.core.db.SessionWithParts
 import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.db.TranscriptKind
 import dev.pampa.pampanotes.core.files.AppFiles
+import dev.antigravity.fluidengine.ai.keys.AiKeyStore
+import dev.antigravity.fluidengine.ai.provider.ProviderId
 import dev.pampa.pampanotes.core.repo.NoteRepository
+import dev.pampa.pampanotes.core.repo.RefinementOptions
+import dev.pampa.pampanotes.core.repo.RefinementRepository
+import dev.pampa.pampanotes.core.settings.RefinementPreset
 import dev.pampa.pampanotes.core.repo.SessionRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
@@ -34,6 +39,13 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+/** Cosa mostrare nel pannello di raffinamento quando si apre. */
+data class RefineDefaults(
+  val preset: RefinementPreset = RefinementPreset.CLEAN,
+  val customPrompt: String = "",
+  val hasKey: Boolean = false,
+)
 
 data class SessionUiState(
   val session: SessionEntity? = null,
@@ -69,6 +81,8 @@ class SessionViewModel @Inject constructor(
   private val repository: SessionRepository,
   private val notes: NoteRepository,
   private val transcription: TranscriptionRepository,
+  private val refinement: RefinementRepository,
+  private val keys: AiKeyStore,
   private val settingsStore: PampaSettingsStore,
   private val scheduler: WorkScheduler,
   private val files: AppFiles,
@@ -83,6 +97,10 @@ class SessionViewModel @Inject constructor(
   /** Il segmento che si sta ascoltando, se ce n'e' uno: la riga che si illumina e a cui la lista va. */
   private val _followPlayback = MutableStateFlow(true)
   val followPlayback: StateFlow<Boolean> = _followPlayback
+
+  /** Quello che il pannello di raffinamento deve sapere prima di aprirsi. */
+  private val _refineDefaults = MutableStateFlow(RefineDefaults())
+  val refineDefaults: StateFlow<RefineDefaults> = _refineDefaults
 
   private val sessionFlow: Flow<SessionWithParts?> = repository.observe(sessionId)
 
@@ -190,6 +208,30 @@ class SessionViewModel @Inject constructor(
   }
 
   fun cancelJob(jobId: String) = viewModelScope.launch { transcription.requestCancel(jobId) }
+
+  /** Prepara il pannello: il preset di default e se la chiave c'e'. */
+  fun prepareRefinement() = viewModelScope.launch {
+    val settings = settingsStore.current()
+    _refineDefaults.value = RefineDefaults(
+      preset = settings.refinementPreset,
+      customPrompt = settings.refinementCustomPrompt,
+      hasKey = !keys.key(ProviderId.GROQ).isNullOrBlank(),
+    )
+  }
+
+  /**
+   * Mette in coda la ripulitura.
+   *
+   * Il preset scelto qui diventa anche quello di default: chi ne sceglie uno diverso da quello
+   * salvato quasi sempre sta correggendo la sua preferenza, non facendo un'eccezione.
+   */
+  fun refine(preset: RefinementPreset, customPrompt: String) = viewModelScope.launch {
+    settingsStore.setRefinementPreset(preset)
+    if (preset == RefinementPreset.CUSTOM) settingsStore.setRefinementCustomPrompt(customPrompt)
+    val options = RefinementOptions(preset = preset.name, customPrompt = customPrompt)
+    transcription.enqueueRefinement(sessionId, refinement.encode(options))
+    scheduler.kick(dev.pampa.pampanotes.core.transcription.GroqWhisperProvider.ID)
+  }
 
   fun movePart(partId: String, delta: Int) = viewModelScope.launch { repository.movePart(partId, delta) }
 

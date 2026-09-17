@@ -81,6 +81,24 @@ object AppNotifications {
     )
   }
 
+  /**
+   * Il testo ripulito e' pronto.
+   *
+   * Quando il conto delle parole si discosta troppo dal grezzo la notifica lo dice: un testo
+   * accorciato del quaranta per cento puo' essere un testo pieno di "ehm" ripulito bene, oppure un
+   * riassunto, e la differenza la vede solo chi guarda.
+   */
+  fun notifyRefined(context: Context, jobId: String, wordCount: Int, suspicious: Boolean) {
+    notify(
+      context = context,
+      jobId = jobId,
+      title = context.getString(
+        if (suspicious) R.string.notification_refined_check else R.string.notification_refined_title,
+      ),
+      text = context.resources.getQuantityString(R.plurals.notification_done_words, wordCount, wordCount),
+    )
+  }
+
   fun notifyFailed(context: Context, jobId: String, errorCode: String) {
     notify(
       context = context,

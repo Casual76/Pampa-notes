@@ -14,6 +14,7 @@ import dev.pampa.pampanotes.core.db.SessionDao
 import dev.pampa.pampanotes.core.db.TranscriptDao
 import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.db.TranscriptKind
+import dev.pampa.pampanotes.core.db.TranscriptStatus
 import dev.pampa.pampanotes.core.model.Ids
 import dev.pampa.pampanotes.core.model.wordCount
 import dev.pampa.pampanotes.core.settings.PampaSettings
@@ -77,6 +78,33 @@ class TranscriptionRepository @Inject constructor(
       state = JobState.QUEUED,
       chunkTotal = 0,
       chunkDone = 0,
+      createdAt = now,
+      updatedAt = now,
+    )
+    jobs.upsert(job)
+    return job
+  }
+
+  /**
+   * Mette in coda il raffinamento di una sessione.
+   *
+   * Stessa coda delle trascrizioni e stesso provider, perche' il limite di richieste al minuto di
+   * Groq e' uno solo: due code parallele se lo prenderebbero a vicenda e si aspetterebbero lo stesso,
+   * ma con due barre invece di una.
+   */
+  suspend fun enqueueRefinement(sessionId: String, optionsJson: String): JobEntity? {
+    jobs.activeForSession(sessionId)?.let { return it }
+    // Senza una grezza non c'e' niente da ripulire, e un lavoro che fallisce subito e' rumore.
+    transcripts.rawForSession(sessionId) ?: return null
+
+    val now = System.currentTimeMillis()
+    val job = JobEntity(
+      id = Ids.newId(),
+      sessionId = sessionId,
+      type = JobType.REFINE,
+      provider = GroqWhisperProvider.ID,
+      state = JobState.QUEUED,
+      optionsJson = optionsJson,
       createdAt = now,
       updatedAt = now,
     )
@@ -251,6 +279,48 @@ class TranscriptionRepository @Inject constructor(
     sessions.get(sessionId)?.let { notes.touch(it.noteId, now) }
     return transcript
   }
+
+  /**
+   * Salva una versione raffinata e la rende quella mostrata.
+   *
+   * Nasce figlia della grezza e non la sostituisce: la grezza resta nel database con i suoi segmenti
+   * e i suoi tempi, e un tocco la riporta a schermo. E' l'unica cosa che rende accettabile far
+   * riscrivere una fonte a una macchina.
+   */
+  suspend fun saveRefinement(
+    sessionId: String,
+    parentId: String,
+    result: dev.pampa.pampanotes.core.refinement.RefinementResult,
+    promptHash: String,
+  ): TranscriptEntity {
+    val now = System.currentTimeMillis()
+    val parent = transcripts.get(parentId)
+    val transcript = TranscriptEntity(
+      id = Ids.newId(),
+      sessionId = sessionId,
+      kind = TranscriptKind.REFINED,
+      provider = "groq",
+      model = result.model,
+      language = parent?.language,
+      text = result.text,
+      preset = result.preset.name,
+      promptHash = promptHash,
+      parentId = parentId,
+      wordCount = result.text.wordCount(),
+      status = if (result.suspicious) TranscriptStatus.SUSPICIOUS else TranscriptStatus.OK,
+      createdAt = now,
+    )
+    // Una raffinata per preset: rifarla con lo stesso preset sostituisce, con un altro affianca.
+    transcripts.bySession(sessionId)
+      .filter { it.kind == TranscriptKind.REFINED && it.parentId == parentId && it.preset == transcript.preset }
+      .forEach { transcripts.delete(it.id) }
+    transcripts.upsert(transcript)
+    sessions.setActiveTranscript(sessionId, transcript.id, now)
+    sessions.get(sessionId)?.let { notes.touch(it.noteId, now) }
+    return transcript
+  }
+
+  suspend fun rawFor(sessionId: String): TranscriptEntity? = transcripts.rawForSession(sessionId)
 
   companion object {
     /** Quello che WhisperX usa quando nessuno dice altro. */

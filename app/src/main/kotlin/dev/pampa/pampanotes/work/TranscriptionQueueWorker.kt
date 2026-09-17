@@ -10,6 +10,9 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import dev.pampa.pampanotes.core.db.JobEntity
 import dev.pampa.pampanotes.core.db.JobState
+import dev.pampa.pampanotes.core.db.JobType
+import dev.pampa.pampanotes.core.refinement.RefinementError
+import dev.pampa.pampanotes.core.repo.RefinementRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.transcription.TranscriptionError
@@ -42,6 +45,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
   @Assisted params: WorkerParameters,
   private val repository: TranscriptionRepository,
   private val runner: TranscriptionRunner,
+  private val refinement: RefinementRepository,
   private val settingsStore: PampaSettingsStore,
 ) : CoroutineWorker(context, params) {
 
@@ -70,6 +74,13 @@ class TranscriptionQueueWorker @AssistedInject constructor(
   }
 
   private suspend fun process(job: JobEntity) {
+    // Due lavori, una coda sola: il limite di richieste al minuto di Groq e' uno, e due code
+    // parallele se lo prenderebbero a vicenda mostrando due barre invece di una.
+    if (job.type == JobType.REFINE) return refine(job)
+    transcribe(job)
+  }
+
+  private suspend fun transcribe(job: JobEntity) {
     val settings = settingsStore.current()
     val provider = repository.providerFor(job.provider) ?: run {
       fail(
@@ -152,11 +163,106 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     }
   }
 
-  private suspend fun publish(job: JobEntity) {
+  /**
+   * Ripulisce la trascrizione grezza di una sessione.
+   *
+   * Molto piu' semplice di una trascrizione: niente file, niente pezzi da ricucire, niente riprese.
+   * Se si interrompe si rifa' da capo, perche' rifare costa qualche secondo e qualche centesimo, e
+   * tenere mezzo testo ripulito accanto a mezzo testo grezzo sarebbe peggio.
+   */
+  private suspend fun refine(job: JobEntity) {
+    val raw = repository.rawFor(job.sessionId) ?: run {
+      fail(job, TranscriptionError.Decode(applicationContext.getString(dev.pampa.pampanotes.R.string.error_no_transcript)))
+      return
+    }
+    val provider = refinement.provider() ?: run {
+      fail(job, TranscriptionError.Unauthorized(applicationContext.getString(dev.pampa.pampanotes.R.string.error_provider_not_configured)))
+      return
+    }
+    val settings = settingsStore.current()
+    val model = refinement.resolveModel(provider, settings) ?: run {
+      fail(job, TranscriptionError.UnknownModel("", applicationContext.getString(dev.pampa.pampanotes.R.string.error_no_model)))
+      return
+    }
+    val options = refinement.decode(job.optionsJson)
+
+    repository.update(job.copy(state = JobState.TRANSCRIBING, model = model, attempts = job.attempts + 1, errorCode = null, errorMessage = null))
+    val latest = MutableStateFlow(job.copy(state = JobState.TRANSCRIBING, model = model))
+
+    try {
+      val result = coroutineScope {
+        val publisher = launch {
+          while (isActive) {
+            delay(PUBLISH_EVERY_MS)
+            runCatching { publish(latest.value, dev.pampa.pampanotes.R.string.notification_refining) }
+          }
+        }
+        try {
+          refinement.service.refine(
+            rawText = raw.text,
+            provider = provider,
+            model = model,
+            preset = options.presetOrDefault,
+            customPrompt = options.customPrompt,
+          ) { progress ->
+            latest.update {
+              it.copy(
+                chunkTotal = progress.chunkCount,
+                chunkDone = progress.chunkIndex,
+                progress = if (progress.chunkCount <= 0) 0f else progress.chunkIndex.toFloat() / progress.chunkCount,
+                phase = if (progress.waitingSeconds > 0) {
+                  "waiting:${progress.waitingSeconds}"
+                } else {
+                  "refining:${progress.chunkIndex + 1}/${progress.chunkCount}"
+                },
+              )
+            }
+          }
+        } finally {
+          publisher.cancel()
+        }
+      }
+
+      if (repository.get(job.id)?.state == JobState.CANCEL_REQUESTED) {
+        repository.update(latest.value.copy(state = JobState.CANCELLED, phase = null, finishedAt = System.currentTimeMillis()))
+        return
+      }
+
+      val transcript = repository.saveRefinement(
+        sessionId = job.sessionId,
+        parentId = raw.id,
+        result = result,
+        promptHash = dev.pampa.pampanotes.core.files.Hashing.sha256(
+          dev.pampa.pampanotes.core.refinement.RefinementPrompts.system(options.presetOrDefault, options.customPrompt),
+        ).take(16),
+      )
+      repository.update(
+        latest.value.copy(
+          state = JobState.DONE,
+          progress = 1f,
+          phase = null,
+          errorCode = null,
+          errorMessage = null,
+          finishedAt = System.currentTimeMillis(),
+        ),
+      )
+      AppNotifications.notifyRefined(applicationContext, job.id, transcript.wordCount, result.suspicious)
+    } catch (cancellation: CancellationException) {
+      if (repository.get(job.id)?.state == JobState.CANCEL_REQUESTED) {
+        repository.update(latest.value.copy(state = JobState.CANCELLED, phase = null, finishedAt = System.currentTimeMillis()))
+      } else {
+        throw cancellation
+      }
+    } catch (error: RefinementError) {
+      fail(job, TranscriptionError.from(error.cause ?: error))
+    }
+  }
+
+  private suspend fun publish(job: JobEntity, titleRes: Int = dev.pampa.pampanotes.R.string.notification_transcribing) {
     repository.update(job)
     setForeground(
       foregroundInfo(
-        title = applicationContext.getString(dev.pampa.pampanotes.R.string.notification_transcribing),
+        title = applicationContext.getString(titleRes),
         text = job.phase,
         progress = job.progress,
       ),

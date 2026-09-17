@@ -178,6 +178,12 @@ class SettingsViewModel @Inject constructor(
 
   fun setLanguage(language: String) = viewModelScope.launch { settingsStore.setLanguage(language) }
   fun setVocabulary(text: String) = viewModelScope.launch { settingsStore.setVocabulary(text) }
+
+  fun setRefinementPreset(preset: dev.pampa.pampanotes.core.settings.RefinementPreset) =
+    viewModelScope.launch { settingsStore.setRefinementPreset(preset) }
+
+  /** Vuoto vuol dire "scegli tu": lo risolve il repository leggendo il catalogo di Groq. */
+  fun setRefinementModel(model: String) = viewModelScope.launch { settingsStore.setRefinementModel(model.trim()) }
   fun setChunkMinutes(minutes: Int) = viewModelScope.launch { settingsStore.setChunkMinutes(minutes) }
   fun setGroqMaxUploadMb(mb: Int) = viewModelScope.launch { settingsStore.setGroqMaxUploadMb(mb) }
   fun setAutoTranscribe(enabled: Boolean) = viewModelScope.launch { settingsStore.setAutoTranscribeOnImport(enabled) }
