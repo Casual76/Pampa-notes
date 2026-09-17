@@ -96,6 +96,7 @@ import dev.pampa.pampanotes.ui.nav.readMotionOrigin
 import dev.pampa.pampanotes.ui.nav.writeExpandMotion
 import dev.pampa.pampanotes.ui.nav.writePeerMotion
 import dev.pampa.pampanotes.ui.search.SearchRoute
+import dev.pampa.pampanotes.ui.session.SessionRoute
 import dev.pampa.pampanotes.ui.settings.SettingsRoute
 import dev.pampa.pampanotes.ui.theme.PampaTheme
 import kotlin.math.roundToInt
@@ -319,9 +320,26 @@ private fun AppShell(
               initialTab = entry.arguments?.getString("tab"),
               onBack = { navController.popBackStack() },
               onEdit = { id -> navigateRoute(Routes.editor(id)) },
+              onOpenSession = { id -> navigateRoute(Routes.session(id)) },
               onImportInto = { id ->
                 onPickFiles(emptyList(), id)
                 pickFiles.launch(ImportRequest.PICKER_MIME_TYPES)
+              },
+            )
+          }
+        }
+        composable(
+          route = Routes.SESSION,
+          arguments = listOf(navArgument("sessionId") { type = NavType.StringType }),
+        ) {
+          FluidRouteMotionHost(this@composable) {
+            SessionRoute(
+              onBack = { navController.popBackStack() },
+              // Separare una sessione apre quella nuova al posto di questa: e' li' che si finisce
+              // il lavoro, ed e' li' che si torna indietro da.
+              onOpenSession = { id ->
+                navController.popBackStack()
+                navigateRoute(Routes.session(id))
               },
             )
           }

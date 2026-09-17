@@ -124,7 +124,7 @@ class TranscriptionRunner @Inject constructor(
     }
 
     onProgress(TranscriptionProgress.Stitching)
-    return assemble(transcripts, provider.id, request.model)
+    return SessionAssembler.assemble(transcripts, provider.id, request.model)
   }
 
   private suspend fun transcribePart(
@@ -271,45 +271,6 @@ class TranscriptionRunner @Inject constructor(
       if (asked != null) return asked.coerceIn(1_000L, MAX_RATE_LIMIT_WAIT_MS)
     }
     return (BASE_BACKOFF_MS shl (attempt - 1)).coerceAtMost(MAX_BACKOFF_MS)
-  }
-
-  /**
-   * Le parti una dopo l'altra, con i tempi che diventano assoluti nella sessione.
-   *
-   * E' la ragione per cui esistono le sessioni: due registrazioni di mezz'ora spezzate dal
-   * telefono diventano un testo con un cronometro solo, e il lettore ci salta dentro come se fosse
-   * sempre stato un file unico.
-   */
-  fun assemble(parts: List<PartTranscript>, providerId: String, model: String): SessionTranscript {
-    var offset = 0L
-    val segments = mutableListOf<SessionSegment>()
-    val texts = mutableListOf<String>()
-
-    parts.forEach { transcript ->
-      transcript.segments.forEachIndexed { index, segment ->
-        segments += SessionSegment(
-          partId = transcript.part.id,
-          indexInPart = index,
-          partStartMs = segment.startMs,
-          partEndMs = segment.endMs,
-          sessionStartMs = offset + segment.startMs,
-          sessionEndMs = offset + segment.endMs,
-          text = segment.text,
-          noSpeechProb = segment.noSpeechProb,
-          avgLogProb = segment.avgLogProb,
-        )
-      }
-      if (transcript.text.isNotBlank()) texts += transcript.text
-      offset += transcript.part.durationMs
-    }
-
-    return SessionTranscript(
-      text = texts.joinToString("\n\n"),
-      segments = segments,
-      language = parts.firstNotNullOfOrNull { it.language },
-      model = model,
-      provider = providerId,
-    )
   }
 
   private fun chunkFile(workDir: File, index: Int) = File(workDir, "chunk-$index.json")

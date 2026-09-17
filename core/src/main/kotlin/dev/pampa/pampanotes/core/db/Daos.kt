@@ -194,6 +194,12 @@ interface SessionDao {
   @Query("SELECT * FROM sessions WHERE noteId = :noteId ORDER BY position DESC LIMIT 1")
   suspend fun last(noteId: String): SessionEntity?
 
+  @Query("SELECT * FROM sessions WHERE noteId = :noteId ORDER BY position")
+  suspend fun plainByNote(noteId: String): List<SessionEntity>
+
+  @Query("SELECT * FROM sessions WHERE noteId = :noteId AND position < :position ORDER BY position DESC LIMIT 1")
+  suspend fun previous(noteId: String, position: Int): SessionEntity?
+
   @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM sessions WHERE noteId = :noteId")
   suspend fun nextPosition(noteId: String): Int
 
@@ -251,6 +257,9 @@ interface AudioPartDao {
   @Query("SELECT * FROM audio_parts WHERE sha256 = :sha LIMIT 1")
   suspend fun findBySha(sha: String): AudioPartEntity?
 
+  @Query("SELECT COUNT(*) FROM audio_parts WHERE sessionId = :sessionId")
+  suspend fun countIn(sessionId: String): Int
+
   @Query("SELECT COUNT(*) AS count, COALESCE(SUM(sizeBytes), 0) AS bytes FROM audio_parts")
   fun observeTotal(): Flow<SizeTotal>
 
@@ -293,6 +302,9 @@ interface TranscriptDao {
   @Query("DELETE FROM transcripts WHERE parentId = :parentId")
   suspend fun deleteChildren(parentId: String)
 
+  @Query("UPDATE transcripts SET text = :text, wordCount = :wordCount WHERE id = :id")
+  suspend fun updateText(id: String, text: String, wordCount: Int)
+
   @Query("SELECT COUNT(*) FROM transcripts")
   suspend fun count(): Int
 }
@@ -307,6 +319,22 @@ interface SegmentDao {
 
   @Query("SELECT * FROM segments")
   suspend fun all(): List<SegmentEntity>
+
+  /**
+   * I segmenti delle parti indicate, da qualunque trascrizione vengano.
+   *
+   * Una parte che cambia sessione si porta dietro i suoi segmenti: i loro tempi dentro la parte non
+   * sono mai cambiati, quindi non c'e' niente da ritrascrivere, solo da ricollocare.
+   */
+  @Query("SELECT * FROM segments WHERE partId IN (:partIds) ORDER BY partStartMs, indexInPart")
+  suspend fun byParts(partIds: List<String>): List<SegmentEntity>
+
+  @Query("DELETE FROM segments WHERE partId = :partId")
+  suspend fun deleteByPart(partId: String)
+
+  /** Le parti che questa trascrizione copre: quelle che non compaiono non sono state trascritte. */
+  @Query("SELECT DISTINCT partId FROM segments WHERE transcriptId = :transcriptId")
+  fun observeCoveredParts(transcriptId: String): Flow<List<String>>
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun insertAll(segments: List<SegmentEntity>)

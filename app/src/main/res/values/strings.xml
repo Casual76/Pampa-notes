@@ -355,4 +355,59 @@
   <string name="settings_vocabulary_detail">Nomi e termini che il modello non conosce. Vederli prima e\u0300 la differenza fra «Termidoro» e «term e d\'oro».</string>
   <string name="language_auto">Auto</string>
   <string name="note_transcript_meta">%1$d parole · %2$s</string>
+
+  <!-- Sessione: il lettore e la trascrizione -->
+  <string name="session_loading">Sessione</string>
+  <string name="session_rename">Titolo e data</string>
+  <string name="session_merge">Unisci alla precedente</string>
+  <string name="session_delete">Elimina la sessione</string>
+  <string name="session_delete_title">Eliminare la sessione?</string>
+  <plurals name="session_delete_message">
+    <item quantity="one">Se ne va con la sua registrazione e la sua trascrizione.</item>
+    <item quantity="other">Se ne va con le sue %d registrazioni e la sua trascrizione.</item>
+  </plurals>
+  <string name="session_title_label">Titolo</string>
+  <string name="session_title_placeholder">La rivoluzione di luglio</string>
+  <string name="session_date_label">Quando</string>
+  <string name="session_date_custom">Un altro giorno</string>
+  <string name="session_at">Al minuto %1$s</string>
+  <plurals name="session_words">
+    <item quantity="one">%d parola</item>
+    <item quantity="other">%d parole</item>
+  </plurals>
+  <plurals name="session_parts">
+    <item quantity="one">Una registrazione</item>
+    <item quantity="other">%d registrazioni di fila</item>
+  </plurals>
+  <string name="session_partial_title">Manca un pezzo</string>
+  <plurals name="session_partial_message">
+    <item quantity="one">Una registrazione non è ancora trascritta. Ritrascrivi la sessione per averla tutta.</item>
+    <item quantity="other">%d registrazioni non sono ancora trascritte. Ritrascrivi la sessione per averla tutta.</item>
+  </plurals>
+  <string name="session_no_audio_title">Nessuna registrazione</string>
+  <string name="session_no_audio_detail">Una sessione senza audio non ha niente da far sentire. Importa un file dalla nota.</string>
+  <string name="session_no_transcript_title">Non ancora trascritta</string>
+  <string name="session_no_transcript_detail">L\'audio c\'è. Manca il testo su cui cercare, che si esporta e che un assistente può leggere.</string>
+
+  <!-- Le parti di una sessione -->
+  <string name="part_starts_at">Comincia al minuto %1$s</string>
+  <string name="part_move_up">Sposta su</string>
+  <string name="part_move_down">Sposta giù</string>
+  <string name="part_split">Separa da qui</string>
+  <string name="part_move_to">Sposta in</string>
+
+  <!-- Le versioni di una trascrizione -->
+  <string name="transcript_raw">Grezza</string>
+  <string name="transcript_refined">Raffinata · %1$s</string>
+  <string name="transcript_suspicious_title">Da controllare</string>
+  <string name="transcript_suspicious_message">Questa versione è molto più corta o più lunga della grezza: il modello può aver tagliato o aggiunto. La grezza resta sotto «Grezza».</string>
+
+  <!-- Il lettore -->
+  <string name="player_play">Riproduci</string>
+  <string name="player_pause">Pausa</string>
+  <string name="player_back">Indietro di 15 secondi</string>
+  <string name="player_forward">Avanti di 15 secondi</string>
+  <string name="player_speed">%1$s×</string>
+  <string name="player_scrubber">Punto della registrazione</string>
+  <string name="note_open_session">Ascolta e leggi</string>
 </resources>

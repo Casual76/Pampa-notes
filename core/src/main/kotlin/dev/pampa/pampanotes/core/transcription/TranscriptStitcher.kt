@@ -8,16 +8,29 @@ data class ChunkTranscript(
   val segments: List<RawSegment>,
 )
 
+/**
+ * Qualsiasi cosa abbia un inizio, una fine e delle parole.
+ *
+ * Esiste perche' il testo si compone allo stesso modo due volte: quando la trascrizione arriva, e
+ * quando le parti di una sessione cambiano ordine e va rifatta. Due copie della regola dei
+ * paragrafi sarebbero due regole destinate a divergere.
+ */
+interface TimedText {
+  val startMs: Long
+  val endMs: Long
+  val text: String
+}
+
 /** Un segmento gia' collocato nel tempo del file intero. */
 data class StitchedSegment(
-  val startMs: Long,
-  val endMs: Long,
-  val text: String,
+  override val startMs: Long,
+  override val endMs: Long,
+  override val text: String,
   val noSpeechProb: Float?,
   val avgLogProb: Float?,
   /** Da quale pezzo viene: serve solo a capire i difetti, non alla UI. */
   val chunkIndex: Int,
-)
+) : TimedText
 
 data class StitchedTranscript(
   val text: String,
@@ -154,7 +167,7 @@ object TranscriptStitcher {
    * Senza, la trascrizione di un'ora e' un muro di tremila parole che nessuno — ne' una persona ne'
    * un assistente — legge volentieri.
    */
-  fun joinIntoParagraphs(segments: List<StitchedSegment>): String {
+  fun joinIntoParagraphs(segments: List<TimedText>): String {
     if (segments.isEmpty()) return ""
     val builder = StringBuilder()
     var previousEnd = segments.first().startMs

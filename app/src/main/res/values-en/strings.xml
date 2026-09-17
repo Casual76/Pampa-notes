@@ -325,4 +325,59 @@
   <string name="settings_vocabulary_detail">Names and terms the model does not know. Seeing them first is the difference between a name and nonsense.</string>
   <string name="language_auto">Auto</string>
   <string name="note_transcript_meta">%1$d words · %2$s</string>
+
+  <!-- Session: the player and the transcript -->
+  <string name="session_loading">Session</string>
+  <string name="session_rename">Title and date</string>
+  <string name="session_merge">Merge into the previous one</string>
+  <string name="session_delete">Delete the session</string>
+  <string name="session_delete_title">Delete this session?</string>
+  <plurals name="session_delete_message">
+    <item quantity="one">It goes, and takes its recording and its transcript with it.</item>
+    <item quantity="other">It goes, and takes its %d recordings and its transcript with it.</item>
+  </plurals>
+  <string name="session_title_label">Title</string>
+  <string name="session_title_placeholder">The July revolution</string>
+  <string name="session_date_label">When</string>
+  <string name="session_date_custom">Another day</string>
+  <string name="session_at">At %1$s</string>
+  <plurals name="session_words">
+    <item quantity="one">%d word</item>
+    <item quantity="other">%d words</item>
+  </plurals>
+  <plurals name="session_parts">
+    <item quantity="one">One recording</item>
+    <item quantity="other">%d recordings in a row</item>
+  </plurals>
+  <string name="session_partial_title">A piece is missing</string>
+  <plurals name="session_partial_message">
+    <item quantity="one">One recording has not been transcribed yet. Transcribe the session again to get all of it.</item>
+    <item quantity="other">%d recordings have not been transcribed yet. Transcribe the session again to get all of it.</item>
+  </plurals>
+  <string name="session_no_audio_title">No recording</string>
+  <string name="session_no_audio_detail">A session with no audio has nothing to play. Import a file from the note.</string>
+  <string name="session_no_transcript_title">Not transcribed yet</string>
+  <string name="session_no_transcript_detail">The audio is here. What is missing is the text you can search, export, and hand to an assistant.</string>
+
+  <!-- The parts of a session -->
+  <string name="part_starts_at">Starts at %1$s</string>
+  <string name="part_move_up">Move up</string>
+  <string name="part_move_down">Move down</string>
+  <string name="part_split">Split from here</string>
+  <string name="part_move_to">Move to</string>
+
+  <!-- Transcript versions -->
+  <string name="transcript_raw">Raw</string>
+  <string name="transcript_refined">Refined · %1$s</string>
+  <string name="transcript_suspicious_title">Worth checking</string>
+  <string name="transcript_suspicious_message">This version is much shorter or much longer than the raw one: the model may have cut or added. The raw text is still under "Raw".</string>
+
+  <!-- The player -->
+  <string name="player_play">Play</string>
+  <string name="player_pause">Pause</string>
+  <string name="player_back">Back 15 seconds</string>
+  <string name="player_forward">Forward 15 seconds</string>
+  <string name="player_speed">%1$s×</string>
+  <string name="player_scrubber">Position in the recording</string>
+  <string name="note_open_session">Listen and read</string>
 </resources>

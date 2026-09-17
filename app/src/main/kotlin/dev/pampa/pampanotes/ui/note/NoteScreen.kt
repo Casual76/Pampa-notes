@@ -53,6 +53,7 @@ fun NoteRoute(
   initialTab: String?,
   onBack: () -> Unit,
   onEdit: (String) -> Unit,
+  onOpenSession: (String) -> Unit,
   onImportInto: (String) -> Unit,
   viewModel: NoteViewModel = hiltViewModel(),
 ) {
@@ -67,6 +68,7 @@ fun NoteRoute(
     onDelete = { viewModel.delete(onBack) },
     onTranscribe = viewModel::transcribe,
     onCancelJob = viewModel::cancelJob,
+    onOpenSession = onOpenSession,
   )
 }
 
@@ -87,6 +89,7 @@ private fun NoteScreen(
   onDelete: () -> Unit,
   onTranscribe: (String) -> Unit,
   onCancelJob: (String) -> Unit,
+  onOpenSession: (String) -> Unit,
 ) {
   var tab by rememberSaveable { mutableStateOf(initialTab) }
   var confirmingDelete by remember { mutableStateOf(false) }
@@ -148,7 +151,7 @@ private fun NoteScreen(
 
     when (tab) {
       NoteTab.TEXT -> textTab(state, onEdit)
-      NoteTab.AUDIO -> audioTab(state, onImport, onTranscribe, onCancelJob)
+      NoteTab.AUDIO -> audioTab(state, onImport, onTranscribe, onCancelJob, onOpenSession)
       NoteTab.SOURCES -> sourcesTab(state, onImport)
     }
   }
@@ -203,6 +206,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
   onImport: () -> Unit,
   onTranscribe: (String) -> Unit,
   onCancelJob: (String) -> Unit,
+  onOpenSession: (String) -> Unit,
 ) {
   if (state.sessions.isEmpty()) {
     item {
@@ -223,6 +227,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
 
   state.sessions.forEachIndexed { index, session ->
     item(key = "session-${session.session.id}") {
+      val sessionId = session.session.id
       Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
           text = sessionTitle(index, session.session.title, session.session.date),
@@ -238,24 +243,28 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
               subtitle = Formats.duration(part.durationMs),
               eyebrow = stringResource(R.string.note_part_number, partIndex + 1),
               meta = Formats.bytes(part.sizeBytes),
+              onClick = { onOpenSession(sessionId) },
             )
           }
         }
 
-        val job = state.activeJobs[session.session.id]
-        val transcript = state.transcripts[session.session.id]
-        val transcribed = transcript != null
+        val job = state.activeJobs[sessionId]
+        val transcript = state.transcripts[sessionId]
 
-        // La trascrizione, quando c'e'. E' il motivo per cui si e' importato l'audio: tenerla dietro
-        // un altro tocco vorrebbe dire nascondere il risultato dietro la sua stessa etichetta.
+        // Un assaggio, non il testo intero. Una lezione da un'ora sono tremila parole, e stamparle
+        // qui vorrebbe dire una nota in cui per arrivare alla seconda sessione si scorre un minuto.
         transcript?.let {
-          FluidCard(glass = true) {
+          FluidCard(glass = true, onClick = { onOpenSession(sessionId) }) {
             Text(
               text = stringResource(R.string.note_transcript_meta, it.wordCount, it.model),
               style = MaterialTheme.typography.labelMedium,
               color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            MarkdownText(markdown = it.text, modifier = Modifier.fillMaxWidth())
+            Text(
+              text = preview(it.text),
+              style = MaterialTheme.typography.bodyMedium,
+              modifier = Modifier.fillMaxWidth(),
+            )
           }
         }
 
@@ -271,10 +280,18 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
             )
           }
 
+          transcript != null -> FluidButton(
+            text = stringResource(R.string.note_open_session),
+            onClick = { onOpenSession(sessionId) },
+            style = FluidButtonStyle.Plain,
+            fillWidth = true,
+            modifier = Modifier.fillMaxWidth(),
+          )
+
           else -> FluidButton(
-            text = stringResource(if (transcribed) R.string.note_retranscribe else R.string.note_transcribe),
-            onClick = { onTranscribe(session.session.id) },
-            style = if (transcribed) FluidButtonStyle.Plain else FluidButtonStyle.Tinted,
+            text = stringResource(R.string.note_transcribe),
+            onClick = { onTranscribe(sessionId) },
+            style = FluidButtonStyle.Tinted,
             fillWidth = true,
             modifier = Modifier.fillMaxWidth(),
           )
@@ -289,6 +306,14 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
       modifier = Modifier.fillMaxWidth(),
     )
   }
+}
+
+/** Le prime righe di una trascrizione, tagliate a fine parola. */
+private fun preview(text: String, maxChars: Int = 220): String {
+  val flat = text.replace(Regex("""\s+"""), " ").trim()
+  if (flat.length <= maxChars) return flat
+  val cut = flat.take(maxChars)
+  return cut.substringBeforeLast(' ', cut).trimEnd(',', ';', ':', '.') + "…"
 }
 
 private fun androidx.compose.foundation.lazy.LazyListScope.sourcesTab(state: NoteUiState, onImport: () -> Unit) {

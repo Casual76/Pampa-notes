@@ -72,7 +72,7 @@ toglie quelli che nessuna riga cita più.
 | M1 note, editor, import testo/PDF, ricerca, griglia di cartelle | fatto |
 | M2 audio, Groq Whisper, taglio nei silenzi, coda in primo piano | fatto |
 | M3 endpoint personale + server companion WhisperX | fatto |
-| M4 lettore audio con i segmenti, riordino delle parti | da fare |
+| M4 lettore audio con i segmenti, riordino delle parti | fatto |
 | M5 export bundle e skill | da fare |
 | M6 raffinamento della trascrizione | da fare |
 | M7 DOCX, sdocx, share target completo | da fare |
@@ -80,6 +80,23 @@ toglie quelli che nessuna riga cita più.
 
 Il piano per esteso: `C:\Users\casua\.claude\plans\praticamente-vorrei-un-applicazione-che-crispy-falcon.md`
 
+## Sessioni, parti, segmenti
+
+Una regola sola, e il resto ne discende: **i segmenti appartengono alla parte, non alla
+trascrizione**. La trascrizione grezza di una sessione è quello che si ottiene mettendo in fila i
+segmenti delle parti che ha in quel momento, e `SessionRepository.rebuildRaw` la rifà dopo ogni
+cambiamento. Per questo riordinare, separare o unire non costa una richiesta di rete: i tempi dentro
+il file (`partStartMs`) non cambiano mai, cambia solo chi viene prima, e da lì `SessionAssembler`
+ricalcola i tempi di sessione (`sessionStartMs`) e ricompone il testo.
+
+Attenzione all'ordine quando una parte cambia sessione: **prima si ricompone chi riceve, poi chi
+perde**. Cancellare la trascrizione di una sessione rimasta vuota si porta dietro i suoi segmenti
+via cascata, compresi quelli appena spostati altrove. `SessionRepositoryTest` copre tutti e tre i
+casi (sposta, separa, unisci).
+
+Il lettore (`SessionPlayer`) parla solo in tempo di sessione: dentro ci sono N file e un indice di
+playlist, ma chi tocca la frase del minuto quaranta sente il minuto quaranta della lezione, non
+della terza registrazione. La traduzione la fa `SessionAssembler.locate`.
 ## Trascrizione
 
 Due strade, stessa interfaccia (`TranscriptionProvider`):
