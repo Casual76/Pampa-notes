@@ -1,0 +1,176 @@
+plugins {
+  alias(libs.plugins.android.application)
+  alias(libs.plugins.kotlin.android)
+  alias(libs.plugins.kotlin.compose)
+  alias(libs.plugins.kotlin.serialization)
+  alias(libs.plugins.ksp)
+  alias(libs.plugins.hilt)
+}
+
+// La chiave di firma vive fuori dal repo. Due strade, nell'ordine:
+//   1. local.properties (git-ignorato):
+//        pampa.storeFile=C:/VibeCoded Projects/pampa.jks
+//        pampa.storePassword=...
+//        pampa.keyAlias=pampa
+//        pampa.keyPassword=...
+//   2. variabili d'ambiente PAMPA_RELEASE_STORE_FILE / _STORE_PASSWORD / _KEY_ALIAS / _KEY_PASSWORD.
+// Senza chiave si compila lo stesso con la firma di debug, e lo si dice: quella build non e'
+// pubblicabile sul Pampa Store.
+def localProps = new Properties()
+def localPropsFile = rootProject.file('local.properties')
+if (localPropsFile.exists()) {
+  localPropsFile.withInputStream { localProps.load(it) }
+}
+def signingValue = { String prop, String env ->
+  def v = localProps.getProperty(prop)
+  if (v == null || v.trim().isEmpty()) v = System.getenv(env)
+  return (v == null || v.trim().isEmpty()) ? null : v.trim()
+}
+def keyStorePath = signingValue('pampa.storeFile', 'PAMPA_RELEASE_STORE_FILE')
+def keyStorePassword = signingValue('pampa.storePassword', 'PAMPA_RELEASE_STORE_PASSWORD')
+def keyAliasValue = signingValue('pampa.keyAlias', 'PAMPA_RELEASE_KEY_ALIAS') ?: 'pampa'
+def keyPasswordValue = signingValue('pampa.keyPassword', 'PAMPA_RELEASE_KEY_PASSWORD')
+def missingKey = []
+if (keyStorePath == null) {
+  missingKey << 'pampa.storeFile'
+} else if (!rootProject.file(keyStorePath).exists()) {
+  missingKey << "pampa.storeFile (il file ${keyStorePath} non esiste)"
+}
+if (keyStorePassword == null) missingKey << 'pampa.storePassword'
+if (keyPasswordValue == null) missingKey << 'pampa.keyPassword'
+def hasReleaseKey = missingKey.isEmpty()
+if (!hasReleaseKey && keyStorePath != null) {
+  println "Pampa Notes: firma pampa incompleta (manca ${missingKey.join(', ')}): build firmata DEBUG."
+}
+
+android {
+  namespace 'dev.pampa.pampanotes'
+  compileSdk 36
+
+  defaultConfig {
+    applicationId 'dev.pampa.pampanotes'
+    minSdk 26
+    targetSdk 36
+    versionCode 1
+    // Letterale: il publisher dello store legge questa riga con una regex che capisce solo stringhe.
+    versionName '0.1.0'
+    testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    vectorDrawables.useSupportLibrary = true
+
+    // Lo stesso documento serve sia gli aggiornamenti sia i flag: sezioni diverse, un URL solo.
+    buildConfigField 'String', 'MANIFEST_URL', '"https://raw.githubusercontent.com/Casual76/Pampa-notes/main/manifest.json"'
+  }
+
+  signingConfigs {
+    if (hasReleaseKey) {
+      release {
+        storeFile rootProject.file(keyStorePath)
+        storePassword keyStorePassword
+        keyAlias keyAliasValue
+        keyPassword keyPasswordValue
+        // La v1 va accesa a mano: AGP la toglie con minSdk >= 24, e il publisher dello store
+        // convalida proprio la presenza della firma JAR (META-INF/*.RSA) prima di caricare.
+        enableV1Signing true
+        enableV2Signing true
+        enableV3Signing true
+      }
+    }
+  }
+
+  buildTypes {
+    debug {
+      // Un suffisso, cosi' una build di lavoro convive sul telefono con quella dello store.
+      applicationIdSuffix '.debug'
+      versionNameSuffix '-debug'
+    }
+    release {
+      minifyEnabled true
+      shrinkResources true
+      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+      if (hasReleaseKey) {
+        signingConfig signingConfigs.release
+      } else {
+        signingConfig signingConfigs.debug
+        println 'Pampa Notes: nessuna chiave pampa: release firmata DEBUG, non pubblicabile.'
+      }
+    }
+  }
+
+  buildFeatures {
+    compose true
+    buildConfig true
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  kotlinOptions {
+    jvmTarget = '17'
+    freeCompilerArgs += [
+      '-opt-in=androidx.compose.material3.ExperimentalMaterial3Api',
+      '-opt-in=androidx.compose.material3.ExperimentalMaterial3ExpressiveApi',
+      '-opt-in=androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi',
+    ]
+  }
+
+  packaging {
+    resources {
+      excludes += '/META-INF/{AL2.0,LGPL2.1}'
+    }
+  }
+
+  lint {
+    warning 'HighAppVersionCode'
+  }
+
+  sourceSets {
+    main.java.setSrcDirs(['src/main/kotlin'])
+    test.java.setSrcDirs(['src/test/kotlin'])
+    androidTest.java.setSrcDirs(['src/androidTest/kotlin'])
+  }
+}
+
+dependencies {
+  implementation project(':core')
+  implementation project(':engine-ui')
+  implementation project(':engine-storage')
+  implementation project(':engine-config')
+  implementation project(':engine-update')
+  implementation project(':engine-ai')
+
+  implementation platform(libs.compose.bom)
+  implementation libs.bundles.compose
+  implementation libs.compose.material3.adaptive
+  implementation libs.compose.material3.adaptive.layout
+  implementation libs.compose.material3.adaptive.navigation
+  implementation libs.hilt.android
+  implementation libs.androidx.hilt.navigation.compose
+  implementation libs.androidx.hilt.work
+  implementation libs.work.runtime
+  implementation libs.datastore.preferences
+  implementation libs.serialization.json
+  implementation libs.media3.exoplayer
+  implementation libs.markdown.renderer
+  implementation libs.markdown.renderer.m3
+  implementation libs.androidx.documentfile
+
+  ksp libs.hilt.compiler
+  ksp libs.androidx.hilt.compiler
+
+  debugImplementation libs.compose.ui.tooling
+  implementation libs.compose.ui.tooling.preview
+
+  testImplementation libs.junit4
+  testImplementation libs.mockk
+  testImplementation libs.kotlinx.coroutines.test
+  testImplementation libs.turbine
+  androidTestImplementation platform(libs.compose.bom)
+  androidTestImplementation libs.androidx.test.ext.junit
+  androidTestImplementation libs.androidx.test.runner
+  androidTestImplementation libs.espresso.core
+  androidTestImplementation libs.compose.ui.test.junit4
+  androidTestImplementation libs.work.testing
+  debugImplementation libs.compose.ui.test.manifest
+}

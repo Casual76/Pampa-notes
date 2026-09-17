@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- I bundle esportati che si condividono con altre app. -->
+  <cache-path name="exports" path="exports/" />
+  <!-- Gli audio delle sessioni, per aprirli in un lettore esterno. -->
+  <files-path name="audio" path="audio/" />
+  <!-- Le fonti originali (PDF, DOCX, .sdocx), per riaprirle. -->
+  <files-path name="sources" path="sources/" />
+</paths>

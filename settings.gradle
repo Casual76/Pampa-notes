@@ -1,0 +1,38 @@
+pluginManagement {
+  repositories {
+    google()
+    mavenCentral()
+    gradlePluginPortal()
+  }
+}
+
+dependencyResolutionManagement {
+  repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+  repositories {
+    google()
+    mavenCentral()
+  }
+}
+
+rootProject.name = "Pampa Notes"
+
+include ":app"
+include ":core"
+
+// --- fluid-engine (inizio) ---
+def engineDir = file('engine')
+if (engineDir.exists()) {
+  [
+   'engine-foundation',
+   'engine-ui',
+   'engine-storage',
+   'engine-net',
+   'engine-config',
+   'engine-update',
+   'engine-ai'
+  ].each { name ->
+    include ":$name"
+    project(":$name").projectDir = new File(engineDir, name)
+  }
+}
+// --- fluid-engine (fine) ---

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Il server Whisper personale sta in LAN o su Tailscale, senza certificato: HTTP in chiaro
+     ammesso ovunque; i servizi cloud sono comunque HTTPS. -->
+<network-security-config>
+  <base-config cleartextTrafficPermitted="true">
+    <trust-anchors>
+      <certificates src="system" />
+    </trust-anchors>
+  </base-config>
+</network-security-config>

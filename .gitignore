@@ -1,0 +1,30 @@
+# Gradle
+.gradle/
+build/
+**/build/
+.kotlin/
+
+# Local config (chiavi, SDK)
+local.properties
+keystore.properties
+*.jks
+*.keystore
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Android
+captures/
+*.apk
+*.aab
+!companion/**/*.py
+
+# Companion server
+companion/.venv/
+companion/__pycache__/
+companion/models/
+
+# Room schema exports are versioned on purpose (core/schemas)

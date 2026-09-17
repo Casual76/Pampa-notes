@@ -1,0 +1,135 @@
+<resources>
+  <string name="app_name">Pampa Notes</string>
+
+  <!-- Canali di notifica -->
+  <string name="channel_jobs">Lavori in corso</string>
+  <string name="channel_jobs_detail">Trascrizioni e raffinamenti mentre girano</string>
+  <string name="channel_results">Esiti</string>
+  <string name="channel_results_detail">Quando una trascrizione finisce o fallisce</string>
+
+  <!-- Navigazione -->
+  <string name="tab_notes">Note</string>
+  <string name="tab_search">Cerca</string>
+  <string name="tab_jobs">Lavori</string>
+  <string name="tab_settings">Impostazioni</string>
+
+  <!-- Azioni comuni -->
+  <string name="action_back">Indietro</string>
+  <string name="action_cancel">Annulla</string>
+  <string name="action_ok">Ok</string>
+  <string name="action_save">Salva</string>
+  <string name="action_delete">Elimina</string>
+  <string name="action_rename">Rinomina</string>
+  <string name="action_create">Crea</string>
+  <string name="action_import">Importa</string>
+  <string name="action_export">Esporta</string>
+  <string name="action_retry">Riprova</string>
+  <string name="action_close">Chiudi</string>
+  <string name="action_more">Altro</string>
+
+  <!-- Home -->
+  <string name="home_title">Pampa Notes</string>
+  <string name="home_subtitle">Le tue fonti, pronte per l\'IA</string>
+  <string name="home_hero_title">%1$d note in %2$d cartelle</string>
+  <string name="home_hero_subtitle_idle">Nessun lavoro in corso</string>
+  <plurals name="home_hero_subtitle_jobs">
+    <item quantity="one">%d lavoro in corso</item>
+    <item quantity="other">%d lavori in corso</item>
+  </plurals>
+  <string name="home_section_folders">Cartelle</string>
+  <string name="home_section_recent">Ultime note</string>
+  <string name="home_empty_title">Nessuna cartella</string>
+  <string name="home_empty_detail">Crea una cartella per materia o argomento, poi importa appunti e registrazioni.</string>
+  <string name="home_new_folder">Nuova cartella</string>
+  <string name="home_import">Importa</string>
+  <plurals name="folder_note_count">
+    <item quantity="one">%d nota</item>
+    <item quantity="other">%d note</item>
+  </plurals>
+  <plurals name="folder_child_count">
+    <item quantity="one">%d sottocartella</item>
+    <item quantity="other">%d sottocartelle</item>
+  </plurals>
+  <string name="folder_empty_meta">Vuota</string>
+
+  <!-- Cartella -->
+  <string name="folder_name_label">Nome della cartella</string>
+  <string name="folder_name_placeholder">Storia, Filosofia, Matematica…</string>
+  <string name="folder_delete_title">Eliminare «%1$s»?</string>
+  <string name="folder_delete_message">Se ne vanno anche le note, gli audio e le trascrizioni che contiene. Non si torna indietro.</string>
+  <string name="folder_tone_label">Colore</string>
+
+  <!-- Ricerca -->
+  <string name="search_title">Cerca</string>
+  <string name="search_placeholder">Note e trascrizioni</string>
+  <string name="search_empty_title">Cerca nelle tue fonti</string>
+  <string name="search_empty_detail">Titoli, testo delle note e trascrizioni, senza badare agli accenti.</string>
+  <string name="search_no_results">Niente per «%1$s»</string>
+
+  <!-- Lavori -->
+  <string name="jobs_title">Lavori</string>
+  <string name="jobs_subtitle">Trascrizioni e raffinamenti</string>
+  <string name="jobs_empty_title">Nessun lavoro</string>
+  <string name="jobs_empty_detail">Quando trascrivi un audio lo vedrai qui, con il suo progresso.</string>
+
+  <!-- Impostazioni -->
+  <string name="settings_title">Impostazioni</string>
+  <string name="settings_section_services">Servizi</string>
+  <string name="settings_section_transcription">Trascrizione</string>
+  <string name="settings_section_refinement">Raffinamento</string>
+  <string name="settings_section_export">Esportazione</string>
+  <string name="settings_section_backup">Backup</string>
+  <string name="settings_section_appearance">Aspetto</string>
+  <string name="settings_section_storage">Archiviazione</string>
+  <string name="settings_section_about">Informazioni</string>
+  <string name="settings_coming_soon">In arrivo</string>
+  <!-- Date -->
+  <string name="date_today">oggi</string>
+  <string name="date_yesterday">ieri</string>
+  <string name="date_days_ago">%1$d giorni fa</string>
+
+  <!-- Toni -->
+  <string name="tone_primary">Accento</string>
+  <string name="tone_success">Verde</string>
+  <string name="tone_warning">Ambra</string>
+  <string name="tone_danger">Rosso</string>
+  <string name="tone_info">Azzurro</string>
+  <string name="tone_neutral">Grigio</string>
+
+  <!-- Note -->
+  <string name="note_text_only">Solo testo</string>
+  <string name="note_pinned">In cima</string>
+  <string name="note_pin">Fissa in cima</string>
+  <string name="note_unpin">Togli dalla cima</string>
+  <string name="note_to_transcribe">Da trascrivere</string>
+  <string name="note_delete_title">Eliminare «%1$s»?</string>
+  <string name="note_delete_message">Se ne vanno anche le registrazioni, le trascrizioni e le fonti che contiene. Non si torna indietro.</string>
+  <plurals name="note_source_count">
+    <item quantity="one">%d fonte</item>
+    <item quantity="other">%d fonti</item>
+  </plurals>
+
+  <!-- Cartella -->
+  <string name="folder_loading">Cartella</string>
+  <string name="folder_new_note">Nuova nota</string>
+  <string name="folder_new_subfolder">Nuova sottocartella</string>
+  <string name="folder_section_notes">Note</string>
+  <string name="folder_search_placeholder">Cerca in questa cartella</string>
+  <string name="folder_empty_detail">Crea una nota, oppure importa appunti e registrazioni da un\'altra app.</string>
+
+  <!-- Impostazioni: aspetto -->
+  <string name="settings_theme">Tema</string>
+  <string name="settings_theme_detail">Chiaro, scuro o come il sistema</string>
+  <string name="settings_dynamic_color">Colori dallo sfondo</string>
+  <string name="settings_dynamic_color_detail">Prende l\'accento dal tema del telefono</string>
+  <string name="settings_amoled">Nero pieno</string>
+  <string name="settings_amoled_detail">Superfici nere quando il tema è scuro</string>
+  <string name="settings_haptics">Vibrazione</string>
+  <string name="settings_haptics_detail">Un tocco sotto il dito sui controlli</string>
+  <string name="settings_version">Versione</string>
+  <string name="theme_system">Sistema</string>
+  <string name="theme_light">Chiaro</string>
+  <string name="theme_dark">Scuro</string>
+  <string name="theme_amoled">Nero</string>
+  <string name="folder_empty_title">Cartella vuota</string>
+</resources>

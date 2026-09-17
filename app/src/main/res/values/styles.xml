@@ -1,0 +1,20 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+  <!--
+    Il tema della finestra, non quello dell'app: i colori li decide Compose (FluidTheme). Qui
+    servono solo tre cose — niente action bar, barre di sistema trasparenti, e uno sfondo che non
+    lampeggi bianco prima che Compose disegni il primo fotogramma.
+
+    Il genitore e' un tema di piattaforma invece di Theme.Material3.*: l'app non ha una sola View
+    di Material, e tirarsi dentro com.google.android.material per un attributo di finestra sarebbe
+    una libreria intera per niente. La variante scura sta in values-night.
+  -->
+  <style name="AppTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+    <item name="android:windowBackground">@color/window_background</item>
+    <item name="android:statusBarColor">@android:color/transparent</item>
+    <item name="android:navigationBarColor">@android:color/transparent</item>
+    <item name="android:windowLightStatusBar" tools:targetApi="23">true</item>
+    <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
+    <item name="android:enforceNavigationBarContrast" tools:targetApi="29">false</item>
+    <item name="android:enforceStatusBarContrast" tools:targetApi="29">false</item>
+  </style>
+</resources>
