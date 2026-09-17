@@ -6,6 +6,9 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import dev.antigravity.fluidengine.foundation.ThemeMode
+import dev.antigravity.fluidengine.ui.fluid.FluidAmbient
+import dev.antigravity.fluidengine.ui.fluid.FluidHeroMotif
+import dev.antigravity.fluidengine.ui.fluid.FluidHeroTone
 import dev.antigravity.fluidengine.ui.fluid.FluidScreen
 import dev.antigravity.fluidengine.ui.fluid.FluidSectionHeader
 import dev.antigravity.fluidengine.ui.fluid.FluidSegmentedControl
@@ -21,7 +24,7 @@ import dev.pampa.pampanotes.R
  * servizi, trascrizione, raffinamento, export e backup arrivano con i rispettivi milestone.
  */
 @Composable
-fun SettingsRoute(viewModel: SettingsViewModel = hiltViewModel()) {
+fun SettingsRoute(onBack: () -> Unit, viewModel: SettingsViewModel = hiltViewModel()) {
   val engine by viewModel.engineSettings.collectAsStateWithLifecycle()
   val themeLabels = mapOf(
     ThemeMode.SYSTEM to stringResource(R.string.theme_system),
@@ -30,10 +33,14 @@ fun SettingsRoute(viewModel: SettingsViewModel = hiltViewModel()) {
     ThemeMode.AMOLED to stringResource(R.string.theme_amoled),
   )
 
-  FluidScreen(title = stringResource(R.string.settings_title)) {
+  FluidScreen(
+    title = stringResource(R.string.settings_title),
+    onBack = onBack,
+    ambient = FluidAmbient(tone = FluidHeroTone.PrimaryToSecondary, motif = FluidHeroMotif.Bars),
+  ) {
     item { FluidSectionHeader(title = stringResource(R.string.settings_section_appearance)) }
     item {
-      FluidListGroup {
+      FluidListGroup(glass = true) {
         FluidListRow(
           title = stringResource(R.string.settings_theme),
           subtitle = stringResource(R.string.settings_theme_detail),
@@ -85,7 +92,7 @@ fun SettingsRoute(viewModel: SettingsViewModel = hiltViewModel()) {
 
     item { FluidSectionHeader(title = stringResource(R.string.settings_section_about)) }
     item {
-      FluidListGroup {
+      FluidListGroup(glass = true) {
         FluidListRow(
           title = stringResource(R.string.settings_version),
           subtitle = BuildConfig.VERSION_NAME,

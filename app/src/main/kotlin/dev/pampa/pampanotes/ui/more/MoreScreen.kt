@@ -1,0 +1,139 @@
+package dev.pampa.pampanotes.ui.more
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ListAlt
+import androidx.compose.material.icons.rounded.CloudUpload
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.antigravity.fluidengine.ui.fluid.ContinuousCornerShape
+import dev.antigravity.fluidengine.ui.fluid.FluidAmbient
+import dev.antigravity.fluidengine.ui.fluid.FluidHeroMotif
+import dev.antigravity.fluidengine.ui.fluid.FluidHeroTone
+import dev.antigravity.fluidengine.ui.fluid.FluidRadius
+import dev.antigravity.fluidengine.ui.fluid.FluidScreen
+import dev.antigravity.fluidengine.ui.fluid.FluidSectionHeader
+import dev.antigravity.fluidengine.ui.theme.FluidListDivider
+import dev.antigravity.fluidengine.ui.theme.FluidListGroup
+import dev.antigravity.fluidengine.ui.theme.FluidListRow
+import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
+import dev.antigravity.fluidengine.ui.theme.FluidTone
+import dev.pampa.pampanotes.R
+
+/**
+ * Tutto il resto: cerca, lavori, export, backup, impostazioni.
+ *
+ * Esiste perche' la barra in basso regge tre schede, non sei: quello che si usa ogni giorno sta
+ * nelle prime due, e questa e' la porta per il resto.
+ */
+@Composable
+fun MoreRoute(
+  onOpenSearch: () -> Unit,
+  onOpenJobs: () -> Unit,
+  onOpenSettings: () -> Unit,
+  onImport: () -> Unit,
+  viewModel: MoreViewModel = hiltViewModel(),
+) {
+  val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+  FluidScreen(
+    title = stringResource(R.string.more_title),
+    ambient = FluidAmbient(tone = FluidHeroTone.SecondaryToTertiary, motif = FluidHeroMotif.Dots),
+  ) {
+    item { FluidSectionHeader(title = stringResource(R.string.more_section_work)) }
+    item {
+      FluidListGroup(glass = true) {
+        FluidListRow(
+          title = stringResource(R.string.search_title),
+          subtitle = stringResource(R.string.more_search_detail),
+          leading = { RowIcon(Icons.Rounded.Search, FluidTone.Primary) },
+          onClick = onOpenSearch,
+        )
+        FluidListDivider()
+        FluidListRow(
+          title = stringResource(R.string.jobs_title),
+          subtitle = stringResource(R.string.more_jobs_detail),
+          leading = { RowIcon(Icons.AutoMirrored.Rounded.ListAlt, FluidTone.Info) },
+          badge = if (state.activeJobs > 0) {
+            { FluidStatusBadge(label = state.activeJobs.toString(), tone = FluidTone.Warning) }
+          } else {
+            null
+          },
+          onClick = onOpenJobs,
+        )
+        FluidListDivider()
+        FluidListRow(
+          title = stringResource(R.string.action_import),
+          subtitle = stringResource(R.string.more_import_detail),
+          leading = { RowIcon(Icons.Rounded.Download, FluidTone.Success) },
+          onClick = onImport,
+        )
+        FluidListDivider()
+        FluidListRow(
+          title = stringResource(R.string.action_export),
+          subtitle = stringResource(R.string.more_export_detail),
+          leading = { RowIcon(Icons.Rounded.CloudUpload, FluidTone.Neutral) },
+          meta = stringResource(R.string.settings_coming_soon),
+        )
+      }
+    }
+
+    item { FluidSectionHeader(title = stringResource(R.string.more_section_app)) }
+    item {
+      FluidListGroup(glass = true) {
+        FluidListRow(
+          title = stringResource(R.string.settings_title),
+          subtitle = stringResource(R.string.more_settings_detail),
+          leading = { RowIcon(Icons.Rounded.Tune, FluidTone.Primary) },
+          onClick = onOpenSettings,
+        )
+        FluidListDivider()
+        FluidListRow(
+          title = stringResource(R.string.settings_version),
+          subtitle = state.versionName,
+          leading = { RowIcon(Icons.Rounded.Info, FluidTone.Neutral) },
+          meta = state.engineVersion,
+        )
+      }
+    }
+  }
+}
+
+/** La piastrella colorata di una riga: il tono sta qui, mai sullo sfondo della riga. */
+@Composable
+private fun RowIcon(icon: ImageVector, tone: FluidTone) {
+  val scheme = MaterialTheme.colorScheme
+  val color = when (tone) {
+    FluidTone.Primary -> scheme.primary
+    FluidTone.Info -> scheme.secondary
+    FluidTone.Success -> scheme.tertiary
+    FluidTone.Warning -> scheme.secondary
+    FluidTone.Danger -> scheme.error
+    FluidTone.Neutral -> scheme.onSurfaceVariant
+  }
+  Box(
+    modifier = Modifier
+      .size(30.dp)
+      .clip(ContinuousCornerShape(FluidRadius.Small))
+      .background(color.copy(alpha = 0.16f)),
+    contentAlignment = Alignment.Center,
+  ) {
+    Icon(imageVector = icon, contentDescription = null, tint = color, modifier = Modifier.size(18.dp))
+  }
+}

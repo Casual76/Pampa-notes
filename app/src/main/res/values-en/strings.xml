@@ -119,4 +119,131 @@
   <string name="theme_dark">Dark</string>
   <string name="theme_amoled">Black</string>
   <string name="folder_empty_title">Empty folder</string>
+  <string name="note_loading">Note</string>
+  <string name="note_tab_text">Text</string>
+  <string name="note_tab_audio">Audio</string>
+  <string name="note_tab_sources">Sources</string>
+  <string name="note_edit">Edit</string>
+  <string name="note_empty_title">Empty note</string>
+  <string name="note_empty_detail">Write something, or import a file: the text lands here.</string>
+  <string name="note_audio_empty_title">No recordings</string>
+  <string name="note_audio_empty_detail">Add audio and we transcribe it. Parts of one lecture stay together.</string>
+  <string name="note_add_audio">Add audio</string>
+  <string name="note_sources_empty_title">No sources</string>
+  <string name="note_sources_empty_detail">Every file this note took something from is listed here.</string>
+  <string name="note_session_number">Session %1$d</string>
+  <string name="note_part_number">Part %1$d</string>
+  <string name="note_source_attached">Attached</string>
+  <plurals name="note_source_chars">
+    <item quantity="one">%d character</item>
+    <item quantity="other">%d characters</item>
+  </plurals>
+
+  <string name="kind_pdf">PDF</string>
+  <string name="kind_docx">Word</string>
+  <string name="kind_sdocx">Samsung Notes</string>
+  <string name="kind_markdown">Markdown</string>
+  <string name="kind_text">Text</string>
+  <string name="kind_image">Image</string>
+  <string name="kind_audio">Audio</string>
+  <string name="kind_clipboard">Clipboard</string>
+  <string name="kind_share">Shared</string>
+  <string name="kind_other">Other</string>
+  <string name="source_status_ok">Read</string>
+  <string name="source_status_partial">Partial</string>
+  <string name="source_status_failed">Not read</string>
+
+  <string name="editor_title">Edit</string>
+  <string name="editor_note_title">Title</string>
+  <string name="editor_saving">Saving…</string>
+  <string name="editor_saved">Saved</string>
+  <string name="editor_write">Write</string>
+  <string name="editor_preview">Preview</string>
+  <string name="editor_preview_empty">Nothing to see: the note is empty.</string>
+  <string name="editor_body_placeholder">Your notes, in Markdown</string>
+  <string name="editor_markdown_hint">Markdown: ## for a heading, - for a list, ** around a word for bold.</string>
+
+  <string name="import_title">Import</string>
+  <string name="import_problem">Problem</string>
+  <string name="import_inspecting">Looking at what you picked…</string>
+  <plurals name="import_items">
+    <item quantity="one">%d item</item>
+    <item quantity="other">%d items</item>
+  </plurals>
+  <string name="import_step_destination">Where it goes</string>
+  <string name="import_step_audio">The recordings</string>
+  <string name="import_empty_title">Nothing to import</string>
+  <string name="import_empty_detail">None of the files could be read.</string>
+  <string name="import_duplicate_note">Anything already imported starts off: switch it on to import it anyway.</string>
+  <string name="import_duplicate_of">Already in “%1$s”</string>
+  <string name="import_folder">Folder</string>
+  <string name="import_no_folder_detail">Create one: that is where imports land.</string>
+  <string name="import_chosen">Chosen</string>
+  <string name="import_note">Note</string>
+  <string name="import_new_note">New note</string>
+  <string name="import_new_note_detail">Text and recordings land in a freshly created note</string>
+  <string name="import_new_note_title">Note title</string>
+  <string name="import_append_to_note">Add to this note</string>
+  <string name="import_audio_where">Where the recordings go</string>
+  <string name="import_audio_where_detail">Parts of one session become a single transcript.</string>
+  <string name="import_new_session">New session</string>
+  <string name="import_new_session_detail">Another lecture, another day</string>
+  <string name="import_append_session">After session %1$d</string>
+  <string name="import_running">Importing…</string>
+  <string name="import_open_note">Open the note</string>
+  <string name="import_failed_title">That did not work</string>
+  <string name="import_failed_detail">No file was imported.</string>
+  <string name="action_continue">Continue</string>
+
+  <string name="search_no_results_detail">Try fewer words, or part of a word.</string>
+  <string name="search_match_in_title">Found in the title</string>
+  <plurals name="search_in_transcripts">
+    <item quantity="one">%d in the transcript</item>
+    <item quantity="other">%d in transcripts</item>
+  </plurals>
+  <string name="tab_home">Home</string>
+  <string name="tab_folders">Folders</string>
+  <string name="tab_more">More</string>
+
+  <string name="home_hero_eyebrow">Your archive</string>
+  <plurals name="home_hero_notes">
+    <item quantity="one">note collected</item>
+    <item quantity="other">notes collected</item>
+  </plurals>
+  <string name="home_hero_description">Ready to hand to an assistant as sources.</string>
+  <string name="home_metric_folders">Folders</string>
+  <string name="home_metric_audio">Audio</string>
+  <string name="home_metric_jobs">Running</string>
+
+  <string name="folders_title">Folders</string>
+  <string name="folders_subtitle">One per subject, one per topic</string>
+  <string name="folder_icon_label">Icon</string>
+  <string name="action_edit">Edit</string>
+
+  <string name="more_title">More</string>
+  <string name="more_section_work">Work</string>
+  <string name="more_section_app">App</string>
+  <string name="more_search_detail">In notes and transcripts</string>
+  <string name="more_jobs_detail">Transcriptions and refinements</string>
+  <string name="more_import_detail">From files, another app, the clipboard</string>
+  <string name="more_export_detail">Markdown bundles for Claude, ChatGPT, Gemini</string>
+  <string name="more_settings_detail">Services, transcription, appearance</string>
+
+  <string name="icon_folder">Folder</string>
+  <string name="icon_book">Book</string>
+  <string name="icon_history">History</string>
+  <string name="icon_philosophy">Philosophy</string>
+  <string name="icon_maths">Maths</string>
+  <string name="icon_calculate">Calculation</string>
+  <string name="icon_science">Science</string>
+  <string name="icon_biology">Biology</string>
+  <string name="icon_geography">Geography</string>
+  <string name="icon_language">Languages</string>
+  <string name="icon_art">Art</string>
+  <string name="icon_music">Music</string>
+  <string name="icon_theatre">Theatre</string>
+  <string name="icon_law">Law</string>
+  <string name="icon_code">Computing</string>
+  <string name="icon_sport">Sport</string>
+  <string name="icon_work">Work</string>
 </resources>

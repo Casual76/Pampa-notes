@@ -20,7 +20,7 @@ class FolderRepository @Inject constructor(
   suspend fun get(id: String): FolderEntity? = folders.get(id)
   suspend fun all(): List<FolderEntity> = folders.all()
 
-  suspend fun create(name: String, parentId: String? = null, tone: String? = null): FolderEntity {
+  suspend fun create(name: String, parentId: String? = null, tone: String? = null, icon: String? = null): FolderEntity {
     val now = System.currentTimeMillis()
     val siblings = folders.children(parentId)
     val folder = FolderEntity(
@@ -29,6 +29,7 @@ class FolderRepository @Inject constructor(
       parentId = parentId,
       sortOrder = (siblings.maxOfOrNull { it.sortOrder } ?: -1) + 1,
       tone = tone,
+      icon = icon,
       createdAt = now,
       updatedAt = now,
     )
@@ -42,9 +43,17 @@ class FolderRepository @Inject constructor(
     folders.upsert(folder.copy(name = trimmed, updatedAt = System.currentTimeMillis()))
   }
 
-  suspend fun setTone(id: String, tone: String?) {
+  /** Nome, colore e icona insieme: e' quello che il pannello di modifica cambia in un colpo solo. */
+  suspend fun update(id: String, name: String, tone: String?, icon: String?) {
     val folder = folders.get(id) ?: return
-    folders.upsert(folder.copy(tone = tone, updatedAt = System.currentTimeMillis()))
+    folders.upsert(
+      folder.copy(
+        name = name.trim().ifEmpty { folder.name },
+        tone = tone,
+        icon = icon,
+        updatedAt = System.currentTimeMillis(),
+      ),
+    )
   }
 
   /** Sposta una cartella sotto un'altra (o alla radice con null). Rifiuta di metterla dentro se stessa. */

@@ -15,6 +15,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.antigravity.fluidengine.ui.fluid.FluidAlert
 import dev.antigravity.fluidengine.ui.fluid.FluidAlertAction
+import dev.antigravity.fluidengine.ui.fluid.FluidAmbient
 import dev.antigravity.fluidengine.ui.fluid.FluidBarAction
 import dev.antigravity.fluidengine.ui.fluid.FluidContextAction
 import dev.antigravity.fluidengine.ui.fluid.FluidScreen
@@ -25,11 +26,17 @@ import dev.antigravity.fluidengine.ui.theme.FluidListDivider
 import dev.antigravity.fluidengine.ui.theme.FluidListGroup
 import dev.antigravity.fluidengine.ui.theme.FluidListRow
 import dev.antigravity.fluidengine.ui.theme.FluidQuickAction
+import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
+import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.db.FolderRow
 import dev.pampa.pampanotes.core.db.NoteRow
 import dev.pampa.pampanotes.ui.common.FolderEditorSheet
 import dev.pampa.pampanotes.ui.common.Formats
+import dev.pampa.pampanotes.ui.common.FolderIcon
+import dev.pampa.pampanotes.ui.common.ambientMotifOf
+import dev.pampa.pampanotes.ui.common.ambientToneOf
+import dev.pampa.pampanotes.ui.common.folderIconOf
 import dev.pampa.pampanotes.ui.common.toneFromName
 
 @Composable
@@ -37,6 +44,8 @@ fun FolderRoute(
   folderId: String,
   onBack: () -> Unit,
   onOpenFolder: (String) -> Unit,
+  onOpenNote: (String) -> Unit,
+  onImport: () -> Unit,
   viewModel: FolderViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -44,10 +53,12 @@ fun FolderRoute(
     state = state,
     onBack = onBack,
     onOpenFolder = onOpenFolder,
+    onOpenNote = onOpenNote,
+    onImport = onImport,
     onQueryChange = viewModel::setQuery,
     onCreateSubfolder = viewModel::createSubfolder,
-    onCreateNote = { title -> viewModel.createNote(title) },
-    onRenameFolder = viewModel::renameFolder,
+    onCreateNote = { title -> viewModel.createNote(title) { id -> onOpenNote(id) } },
+    onUpdateFolder = viewModel::updateFolder,
     onDeleteFolder = viewModel::deleteFolder,
     onDeleteNote = viewModel::deleteNote,
     onTogglePinned = viewModel::togglePinned,
@@ -59,10 +70,12 @@ private fun FolderScreen(
   state: FolderUiState,
   onBack: () -> Unit,
   onOpenFolder: (String) -> Unit,
+  onOpenNote: (String) -> Unit,
+  onImport: () -> Unit,
   onQueryChange: (String) -> Unit,
-  onCreateSubfolder: (String, String?) -> Unit,
+  onCreateSubfolder: (String, String?, String?) -> Unit,
   onCreateNote: (String) -> Unit,
-  onRenameFolder: (String, String) -> Unit,
+  onUpdateFolder: (String, String, String?, String?) -> Unit,
   onDeleteFolder: (String) -> Unit,
   onDeleteNote: (String) -> Unit,
   onTogglePinned: (String, Boolean) -> Unit,
@@ -80,11 +93,17 @@ private fun FolderScreen(
   val unpinLabel = stringResource(R.string.note_unpin)
   val newNoteLabel = stringResource(R.string.folder_new_note)
   val newSubfolderLabel = stringResource(R.string.folder_new_subfolder)
+  val importLabel = stringResource(R.string.action_import)
+
+  val folderTone = toneFromName(state.folder?.tone)
+  val folderIcon = FolderIcon.fromKey(state.folder?.icon)
 
   FluidScreen(
     title = state.folder?.name ?: stringResource(R.string.folder_loading),
     subtitle = state.path.dropLast(1).joinToString(" / ") { it.name }.takeIf { it.isNotEmpty() },
     onBack = onBack,
+    // Il fondale prende il colore della cartella: la pagina e la sua tessera si somigliano.
+    ambient = FluidAmbient(tone = ambientToneOf(folderTone), motif = ambientMotifOf(folderIcon)),
     actions = {
       FluidBarAction(
         icon = Icons.Rounded.Add,
@@ -94,6 +113,7 @@ private fun FolderScreen(
         actions = {
           listOf(
             FluidContextAction(label = newNoteLabel) { creatingNote = true },
+            FluidContextAction(label = importLabel) { onImport() },
             FluidContextAction(label = newSubfolderLabel) { creatingFolder = true },
           )
         },
@@ -114,7 +134,7 @@ private fun FolderScreen(
     if (state.subfolders.isNotEmpty()) {
       item { FluidSectionHeader(title = stringResource(R.string.home_section_folders)) }
       item {
-        FluidListGroup {
+        FluidListGroup(glass = true) {
           state.subfolders.forEachIndexed { index, row ->
             if (index > 0) FluidListDivider()
             FluidListRow(
@@ -140,7 +160,7 @@ private fun FolderScreen(
         item { FluidSectionHeader(title = stringResource(R.string.folder_section_notes)) }
       }
       item {
-        FluidListGroup {
+        FluidListGroup(glass = true) {
           notes.forEachIndexed { index, row ->
             if (index > 0) FluidListDivider()
             FluidListRow(
@@ -149,8 +169,7 @@ private fun FolderScreen(
               eyebrow = if (row.note.pinned) stringResource(R.string.note_pinned) else null,
               meta = Formats.relativeDate(row.note.updatedAt),
               badge = noteBadge(row),
-              // La nota si apre in M1: per ora la riga mostra quello che c'e' dentro.
-              onClick = null,
+              onClick = { onOpenNote(row.note.id) },
               contextActions = {
                 listOf(
                   FluidContextAction(label = if (row.note.pinned) unpinLabel else pinLabel) {
@@ -179,6 +198,13 @@ private fun FolderScreen(
           modifier = Modifier.fillMaxWidth(),
         )
       }
+      item {
+        FluidQuickAction(
+          label = importLabel,
+          onClick = onImport,
+          modifier = Modifier.fillMaxWidth(),
+        )
+      }
     }
   }
 
@@ -187,10 +213,10 @@ private fun FolderScreen(
       title = stringResource(R.string.folder_new_subfolder),
       initialName = "",
       initialTone = null,
-      showToneChooser = true,
+      initialIcon = null,
       onDismiss = { creatingFolder = false },
-      onConfirm = { name, tone ->
-        onCreateSubfolder(name, tone)
+      onConfirm = { name, tone, icon ->
+        onCreateSubfolder(name, tone, icon)
         creatingFolder = false
       },
     )
@@ -201,9 +227,9 @@ private fun FolderScreen(
       title = stringResource(R.string.folder_new_note),
       initialName = "",
       initialTone = null,
-      showToneChooser = false,
+      initialIcon = null,
       onDismiss = { creatingNote = false },
-      onConfirm = { name, _ ->
+      onConfirm = { name, _, _ ->
         onCreateNote(name)
         creatingNote = false
       },
@@ -215,10 +241,10 @@ private fun FolderScreen(
       title = renameLabel,
       initialName = row.folder.name,
       initialTone = row.folder.tone,
-      showToneChooser = true,
+      initialIcon = row.folder.icon,
       onDismiss = { renaming = null },
-      onConfirm = { name, _ ->
-        onRenameFolder(row.folder.id, name)
+      onConfirm = { name, tone, icon ->
+        onUpdateFolder(row.folder.id, name, tone, icon)
         renaming = null
       },
     )

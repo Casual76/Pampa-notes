@@ -31,8 +31,10 @@ data class FolderEntity(
   val name: String,
   val parentId: String? = null,
   val sortOrder: Int = 0,
-  /** Il nome di un FluidTone, per la piastrella dell'icona. */
+  /** Il nome di un FluidTone: da qui la tessera prende il suo colore e la schermata il suo fondale. */
   val tone: String? = null,
+  /** La chiave di un'icona del catalogo, oppure un'emoji: la cartella si riconosce da lontano. */
+  val icon: String? = null,
   val createdAt: Long,
   val updatedAt: Long,
 )

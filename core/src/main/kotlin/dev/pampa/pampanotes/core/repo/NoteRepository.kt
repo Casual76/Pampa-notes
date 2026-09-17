@@ -25,6 +25,7 @@ class NoteRepository @Inject constructor(
   suspend fun get(id: String): NoteEntity? = notes.get(id)
   suspend fun byFolder(folderId: String): List<NoteEntity> = notes.byFolder(folderId)
   suspend fun all(): List<NoteEntity> = notes.all()
+  suspend fun getAll(ids: List<String>): List<NoteEntity> = if (ids.isEmpty()) emptyList() else notes.getAll(ids)
   suspend fun tags(noteId: String): List<String> = tags.tags(noteId)
   suspend fun searchByTitle(query: String, limit: Int = 20): List<NoteEntity> = notes.byTitle(query, limit)
 

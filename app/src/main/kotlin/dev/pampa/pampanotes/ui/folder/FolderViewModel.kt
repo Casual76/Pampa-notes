@@ -67,8 +67,8 @@ class FolderViewModel @Inject constructor(
     query.value = value
   }
 
-  fun createSubfolder(name: String, tone: String?) {
-    viewModelScope.launch { folders.create(name = name, parentId = folderId, tone = tone) }
+  fun createSubfolder(name: String, tone: String?, icon: String?) {
+    viewModelScope.launch { folders.create(name = name, parentId = folderId, tone = tone, icon = icon) }
   }
 
   fun createNote(title: String, onCreated: (String) -> Unit = {}) {
@@ -78,8 +78,8 @@ class FolderViewModel @Inject constructor(
     }
   }
 
-  fun renameFolder(id: String, name: String) {
-    viewModelScope.launch { folders.rename(id, name) }
+  fun updateFolder(id: String, name: String, tone: String?, icon: String?) {
+    viewModelScope.launch { folders.update(id, name, tone, icon) }
   }
 
   fun deleteFolder(id: String) {

@@ -132,4 +132,141 @@
   <string name="theme_dark">Scuro</string>
   <string name="theme_amoled">Nero</string>
   <string name="folder_empty_title">Cartella vuota</string>
+  <!-- Nota -->
+  <string name="note_loading">Nota</string>
+  <string name="note_tab_text">Testo</string>
+  <string name="note_tab_audio">Audio</string>
+  <string name="note_tab_sources">Fonti</string>
+  <string name="note_edit">Modifica</string>
+  <string name="note_empty_title">Nota vuota</string>
+  <string name="note_empty_detail">Scrivi qualcosa, oppure importa un file: il testo finisce qui.</string>
+  <string name="note_audio_empty_title">Nessuna registrazione</string>
+  <string name="note_audio_empty_detail">Aggiungi un audio e lo trascriviamo. Le parti di una stessa lezione restano insieme.</string>
+  <string name="note_add_audio">Aggiungi audio</string>
+  <string name="note_sources_empty_title">Nessuna fonte</string>
+  <string name="note_sources_empty_detail">Qui resta traccia di ogni file da cui questa nota ha preso qualcosa.</string>
+  <string name="note_session_number">Sessione %1$d</string>
+  <string name="note_part_number">Parte %1$d</string>
+  <string name="note_source_attached">Allegato</string>
+  <plurals name="note_source_chars">
+    <item quantity="one">%d carattere</item>
+    <item quantity="other">%d caratteri</item>
+  </plurals>
+
+  <!-- Tipi di fonte -->
+  <string name="kind_pdf">PDF</string>
+  <string name="kind_docx">Word</string>
+  <string name="kind_sdocx">Samsung Notes</string>
+  <string name="kind_markdown">Markdown</string>
+  <string name="kind_text">Testo</string>
+  <string name="kind_image">Immagine</string>
+  <string name="kind_audio">Audio</string>
+  <string name="kind_clipboard">Appunti</string>
+  <string name="kind_share">Condiviso</string>
+  <string name="kind_other">Altro</string>
+  <string name="source_status_ok">Letto</string>
+  <string name="source_status_partial">Parziale</string>
+  <string name="source_status_failed">Non letto</string>
+
+  <!-- Editor -->
+  <string name="editor_title">Modifica</string>
+  <string name="editor_note_title">Titolo</string>
+  <string name="editor_saving">Salvataggio…</string>
+  <string name="editor_saved">Salvato</string>
+  <string name="editor_write">Scrivi</string>
+  <string name="editor_preview">Anteprima</string>
+  <string name="editor_preview_empty">Niente da vedere: la nota è vuota.</string>
+  <string name="editor_body_placeholder">Gli appunti, in Markdown</string>
+  <string name="editor_markdown_hint">Markdown: ## per un titolo, - per un elenco, ** intorno a una parola per il grassetto.</string>
+
+  <!-- Import -->
+  <string name="import_title">Importa</string>
+  <string name="import_problem">Problema</string>
+  <string name="import_inspecting">Sto guardando cosa hai scelto…</string>
+  <plurals name="import_items">
+    <item quantity="one">%d elemento</item>
+    <item quantity="other">%d elementi</item>
+  </plurals>
+  <string name="import_step_destination">Dove va</string>
+  <string name="import_step_audio">Le registrazioni</string>
+  <string name="import_empty_title">Niente da importare</string>
+  <string name="import_empty_detail">Nessuno dei file scelti si è potuto leggere.</string>
+  <string name="import_duplicate_note">Quello che hai già importato parte spento: accendilo se lo vuoi comunque.</string>
+  <string name="import_duplicate_of">Già in «%1$s»</string>
+  <string name="import_folder">Cartella</string>
+  <string name="import_no_folder_detail">Creane una: è lì che finisce quello che importi.</string>
+  <string name="import_chosen">Scelta</string>
+  <string name="import_note">Nota</string>
+  <string name="import_new_note">Nota nuova</string>
+  <string name="import_new_note_detail">Il testo e le registrazioni finiscono in una nota appena creata</string>
+  <string name="import_new_note_title">Titolo della nota</string>
+  <string name="import_append_to_note">Aggiungi a questa nota</string>
+  <string name="import_audio_where">Dove mettere le registrazioni</string>
+  <string name="import_audio_where_detail">Le parti di una stessa sessione diventano una trascrizione sola.</string>
+  <string name="import_new_session">Sessione nuova</string>
+  <string name="import_new_session_detail">Un\'altra lezione, un altro giorno</string>
+  <string name="import_append_session">In coda alla sessione %1$d</string>
+  <string name="import_running">Importazione in corso…</string>
+  <string name="import_open_note">Apri la nota</string>
+  <string name="import_failed_title">Non è andata</string>
+  <string name="import_failed_detail">Nessun file è stato importato.</string>
+  <string name="action_continue">Avanti</string>
+
+  <!-- Ricerca -->
+  <string name="search_no_results_detail">Prova con meno parole, o con una parte di parola.</string>
+  <string name="search_match_in_title">Trovato nel titolo</string>
+  <plurals name="search_in_transcripts">
+    <item quantity="one">%d nella trascrizione</item>
+    <item quantity="other">%d nelle trascrizioni</item>
+  </plurals>
+  <!-- Schede -->
+  <string name="tab_home">Home</string>
+  <string name="tab_folders">Cartelle</string>
+  <string name="tab_more">Altro</string>
+
+  <!-- Home -->
+  <string name="home_hero_eyebrow">Il tuo archivio</string>
+  <plurals name="home_hero_notes">
+    <item quantity="one">nota raccolta</item>
+    <item quantity="other">note raccolte</item>
+  </plurals>
+  <string name="home_hero_description">Pronte da dare a un assistente come fonti.</string>
+  <string name="home_metric_folders">Cartelle</string>
+  <string name="home_metric_audio">Audio</string>
+  <string name="home_metric_jobs">In corso</string>
+
+  <!-- Cartelle -->
+  <string name="folders_title">Cartelle</string>
+  <string name="folders_subtitle">Una per materia, una per argomento</string>
+  <string name="folder_icon_label">Icona</string>
+  <string name="action_edit">Modifica</string>
+
+  <!-- Altro -->
+  <string name="more_title">Altro</string>
+  <string name="more_section_work">Lavoro</string>
+  <string name="more_section_app">App</string>
+  <string name="more_search_detail">Nelle note e nelle trascrizioni</string>
+  <string name="more_jobs_detail">Trascrizioni e raffinamenti</string>
+  <string name="more_import_detail">Da file, da un\'altra app, dagli appunti</string>
+  <string name="more_export_detail">Bundle Markdown per Claude, ChatGPT, Gemini</string>
+  <string name="more_settings_detail">Servizi, trascrizione, aspetto</string>
+
+  <!-- Icone delle cartelle -->
+  <string name="icon_folder">Cartella</string>
+  <string name="icon_book">Libro</string>
+  <string name="icon_history">Storia</string>
+  <string name="icon_philosophy">Filosofia</string>
+  <string name="icon_maths">Matematica</string>
+  <string name="icon_calculate">Calcolo</string>
+  <string name="icon_science">Scienze</string>
+  <string name="icon_biology">Biologia</string>
+  <string name="icon_geography">Geografia</string>
+  <string name="icon_language">Lingue</string>
+  <string name="icon_art">Arte</string>
+  <string name="icon_music">Musica</string>
+  <string name="icon_theatre">Teatro</string>
+  <string name="icon_law">Diritto</string>
+  <string name="icon_code">Informatica</string>
+  <string name="icon_sport">Sport</string>
+  <string name="icon_work">Lavoro</string>
 </resources>

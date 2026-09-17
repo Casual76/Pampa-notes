@@ -1,6 +1,8 @@
 package dev.pampa.pampanotes.ui
 
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -20,10 +22,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ListAlt
-import androidx.compose.material.icons.rounded.FolderOpen
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -32,13 +33,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavBackStackEntry
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -46,8 +47,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import androidx.navigation.NavGraph.Companion.findStartDestination
 import dev.antigravity.fluidengine.ui.fluid.FluidBarFold
+import dev.antigravity.fluidengine.ui.fluid.FluidChromeController
 import dev.antigravity.fluidengine.ui.fluid.FluidFoldAlignment
 import dev.antigravity.fluidengine.ui.fluid.FluidFoldingTabBar
 import dev.antigravity.fluidengine.ui.fluid.FluidFoldingTabBarDefaults
@@ -77,9 +78,15 @@ import dev.antigravity.fluidengine.ui.theme.fluidTouchOriginTracker
 import dev.antigravity.fluidengine.ui.theme.rememberFluidTouchOrigin
 import dev.antigravity.fluidengine.ui.theme.rememberRouteMotionSignals
 import dev.pampa.pampanotes.R
+import dev.pampa.pampanotes.ui.editor.EditorRoute
 import dev.pampa.pampanotes.ui.folder.FolderRoute
 import dev.pampa.pampanotes.ui.home.HomeRoute
+import dev.pampa.pampanotes.ui.importing.ImportRequest
+import dev.pampa.pampanotes.ui.importing.ImportRoute
+import dev.pampa.pampanotes.ui.folders.FoldersRoute
 import dev.pampa.pampanotes.ui.jobs.JobsRoute
+import dev.pampa.pampanotes.ui.more.MoreRoute
+import dev.pampa.pampanotes.ui.note.NoteRoute
 import dev.pampa.pampanotes.ui.nav.RouteMotionDecision
 import dev.pampa.pampanotes.ui.nav.RouteMotionKind
 import dev.pampa.pampanotes.ui.nav.Routes
@@ -123,7 +130,12 @@ fun MainApp(
           // La pagina sotto un modale di vetro resta visibile — e' il senso del materiale — quindi
           // va tolta all'accessibilita' a mano, o TalkBack cammina dentro allo scrim.
           Box(modifier = Modifier.fillMaxSize().fluidGlassModalObscured()) {
-            AppShell(incomingIntents = incomingIntents)
+            AppShell(
+              chromeController = chromeController,
+              incomingIntents = incomingIntents,
+              onIntent = viewModel::onIntent,
+              onPickFiles = viewModel::onFilesPicked,
+            )
           }
           FluidGlassModalHost(
             state = glassModalHostState,
@@ -141,17 +153,20 @@ fun MainApp(
 }
 
 @Composable
-private fun AppShell(incomingIntents: Flow<Intent>) {
+private fun AppShell(
+  chromeController: FluidChromeController,
+  incomingIntents: Flow<Intent>,
+  onIntent: (Intent) -> Boolean,
+  onPickFiles: (List<android.net.Uri>, String?) -> Unit,
+) {
   val navController = rememberNavController()
   val backStackEntry by navController.currentBackStackEntryAsState()
   val currentRoute = backStackEntry?.destination?.route?.substringBefore("?")
   val showTabBar = currentRoute in Routes.topLevelSet
 
-  val chromeController = rememberFluidChromeController()
   val scrollToTop = remember { FluidScrollToTopBus() }
   val touchOrigin = rememberFluidTouchOrigin()
   val motionSignals = LocalRouteMotionSignals.current
-  val context = LocalContext.current
 
   // La destinazione porta con se' sia il punto da cui e' stata aperta sia il fatto che sia stata
   // *aperta* invece che raggiunta di lato: tornare indietro disfa lo stesso movimento, comunque si
@@ -166,18 +181,29 @@ private fun AppShell(incomingIntents: Flow<Intent>) {
     navController.currentBackStackEntry?.savedStateHandle?.writePeerMotion()
   }
 
+  // Il selettore file: la stessa lista di tipi che il manifest dichiara per la condivisione.
+  val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+    if (uris.isNotEmpty()) {
+      onPickFiles(uris, null)
+      navigateRoute(Routes.IMPORT)
+    }
+  }
+
   LaunchedEffect(navController, incomingIntents) {
     incomingIntents.collect { intent ->
-      // In M0 il deep link non apre ancora niente: la gestione degli import arriva con M1.
-      navController.handleDeepLink(intent)
+      // Prima la condivisione, poi i deep link: un intent di SEND non e' un link e non ha una rotta.
+      if (onIntent(intent)) {
+        navController.navigate(Routes.IMPORT)
+      } else {
+        navController.handleDeepLink(intent)
+      }
     }
   }
 
   val tabItems = listOf(
-    FluidTabItem(Routes.HOME, stringResource(R.string.tab_notes), Icons.Rounded.FolderOpen),
-    FluidTabItem(Routes.SEARCH, stringResource(R.string.tab_search), Icons.Rounded.Search),
-    FluidTabItem(Routes.JOBS, stringResource(R.string.tab_jobs), Icons.AutoMirrored.Rounded.ListAlt),
-    FluidTabItem(Routes.SETTINGS, stringResource(R.string.tab_settings), Icons.Rounded.Tune),
+    FluidTabItem(Routes.HOME, stringResource(R.string.tab_home), Icons.Rounded.Home),
+    FluidTabItem(Routes.FOLDERS, stringResource(R.string.tab_folders), Icons.Rounded.GridView),
+    FluidTabItem(Routes.MORE, stringResource(R.string.tab_more), Icons.Rounded.MoreHoriz),
   )
 
   // La policy avvolge tutta la shell: anche la chrome in cima e' movimento, non solo il contenuto.
@@ -228,17 +254,44 @@ private fun AppShell(incomingIntents: Flow<Intent>) {
       ) {
         composable(Routes.HOME) {
           FluidRouteMotionHost(this@composable) {
-            HomeRoute(onOpenFolder = { id -> navigateRoute(Routes.folder(id)) })
+            HomeRoute(
+              onOpenNote = { id -> navigateRoute(Routes.note(id)) },
+              onImport = { pickFiles.launch(ImportRequest.PICKER_MIME_TYPES) },
+              onOpenJobs = { navigateRoute(Routes.JOBS) },
+            )
+          }
+        }
+        composable(Routes.FOLDERS) {
+          FluidRouteMotionHost(this@composable) {
+            FoldersRoute(
+              onOpenFolder = { id -> navigateRoute(Routes.folder(id)) },
+              onImport = { pickFiles.launch(ImportRequest.PICKER_MIME_TYPES) },
+            )
+          }
+        }
+        composable(Routes.MORE) {
+          FluidRouteMotionHost(this@composable) {
+            MoreRoute(
+              onOpenSearch = { navigateRoute(Routes.SEARCH) },
+              onOpenJobs = { navigateRoute(Routes.JOBS) },
+              onOpenSettings = { navigateRoute(Routes.SETTINGS) },
+              onImport = { pickFiles.launch(ImportRequest.PICKER_MIME_TYPES) },
+            )
           }
         }
         composable(Routes.SEARCH) {
-          FluidRouteMotionHost(this@composable) { SearchRoute() }
+          FluidRouteMotionHost(this@composable) {
+            SearchRoute(
+              onBack = { navController.popBackStack() },
+              onOpenNote = { id -> navigateRoute(Routes.note(id)) },
+            )
+          }
         }
         composable(Routes.JOBS) {
-          FluidRouteMotionHost(this@composable) { JobsRoute() }
+          FluidRouteMotionHost(this@composable) { JobsRoute(onBack = { navController.popBackStack() }) }
         }
         composable(Routes.SETTINGS) {
-          FluidRouteMotionHost(this@composable) { SettingsRoute() }
+          FluidRouteMotionHost(this@composable) { SettingsRoute(onBack = { navController.popBackStack() }) }
         }
         composable(
           route = Routes.FOLDER,
@@ -249,6 +302,46 @@ private fun AppShell(incomingIntents: Flow<Intent>) {
               folderId = entry.arguments?.getString("folderId").orEmpty(),
               onBack = { navController.popBackStack() },
               onOpenFolder = { id -> navigateRoute(Routes.folder(id)) },
+              onOpenNote = { id -> navigateRoute(Routes.note(id)) },
+              onImport = { pickFiles.launch(ImportRequest.PICKER_MIME_TYPES) },
+            )
+          }
+        }
+        composable(
+          route = Routes.NOTE,
+          arguments = listOf(
+            navArgument("noteId") { type = NavType.StringType },
+            navArgument("tab") { nullable = true; defaultValue = null },
+          ),
+        ) { entry ->
+          FluidRouteMotionHost(this@composable) {
+            NoteRoute(
+              initialTab = entry.arguments?.getString("tab"),
+              onBack = { navController.popBackStack() },
+              onEdit = { id -> navigateRoute(Routes.editor(id)) },
+              onImportInto = { id ->
+                onPickFiles(emptyList(), id)
+                pickFiles.launch(ImportRequest.PICKER_MIME_TYPES)
+              },
+            )
+          }
+        }
+        composable(
+          route = Routes.EDITOR,
+          arguments = listOf(navArgument("noteId") { type = NavType.StringType }),
+        ) {
+          FluidRouteMotionHost(this@composable) {
+            EditorRoute(onDone = { navController.popBackStack() })
+          }
+        }
+        composable(Routes.IMPORT) {
+          FluidRouteMotionHost(this@composable) {
+            ImportRoute(
+              onClose = { navController.popBackStack() },
+              onOpenNote = { id ->
+                navController.popBackStack()
+                navigateRoute(Routes.note(id))
+              },
             )
           }
         }
@@ -263,7 +356,7 @@ private fun TabBarScaffold(
   items: List<FluidTabItem>,
   currentRoute: String?,
   showTabBar: Boolean,
-  chromeController: dev.antigravity.fluidengine.ui.fluid.FluidChromeController,
+  chromeController: FluidChromeController,
   scrollToTop: FluidScrollToTopBus,
   onSelect: (FluidTabItem) -> Unit,
   onReselect: (FluidTabItem) -> Unit,

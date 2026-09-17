@@ -109,13 +109,6 @@ fun FluidTone.label(): String = stringResource(
   },
 )
 
-/** Il colore con cui disegnare un punto di quel tono, preso dal tema. */
+/** Il punto colorato del selettore: lo stesso colore che la tessera avra'. */
 @Composable
-fun FluidTone.dotColor(): Color = when (this) {
-  FluidTone.Primary -> androidx.compose.material3.MaterialTheme.colorScheme.primary
-  FluidTone.Success -> androidx.compose.material3.MaterialTheme.colorScheme.tertiary
-  FluidTone.Warning -> androidx.compose.material3.MaterialTheme.colorScheme.secondary
-  FluidTone.Danger -> androidx.compose.material3.MaterialTheme.colorScheme.error
-  FluidTone.Info -> androidx.compose.material3.MaterialTheme.colorScheme.primaryContainer
-  FluidTone.Neutral -> androidx.compose.material3.MaterialTheme.colorScheme.outline
-}
+fun FluidTone.dotColor(): Color = folderAccent(this)
