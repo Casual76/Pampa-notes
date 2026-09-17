@@ -1,0 +1,86 @@
+package dev.pampa.pampanotes.core.transcription
+
+import java.io.File
+
+/** Cosa un servizio di trascrizione sa fare, e dove si ferma. */
+data class TranscriptionCapabilities(
+  /** Il tetto per una singola richiesta. Null quando non c'e': il server di casa accetta tutto. */
+  val maxUploadBytes: Long?,
+  /** Restituisce i tempi dei segmenti, non solo il testo. Senza, il lettore non puo' seguire. */
+  val supportsSegments: Boolean,
+  /** Serve tagliare un audio lungo prima di mandarlo. */
+  val needsChunking: Boolean,
+  val supportsAutoLanguage: Boolean = true,
+)
+
+/** Cosa si chiede a una trascrizione. */
+data class TranscribeRequest(
+  val model: String,
+  /** ISO 639-1, oppure null per lasciare che il modello indovini. */
+  val language: String? = null,
+  /**
+   * Il vocabolario: nomi propri e termini che il modello non conoscerebbe.
+   *
+   * Whisper lo usa come se fosse il testo appena precedente, quindi funziona meglio come elenco di
+   * parole che come istruzione. Vale al massimo 224 token, che sono circa 800 caratteri.
+   */
+  val prompt: String? = null,
+  val temperature: Double = 0.0,
+)
+
+/** Un pezzo di testo con i suoi tempi, come lo restituisce il servizio. */
+data class RawSegment(
+  val startMs: Long,
+  val endMs: Long,
+  val text: String,
+  /** Quanto il modello crede che qui non ci fosse voce: sopra 0.9 di solito e' un'allucinazione. */
+  val noSpeechProb: Float? = null,
+  val avgLogProb: Float? = null,
+)
+
+data class TranscriptResult(
+  val text: String,
+  val segments: List<RawSegment>,
+  val language: String?,
+  val durationMs: Long?,
+)
+
+/** A che punto e' l'invio di un file: la barra di avanzamento ha bisogno di questo, non di uno spinner. */
+data class UploadProgress(val sentBytes: Long, val totalBytes: Long) {
+  val fraction: Float get() = if (totalBytes <= 0) 0f else (sentBytes.toFloat() / totalBytes).coerceIn(0f, 1f)
+}
+
+/** Se il server risponde, e cosa dice di se'. */
+data class EndpointHealth(
+  val reachable: Boolean,
+  val latencyMs: Long,
+  val models: List<String> = emptyList(),
+  val serverName: String? = null,
+  val detail: String? = null,
+)
+
+/**
+ * Chi trasforma un audio in testo.
+ *
+ * Due implementazioni con lo stesso contratto: Groq nel cloud con la chiave dell'utente, e un
+ * endpoint compatibile OpenAI — di regola il computer di casa con WhisperX. La differenza che conta
+ * sta in [capabilities]: il primo ha un tetto per richiesta e va servito a pezzi, il secondo si
+ * prende l'ora intera.
+ */
+interface TranscriptionProvider {
+  /** "groq" oppure "custom": lo stesso identificatore con cui i lavori si mettono in coda. */
+  val id: String
+
+  val capabilities: TranscriptionCapabilities
+
+  suspend fun listModels(): List<String>
+
+  suspend fun health(): EndpointHealth
+
+  suspend fun transcribe(
+    file: File,
+    mime: String,
+    request: TranscribeRequest,
+    onProgress: (UploadProgress) -> Unit = {},
+  ): TranscriptResult
+}

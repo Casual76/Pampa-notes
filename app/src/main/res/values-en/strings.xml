@@ -246,4 +246,79 @@
   <string name="icon_code">Computing</string>
   <string name="icon_sport">Sport</string>
   <string name="icon_work">Work</string>
+  <string name="import_folder_root">Top-level folder</string>
+  <string name="notification_transcribing">Transcribing</string>
+  <string name="notification_done_title">Transcript ready</string>
+  <plurals name="notification_done_words">
+    <item quantity="one">%d word</item>
+    <item quantity="other">%d words</item>
+  </plurals>
+  <string name="notification_failed_title">Transcription failed</string>
+  <string name="notification_failed_text">Open Jobs to see what happened.</string>
+
+  <string name="job_state_queued">Queued</string>
+  <string name="job_state_preparing">Preparing</string>
+  <string name="job_state_uploading">Uploading</string>
+  <string name="job_state_transcribing">Transcribing</string>
+  <string name="job_state_stitching">Stitching</string>
+  <string name="job_state_done">Done</string>
+  <string name="job_state_failed">Failed</string>
+  <string name="job_state_cancelled">Cancelled</string>
+  <string name="job_state_cancelling">Cancelling</string>
+  <string name="job_phase_preparing">Preparing the audio, %1$d%%</string>
+  <string name="job_phase_uploading">Uploading chunk %1$d of %2$d, %3$d%%</string>
+  <string name="job_phase_transcribing">Chunk %1$d of %2$d</string>
+  <string name="job_phase_waiting">Waiting on the rate limit, %1$d s</string>
+
+  <string name="error_unauthorized">Invalid key. Set it again in settings.</string>
+  <string name="error_rate_limited">Service rate limit reached. Try again shortly.</string>
+  <string name="error_file_too_large">The chunk exceeds the service limit. Try shorter chunks.</string>
+  <string name="error_server">The service returned an error. It usually clears on its own.</string>
+  <string name="error_network">No network, or the server is unreachable.</string>
+  <string name="error_timeout">The service did not answer in time.</string>
+  <string name="error_decode">This audio could not be read. Try the personal server, which accepts more formats.</string>
+  <string name="error_parse">The service returned something we could not read.</string>
+  <string name="error_unknown_model">The chosen model no longer exists on the service.</string>
+  <string name="error_generic">Something went wrong.</string>
+  <string name="error_provider_not_configured">Service not configured: the key or the address is missing.</string>
+  <string name="error_no_audio">This session has no recordings.</string>
+
+  <string name="jobs_section_active">Running</string>
+  <string name="jobs_section_finished">Finished</string>
+  <string name="jobs_clear_finished">Clear finished</string>
+  <string name="jobs_unknown_note">Deleted note</string>
+
+  <string name="note_transcribe">Transcribe</string>
+  <string name="note_retranscribe">Transcribe again</string>
+
+  <string name="settings_groq">Groq</string>
+  <string name="settings_groq_key">API key</string>
+  <string name="settings_groq_key_hint">Free at console.groq.com. Stays encrypted on the phone.</string>
+  <string name="settings_groq_verified">Key verified</string>
+  <string name="settings_groq_unverified">Key saved, not verified yet</string>
+  <string name="settings_groq_missing">No key: cloud transcription will not start</string>
+  <string name="settings_groq_ok">Works. Model: %1$s</string>
+  <string name="settings_verify">Save and verify</string>
+  <string name="settings_ok">OK</string>
+  <string name="settings_endpoint">Personal server</string>
+  <string name="settings_endpoint_detail">Your computer with WhisperX: no size limit, and the files never leave the house.</string>
+  <string name="settings_endpoint_url">Address</string>
+  <string name="settings_endpoint_token">Token</string>
+  <string name="settings_endpoint_token_hint">Only if the server asks for one</string>
+  <string name="settings_test_connection">Test the connection</string>
+  <string name="settings_endpoint_ok">Reached. %1$s</string>
+  <string name="provider_groq">Groq</string>
+  <string name="provider_custom">Personal server</string>
+
+  <string name="settings_auto_transcribe">Transcribe on import</string>
+  <string name="settings_auto_transcribe_detail">Without asking every time</string>
+  <string name="settings_chunk_minutes">Chunk length</string>
+  <string name="settings_chunk_minutes_detail">How much audio goes in one request when a file must be split</string>
+  <string name="settings_groq_limit">Groq limit</string>
+  <string name="settings_groq_limit_detail">25 MB on the free plan, 100 on the paid one</string>
+  <string name="settings_vocabulary">Vocabulary</string>
+  <string name="settings_vocabulary_hint">Thermidor, Feuerbach, Termidoro…</string>
+  <string name="settings_vocabulary_detail">Names and terms the model does not know. Seeing them first is the difference between a name and nonsense.</string>
+  <string name="language_auto">Auto</string>
+  <string name="note_transcript_meta">%1$d words · %2$s</string>
 </resources>

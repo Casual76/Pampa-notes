@@ -218,7 +218,10 @@ private fun androidx.compose.foundation.lazy.LazyListScope.destinationStep(
           if (index > 0) FluidListDivider()
           FluidListRow(
             title = folder.name,
-            subtitle = state.folderPaths[folder.id].orEmpty(),
+            // Il percorso dei soli genitori: una riga che ripete il proprio titolo nel sottotitolo
+            // si legge come un difetto. Per una cartella di primo livello si dice che lo e'.
+            subtitle = state.folderPaths[folder.id]?.takeIf { it.isNotBlank() }
+              ?: stringResource(R.string.import_folder_root),
             onClick = { onSelectFolder(folder.id) },
             badge = if (folder.id == state.selectedFolderId) {
               { FluidStatusBadge(label = stringResource(R.string.import_chosen), tone = FluidTone.Primary) }

@@ -28,6 +28,9 @@ import dev.antigravity.fluidengine.ui.fluid.FluidBarAction
 import dev.antigravity.fluidengine.ui.fluid.FluidHeroMotif
 import dev.antigravity.fluidengine.ui.fluid.FluidHeroTone
 import dev.antigravity.fluidengine.ui.fluid.FluidContextAction
+import dev.antigravity.fluidengine.ui.fluid.FluidButton
+import dev.antigravity.fluidengine.ui.fluid.FluidButtonStyle
+import dev.antigravity.fluidengine.ui.fluid.FluidProgressBar
 import dev.antigravity.fluidengine.ui.fluid.FluidScreen
 import dev.antigravity.fluidengine.ui.theme.FluidCard
 import dev.antigravity.fluidengine.ui.theme.FluidEmptyState
@@ -62,6 +65,8 @@ fun NoteRoute(
     onImport = { state.note?.let { onImportInto(it.id) } },
     onTogglePinned = viewModel::togglePinned,
     onDelete = { viewModel.delete(onBack) },
+    onTranscribe = viewModel::transcribe,
+    onCancelJob = viewModel::cancelJob,
   )
 }
 
@@ -80,6 +85,8 @@ private fun NoteScreen(
   onImport: () -> Unit,
   onTogglePinned: () -> Unit,
   onDelete: () -> Unit,
+  onTranscribe: (String) -> Unit,
+  onCancelJob: (String) -> Unit,
 ) {
   var tab by rememberSaveable { mutableStateOf(initialTab) }
   var confirmingDelete by remember { mutableStateOf(false) }
@@ -141,7 +148,7 @@ private fun NoteScreen(
 
     when (tab) {
       NoteTab.TEXT -> textTab(state, onEdit)
-      NoteTab.AUDIO -> audioTab(state, onImport)
+      NoteTab.AUDIO -> audioTab(state, onImport, onTranscribe, onCancelJob)
       NoteTab.SOURCES -> sourcesTab(state, onImport)
     }
   }
@@ -191,7 +198,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.textTab(state: NoteUi
   }
 }
 
-private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(state: NoteUiState, onImport: () -> Unit) {
+private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
+  state: NoteUiState,
+  onImport: () -> Unit,
+  onTranscribe: (String) -> Unit,
+  onCancelJob: (String) -> Unit,
+) {
   if (state.sessions.isEmpty()) {
     item {
       FluidEmptyState(
@@ -228,6 +240,44 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(state: NoteU
               meta = Formats.bytes(part.sizeBytes),
             )
           }
+        }
+
+        val job = state.activeJobs[session.session.id]
+        val transcript = state.transcripts[session.session.id]
+        val transcribed = transcript != null
+
+        // La trascrizione, quando c'e'. E' il motivo per cui si e' importato l'audio: tenerla dietro
+        // un altro tocco vorrebbe dire nascondere il risultato dietro la sua stessa etichetta.
+        transcript?.let {
+          FluidCard(glass = true) {
+            Text(
+              text = stringResource(R.string.note_transcript_meta, it.wordCount, it.model),
+              style = MaterialTheme.typography.labelMedium,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            MarkdownText(markdown = it.text, modifier = Modifier.fillMaxWidth())
+          }
+        }
+
+        when {
+          job != null -> {
+            FluidProgressBar(progress = { job.progress }, modifier = Modifier.fillMaxWidth())
+            FluidButton(
+              text = stringResource(R.string.action_cancel),
+              onClick = { onCancelJob(job.id) },
+              style = FluidButtonStyle.Plain,
+              fillWidth = true,
+              modifier = Modifier.fillMaxWidth(),
+            )
+          }
+
+          else -> FluidButton(
+            text = stringResource(if (transcribed) R.string.note_retranscribe else R.string.note_transcribe),
+            onClick = { onTranscribe(session.session.id) },
+            style = if (transcribed) FluidButtonStyle.Plain else FluidButtonStyle.Tinted,
+            fillWidth = true,
+            modifier = Modifier.fillMaxWidth(),
+          )
         }
       }
     }

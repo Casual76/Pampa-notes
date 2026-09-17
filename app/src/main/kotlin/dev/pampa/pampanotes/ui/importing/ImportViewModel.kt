@@ -90,7 +90,7 @@ class ImportViewModel @Inject constructor(
       val all = fromFiles + fromText
 
       val allFolders = folders.all()
-      val paths = allFolders.associate { it.id to folders.pathString(it.id) }
+      val paths = allFolders.associate { it.id to folders.parentPathString(it.id) }
 
       if (all.isEmpty()) {
         _uiState.update { it.copy(step = ImportStep.REVIEW, candidates = emptyList(), folders = allFolders, folderPaths = paths) }
@@ -145,7 +145,7 @@ class ImportViewModel @Inject constructor(
     viewModelScope.launch {
       val folder = folders.create(name)
       val allFolders = folders.all()
-      val paths = allFolders.associate { it.id to folders.pathString(it.id) }
+      val paths = allFolders.associate { it.id to folders.parentPathString(it.id) }
       _uiState.update { it.copy(folders = allFolders, folderPaths = paths, selectedFolderId = folder.id, notesInFolder = emptyList()) }
     }
   }
@@ -224,8 +224,27 @@ class ImportViewModel @Inject constructor(
     }
   }
 
-  /** Il nome di un testo incollato: la sua prima riga, tagliata. */
-  private fun defaultTextName(text: String): String =
-    text.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.removePrefix("#")?.trim()?.take(60)?.ifEmpty { null }
-      ?: "Testo incollato"
+  /**
+   * Il nome di un testo incollato o condiviso.
+   *
+   * La prima frase, non la prima riga: un testo condiviso spesso e' un paragrafo intero su una riga
+   * sola, e prenderla tutta produceva un titolo lungo quanto la nota, tagliato a meta' parola nella
+   * barra e inutile in un elenco. Se la prima frase e' comunque lunga si taglia a una parola intera.
+   */
+  private fun defaultTextName(text: String): String {
+    val firstLine = text.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.removePrefix("#")?.trim()
+      ?: return "Testo incollato"
+    val firstSentence = firstLine.split(SentenceEnd).firstOrNull()?.trim().orEmpty().ifEmpty { firstLine }
+    val candidate = firstSentence.trimEnd('.', '!', '?', ';', ':')
+    if (candidate.length <= MAX_TITLE_CHARS) return candidate.ifEmpty { "Testo incollato" }
+    return candidate.take(MAX_TITLE_CHARS).substringBeforeLast(' ').trimEnd(',', ';', '-').ifEmpty { candidate.take(MAX_TITLE_CHARS) } + "…"
+  }
+
+  private companion object {
+    /** Quanto sta nel titolo di una riga di elenco su un telefono, su due righe. */
+    const val MAX_TITLE_CHARS = 48
+
+    /** La fine di una frase: un segno di punteggiatura seguito da spazio. */
+    val SentenceEnd = Regex("(?<=[.!?;:])\\s+")
+  }
 }

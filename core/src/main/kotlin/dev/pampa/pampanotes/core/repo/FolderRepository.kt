@@ -78,8 +78,16 @@ class FolderRepository @Inject constructor(
     return path.toList()
   }
 
-  /** "Cartella/Sottocartella" per l'export e l'indice. */
+  /** "Cartella/Sottocartella" per l'export e l'indice: il percorso completo, cartella compresa. */
   suspend fun pathString(id: String): String = pathTo(id).joinToString("/") { it.name }
+
+  /**
+   * Solo i genitori, senza la cartella stessa: vuoto per una cartella di primo livello.
+   *
+   * E' quello che va nel sottotitolo di una riga che gia' porta il nome come titolo — altrimenti si
+   * legge "Storia" e sotto di nuovo "Storia", che sembra un difetto perche' lo e'.
+   */
+  suspend fun parentPathString(id: String): String = pathTo(id).dropLast(1).joinToString("/") { it.name }
 
   private fun uniqueName(name: String, taken: List<String>): String {
     if (taken.none { it.equals(name, ignoreCase = true) }) return name

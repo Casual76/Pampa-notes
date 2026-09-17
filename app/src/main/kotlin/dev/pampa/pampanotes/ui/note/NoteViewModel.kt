@@ -9,13 +9,21 @@ import dev.pampa.pampanotes.core.db.SessionDao
 import dev.pampa.pampanotes.core.db.SessionWithParts
 import dev.pampa.pampanotes.core.db.SourceDao
 import dev.pampa.pampanotes.core.db.SourceEntity
+import dev.pampa.pampanotes.core.db.JobEntity
+import dev.pampa.pampanotes.core.db.TranscriptDao
+import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.repo.FolderRepository
+import dev.pampa.pampanotes.core.repo.TranscriptionRepository
+import dev.pampa.pampanotes.core.settings.PampaSettingsStore
+import dev.pampa.pampanotes.work.WorkScheduler
 import dev.pampa.pampanotes.core.repo.NoteRepository
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -27,6 +35,10 @@ data class NoteUiState(
   val tags: List<String> = emptyList(),
   val sessions: List<SessionWithParts> = emptyList(),
   val sources: List<SourceEntity> = emptyList(),
+  /** I lavori attivi di questa nota, per sessione: la riga mostra a che punto sono. */
+  val activeJobs: Map<String, JobEntity> = emptyMap(),
+  /** La trascrizione mostrata di ogni sessione. */
+  val transcripts: Map<String, TranscriptEntity> = emptyMap(),
   val loading: Boolean = true,
 ) {
   val audioDurationMs: Long get() = sessions.sumOf { it.durationMs }
@@ -38,29 +50,54 @@ class NoteViewModel @Inject constructor(
   savedStateHandle: SavedStateHandle,
   private val notes: NoteRepository,
   private val folders: FolderRepository,
-  sessions: SessionDao,
+  private val sessionDao: SessionDao,
   sources: SourceDao,
+  private val transcriptDao: TranscriptDao,
+  private val transcription: TranscriptionRepository,
+  private val settingsStore: PampaSettingsStore,
+  private val scheduler: WorkScheduler,
 ) : ViewModel() {
 
   private val noteId: String = savedStateHandle.get<String>("noteId").orEmpty()
   private val folderPath = MutableStateFlow("")
 
+  /**
+   * Le trascrizioni mostrate, una per sessione.
+   *
+   * Ricaricate quando le sessioni cambiano — cioe' anche quando un lavoro ne scrive una nuova e
+   * aggiorna `activeTranscriptId`, che e' il segnale con cui la schermata si accorge che il testo
+   * e' arrivato senza dover osservare ogni trascrizione una per una.
+   */
+  private val transcriptTexts: Flow<Map<String, TranscriptEntity>> = sessionDao.observeByNote(noteId)
+    .map { sessions ->
+      sessions.mapNotNull { session ->
+        val id = session.session.activeTranscriptId ?: return@mapNotNull null
+        transcriptDao.get(id)?.let { session.session.id to it }
+      }.toMap()
+    }
+
   val uiState: StateFlow<NoteUiState> = combine(
     notes.observe(noteId),
     notes.observeTags(noteId),
-    sessions.observeByNote(noteId),
+    sessionDao.observeByNote(noteId),
     sources.observeByNote(noteId),
     folderPath,
-  ) { note, tags, sessionList, sourceList, path ->
+    transcription.observeActive(),
+    transcriptTexts,
+  ) { values ->
+    @Suppress("UNCHECKED_CAST")
     NoteUiState(
-      note = note,
-      folderPath = path,
-      tags = tags,
-      sessions = sessionList,
-      sources = sourceList,
+      note = values[0] as NoteEntity?,
+      tags = values[1] as List<String>,
+      sessions = values[2] as List<SessionWithParts>,
+      sources = values[3] as List<SourceEntity>,
+      folderPath = values[4] as String,
+      activeJobs = (values[5] as List<JobEntity>).associateBy { it.sessionId },
+      transcripts = values[6] as Map<String, TranscriptEntity>,
       loading = false,
     )
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NoteUiState())
+
 
   init {
     viewModelScope.launch {
@@ -81,4 +118,18 @@ class NoteViewModel @Inject constructor(
     notes.delete(noteId)
     onDone()
   }
+
+  /**
+   * Mette in coda la trascrizione di una sessione.
+   *
+   * Il provider e' quello scelto nelle impostazioni: chiederlo ogni volta sarebbe una domanda a cui
+   * la risposta e' sempre la stessa.
+   */
+  fun transcribe(sessionId: String) = viewModelScope.launch {
+    val provider = settingsStore.current().preferredProvider
+    transcription.enqueue(sessionId, provider)
+    scheduler.kick(provider.id)
+  }
+
+  fun cancelJob(jobId: String) = viewModelScope.launch { transcription.requestCancel(jobId) }
 }

@@ -14,6 +14,7 @@ import dev.antigravity.fluidengine.ai.net.AiHttp
 import dev.antigravity.fluidengine.ai.provider.ProviderFactory
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
+import dev.pampa.pampanotes.core.transcription.TranscriptionHttp
 import java.io.File
 import javax.inject.Singleton
 import kotlinx.serialization.json.Json
@@ -46,6 +47,13 @@ object CoreModule {
     val version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
     // Il raffinamento di un capitolo lungo puo' tacere un pezzo prima del primo token.
     return AiHttp(userAgent = "PampaNotes/$version", readTimeoutMillis = 180_000, streamChunkTimeoutMillis = 60_000)
+  }
+
+  @Provides
+  @Singleton
+  fun transcriptionHttp(@ApplicationContext context: Context): TranscriptionHttp {
+    val version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
+    return TranscriptionHttp(userAgent = "PampaNotes/$version")
   }
 
   @Provides

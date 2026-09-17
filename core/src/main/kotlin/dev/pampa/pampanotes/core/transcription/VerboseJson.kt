@@ -1,0 +1,93 @@
+package dev.pampa.pampanotes.core.transcription
+
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlin.math.roundToLong
+
+/**
+ * La risposta `verbose_json` di un servizio compatibile OpenAI.
+ *
+ * Scritto a mano invece che con `@Serializable` perche' i due servizi che ci interessano non
+ * rispondono identici: WhisperX aggiunge le parole e talvolta chi parla, Groq no; i tempi sono
+ * secondi in virgola mobile da una parte e a volte stringhe dall'altra. Un parser indulgente qui
+ * costa trenta righe e toglie una classe intera di guasti in produzione.
+ */
+object VerboseJson {
+
+  /**
+   * @param fallbackText usato quando la risposta non porta segmenti: certi server rispondono con il
+   *   solo `text`, e mezzo risultato vale piu' di un errore.
+   */
+  fun parse(body: JsonElement?): TranscriptResult {
+    val root = body as? JsonObject ?: throw TranscriptionError.Parse("risposta non riconosciuta")
+
+    val text = root["text"].asString()?.trim().orEmpty()
+    val language = root["language"].asString()?.takeIf { it.isNotBlank() }
+    val durationMs = root["duration"].asDouble()?.let { (it * 1000).roundToLong() }
+
+    val segments = (root["segments"] as? JsonArray)
+      ?.mapNotNull { element -> parseSegment(element) }
+      .orEmpty()
+
+    if (text.isEmpty() && segments.isEmpty()) {
+      throw TranscriptionError.Parse("la risposta non contiene testo")
+    }
+
+    return TranscriptResult(
+      // Quando i segmenti ci sono, il testo si ricompone da loro: e' l'unico modo di essere sicuri
+      // che testo e tempi raccontino la stessa cosa dopo che i segmenti sono stati filtrati.
+      text = if (segments.isNotEmpty()) segments.joinToString(" ") { it.text.trim() }.trim() else text,
+      segments = segments,
+      language = language,
+      durationMs = durationMs ?: segments.maxOfOrNull { it.endMs },
+    )
+  }
+
+  private fun parseSegment(element: JsonElement): RawSegment? {
+    val obj = element as? JsonObject ?: return null
+    val text = obj["text"].asString()?.trim().orEmpty()
+    if (text.isEmpty()) return null
+    val start = obj["start"].asDouble() ?: return null
+    val end = obj["end"].asDouble() ?: start
+    return RawSegment(
+      startMs = (start * 1000).roundToLong(),
+      endMs = (end * 1000).roundToLong(),
+      text = text,
+      noSpeechProb = obj["no_speech_prob"].asDouble()?.toFloat(),
+      avgLogProb = obj["avg_logprob"].asDouble()?.toFloat(),
+    )
+  }
+
+  /** L'elenco dei modelli di `GET /models`, in entrambe le forme che i server usano. */
+  fun parseModels(body: JsonElement?): List<String> {
+    val root = body ?: return emptyList()
+    val array = when {
+      root is JsonArray -> root
+      root is JsonObject && root["data"] is JsonArray -> root["data"]!!.jsonArray
+      root is JsonObject && root["models"] is JsonArray -> root["models"]!!.jsonArray
+      else -> return emptyList()
+    }
+    return array.mapNotNull { element ->
+      when (element) {
+        is JsonPrimitive -> element.contentOrNull
+        is JsonObject -> element["id"].asString() ?: element["name"].asString()
+        else -> null
+      }
+    }.filter { it.isNotBlank() }.distinct()
+  }
+
+  private fun JsonElement?.asString(): String? = (this as? JsonPrimitive)?.contentOrNull
+
+  /** Tollera sia `1.5` sia `"1.5"`: WhisperX serializza i tempi in entrambi i modi a seconda della versione. */
+  private fun JsonElement?.asDouble(): Double? {
+    val primitive = this as? JsonPrimitive ?: return null
+    return primitive.doubleOrNull ?: primitive.contentOrNull?.toDoubleOrNull()
+  }
+}

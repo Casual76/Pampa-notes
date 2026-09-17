@@ -269,4 +269,86 @@
   <string name="icon_code">Informatica</string>
   <string name="icon_sport">Sport</string>
   <string name="icon_work">Lavoro</string>
+  <string name="import_folder_root">Cartella principale</string>
+  <!-- Notifiche dei lavori -->
+  <string name="notification_transcribing">Trascrizione in corso</string>
+  <string name="notification_done_title">Trascrizione pronta</string>
+  <plurals name="notification_done_words">
+    <item quantity="one">%d parola</item>
+    <item quantity="other">%d parole</item>
+  </plurals>
+  <string name="notification_failed_title">Trascrizione non riuscita</string>
+  <string name="notification_failed_text">Apri i Lavori per vedere cosa e\u0300 successo.</string>
+
+  <!-- Stati di un lavoro -->
+  <string name="job_state_queued">In coda</string>
+  <string name="job_state_preparing">Preparazione</string>
+  <string name="job_state_uploading">Invio</string>
+  <string name="job_state_transcribing">Trascrizione</string>
+  <string name="job_state_stitching">Ricucitura</string>
+  <string name="job_state_done">Fatto</string>
+  <string name="job_state_failed">Fallito</string>
+  <string name="job_state_cancelled">Annullato</string>
+  <string name="job_state_cancelling">Sto annullando</string>
+  <string name="job_phase_preparing">Preparazione dell\'audio, %1$d%%</string>
+  <string name="job_phase_uploading">Invio del pezzo %1$d di %2$d, %3$d%%</string>
+  <string name="job_phase_transcribing">Pezzo %1$d di %2$d</string>
+  <string name="job_phase_waiting">In attesa del limite, %1$d s</string>
+
+  <!-- Errori -->
+  <string name="error_unauthorized">Chiave non valida. Rimettila nelle impostazioni.</string>
+  <string name="error_rate_limited">Limite del servizio raggiunto. Riprova fra poco.</string>
+  <string name="error_file_too_large">Il pezzo supera il limite del servizio. Prova con pezzi piu\u0300 corti.</string>
+  <string name="error_server">Il servizio ha risposto con un errore. Di solito passa da solo.</string>
+  <string name="error_network">Nessuna rete, o server non raggiungibile.</string>
+  <string name="error_timeout">Il servizio non ha risposto in tempo.</string>
+  <string name="error_decode">Questo audio non si e\u0300 potuto leggere. Prova con il server personale, che accetta piu\u0300 formati.</string>
+  <string name="error_parse">Risposta non riconosciuta dal servizio.</string>
+  <string name="error_unknown_model">Il modello scelto non esiste piu\u0300 sul servizio.</string>
+  <string name="error_generic">Qualcosa e\u0300 andato storto.</string>
+  <string name="error_provider_not_configured">Servizio non configurato: manca la chiave o l\'indirizzo.</string>
+  <string name="error_no_audio">Questa sessione non ha registrazioni.</string>
+
+  <!-- Lavori -->
+  <string name="jobs_section_active">In corso</string>
+  <string name="jobs_section_finished">Finiti</string>
+  <string name="jobs_clear_finished">Svuota i finiti</string>
+  <string name="jobs_unknown_note">Nota rimossa</string>
+
+  <!-- Nota: trascrizione -->
+  <string name="note_transcribe">Trascrivi</string>
+  <string name="note_retranscribe">Trascrivi di nuovo</string>
+
+  <!-- Impostazioni: servizi -->
+  <string name="settings_groq">Groq</string>
+  <string name="settings_groq_key">Chiave API</string>
+  <string name="settings_groq_key_hint">Si prende gratis su console.groq.com. Resta cifrata sul telefono.</string>
+  <string name="settings_groq_verified">Chiave verificata</string>
+  <string name="settings_groq_unverified">Chiave salvata, non ancora verificata</string>
+  <string name="settings_groq_missing">Nessuna chiave: la trascrizione nel cloud non parte</string>
+  <string name="settings_groq_ok">Funziona. Modello: %1$s</string>
+  <string name="settings_verify">Salva e verifica</string>
+  <string name="settings_ok">Ok</string>
+  <string name="settings_endpoint">Server personale</string>
+  <string name="settings_endpoint_detail">Il tuo computer con WhisperX: nessun limite di dimensione, e i file non escono di casa.</string>
+  <string name="settings_endpoint_url">Indirizzo</string>
+  <string name="settings_endpoint_token">Token</string>
+  <string name="settings_endpoint_token_hint">Solo se il server ne chiede uno</string>
+  <string name="settings_test_connection">Prova la connessione</string>
+  <string name="settings_endpoint_ok">Raggiunto. %1$s</string>
+  <string name="provider_groq">Groq</string>
+  <string name="provider_custom">Server personale</string>
+
+  <!-- Impostazioni: trascrizione -->
+  <string name="settings_auto_transcribe">Trascrivi appena importi</string>
+  <string name="settings_auto_transcribe_detail">Senza chiederlo ogni volta</string>
+  <string name="settings_chunk_minutes">Durata di un pezzo</string>
+  <string name="settings_chunk_minutes_detail">Quanto audio sta in una richiesta quando il file va tagliato</string>
+  <string name="settings_groq_limit">Limite di Groq</string>
+  <string name="settings_groq_limit_detail">25 MB sul piano gratuito, 100 su quello a pagamento</string>
+  <string name="settings_vocabulary">Vocabolario</string>
+  <string name="settings_vocabulary_hint">Termidoro, Monti, Feuerbach…</string>
+  <string name="settings_vocabulary_detail">Nomi e termini che il modello non conosce. Vederli prima e\u0300 la differenza fra «Termidoro» e «term e d\'oro».</string>
+  <string name="language_auto">Auto</string>
+  <string name="note_transcript_meta">%1$d parole · %2$s</string>
 </resources>
