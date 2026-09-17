@@ -1,0 +1,7 @@
+# Le dipendenze CUDA (torch, torchaudio) NON sono qui: vanno installate prima, con la riga che
+# pytorch.org da' per la propria scheda, perche' quella dipende dal driver e non dal progetto.
+# setup.ps1 se ne accorge e lo dice.
+whisperx>=3.3.0
+fastapi>=0.115.0
+uvicorn>=0.32.0
+python-multipart>=0.0.12

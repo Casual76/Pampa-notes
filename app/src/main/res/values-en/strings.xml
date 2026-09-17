@@ -306,7 +306,11 @@
   <string name="settings_endpoint_token">Token</string>
   <string name="settings_endpoint_token_hint">Only if the server asks for one</string>
   <string name="settings_test_connection">Test the connection</string>
-  <string name="settings_endpoint_ok">Reached. %1$s</string>
+  <string name="settings_endpoint_ok">Reached in %1$d ms</string>
+  <plurals name="settings_endpoint_models">
+    <item quantity="one">%d model</item>
+    <item quantity="other">%d models</item>
+  </plurals>
   <string name="provider_groq">Groq</string>
   <string name="provider_custom">Personal server</string>
 

@@ -33,7 +33,16 @@ import kotlinx.coroutines.launch
 sealed interface CheckState {
   data object Idle : CheckState
   data object Running : CheckState
-  data class Ok(val detail: String) : CheckState
+
+  /**
+   * Andata bene.
+   *
+   * @param detail il modello scelto, per Groq.
+   * @param latencyMs e [modelCount] per un endpoint: le parole attorno ai numeri le mette la UI,
+   *   perche' scriverle qui vorrebbe dire scriverle in una lingua sola.
+   */
+  data class Ok(val detail: String = "", val latencyMs: Long = 0, val modelCount: Int = 0) : CheckState
+
   data class Failed(val reason: String) : CheckState
 }
 
@@ -153,7 +162,7 @@ class SettingsViewModel @Inject constructor(
         if (health.reachable) {
           it.copy(
             endpointModels = health.models,
-            endpointCheck = CheckState.Ok("${health.latencyMs} ms · ${health.models.size}"),
+            endpointCheck = CheckState.Ok(latencyMs = health.latencyMs, modelCount = health.models.size),
           )
         } else {
           it.copy(endpointCheck = CheckState.Failed(health.detail ?: "network"))

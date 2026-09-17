@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -183,7 +184,8 @@ fun SettingsRoute(onBack: () -> Unit, viewModel: SettingsViewModel = hiltViewMod
     (services.endpointCheck as? CheckState.Ok)?.let { ok ->
       item {
         FluidInlineMessage(
-          message = stringResource(R.string.settings_endpoint_ok, ok.detail),
+          message = stringResource(R.string.settings_endpoint_ok, ok.latencyMs) + " · " +
+            pluralStringResource(R.plurals.settings_endpoint_models, ok.modelCount, ok.modelCount),
           title = stringResource(R.string.settings_endpoint),
           tone = FluidTone.Success,
         )

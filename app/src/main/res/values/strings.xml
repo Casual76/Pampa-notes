@@ -335,7 +335,11 @@
   <string name="settings_endpoint_token">Token</string>
   <string name="settings_endpoint_token_hint">Solo se il server ne chiede uno</string>
   <string name="settings_test_connection">Prova la connessione</string>
-  <string name="settings_endpoint_ok">Raggiunto. %1$s</string>
+  <string name="settings_endpoint_ok">Raggiunto in %1$d ms</string>
+  <plurals name="settings_endpoint_models">
+    <item quantity="one">%d modello</item>
+    <item quantity="other">%d modelli</item>
+  </plurals>
   <string name="provider_groq">Groq</string>
   <string name="provider_custom">Server personale</string>
 
