@@ -380,4 +380,66 @@
   <string name="player_speed">%1$s×</string>
   <string name="player_scrubber">Position in the recording</string>
   <string name="note_open_session">Listen and read</string>
+
+  <!-- Export: the words that end up inside the pack -->
+  <string name="export_label_notes">Notes</string>
+  <string name="export_label_no_notes">Nothing written by hand: this note is made of recordings.</string>
+  <string name="export_label_session">Session</string>
+  <string name="export_label_transcript">Transcript</string>
+  <string name="export_label_raw">raw</string>
+  <string name="export_label_refined">refined</string>
+  <string name="export_label_no_transcript">Not transcribed yet.</string>
+  <string name="export_label_no_timings">This version was cleaned up by a model and carries no timings. The raw one has them.</string>
+  <string name="export_label_part">Part</string>
+  <string name="export_label_sources">Sources</string>
+  <string name="export_label_index">Index</string>
+  <string name="export_label_recording">recording</string>
+  <string name="export_label_recordings">recordings</string>
+  <string name="export_label_minutes">min</string>
+  <string name="export_label_words">words</string>
+  <string name="export_label_note">note</string>
+  <string name="export_label_notes_plural">notes</string>
+
+  <!-- Export: the panel -->
+  <string name="export_scope_everything">Everything</string>
+  <string name="export_counting">Looking at what is here…</string>
+  <string name="export_format_label">Format</string>
+  <string name="export_format_bundle">Pack</string>
+  <string name="export_format_single">Single file</string>
+  <string name="export_format_bundle_detail">A ZIP with one file per note, an index, and the rules for the assistant. For a Claude Project, a ChatGPT Project or a Gem.</string>
+  <string name="export_format_single_detail">One Markdown file, to paste into a conversation.</string>
+  <string name="export_transcript_label">Which transcript</string>
+  <string name="export_transcript_best">The best one</string>
+  <string name="export_transcript_raw">Always the raw one</string>
+  <string name="export_timestamps">Times before each paragraph</string>
+  <string name="export_timestamps_detail">The [mm:ss] marks let you cite a moment and listen back</string>
+  <string name="export_skill">Rules for the assistant</string>
+  <string name="export_skill_detail">SKILL.md for Claude, instructions.md for ChatGPT and Gemini</string>
+  <string name="export_sources">Original documents</string>
+  <string name="export_sources_detail">The PDFs and files the notes were imported from</string>
+  <string name="export_audio">Recordings</string>
+  <string name="export_audio_detail">The audio files. They are heavy.</string>
+  <string name="export_audio_detail_size">The audio files: %1$s of recordings</string>
+  <string name="export_share">Share</string>
+  <string name="export_save_folder">Save to a folder</string>
+  <string name="export_save_in">Save to %1$s</string>
+  <string name="export_change_folder">Change folder</string>
+  <string name="export_running">Writing the pack</string>
+  <string name="export_running_detail">Stay here until it finishes: leaving now leaves it half written.</string>
+  <string name="export_done">Done</string>
+  <string name="export_open">Open</string>
+  <string name="export_failed">That did not work</string>
+  <string name="action_done">Close</string>
+  <plurals name="export_notes">
+    <item quantity="one">%d note</item>
+    <item quantity="other">%d notes</item>
+  </plurals>
+  <plurals name="export_recordings">
+    <item quantity="one">%d recording</item>
+    <item quantity="other">%d recordings</item>
+  </plurals>
+  <plurals name="export_done_detail">
+    <item quantity="one">%d note inside</item>
+    <item quantity="other">%d notes inside</item>
+  </plurals>
 </resources>

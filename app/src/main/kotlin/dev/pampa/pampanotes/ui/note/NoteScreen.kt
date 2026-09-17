@@ -42,6 +42,8 @@ import dev.antigravity.fluidengine.ui.theme.FluidQuickAction
 import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
+import dev.pampa.pampanotes.core.export.ExportScope
+import dev.pampa.pampanotes.ui.export.ExportSheet
 import dev.pampa.pampanotes.core.db.SourceEntity
 import dev.pampa.pampanotes.core.db.SourceKind
 import dev.pampa.pampanotes.core.db.SourceStatus
@@ -93,6 +95,7 @@ private fun NoteScreen(
 ) {
   var tab by rememberSaveable { mutableStateOf(initialTab) }
   var confirmingDelete by remember { mutableStateOf(false) }
+  var exporting by remember { mutableStateOf(false) }
 
   val tabText = stringResource(R.string.note_tab_text)
   val tabAudio = stringResource(R.string.note_tab_audio)
@@ -101,6 +104,7 @@ private fun NoteScreen(
   val unpinLabel = stringResource(R.string.note_unpin)
   val deleteLabel = stringResource(R.string.action_delete)
   val importLabel = stringResource(R.string.action_import)
+  val exportLabel = stringResource(R.string.action_export)
   val editLabel = stringResource(R.string.note_edit)
 
   val tabLabels = listOf(tabText, tabAudio, tabSources)
@@ -128,6 +132,7 @@ private fun NoteScreen(
           listOf(
             FluidContextAction(label = editLabel) { onEdit() },
             FluidContextAction(label = importLabel) { onImport() },
+            FluidContextAction(label = exportLabel) { exporting = true },
             FluidContextAction(label = if (state.note?.pinned == true) unpinLabel else pinLabel) { onTogglePinned() },
             FluidContextAction(label = deleteLabel, destructive = true) { confirmingDelete = true },
           )
@@ -154,6 +159,10 @@ private fun NoteScreen(
       NoteTab.AUDIO -> audioTab(state, onImport, onTranscribe, onCancelJob, onOpenSession)
       NoteTab.SOURCES -> sourcesTab(state, onImport)
     }
+  }
+
+  state.note?.let { note ->
+    if (exporting) ExportSheet(scope = ExportScope.Note(note.id), onDismiss = { exporting = false })
   }
 
   if (confirmingDelete) {

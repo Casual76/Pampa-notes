@@ -4,7 +4,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
@@ -23,6 +22,7 @@ import dev.antigravity.fluidengine.ui.fluid.FluidGlassModalPresentation
 import dev.antigravity.fluidengine.ui.fluid.FluidSectionFootnote
 import dev.antigravity.fluidengine.ui.fluid.FluidTextField
 import dev.pampa.pampanotes.R
+import dev.pampa.pampanotes.ui.common.SheetScaffold
 import dev.pampa.pampanotes.core.model.Dates
 import dev.pampa.pampanotes.ui.common.Formats
 import java.time.LocalDate
@@ -54,61 +54,60 @@ fun SessionRenameSheet(
     presentation = FluidGlassModalPresentation.Sheet,
     paneTitle = stringResource(R.string.session_rename),
   ) {
-    FluidTextField(
-      value = text,
-      onValueChange = { text = it },
-      label = stringResource(R.string.session_title_label),
-      placeholder = stringResource(R.string.session_title_placeholder),
-      modifier = Modifier.fillMaxWidth(),
-    )
-
-    FluidSectionFootnote(text = stringResource(R.string.session_date_label))
-    val scroll = rememberScrollState()
-    Row(
-      modifier = Modifier.fillMaxWidth().horizontalScroll(scroll),
-      horizontalArrangement = Arrangement.spacedBy(8.dp),
+    SheetScaffold(
+      actions = {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+          FluidButton(
+            text = stringResource(R.string.action_cancel),
+            onClick = onDismiss,
+            style = FluidButtonStyle.Plain,
+            modifier = Modifier.weight(1f),
+            fillWidth = true,
+          )
+          FluidButton(
+            text = stringResource(R.string.action_save),
+            onClick = { onConfirm(text, chosen) },
+            // Una data che non si sa leggere non si salva: meglio un tasto spento di una riga di
+            // database con dentro "lunedi'".
+            enabled = Dates.parseOrNull(chosen) != null,
+            modifier = Modifier.weight(1f),
+            fillWidth = true,
+          )
+        }
+      },
     ) {
-      shortcuts.forEach { candidate ->
-        val iso = Formats.isoDate(candidate)
-        FluidChip(
-          label = Formats.relativeDate(candidate),
-          selected = iso == chosen,
-          onClick = { chosen = iso },
-        )
+      FluidTextField(
+        value = text,
+        onValueChange = { text = it },
+        label = stringResource(R.string.session_title_label),
+        placeholder = stringResource(R.string.session_title_placeholder),
+        modifier = Modifier.fillMaxWidth(),
+      )
+
+      FluidSectionFootnote(text = stringResource(R.string.session_date_label))
+      val scroll = rememberScrollState()
+      Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(scroll),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        shortcuts.forEach { candidate ->
+          val iso = Formats.isoDate(candidate)
+          FluidChip(
+            label = Formats.relativeDate(candidate),
+            selected = iso == chosen,
+            onClick = { chosen = iso },
+          )
+        }
       }
-    }
 
-    FluidTextField(
-      value = chosen,
-      onValueChange = { chosen = it },
-      label = stringResource(R.string.session_date_custom),
-      placeholder = "2026-09-17",
-      modifier = Modifier.fillMaxWidth(),
-    )
+      FluidTextField(
+        value = chosen,
+        onValueChange = { chosen = it },
+        label = stringResource(R.string.session_date_custom),
+        placeholder = "2026-09-17",
+        modifier = Modifier.fillMaxWidth(),
+      )
 
-    Row(
-      modifier = Modifier
-        .fillMaxWidth()
-        .padding(top = 18.dp)
-        .navigationBarsPadding(),
-      horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-      FluidButton(
-        text = stringResource(R.string.action_cancel),
-        onClick = onDismiss,
-        style = FluidButtonStyle.Plain,
-        modifier = Modifier.weight(1f),
-        fillWidth = true,
-      )
-      FluidButton(
-        text = stringResource(R.string.action_save),
-        onClick = { onConfirm(text, chosen) },
-        // Una data che non si sa leggere non si salva: meglio un tasto spento di una riga di
-        // database con dentro "lunedi'".
-        enabled = Dates.parseOrNull(chosen) != null,
-        modifier = Modifier.weight(1f),
-        fillWidth = true,
-      )
     }
   }
 }

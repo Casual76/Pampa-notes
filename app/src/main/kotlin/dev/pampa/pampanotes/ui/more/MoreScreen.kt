@@ -14,6 +14,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,6 +38,8 @@ import dev.antigravity.fluidengine.ui.theme.FluidListRow
 import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
+import dev.pampa.pampanotes.core.export.ExportScope
+import dev.pampa.pampanotes.ui.export.ExportSheet
 
 /**
  * Tutto il resto: cerca, lavori, export, backup, impostazioni.
@@ -51,6 +56,7 @@ fun MoreRoute(
   viewModel: MoreViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
+  var exporting by remember { mutableStateOf(false) }
 
   FluidScreen(
     title = stringResource(R.string.more_title),
@@ -88,8 +94,8 @@ fun MoreRoute(
         FluidListRow(
           title = stringResource(R.string.action_export),
           subtitle = stringResource(R.string.more_export_detail),
-          leading = { RowIcon(Icons.Rounded.CloudUpload, FluidTone.Neutral) },
-          meta = stringResource(R.string.settings_coming_soon),
+          leading = { RowIcon(Icons.Rounded.CloudUpload, FluidTone.Primary) },
+          onClick = { exporting = true },
         )
       }
     }
@@ -112,6 +118,10 @@ fun MoreRoute(
         )
       }
     }
+  }
+
+  if (exporting) {
+    ExportSheet(scope = ExportScope.Everything, onDismiss = { exporting = false })
   }
 }
 

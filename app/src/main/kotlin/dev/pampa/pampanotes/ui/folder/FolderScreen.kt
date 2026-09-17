@@ -29,6 +29,8 @@ import dev.antigravity.fluidengine.ui.theme.FluidQuickAction
 import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
+import dev.pampa.pampanotes.core.export.ExportScope
+import dev.pampa.pampanotes.ui.export.ExportSheet
 import dev.pampa.pampanotes.core.db.FolderRow
 import dev.pampa.pampanotes.core.db.NoteRow
 import dev.pampa.pampanotes.ui.common.FolderEditorSheet
@@ -85,6 +87,7 @@ private fun FolderScreen(
   var renaming by remember { mutableStateOf<FolderRow?>(null) }
   var pendingFolderDelete by remember { mutableStateOf<FolderRow?>(null) }
   var pendingNoteDelete by remember { mutableStateOf<NoteRow?>(null) }
+  var exporting by remember { mutableStateOf(false) }
 
   // Le etichette dei menu si leggono qui: le lambda che le ricevono non sono composable.
   val renameLabel = stringResource(R.string.action_rename)
@@ -94,6 +97,7 @@ private fun FolderScreen(
   val newNoteLabel = stringResource(R.string.folder_new_note)
   val newSubfolderLabel = stringResource(R.string.folder_new_subfolder)
   val importLabel = stringResource(R.string.action_import)
+  val exportLabel = stringResource(R.string.action_export)
 
   val folderTone = toneFromName(state.folder?.tone)
   val folderIcon = FolderIcon.fromKey(state.folder?.icon)
@@ -115,6 +119,7 @@ private fun FolderScreen(
             FluidContextAction(label = newNoteLabel) { creatingNote = true },
             FluidContextAction(label = importLabel) { onImport() },
             FluidContextAction(label = newSubfolderLabel) { creatingFolder = true },
+            FluidContextAction(label = exportLabel) { exporting = true },
           )
         },
       )
@@ -234,6 +239,10 @@ private fun FolderScreen(
         creatingNote = false
       },
     )
+  }
+
+  state.folder?.let { folder ->
+    if (exporting) ExportSheet(scope = ExportScope.Folder(folder.id), onDismiss = { exporting = false })
   }
 
   renaming?.let { row ->

@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -35,6 +34,7 @@ import dev.antigravity.fluidengine.ui.fluid.FluidSectionFootnote
 import dev.antigravity.fluidengine.ui.fluid.FluidTextField
 import dev.antigravity.fluidengine.ui.fluid.fluidPressable
 import dev.pampa.pampanotes.R
+import dev.pampa.pampanotes.ui.common.SheetScaffold
 
 /**
  * Crea o modifica una cartella: nome, colore, icona.
@@ -66,68 +66,65 @@ fun FolderEditorSheet(
     presentation = FluidGlassModalPresentation.Sheet,
     paneTitle = title,
   ) {
-    FluidTextField(
-      value = name,
-      onValueChange = { name = it },
-      label = title,
-      placeholder = stringResource(R.string.folder_name_placeholder),
-      modifier = Modifier.fillMaxWidth(),
-    )
-
-    FluidSectionFootnote(text = stringResource(R.string.folder_tone_label))
-    Row(
-      modifier = Modifier.fillMaxWidth(),
-      horizontalArrangement = Arrangement.spacedBy(10.dp),
-      verticalAlignment = Alignment.CenterVertically,
+    SheetScaffold(
+      actions = {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+          FluidButton(
+            text = stringResource(R.string.action_cancel),
+            onClick = onDismiss,
+            style = FluidButtonStyle.Plain,
+            modifier = Modifier.weight(1f),
+            fillWidth = true,
+          )
+          FluidButton(
+            text = stringResource(R.string.action_save),
+            onClick = { onConfirm(name, tone, effectiveIcon) },
+            enabled = name.isNotBlank(),
+            modifier = Modifier.weight(1f),
+            fillWidth = true,
+          )
+        }
+      },
     ) {
-      selectableTones.forEach { candidate ->
-        FluidColorDot(
-          color = candidate.dotColor(),
-          selected = tone.equals(candidate.name, ignoreCase = true),
-          onClick = { tone = candidate.name },
-          label = candidate.label(),
-        )
-      }
-    }
-
-    FluidSectionFootnote(text = stringResource(R.string.folder_icon_label))
-    val scroll = rememberScrollState()
-    Row(
-      modifier = Modifier.fillMaxWidth().horizontalScroll(scroll),
-      horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-      FolderIcon.entries.forEach { candidate ->
-        IconChoice(
-          candidate = candidate,
-          selected = candidate.key == effectiveIcon,
-          onClick = { icon = candidate.key },
-        )
-      }
-    }
-
-    Row(
-      modifier = Modifier
-        .fillMaxWidth()
-        .padding(top = 18.dp)
-        // Il pannello arriva al bordo dello schermo: senza questo i tasti finiscono sotto la barra
-        // dei gesti, che e' esattamente dove non si possono premere.
-        .navigationBarsPadding(),
-      horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-      FluidButton(
-        text = stringResource(R.string.action_cancel),
-        onClick = onDismiss,
-        style = FluidButtonStyle.Plain,
-        modifier = Modifier.weight(1f),
-        fillWidth = true,
+      FluidTextField(
+        value = name,
+        onValueChange = { name = it },
+        label = title,
+        placeholder = stringResource(R.string.folder_name_placeholder),
+        modifier = Modifier.fillMaxWidth(),
       )
-      FluidButton(
-        text = stringResource(R.string.action_save),
-        onClick = { onConfirm(name, tone, effectiveIcon) },
-        enabled = name.isNotBlank(),
-        modifier = Modifier.weight(1f),
-        fillWidth = true,
-      )
+
+      FluidSectionFootnote(text = stringResource(R.string.folder_tone_label))
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        selectableTones.forEach { candidate ->
+          FluidColorDot(
+            color = candidate.dotColor(),
+            selected = tone.equals(candidate.name, ignoreCase = true),
+            onClick = { tone = candidate.name },
+            label = candidate.label(),
+          )
+        }
+      }
+
+      FluidSectionFootnote(text = stringResource(R.string.folder_icon_label))
+      val scroll = rememberScrollState()
+      Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(scroll),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        FolderIcon.entries.forEach { candidate ->
+          IconChoice(
+            candidate = candidate,
+            selected = candidate.key == effectiveIcon,
+            onClick = { icon = candidate.key },
+          )
+        }
+      }
+
     }
   }
 }

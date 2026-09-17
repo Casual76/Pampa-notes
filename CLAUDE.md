@@ -73,7 +73,7 @@ toglie quelli che nessuna riga cita più.
 | M2 audio, Groq Whisper, taglio nei silenzi, coda in primo piano | fatto |
 | M3 endpoint personale + server companion WhisperX | fatto |
 | M4 lettore audio con i segmenti, riordino delle parti | fatto |
-| M5 export bundle e skill | da fare |
+| M5 export bundle e skill | fatto |
 | M6 raffinamento della trascrizione | da fare |
 | M7 DOCX, sdocx, share target completo | da fare |
 | M8 backup, onboarding, pubblicazione | da fare |
@@ -97,6 +97,32 @@ casi (sposta, separa, unisci).
 Il lettore (`SessionPlayer`) parla solo in tempo di sessione: dentro ci sono N file e un indice di
 playlist, ma chi tocca la frase del minuto quaranta sente il minuto quaranta della lezione, non
 della terza registrazione. La traduzione la fa `SessionAssembler.locate`.
+## Export
+
+Il motivo per cui l'app esiste. Un pacchetto ZIP con dentro, in ordine di importanza:
+
+- `INDEX.md` — l'elenco delle note. Un assistente non apre venti file per rispondere a una domanda:
+  ne apre uno e decide. Senza indice o li apre tutti e finisce il contesto, o ne apre uno a caso.
+- `notes/<cartella>/<nota>.md` — una nota per file, front-matter YAML piu' corpo. **Appunti** e
+  **Trascrizione** stanno sotto due titoli diversi, ed e' la distinzione da cui dipende tutto: un
+  modello che non sa quale delle due sta leggendo tratta un errore di Whisper come una cosa che
+  l'autore ha scritto.
+- `SKILL.md` + `instructions.md` — le regole, nel formato di Claude e in quello di ChatGPT o Gemini.
+  La `description` della skill si costruisce dai titoli veri delle note: e' quello che Claude legge
+  per decidere se aprirla, e una frase generica non viene scelta mai.
+- `README-FOR-AI.md` — bilingue, nella radice, per chi apre lo ZIP senza aver configurato niente.
+- `manifest.json` — gli stessi dati per un programma, con un numero di schema.
+
+I writer (`MarkdownWriter`, `IndexWriter`, `SkillWriter`, `BundleWriter`) sono puri e si provano in
+JVM; `ExportService` e' l'unico pezzo che tocca il database e il SAF. Lo ZIP si scrive in streaming:
+un bundle con le registrazioni di un semestre sono gigabyte, e un telefono che prova a costruirlo in
+memoria viene ucciso dal sistema a meta'. Gli audio entrano `STORED` perche' un m4a e' gia'
+compresso. Una scrittura fallita cancella il file a meta': un archivio rotto e' peggio di nessun
+archivio.
+
+Le parole che finiscono dentro il pacchetto passano da `ExportLabels`, riempito dall'app con le
+stringhe della sua lingua: i writer stanno in `:core` e non possono leggere `res/values`.
+
 ## Trascrizione
 
 Due strade, stessa interfaccia (`TranscriptionProvider`):
