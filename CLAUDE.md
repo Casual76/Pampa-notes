@@ -10,11 +10,14 @@ di un LLM è il raffinamento opzionale di una trascrizione grezza, e la grezza r
 
 ## Comandi
 
+Su questa macchina qualcosa tiene aperti handle dentro `build/` e ogni tanto una build muore con
+`Unable to delete directory`. Non e' un difetto del progetto: si rilancia, e la seconda volta passa.
+
 ```powershell
-.\gradlew.bat --no-daemon :app:assembleDebug        # build
-.\gradlew.bat --no-daemon :core:testDebugUnitTest   # test JVM (la logica pura sta tutta qui)
-.\gradlew.bat --no-daemon :app:installDebug         # sul telefono
-.\gradlew.bat --no-daemon :core:connectedDebugAndroidTest   # Room, migrazioni, FTS (serve un dispositivo)
+.\gradlew.bat :app:assembleDebug                    # build
+.\gradlew.bat :core:testDebugUnitTest   # test JVM (la logica pura sta tutta qui)
+.\gradlew.bat :app:installDebug         # sul telefono
+.\gradlew.bat :core:connectedDebugAndroidTest   # Room, migrazioni, FTS (serve un dispositivo)
 powershell -ExecutionPolicy Bypass -File engine\tools\engine-doctor.ps1 -AppRoot .
 ```
 
@@ -65,14 +68,14 @@ toglie quelli che nessuna riga cita più.
 
 | Milestone | |
 |---|---|
-| M0 scheletro, engine, tema, Room, Home, cartelle | fatto |
-| M1 note, editor, import testo/PDF, ricerca | da fare |
-| M2 audio, Groq Whisper, chunking, coda | da fare |
-| M3 endpoint personale + server companion WhisperX | da fare |
-| M4 sessioni, parti, lettore con segmenti | da fare |
+| M0 scheletro, engine, tema, Room | fatto |
+| M1 note, editor, import testo/PDF, ricerca, griglia di cartelle | fatto |
+| M2 audio, Groq Whisper, taglio nei silenzi, coda in primo piano | fatto |
+| M3 endpoint personale + server companion WhisperX | fatto |
+| M4 lettore audio con i segmenti, riordino delle parti | da fare |
 | M5 export bundle e skill | da fare |
-| M6 raffinamento | da fare |
-| M7 DOCX, sdocx, share target | da fare |
+| M6 raffinamento della trascrizione | da fare |
+| M7 DOCX, sdocx, share target completo | da fare |
 | M8 backup, onboarding, pubblicazione | da fare |
 
 Il piano per esteso: `C:\Users\casua\.claude\plans\praticamente-vorrei-un-applicazione-che-crispy-falcon.md`
