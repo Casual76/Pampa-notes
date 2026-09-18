@@ -53,6 +53,8 @@ import dev.pampa.pampanotes.ui.common.Formats
 import dev.pampa.pampanotes.ui.common.folderIconOf
 import dev.pampa.pampanotes.ui.common.folderVividColors
 import dev.pampa.pampanotes.ui.common.toneFromName
+import dev.pampa.pampanotes.core.export.ExportScope
+import dev.pampa.pampanotes.ui.export.ExportSheet
 
 /**
  * La Home: quello che hai caricato per ultimo, in ordine di tempo.
@@ -69,10 +71,12 @@ fun HomeRoute(
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
   var pendingDelete by remember { mutableStateOf<RecentNote?>(null) }
+  var exporting by remember { mutableStateOf<RecentNote?>(null) }
 
   val pinLabel = stringResource(R.string.note_pin)
   val unpinLabel = stringResource(R.string.note_unpin)
   val deleteLabel = stringResource(R.string.action_delete)
+  val exportLabel = stringResource(R.string.action_export)
   val importLabel = stringResource(R.string.action_import)
 
   FluidScreen(
@@ -146,12 +150,17 @@ fun HomeRoute(
               FluidContextAction(label = if (recent.row.note.pinned) unpinLabel else pinLabel) {
                 viewModel.togglePinned(recent.row.note.id, !recent.row.note.pinned)
               },
+              FluidContextAction(label = exportLabel) { exporting = recent },
               FluidContextAction(label = deleteLabel, destructive = true) { pendingDelete = recent },
             )
           },
         )
       }
     }
+  }
+
+  exporting?.let { recent ->
+    ExportSheet(scope = ExportScope.Note(recent.row.note.id), onDismiss = { exporting = null })
   }
 
   pendingDelete?.let { recent ->

@@ -34,7 +34,6 @@ import dev.antigravity.fluidengine.ui.fluid.FluidSectionFootnote
 import dev.antigravity.fluidengine.ui.fluid.FluidTextField
 import dev.antigravity.fluidengine.ui.fluid.fluidPressable
 import dev.pampa.pampanotes.R
-import dev.pampa.pampanotes.ui.common.SheetScaffold
 
 /**
  * Crea o modifica una cartella: nome, colore, icona.
@@ -63,11 +62,11 @@ fun FolderEditorSheet(
   FluidGlassModalPortal(
     visible = true,
     onDismissRequest = onDismiss,
-    presentation = FluidGlassModalPresentation.Sheet,
+    // Nome, colore e diciassette icone: e' un compito, e un compito ha la sua pagina.
+    presentation = FluidGlassModalPresentation.FullScreen,
     paneTitle = title,
-  ) {
-    SheetScaffold(
-      actions = {
+    footer = {
+      PageActions {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
           FluidButton(
             text = stringResource(R.string.action_cancel),
@@ -84,8 +83,10 @@ fun FolderEditorSheet(
             fillWidth = true,
           )
         }
-      },
-    ) {
+      }
+    },
+  ) {
+    SheetBody(scrollable = false) {
       FluidTextField(
         value = name,
         onValueChange = { name = it },

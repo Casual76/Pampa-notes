@@ -40,7 +40,8 @@ import dev.pampa.pampanotes.core.export.ExportOptions
 import dev.pampa.pampanotes.core.export.ExportScope
 import dev.pampa.pampanotes.core.export.TranscriptChoice
 import dev.pampa.pampanotes.ui.common.Formats
-import dev.pampa.pampanotes.ui.common.SheetScaffold
+import dev.pampa.pampanotes.ui.common.PageActions
+import dev.pampa.pampanotes.ui.common.SheetBody
 
 /**
  * Il pannello che prepara un pacchetto.
@@ -85,11 +86,12 @@ fun ExportSheet(
     visible = true,
     // Chiudere a meta' scrittura lascerebbe un file rotto: finche' scrive, il pannello resta.
     onDismissRequest = { if (state.stage != ExportStage.RUNNING) onDismiss() },
-    presentation = FluidGlassModalPresentation.Sheet,
+    // Una pagina intera: le scelte sono piu' di tre, e i tasti in fondo restano fermi mentre
+    // le scelte scorrono.
+    presentation = FluidGlassModalPresentation.FullScreen,
     paneTitle = stringResource(R.string.action_export),
-  ) {
-    SheetScaffold(
-      actions = {
+    footer = {
+      PageActions {
         when (state.stage) {
           ExportStage.RUNNING -> FluidButton(
             text = stringResource(R.string.action_cancel),
@@ -119,8 +121,10 @@ fun ExportSheet(
             onPickFolder = { pickFolder.launch(null) },
           )
         }
-      },
-    ) {
+      }
+    },
+  ) {
+    SheetBody(scrollable = false) {
       when (state.stage) {
         ExportStage.RUNNING -> RunningBody(state)
         ExportStage.DONE -> DoneBody(state)

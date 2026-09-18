@@ -44,6 +44,8 @@ import dev.pampa.pampanotes.ui.common.FolderEditorSheet
 import dev.pampa.pampanotes.ui.common.folderIconOf
 import dev.pampa.pampanotes.ui.common.folderVividColors
 import dev.pampa.pampanotes.ui.common.toneFromName
+import dev.pampa.pampanotes.core.export.ExportScope
+import dev.pampa.pampanotes.ui.export.ExportSheet
 
 /**
  * Le cartelle, come tessere.
@@ -61,10 +63,12 @@ fun FoldersRoute(
   val state by viewModel.uiState.collectAsStateWithLifecycle()
   var editing by remember { mutableStateOf<FolderEdit?>(null) }
   var pendingDelete by remember { mutableStateOf<FolderRow?>(null) }
+  var exporting by remember { mutableStateOf<FolderRow?>(null) }
 
   val newLabel = stringResource(R.string.home_new_folder)
   val editLabel = stringResource(R.string.action_edit)
   val deleteLabel = stringResource(R.string.action_delete)
+  val exportLabel = stringResource(R.string.action_export)
 
   FluidScreen(
     title = stringResource(R.string.folders_title),
@@ -107,6 +111,8 @@ fun FoldersRoute(
               contextActions = {
                 listOf(
                   FluidContextAction(label = editLabel) { editing = FolderEdit.Existing(row) },
+                  // Dove uno lo cerca: tenendo premuta la materia da dare all'assistente.
+                  FluidContextAction(label = exportLabel) { exporting = row },
                   FluidContextAction(label = deleteLabel, destructive = true) { pendingDelete = row },
                 )
               },
@@ -118,6 +124,10 @@ fun FoldersRoute(
         }
       }
     }
+  }
+
+  exporting?.let { row ->
+    ExportSheet(scope = ExportScope.Folder(row.folder.id), onDismiss = { exporting = null })
   }
 
   editing?.let { request ->

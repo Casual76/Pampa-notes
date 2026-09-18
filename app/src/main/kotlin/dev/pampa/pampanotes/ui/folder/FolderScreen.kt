@@ -88,6 +88,8 @@ private fun FolderScreen(
   var pendingFolderDelete by remember { mutableStateOf<FolderRow?>(null) }
   var pendingNoteDelete by remember { mutableStateOf<NoteRow?>(null) }
   var exporting by remember { mutableStateOf(false) }
+  // Una riga tenuta premuta: la sottocartella o la nota da dare all'assistente.
+  var exportingScope by remember { mutableStateOf<ExportScope?>(null) }
 
   // Le etichette dei menu si leggono qui: le lambda che le ricevono non sono composable.
   val renameLabel = stringResource(R.string.action_rename)
@@ -150,6 +152,7 @@ private fun FolderScreen(
               contextActions = {
                 listOf(
                   FluidContextAction(label = renameLabel) { renaming = row },
+                  FluidContextAction(label = exportLabel) { exportingScope = ExportScope.Folder(row.folder.id) },
                   FluidContextAction(label = deleteLabel, destructive = true) { pendingFolderDelete = row },
                 )
               },
@@ -180,6 +183,7 @@ private fun FolderScreen(
                   FluidContextAction(label = if (row.note.pinned) unpinLabel else pinLabel) {
                     onTogglePinned(row.note.id, !row.note.pinned)
                   },
+                  FluidContextAction(label = exportLabel) { exportingScope = ExportScope.Note(row.note.id) },
                   FluidContextAction(label = deleteLabel, destructive = true) { pendingNoteDelete = row },
                 )
               },
@@ -243,6 +247,7 @@ private fun FolderScreen(
 
   state.folder?.let { folder ->
     if (exporting) ExportSheet(scope = ExportScope.Folder(folder.id), onDismiss = { exporting = false })
+    exportingScope?.let { ExportSheet(scope = it, onDismiss = { exportingScope = null }) }
   }
 
   renaming?.let { row ->

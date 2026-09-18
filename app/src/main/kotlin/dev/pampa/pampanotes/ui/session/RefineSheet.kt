@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.antigravity.fluidengine.ui.fluid.FluidButton
@@ -39,6 +40,8 @@ fun RefineSheet(
   hasKey: Boolean,
   onDismiss: () -> Unit,
   onConfirm: (RefinementPreset, String) -> Unit,
+  /** Il tasto da cui nasce: il pannello si apre su di lui, e nessuno perde il filo. */
+  origin: () -> Rect? = { null },
 ) {
   var preset by remember(initialPreset) { mutableStateOf(initialPreset) }
   var custom by remember(initialCustomPrompt) { mutableStateOf(initialCustomPrompt) }
@@ -50,10 +53,13 @@ fun RefineSheet(
   FluidGlassModalPortal(
     visible = true,
     onDismissRequest = onDismiss,
-    presentation = FluidGlassModalPresentation.Sheet,
+    // Una scelta fra tre e un tasto: un pop-up sul comando, non un foglio che copre la lezione.
+    presentation = FluidGlassModalPresentation.Popover,
+    origin = origin,
     paneTitle = stringResource(R.string.refine_title),
   ) {
     SheetScaffold(
+      insetBottom = false,
       actions = {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
           FluidButton(

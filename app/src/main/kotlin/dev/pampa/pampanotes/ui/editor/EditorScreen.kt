@@ -1,11 +1,9 @@
 package dev.pampa.pampanotes.ui.editor
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
@@ -17,6 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -28,6 +27,7 @@ import dev.antigravity.fluidengine.ui.fluid.FluidHeroTone
 import dev.antigravity.fluidengine.ui.fluid.FluidChip
 import dev.antigravity.fluidengine.ui.fluid.FluidScreen
 import dev.antigravity.fluidengine.ui.fluid.FluidSectionFootnote
+import dev.antigravity.fluidengine.ui.fluid.FluidTextEdit
 import dev.antigravity.fluidengine.ui.fluid.FluidTextField
 import dev.antigravity.fluidengine.ui.theme.FluidCard
 import dev.pampa.pampanotes.R
@@ -64,6 +64,23 @@ private fun EditorScreen(
   var preview by remember { mutableStateOf(false) }
   val previewLabel = stringResource(R.string.editor_preview)
   val writeLabel = stringResource(R.string.editor_write)
+
+  // Il cursore vive qui: il ViewModel conosce il testo, non dove si sta scrivendo. Il testo del
+  // ViewModel vince solo quando cambia per conto suo — il caricamento della nota — e non quando e'
+  // l'eco di quello che si e' appena battuto, altrimenti ogni tasto rimetterebbe il cursore in fondo.
+  var bodyValue by remember { mutableStateOf(TextFieldValue(body, TextRange(body.length))) }
+  var knownBody by remember { mutableStateOf(body) }
+  if (body != knownBody) {
+    knownBody = body
+    if (bodyValue.text != body) bodyValue = TextFieldValue(body, TextRange(body.length))
+  }
+  val updateBody: (TextFieldValue) -> Unit = { value ->
+    bodyValue = value
+    if (value.text != knownBody) {
+      knownBody = value.text
+      onBodyChange(value.text)
+    }
+  }
 
   FluidScreen(
     title = stringResource(R.string.editor_title),
@@ -106,14 +123,12 @@ private fun EditorScreen(
       }
     } else {
       item {
-        MarkdownToolbar(
-          onInsert = { snippet -> onBodyChange(insertSnippet(body, snippet)) },
-        )
+        MarkdownToolbar(onEdit = { edit -> updateBody(edit(bodyValue)) })
       }
       item {
         FluidTextField(
-          value = body,
-          onValueChange = onBodyChange,
+          value = bodyValue,
+          onValueChange = updateBody,
           placeholder = stringResource(R.string.editor_body_placeholder),
           singleLine = false,
           minLines = 16,
@@ -126,33 +141,31 @@ private fun EditorScreen(
   }
 }
 
-/** I quattro segni che servono davvero mentre si sistema un testo importato. */
+/** Un segno Markdown e cosa fa al testo, dal cursore in poi. */
+private class MarkdownTool(val label: String, val apply: (TextFieldValue) -> TextFieldValue)
+
+/**
+ * I cinque segni che servono davvero mentre si sistema un testo importato. Quelli di riga (titolo,
+ * elenco, citazione) vanno a inizio riga e si tolgono con un secondo tocco; quelli di parola
+ * (grassetto, codice) avvolgono la selezione.
+ */
+private val markdownTools = listOf(
+  MarkdownTool("##") { FluidTextEdit.toggleLinePrefix(it, "## ") },
+  MarkdownTool("-") { FluidTextEdit.toggleLinePrefix(it, "- ") },
+  MarkdownTool("**") { FluidTextEdit.wrap(it, "**") },
+  MarkdownTool(">") { FluidTextEdit.toggleLinePrefix(it, "> ") },
+  MarkdownTool("`") { FluidTextEdit.wrap(it, "`") },
+)
+
 @Composable
-private fun MarkdownToolbar(onInsert: (String) -> Unit) {
+private fun MarkdownToolbar(onEdit: ((TextFieldValue) -> TextFieldValue) -> Unit) {
   val scroll = rememberScrollState()
   Row(
     modifier = Modifier.fillMaxWidth().horizontalScroll(scroll),
     horizontalArrangement = Arrangement.spacedBy(8.dp),
   ) {
-    listOf("## ", "- ", "**", "> ", "`").forEach { snippet ->
-      FluidChip(label = snippet.trim().ifEmpty { snippet }, selected = false, onClick = { onInsert(snippet) })
+    markdownTools.forEach { tool ->
+      FluidChip(label = tool.label, selected = false, onClick = { onEdit(tool.apply) })
     }
-  }
-}
-
-/**
- * Aggiunge il segno in fondo, su una riga sua quando il segno vale per una riga intera.
- *
- * Non c'e' un cursore da cui partire: `FluidTextField` espone una stringa, non un
- * `TextFieldValue`, quindi l'inserimento a meta' testo non e' possibile senza cambiare il
- * componente dell'engine. In fondo e' dove si scrive comunque.
- */
-private fun insertSnippet(body: String, snippet: String): String {
-  val lineMarker = snippet.endsWith(" ")
-  return when {
-    body.isEmpty() -> snippet
-    lineMarker && body.endsWith("\n") -> body + snippet
-    lineMarker -> body + "\n" + snippet
-    else -> body + snippet
   }
 }

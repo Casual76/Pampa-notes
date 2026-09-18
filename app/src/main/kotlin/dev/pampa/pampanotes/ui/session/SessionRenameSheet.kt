@@ -12,6 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.antigravity.fluidengine.ui.fluid.FluidButton
@@ -41,6 +42,8 @@ fun SessionRenameSheet(
   date: String,
   onDismiss: () -> Unit,
   onConfirm: (title: String, date: String) -> Unit,
+  /** Il tasto da cui nasce: il pannello si apre su di lui, e nessuno perde il filo. */
+  origin: () -> Rect? = { null },
 ) {
   var text by remember(title) { mutableStateOf(title) }
   var chosen by remember(date) { mutableStateOf(date) }
@@ -51,10 +54,13 @@ fun SessionRenameSheet(
   FluidGlassModalPortal(
     visible = true,
     onDismissRequest = onDismiss,
-    presentation = FluidGlassModalPresentation.Sheet,
+    // Due campi: un pop-up sul comando, non un foglio che copre la lezione.
+    presentation = FluidGlassModalPresentation.Popover,
+    origin = origin,
     paneTitle = stringResource(R.string.session_rename),
   ) {
     SheetScaffold(
+      insetBottom = false,
       actions = {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
           FluidButton(

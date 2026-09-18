@@ -61,6 +61,8 @@ fun SheetBody(
 @Composable
 fun ColumnScope.SheetScaffold(
   actions: @Composable ColumnScope.() -> Unit,
+  /** Falso in un pop-up: sta a mezz'aria, e lo spazio per la barra di sistema sarebbe aria a vuoto. */
+  insetBottom: Boolean = true,
   content: @Composable ColumnScope.() -> Unit,
 ) {
   // fill = false: il corpo prende lo spazio che gli serve e non un pixel di piu', cosi' un pannello
@@ -76,9 +78,34 @@ fun ColumnScope.SheetScaffold(
         .fillMaxWidth()
         .padding(horizontal = 20.dp)
         .padding(top = 8.dp, bottom = 12.dp)
-        .navigationBarsPadding(),
+        .then(if (insetBottom) Modifier.navigationBarsPadding() else Modifier),
       verticalArrangement = Arrangement.spacedBy(10.dp),
       content = actions,
+    )
+  }
+}
+
+/**
+ * I tasti in fondo a una pagina intera.
+ *
+ * Il gemello di [SheetScaffold] per `FluidGlassModalPresentation.FullScreen`: li' e' l'engine a
+ * tenerli fermi sotto il contenuto che scorre e a scavalcare la barra di sistema, quindi qui restano
+ * solo la misura e l'aria intorno.
+ */
+@Composable
+fun ColumnScope.PageActions(content: @Composable ColumnScope.() -> Unit) {
+  Column(
+    modifier = Modifier.fillMaxWidth(),
+    horizontalAlignment = Alignment.CenterHorizontally,
+  ) {
+    Column(
+      modifier = Modifier
+        .widthIn(max = 560.dp)
+        .fillMaxWidth()
+        .padding(horizontal = 20.dp)
+        .padding(top = 8.dp, bottom = 12.dp),
+      verticalArrangement = Arrangement.spacedBy(10.dp),
+      content = content,
     )
   }
 }

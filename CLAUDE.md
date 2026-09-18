@@ -32,7 +32,7 @@ Due moduli più l'engine come submodule.
 |---|---|
 | `:core` | dominio, Room, DataStore, file, import, trascrizione, raffinamento, export. I package puri (pianificatore dei chunk, cucitura, writer Markdown, parser DOCX) non importano niente di Android e si provano in JVM. |
 | `:app` | UI Compose, navigazione, DI, worker, share target, lettore audio. |
-| `engine/` | [Fluid Engine](https://github.com/Casual76/fluid-engine) 1.31.0, submodule. **Non si modifica da qui**: una modifica non committata a monte sparisce al primo aggiornamento. |
+| `engine/` | [Fluid Engine](https://github.com/Casual76/fluid-engine) 1.32.0, submodule. **Non si modifica da qui**: una modifica non committata a monte sparisce al primo aggiornamento. |
 
 Il design system è quello dell'engine: `FluidScreen`, `FluidListGroup`/`FluidListRow`,
 `ContinuousCornerShape` (mai `RoundedCornerShape`), nessun colore o dimensione scritti a mano,

@@ -68,6 +68,8 @@ import dev.pampa.pampanotes.player.PlaybackState
 import dev.pampa.pampanotes.ui.common.Formats
 import dev.pampa.pampanotes.ui.common.jobPhaseText
 import dev.pampa.pampanotes.ui.common.MarkdownText
+import androidx.compose.ui.geometry.Rect
+import dev.antigravity.fluidengine.ui.fluid.fluidExpandOrigin
 
 @Composable
 fun SessionRoute(
@@ -135,6 +137,8 @@ private fun SessionScreen(
   var renaming by remember { mutableStateOf(false) }
   var confirmingDelete by remember { mutableStateOf(false) }
   var refining by remember { mutableStateOf(false) }
+  // Dove sta il tasto «altro»: i pop-up di rinomina e ripulitura nascono da li'.
+  var moreOrigin by remember { mutableStateOf<Rect?>(null) }
 
   val paragraphs = remember(state.segments) { paragraphsOf(state.segments) }
   // Quale paragrafo si sta ascoltando: l'ultimo cominciato.
@@ -180,6 +184,7 @@ private fun SessionScreen(
         icon = Icons.Rounded.MoreHoriz,
         contentDescription = moreLabel,
         onClick = { renaming = true },
+        modifier = Modifier.fluidExpandOrigin(open = { renaming || refining }, onMeasured = { moreOrigin = it }),
         actions = {
           buildList {
             add(FluidContextAction(label = renameLabel) { renaming = true })
@@ -227,6 +232,7 @@ private fun SessionScreen(
     SessionRenameSheet(
       title = state.session.title,
       date = state.session.date,
+      origin = { moreOrigin },
       onDismiss = { renaming = false },
       onConfirm = { title, date ->
         renaming = false
@@ -240,6 +246,7 @@ private fun SessionScreen(
       initialPreset = refineDefaults.preset,
       initialCustomPrompt = refineDefaults.customPrompt,
       hasKey = refineDefaults.hasKey,
+      origin = { moreOrigin },
       onDismiss = { refining = false },
       onConfirm = { preset, prompt ->
         refining = false
