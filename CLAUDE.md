@@ -36,7 +36,7 @@ Due moduli più l'engine come submodule.
 |---|---|
 | `:core` | dominio, Room, DataStore, file, import, trascrizione, raffinamento, export. I package puri (pianificatore dei chunk, cucitura, writer Markdown, parser DOCX) non importano niente di Android e si provano in JVM. |
 | `:app` | UI Compose, navigazione, DI, worker, share target, lettore audio. |
-| `engine/` | [Fluid Engine](https://github.com/Casual76/fluid-engine) 1.33.0, submodule. **Non si modifica da qui**: una modifica non committata a monte sparisce al primo aggiornamento. |
+| `engine/` | [Fluid Engine](https://github.com/Casual76/fluid-engine) 1.34.0, submodule. **Non si modifica da qui**: una modifica non committata a monte sparisce al primo aggiornamento. |
 
 Il design system è quello dell'engine: `FluidScreen`, `FluidListGroup`/`FluidListRow`,
 `ContinuousCornerShape` (mai `RoundedCornerShape`), nessun colore o dimensione scritti a mano,
@@ -57,6 +57,24 @@ nota va nel dettaglio, su una stretta in cima alla lista. `syncPanes` sposta la 
 padrone di casa all'altro quando la finestra cambia regime, ricostruendo la rotta dagli argomenti:
 la rotazione non perde il posto. Il back non ha handler scritti a mano: con `DETAIL_EMPTY` sotto,
 lo stack del dettaglio ha due voci quando una nota e' aperta e il suo `NavHost` vince.
+
+### Il colore della materia
+
+Entrando in Storia l'accento dell'app diventa quello di Storia: tasti, pillola, selezioni, tinte
+del vetro, fondali. E' la cosa che rende Pampa Notes riconoscibile a colpo d'occhio, e nessun'altra
+app della famiglia ce l'ha, perche' nessun'altra ha un concetto forte come «la materia» da cui
+prendere il colore.
+
+Le schermate si iscrivono con `ReportSubject(folder?.asSubject())` — cartella, nota, sessione — e
+`SubjectRegistry` decide chi vince: con due pannelli sulla stessa scena vince il ruolo `Detail`,
+cioe' quello che si sta leggendo. Le schermate senza materia non si iscrivono, e si *sente* di
+essere usciti da Storia. La materia vince **solo** con `AccentMode.BRAND`: chi ha scelto Material
+You o una tinta dal selettore ha gia' detto di che colore vuole l'app.
+
+I sei accenti di `subjectAccent` sono le stesse sei tinte delle tessere (`folderVividColors`): la
+tessera di Storia e l'app dentro Storia devono essere dello stesso colore, o la materia non si
+riconosce. L'accento si anima, perche' sul tablet passare da una materia all'altra non ha una
+transizione di rotta da cui nascondersi.
 
 ### Il modello dei dati
 

@@ -516,4 +516,17 @@
   <string name="sidebar_all_folders">Tutte le cartelle</string>
   <string name="detail_empty_title">Niente di aperto</string>
   <string name="detail_empty_detail">Scegli una nota dalla lista, o importane una.</string>
+  <string name="settings_section_services_detail">Chiave Groq e server personale</string>
+  <string name="settings_section_transcription_detail">Servizio, lingua, vocabolario</string>
+  <string name="settings_section_refinement_detail">Quanto ripulire, e con quale modello</string>
+  <string name="settings_section_appearance_detail">Tema, colori, aptica</string>
+  <string name="settings_section_about_detail">Versione dell\'app e dell\'engine</string>
+  <string name="settings_section_soon_title">Non c\'è ancora niente qui</string>
+  <string name="settings_section_soon_detail">Arriva con il backup e l\'archiviazione.</string>
+  <string name="settings_model_auto">Automatico</string>
+  <string name="settings_model_auto_detail">Il migliore fra quelli che Groq dichiara: %1$s</string>
+  <string name="settings_model_chosen">Scelto</string>
+  <string name="settings_models_missing">Verifica la chiave Groq in Servizi per vedere i modelli fra cui scegliere.</string>
+  <string name="settings_subject_accent_detail">Con i colori del marchio, l\'app prende il colore della materia in cui ti trovi. Con Material You o una tinta scelta, resta quella.</string>
+  <string name="note_sources_hint">I file da cui è arrivato il testo. Tocca una riga per riaprire l\'originale.</string>
 </resources>

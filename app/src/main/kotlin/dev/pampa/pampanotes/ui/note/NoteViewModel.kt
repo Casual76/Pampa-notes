@@ -26,11 +26,19 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import dev.pampa.pampanotes.core.db.FolderEntity
+import dev.pampa.pampanotes.core.files.AppFiles
+import java.io.File
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 
 enum class NoteTab { TEXT, AUDIO, SOURCES }
 
 data class NoteUiState(
   val note: NoteEntity? = null,
+  /** La materia: e' quella che colora la schermata. */
+  val folder: FolderEntity? = null,
   val folderPath: String = "",
   val tags: List<String> = emptyList(),
   val sessions: List<SessionWithParts> = emptyList(),
@@ -56,10 +64,16 @@ class NoteViewModel @Inject constructor(
   private val transcription: TranscriptionRepository,
   private val settingsStore: PampaSettingsStore,
   private val scheduler: WorkScheduler,
+  private val files: AppFiles,
 ) : ViewModel() {
 
   private val noteId: String = savedStateHandle.get<String>("noteId").orEmpty()
   private val folderPath = MutableStateFlow("")
+
+  @OptIn(ExperimentalCoroutinesApi::class)
+  private val folderFlow: Flow<FolderEntity?> = notes.observe(noteId).flatMapLatest { note ->
+    note?.let { folders.observe(it.folderId) } ?: flowOf(null)
+  }
 
   /**
    * Le trascrizioni mostrate, una per sessione.
@@ -84,10 +98,12 @@ class NoteViewModel @Inject constructor(
     folderPath,
     transcription.observeActive(),
     transcriptTexts,
+    folderFlow,
   ) { values ->
     @Suppress("UNCHECKED_CAST")
     NoteUiState(
       note = values[0] as NoteEntity?,
+      folder = values[7] as FolderEntity?,
       tags = values[1] as List<String>,
       sessions = values[2] as List<SessionWithParts>,
       sources = values[3] as List<SourceEntity>,
@@ -132,4 +148,7 @@ class NoteViewModel @Inject constructor(
   }
 
   fun cancelJob(jobId: String) = viewModelScope.launch { transcription.requestCancel(jobId) }
+
+  /** L'originale conservato di una fonte, da riaprire; null per il testo incollato, che un file non l'ha. */
+  fun sourceFile(source: SourceEntity): File? = source.storedFileName?.let(files::sourceFile)
 }

@@ -73,6 +73,8 @@ import dev.antigravity.fluidengine.ui.theme.fluidTouchOriginTracker
 import dev.antigravity.fluidengine.ui.theme.rememberFluidTouchOrigin
 import dev.antigravity.fluidengine.ui.theme.rememberRouteMotionSignals
 import dev.pampa.pampanotes.R
+import dev.pampa.pampanotes.ui.common.LocalSubjectRegistry
+import dev.pampa.pampanotes.ui.common.SubjectRegistry
 import dev.pampa.pampanotes.ui.importing.ImportRequest
 import dev.pampa.pampanotes.ui.nav.PampaNavActions
 import dev.pampa.pampanotes.ui.nav.PampaNavHost
@@ -84,6 +86,11 @@ import dev.pampa.pampanotes.ui.nav.syncPanes
 import dev.pampa.pampanotes.ui.theme.PampaTheme
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import dev.antigravity.fluidengine.ui.fluid.FluidAmbient
+import dev.antigravity.fluidengine.ui.fluid.FluidAmbientSurface
+import dev.antigravity.fluidengine.ui.fluid.FluidHeroMotif
+import dev.antigravity.fluidengine.ui.fluid.FluidHeroTone
+import dev.pampa.pampanotes.ui.common.ambientToneOf
 
 /**
  * La radice: tema, host dei modali e delle notifiche, barra di navigazione e grafo delle rotte.
@@ -100,13 +107,16 @@ fun MainApp(
   val notificationHostState = rememberFluidNotificationHostState()
   val glassModalHostState = rememberFluidGlassModalHostState()
   val routeMotionSignals = rememberRouteMotionSignals()
+  // La materia in cui ci si trova colora l'app: le schermate si iscrivono qui, e il tema legge.
+  val subjects = remember { SubjectRegistry() }
 
-  PampaTheme(settings = engineSettings) {
+  PampaTheme(settings = engineSettings, subject = subjects.current) {
     val chromeController = rememberFluidChromeController()
     CompositionLocalProvider(
       LocalFluidNotificationHostState provides notificationHostState,
       LocalFluidGlassModalHostState provides glassModalHostState,
       LocalRouteMotionSignals provides routeMotionSignals,
+      LocalSubjectRegistry provides subjects,
     ) {
       FluidScreenSurface(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -153,6 +163,8 @@ private fun AppShell(
   val detailNav = rememberNavController()
   val scrollToTop = remember { FluidScrollToTopBus() }
   val touchOrigin = rememberFluidTouchOrigin()
+  // La materia che le schermate hanno dichiarato: da' il colore al fondale della finestra.
+  val subject = LocalSubjectRegistry.current?.current
 
   BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
     val layout = remember(maxWidth) { fluidPaneLayout(maxWidth, hasSide = true, hasRail = true) }
@@ -217,6 +229,10 @@ private fun AppShell(
         onSelect = { item -> actions.switchTopLevel(item.route) },
         onReselect = { scrollToTop.request() },
       ) { backdrop ->
+        // Un fondale solo sotto tutta la finestra quando i pannelli sono piu' di uno, del colore
+        // della materia in cui ci si trova. Senza, ogni pannello dipinge il suo e l'app si legge
+        // come tre telefoni appoggiati uno accanto all'altro.
+        FluidAmbientSurface(ambient = if (layout.panes.size > 1) windowAmbient(subject) else null) {
         FluidPaneScaffold(
           layout = layout,
           rail = {
@@ -268,16 +284,32 @@ private fun AppShell(
             }
           },
         )
+        }
       }
     }
   }
 }
 
+/**
+ * Il fondale della finestra: il tono della materia in cui ci si trova, con un motivo calmo.
+ *
+ * Il motivo e' `Glow` e non quelli piu' marcati: coprendo tutta la finestra, un motivo con una
+ * struttura diventa carta da parati, mentre su una pagina sola era una decorazione che si vedeva
+ * appena. Il tono invece e' quello della materia — e' tutta la questione.
+ */
+@Composable
+private fun windowAmbient(subject: dev.pampa.pampanotes.ui.common.SubjectIdentity?): FluidAmbient =
+  FluidAmbient(
+    tone = subject?.let { ambientToneOf(it.tone) } ?: FluidHeroTone.PrimaryToSecondary,
+    motif = FluidHeroMotif.Glow,
+  )
+
 /** Il dettaglio quando non c'e' niente di aperto: una pagina calma, non una pagina vuota. */
 @Composable
 private fun EmptyDetail() {
   Box(
-    modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
+    // Niente fondo suo: lo dipinge la finestra, e un rettangolo opaco qui sarebbe la cucitura.
+    modifier = Modifier.fillMaxSize(),
     contentAlignment = Alignment.Center,
   ) {
     FluidEmptyState(

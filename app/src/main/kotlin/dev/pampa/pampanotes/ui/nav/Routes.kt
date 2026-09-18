@@ -36,10 +36,14 @@ object Routes {
    */
   const val DETAIL_EMPTY = "detail"
 
-  /** Le rotte che su una pagina larga stanno nel dettaglio: la nota, la sessione, l'editor, l'import. */
-  fun isDetail(route: String?): Boolean = route != null && detailPrefixes.any { route == it || route.startsWith("$it/") }
+  /**
+   * Le rotte che su una pagina larga stanno nel dettaglio: la nota, la sessione, l'editor,
+   * l'import, e una sezione delle impostazioni (non l'indice, che e' una lista).
+   */
+  fun isDetail(route: String?): Boolean =
+    route != null && (route == IMPORT || detailPrefixes.any { route.startsWith(it) })
 
-  private val detailPrefixes = listOf("note", "session", "editor", IMPORT)
+  private val detailPrefixes = listOf("note/", "session/", "editor/", "settings/")
 
   fun folder(id: String) = "folder/${Uri.encode(id)}"
   fun note(id: String, tab: String? = null) = "note/${Uri.encode(id)}" + (tab?.let { "?tab=${Uri.encode(it)}" } ?: "")

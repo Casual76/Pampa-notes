@@ -49,6 +49,11 @@ import dev.pampa.pampanotes.core.db.SourceKind
 import dev.pampa.pampanotes.core.db.SourceStatus
 import dev.pampa.pampanotes.ui.common.Formats
 import dev.pampa.pampanotes.ui.common.MarkdownText
+import androidx.compose.ui.platform.LocalContext
+import dev.antigravity.fluidengine.ui.fluid.FluidSectionFootnote
+import dev.pampa.pampanotes.ui.common.ReportSubject
+import dev.pampa.pampanotes.ui.common.asSubject
+import dev.pampa.pampanotes.ui.common.openWithSystem
 
 @Composable
 fun NoteRoute(
@@ -60,6 +65,7 @@ fun NoteRoute(
   viewModel: NoteViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
+  val context = LocalContext.current
   NoteScreen(
     state = state,
     initialTab = tabFromRoute(initialTab),
@@ -71,6 +77,7 @@ fun NoteRoute(
     onTranscribe = viewModel::transcribe,
     onCancelJob = viewModel::cancelJob,
     onOpenSession = onOpenSession,
+    onOpenSource = { source -> viewModel.sourceFile(source)?.let { openWithSystem(context, it, source.mime) } },
   )
 }
 
@@ -92,10 +99,13 @@ private fun NoteScreen(
   onTranscribe: (String) -> Unit,
   onCancelJob: (String) -> Unit,
   onOpenSession: (String) -> Unit,
+  onOpenSource: (SourceEntity) -> Unit,
 ) {
   var tab by rememberSaveable { mutableStateOf(initialTab) }
   var confirmingDelete by remember { mutableStateOf(false) }
   var exporting by remember { mutableStateOf(false) }
+  // La nota e' della sua materia: l'app prende quel colore.
+  ReportSubject(state.folder?.asSubject())
 
   val tabText = stringResource(R.string.note_tab_text)
   val tabAudio = stringResource(R.string.note_tab_audio)
@@ -118,7 +128,8 @@ private fun NoteScreen(
     title = state.note?.title ?: stringResource(R.string.note_loading),
     subtitle = state.folderPath.takeIf { it.isNotBlank() },
     onBack = onBack,
-    ambient = FluidAmbient(tone = FluidHeroTone.Secondary, motif = FluidHeroMotif.Cards),
+    // Primary, cioe' la materia: il fondale della nota e' dello stesso colore della sua tessera.
+    ambient = FluidAmbient(tone = FluidHeroTone.Primary, motif = FluidHeroMotif.Cards),
     titleFacets = buildList {
       if (state.partCount > 0) add(Formats.durationShort(state.audioDurationMs))
       if (state.sources.isNotEmpty()) add("${state.sources.size}")
@@ -157,7 +168,7 @@ private fun NoteScreen(
     when (tab) {
       NoteTab.TEXT -> textTab(state, onEdit)
       NoteTab.AUDIO -> audioTab(state, onImport, onTranscribe, onCancelJob, onOpenSession)
-      NoteTab.SOURCES -> sourcesTab(state, onImport)
+      NoteTab.SOURCES -> sourcesTab(state, onImport, onOpenSource)
     }
   }
 
@@ -325,7 +336,17 @@ private fun preview(text: String, maxChars: Int = 220): String {
   return cut.substringBeforeLast(' ', cut).trimEnd(',', ';', ':', '.') + "…"
 }
 
-private fun androidx.compose.foundation.lazy.LazyListScope.sourcesTab(state: NoteUiState, onImport: () -> Unit) {
+/**
+ * Le fonti: da dove viene il testo, e la strada per riaprire l'originale.
+ *
+ * E' l'unica utilita' vera di questa scheda, e va detta in cima: un elenco di nomi di file con
+ * accanto dei megabyte non dice a nessuno cosa farci.
+ */
+private fun androidx.compose.foundation.lazy.LazyListScope.sourcesTab(
+  state: NoteUiState,
+  onImport: () -> Unit,
+  onOpenSource: (SourceEntity) -> Unit,
+) {
   if (state.sources.isEmpty()) {
     item {
       FluidEmptyState(
@@ -343,6 +364,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sourcesTab(state: Not
     return
   }
 
+  item { FluidSectionFootnote(text = stringResource(R.string.note_sources_hint)) }
   item {
     FluidListGroup {
       state.sources.forEachIndexed { index, source ->
@@ -353,6 +375,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sourcesTab(state: Not
           eyebrow = sourceKindLabel(source.kind),
           meta = Formats.bytes(source.sizeBytes),
           tone = sourceTone(source.status),
+          // Solo chi ha un file conservato si riapre: il testo incollato non ha un originale.
+          onClick = if (source.storedFileName != null) { { onOpenSource(source) } } else null,
           badge = if (source.status != SourceStatus.OK) {
             { FluidStatusBadge(label = sourceStatusLabel(source.status), tone = sourceTone(source.status)) }
           } else {

@@ -38,6 +38,7 @@ import dev.pampa.pampanotes.ui.note.NoteRoute
 import dev.pampa.pampanotes.ui.search.SearchRoute
 import dev.pampa.pampanotes.ui.session.SessionRoute
 import dev.pampa.pampanotes.ui.settings.SettingsRoute
+import dev.pampa.pampanotes.ui.settings.SettingsSectionRoute
 import kotlin.math.roundToInt
 
 /**
@@ -66,6 +67,9 @@ class PampaNavActions(
   fun openSearch() = openList(Routes.SEARCH)
   fun openJobs() = openList(Routes.JOBS)
   fun openSettings() = openList(Routes.SETTINGS)
+
+  /** Una sezione delle impostazioni: sul tablet a destra dell'indice, sul telefono sopra. */
+  fun openSettingsSection(section: SettingsSection) = openDetail(Routes.settingsSection(section.route), fresh = true)
 
   /** Una scheda principale: si scambia con quella di prima, non si impila. */
   fun switchTopLevel(route: String) {
@@ -155,6 +159,7 @@ private fun detailRouteOf(entry: NavBackStackEntry): String? {
     Routes.NOTE -> Routes.note(args?.getString("noteId") ?: return null, args.getString("tab"))
     Routes.SESSION -> Routes.session(args?.getString("sessionId") ?: return null)
     Routes.EDITOR -> Routes.editor(args?.getString("noteId") ?: return null)
+    Routes.SETTINGS_SECTION -> Routes.settingsSection(args?.getString("section") ?: return null)
     Routes.IMPORT -> Routes.IMPORT
     else -> null
   }
@@ -246,7 +251,9 @@ fun NavGraphBuilder.listDestinations(actions: PampaNavActions, host: NavHostCont
     FluidRouteMotionHost(this@composable) { JobsRoute(onBack = { host.popBackStack() }) }
   }
   composable(Routes.SETTINGS) {
-    FluidRouteMotionHost(this@composable) { SettingsRoute(onBack = { host.popBackStack() }) }
+    FluidRouteMotionHost(this@composable) {
+      SettingsRoute(onBack = { host.popBackStack() }, onOpenSection = actions::openSettingsSection)
+    }
   }
   composable(
     route = Routes.FOLDER,
@@ -314,6 +321,17 @@ fun NavGraphBuilder.detailDestinations(actions: PampaNavActions, host: NavHostCo
       ImportRoute(
         onClose = { host.popBackStack() },
         onOpenNote = { id -> actions.replaceWith(host, Routes.note(id)) },
+      )
+    }
+  }
+  composable(
+    route = Routes.SETTINGS_SECTION,
+    arguments = listOf(navArgument("section") { type = NavType.StringType }),
+  ) { entry ->
+    FluidRouteMotionHost(this@composable) {
+      SettingsSectionRoute(
+        section = SettingsSection.fromRoute(entry.arguments?.getString("section")) ?: SettingsSection.SERVICES,
+        onBack = { host.popBackStack() },
       )
     }
   }

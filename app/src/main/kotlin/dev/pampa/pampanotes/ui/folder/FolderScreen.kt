@@ -36,6 +36,8 @@ import dev.pampa.pampanotes.core.db.NoteRow
 import dev.pampa.pampanotes.ui.common.FolderEditorSheet
 import dev.pampa.pampanotes.ui.common.Formats
 import dev.pampa.pampanotes.ui.common.FolderIcon
+import dev.pampa.pampanotes.ui.common.ReportSubject
+import dev.pampa.pampanotes.ui.common.asSubject
 import dev.pampa.pampanotes.ui.common.ambientMotifOf
 import dev.pampa.pampanotes.ui.common.ambientToneOf
 import dev.pampa.pampanotes.ui.common.folderIconOf
@@ -103,6 +105,8 @@ private fun FolderScreen(
 
   val folderTone = toneFromName(state.folder?.tone)
   val folderIcon = FolderIcon.fromKey(state.folder?.icon)
+  // Entrando in Storia l'app diventa del colore di Storia.
+  ReportSubject(state.folder?.asSubject())
 
   FluidScreen(
     title = state.folder?.name ?: stringResource(R.string.folder_loading),

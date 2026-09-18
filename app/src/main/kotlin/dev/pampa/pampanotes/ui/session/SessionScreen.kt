@@ -70,6 +70,8 @@ import dev.pampa.pampanotes.ui.common.jobPhaseText
 import dev.pampa.pampanotes.ui.common.MarkdownText
 import androidx.compose.ui.geometry.Rect
 import dev.antigravity.fluidengine.ui.fluid.fluidExpandOrigin
+import dev.pampa.pampanotes.ui.common.ReportSubject
+import dev.pampa.pampanotes.ui.common.asSubject
 
 @Composable
 fun SessionRoute(
@@ -165,6 +167,8 @@ private fun SessionScreen(
   val mergeLabel = stringResource(R.string.session_merge)
   val deleteLabel = stringResource(R.string.session_delete)
   val moreLabel = stringResource(R.string.action_more)
+  // La lezione e' della sua materia: l'app prende quel colore.
+  ReportSubject(state.folder?.asSubject())
 
   FluidScreen(
     title = state.session?.let { sessionHeading(it.title, it.date) } ?: stringResource(R.string.session_loading),

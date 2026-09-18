@@ -486,4 +486,17 @@
   <string name="sidebar_all_folders">All folders</string>
   <string name="detail_empty_title">Nothing open</string>
   <string name="detail_empty_detail">Pick a note from the list, or import one.</string>
+  <string name="settings_section_services_detail">Groq key and personal server</string>
+  <string name="settings_section_transcription_detail">Service, language, vocabulary</string>
+  <string name="settings_section_refinement_detail">How much to clean up, and with which model</string>
+  <string name="settings_section_appearance_detail">Theme, colours, haptics</string>
+  <string name="settings_section_about_detail">App and engine version</string>
+  <string name="settings_section_soon_title">Nothing here yet</string>
+  <string name="settings_section_soon_detail">Coming with backup and storage.</string>
+  <string name="settings_model_auto">Automatic</string>
+  <string name="settings_model_auto_detail">The best of what Groq lists: %1$s</string>
+  <string name="settings_model_chosen">Chosen</string>
+  <string name="settings_models_missing">Verify the Groq key under Services to see the models to choose from.</string>
+  <string name="settings_subject_accent_detail">With the brand colours, the app takes the colour of the subject you are in. With Material You or a chosen tint, that one stays.</string>
+  <string name="note_sources_hint">The files the text came from. Tap a row to reopen the original.</string>
 </resources>

@@ -1,11 +1,18 @@
 package dev.pampa.pampanotes.ui.theme
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
+import dev.antigravity.fluidengine.foundation.AccentMode
 import dev.antigravity.fluidengine.foundation.EngineSettings
+import dev.antigravity.fluidengine.ui.fluid.FluidMotion
 import dev.antigravity.fluidengine.ui.theme.AccentPoles
 import dev.antigravity.fluidengine.ui.theme.AccentPreset
 import dev.antigravity.fluidengine.ui.theme.FluidTheme
+import dev.pampa.pampanotes.ui.common.SubjectIdentity
+import dev.pampa.pampanotes.ui.common.subjectAccent
 
 /**
  * L'ametista di Pampa Notes.
@@ -40,13 +47,39 @@ val pampaAccentPresets: List<AccentPreset> = listOf(
   AccentPreset("rosa", "Rosa", Color(0xFFFF2D9B), Color(0xFFFF6FC0)),
 )
 
-/** Il tema dell'app: il design system dell'engine con l'ametista di Pampa Notes. */
+/**
+ * Il tema dell'app: il design system dell'engine con l'ametista di Pampa Notes — o con il colore
+ * della materia in cui ci si trova.
+ *
+ * La materia vince **solo** con [AccentMode.BRAND]: chi ha scelto Material You o una tinta dal
+ * selettore ha gia' detto di che colore vuole l'app, e sovrascriverlo e' rubargli la scelta.
+ */
 @Composable
-fun PampaTheme(settings: EngineSettings, content: @Composable () -> Unit) {
+fun PampaTheme(
+  settings: EngineSettings,
+  subject: SubjectIdentity? = null,
+  content: @Composable () -> Unit,
+) {
+  val target = if (settings.accentMode == AccentMode.BRAND && subject != null) subjectAccent(subject.tone) else PampaNotesBrand
   FluidTheme(
     settings = settings,
-    brand = PampaNotesBrand,
+    brand = rememberAnimatedAccent(target),
     presets = pampaAccentPresets,
     content = content,
   )
+}
+
+/**
+ * L'accento che si muove da un colore all'altro invece di scattare.
+ *
+ * Il passaggio da una materia all'altra sul tablet non ha una transizione di rotta — la barra
+ * laterale cambia solo il pannello di fianco — quindi l'accento si anima da solo, e con lui tutta
+ * la scala che l'engine ne deriva. I poli invece scattano: influiscono solo su secondary e
+ * tertiary, e un'interpolazione fra due sistemi di poli non e' un colore in mezzo, e' rumore.
+ */
+@Composable
+private fun rememberAnimatedAccent(target: AccentPreset): AccentPreset {
+  val light by animateColorAsState(target.light, tween(FluidMotion.DurationExpand), label = "pampaAccentLight")
+  val dark by animateColorAsState(target.dark, tween(FluidMotion.DurationExpand), label = "pampaAccentDark")
+  return target.copy(light = light, dark = dark)
 }

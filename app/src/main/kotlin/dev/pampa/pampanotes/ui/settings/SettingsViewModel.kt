@@ -11,6 +11,8 @@ import dev.antigravity.fluidengine.ai.provider.ProviderId
 import dev.antigravity.fluidengine.foundation.EngineSettings
 import dev.antigravity.fluidengine.foundation.ThemeMode
 import dev.antigravity.fluidengine.storage.EngineSettingsStore
+import dev.pampa.pampanotes.core.refinement.RefinementService
+import dev.pampa.pampanotes.core.repo.RefinementRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
@@ -53,6 +55,10 @@ data class ServicesUiState(
   val groqCheck: CheckState = CheckState.Idle,
   val endpointCheck: CheckState = CheckState.Idle,
   val endpointModels: List<String> = emptyList(),
+  /** I modelli di chat che Groq dichiara, fra cui scegliere quello del raffinamento. */
+  val refinementModels: List<String> = emptyList(),
+  /** Quello che «automatico» sceglierebbe oggi, per dirlo invece di farlo indovinare. */
+  val refinementAuto: String? = null,
 )
 
 @HiltViewModel
@@ -63,6 +69,7 @@ class SettingsViewModel @Inject constructor(
   private val verifier: AiKeyVerifier,
   private val aiSettings: AiSettingsStore,
   private val http: TranscriptionHttp,
+  private val refinement: RefinementRepository,
 ) : ViewModel() {
 
   val engineSettings: StateFlow<EngineSettings> = engineSettingsStore.settings
@@ -184,6 +191,22 @@ class SettingsViewModel @Inject constructor(
 
   /** Vuoto vuol dire "scegli tu": lo risolve il repository leggendo il catalogo di Groq. */
   fun setRefinementModel(model: String) = viewModelScope.launch { settingsStore.setRefinementModel(model.trim()) }
+
+  /**
+   * I modelli fra cui scegliere, dal catalogo di Groq.
+   *
+   * Un elenco e non un campo di testo: un nome di modello scritto a mano e' un nome sbagliato
+   * mezze volte, e l'errore arriva trenta secondi dopo, dal lavoro. Senza chiave l'elenco resta
+   * vuoto e la pagina lo dice.
+   */
+  fun loadRefinementModels() {
+    viewModelScope.launch {
+      val provider = refinement.provider() ?: return@launch
+      val chat = runCatching { provider.listModels().chat.map { it.id } }.getOrDefault(emptyList())
+        .filterNot { it.contains("whisper", ignoreCase = true) || it.contains("tts", ignoreCase = true) }
+      _services.update { it.copy(refinementModels = chat, refinementAuto = RefinementService.pickModel(chat)) }
+    }
+  }
   fun setChunkMinutes(minutes: Int) = viewModelScope.launch { settingsStore.setChunkMinutes(minutes) }
   fun setGroqMaxUploadMb(mb: Int) = viewModelScope.launch { settingsStore.setGroqMaxUploadMb(mb) }
   fun setAutoTranscribe(enabled: Boolean) = viewModelScope.launch { settingsStore.setAutoTranscribeOnImport(enabled) }

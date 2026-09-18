@@ -39,6 +39,8 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import dev.pampa.pampanotes.core.db.FolderEntity
+import dev.pampa.pampanotes.core.repo.FolderRepository
 
 /** Cosa mostrare nel pannello di raffinamento quando si apre. */
 data class RefineDefaults(
@@ -50,6 +52,8 @@ data class RefineDefaults(
 data class SessionUiState(
   val session: SessionEntity? = null,
   val note: NoteEntity? = null,
+  /** La materia della nota: e' quella che colora la schermata. */
+  val folder: FolderEntity? = null,
   val parts: List<AudioPartEntity> = emptyList(),
   /** Tutte le versioni: la grezza e le raffinate che ne discendono. */
   val transcripts: List<TranscriptEntity> = emptyList(),
@@ -80,6 +84,7 @@ class SessionViewModel @Inject constructor(
   savedStateHandle: SavedStateHandle,
   private val repository: SessionRepository,
   private val notes: NoteRepository,
+  private val folders: FolderRepository,
   private val transcription: TranscriptionRepository,
   private val refinement: RefinementRepository,
   private val keys: AiKeyStore,
@@ -107,6 +112,11 @@ class SessionViewModel @Inject constructor(
   @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
   private val noteFlow: Flow<NoteEntity?> = sessionFlow.flatMapLatest { withParts ->
     withParts?.session?.noteId?.let { notes.observe(it) } ?: flowOf(null)
+  }
+
+  @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+  private val folderFlow: Flow<FolderEntity?> = noteFlow.flatMapLatest { note ->
+    note?.let { folders.observe(it.folderId) } ?: flowOf(null)
   }
 
   @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -138,6 +148,7 @@ class SessionViewModel @Inject constructor(
     segmentsFlow,
     transcription.observeBySession(sessionId),
     siblingsFlow,
+    folderFlow,
   ) { values ->
     @Suppress("UNCHECKED_CAST")
     val withParts = values[0] as SessionWithParts?
@@ -146,6 +157,7 @@ class SessionViewModel @Inject constructor(
     SessionUiState(
       session = session,
       note = values[1] as NoteEntity?,
+      folder = values[6] as FolderEntity?,
       parts = withParts?.partsSorted.orEmpty(),
       transcripts = transcripts,
       activeTranscript = transcripts.firstOrNull { it.id == session?.activeTranscriptId }
