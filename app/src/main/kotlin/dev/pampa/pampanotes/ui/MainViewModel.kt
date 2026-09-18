@@ -3,7 +3,6 @@ package dev.pampa.pampanotes.ui
 import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.antigravity.fluidengine.foundation.EngineSettings
 import dev.antigravity.fluidengine.storage.EngineSettingsStore
@@ -12,14 +11,17 @@ import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.ui.importing.ImportRequest
 import dev.pampa.pampanotes.ui.importing.ImportRequestHolder
 import javax.inject.Inject
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
   engineSettingsStore: EngineSettingsStore,
-  settingsStore: PampaSettingsStore,
+  private val settingsStore: PampaSettingsStore,
   private val importRequests: ImportRequestHolder,
 ) : ViewModel() {
 
@@ -29,6 +31,20 @@ class MainViewModel @Inject constructor(
 
   val settings: StateFlow<PampaSettings> = settingsStore.settings
     .stateIn(viewModelScope, SharingStarted.Eagerly, PampaSettings())
+
+  /**
+   * Se il primo avvio e' gia' stato fatto. `null` finche' non si sa.
+   *
+   * Tre stati e non due: il default compilato di [PampaSettings] dice "non fatto", e partire da
+   * quello vorrebbe dire un lampo di benvenuto a ogni apertura per chi l'app ce l'ha da mesi.
+   */
+  val onboardingDone: StateFlow<Boolean?> = settingsStore.settings
+    .map { it.onboardingDone }
+    .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+  fun completeOnboarding() {
+    viewModelScope.launch { settingsStore.setOnboardingDone(true) }
+  }
 
   /**
    * @return vero quando l'intent portava roba da importare, e la navigazione deve aprire il wizard.

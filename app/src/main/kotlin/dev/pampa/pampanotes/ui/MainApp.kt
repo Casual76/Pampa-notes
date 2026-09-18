@@ -76,6 +76,7 @@ import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.ui.common.LocalSubjectRegistry
 import dev.pampa.pampanotes.ui.common.SubjectRegistry
 import dev.pampa.pampanotes.ui.importing.ImportRequest
+import dev.pampa.pampanotes.ui.onboarding.OnboardingRoute
 import dev.pampa.pampanotes.ui.nav.PampaNavActions
 import dev.pampa.pampanotes.ui.nav.PampaNavHost
 import dev.pampa.pampanotes.ui.nav.PampaSidebar
@@ -104,6 +105,7 @@ fun MainApp(
   incomingIntents: Flow<Intent> = emptyFlow(),
 ) {
   val engineSettings by viewModel.engineSettings.collectAsStateWithLifecycle()
+  val onboardingDone by viewModel.onboardingDone.collectAsStateWithLifecycle()
   val notificationHostState = rememberFluidNotificationHostState()
   val glassModalHostState = rememberFluidGlassModalHostState()
   val routeMotionSignals = rememberRouteMotionSignals()
@@ -123,12 +125,18 @@ fun MainApp(
           // La pagina sotto un modale di vetro resta visibile — e' il senso del materiale — quindi
           // va tolta all'accessibilita' a mano, o TalkBack cammina dentro allo scrim.
           Box(modifier = Modifier.fillMaxSize().fluidGlassModalObscured()) {
-            AppShell(
-              chromeController = chromeController,
-              incomingIntents = incomingIntents,
-              onIntent = viewModel::onIntent,
-              onPickFiles = viewModel::onFilesPicked,
-            )
+            // Finche' non si sa se il primo avvio e' stato fatto non si disegna niente: mezzo
+            // secondo di pagina vuota e' meno peggio di un lampo di benvenuto a ogni apertura.
+            when (onboardingDone) {
+              null -> Unit
+              false -> OnboardingRoute(onDone = viewModel::completeOnboarding)
+              true -> AppShell(
+                chromeController = chromeController,
+                incomingIntents = incomingIntents,
+                onIntent = viewModel::onIntent,
+                onPickFiles = viewModel::onFilesPicked,
+              )
+            }
           }
           FluidGlassModalHost(
             state = glassModalHostState,

@@ -11,6 +11,8 @@ import dev.antigravity.fluidengine.ai.provider.ProviderId
 import dev.antigravity.fluidengine.foundation.EngineSettings
 import dev.antigravity.fluidengine.foundation.ThemeMode
 import dev.antigravity.fluidengine.storage.EngineSettingsStore
+import dev.pampa.pampanotes.core.export.ExportOptions
+import dev.pampa.pampanotes.core.export.ExportOptionsCodec
 import dev.pampa.pampanotes.core.refinement.RefinementService
 import dev.pampa.pampanotes.core.repo.RefinementRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
@@ -27,6 +29,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -77,6 +80,16 @@ class SettingsViewModel @Inject constructor(
 
   val settings: StateFlow<PampaSettings> = settingsStore.settings
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), PampaSettings())
+
+  /**
+   * Le opzioni con cui si esportera' la prossima volta.
+   *
+   * Vivono nelle preferenze e non in un preset del database: sono una preferenza dell'utente, non
+   * un oggetto che si crea, si nomina e si cancella.
+   */
+  val exportDefaults: StateFlow<ExportOptions> = settingsStore.settings
+    .map { ExportOptionsCodec.decode(it.exportDefaultsJson) }
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ExportOptions())
 
   private val _services = MutableStateFlow(ServicesUiState())
   val services: StateFlow<ServicesUiState> = _services.asStateFlow()
@@ -210,4 +223,14 @@ class SettingsViewModel @Inject constructor(
   fun setChunkMinutes(minutes: Int) = viewModelScope.launch { settingsStore.setChunkMinutes(minutes) }
   fun setGroqMaxUploadMb(mb: Int) = viewModelScope.launch { settingsStore.setGroqMaxUploadMb(mb) }
   fun setAutoTranscribe(enabled: Boolean) = viewModelScope.launch { settingsStore.setAutoTranscribeOnImport(enabled) }
+
+  /** La cartella dove finiscono backup ed export. La sceglie anche il primo avvio. */
+  fun setBackupFolder(uri: android.net.Uri) = viewModelScope.launch {
+    settingsStore.setBackupFolderUri(uri.toString())
+  }
+
+  // --- Esportazione ---
+  fun setExportDefaults(options: ExportOptions) = viewModelScope.launch {
+    settingsStore.setExportDefaultsJson(ExportOptionsCodec.encode(options))
+  }
 }

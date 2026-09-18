@@ -521,8 +521,6 @@
   <string name="settings_section_refinement_detail">Quanto ripulire, e con quale modello</string>
   <string name="settings_section_appearance_detail">Tema, colori, aptica</string>
   <string name="settings_section_about_detail">Versione dell\'app e dell\'engine</string>
-  <string name="settings_section_soon_title">Non c\'è ancora niente qui</string>
-  <string name="settings_section_soon_detail">Arriva con il backup e l\'archiviazione.</string>
   <string name="settings_model_auto">Automatico</string>
   <string name="settings_model_auto_detail">Il migliore fra quelli che Groq dichiara: %1$s</string>
   <string name="settings_model_chosen">Scelto</string>
@@ -530,4 +528,95 @@
   <string name="settings_subject_accent_detail">Con i colori del marchio, l\'app prende il colore della materia in cui ti trovi. Con Material You o una tinta scelta, resta quella.</string>
   <string name="note_sources_hint">I file da cui è arrivato il testo. Tocca una riga per riaprire l\'originale.</string>
   <string name="session_words_estimated">I tempi delle singole parole sono stimati: Groq dà i tempi di ogni frase, non di ogni parola. Con il server personale sono allineati davvero.</string>
+  <!-- Backup -->
+  <string name="backup_explain">Un backup è tutto l\'archivio in un file solo: le note, le trascrizioni con i loro tempi e, se vuoi, le registrazioni. Si scrive nella cartella che scegli, anche su Drive.</string>
+  <string name="backup_folder">Cartella</string>
+  <string name="backup_folder_missing">Scegli dove salvare</string>
+  <string name="backup_folder_change">Cambia</string>
+  <string name="backup_include_audio">Includi le registrazioni</string>
+  <string name="backup_include_audio_detail">Sono la parte che pesa. Senza, resta tutto il testo.</string>
+  <string name="backup_include_sources">Includi i documenti originali</string>
+  <string name="backup_include_sources_detail">I PDF e i file da cui le note sono arrivate</string>
+  <string name="backup_contents">Cosa ci finisce dentro</string>
+  <string name="backup_without_audio">· senza registrazioni</string>
+  <string name="backup_last">Ultimo backup</string>
+  <string name="backup_never">Mai</string>
+  <string name="backup_now">Fai un backup adesso</string>
+  <string name="backup_done">Backup fatto</string>
+  <string name="backup_done_detail">%1$s · %2$s</string>
+  <string name="backup_failed">Non ha funzionato</string>
+  <string name="backup_restore_title">Ripristino</string>
+  <string name="backup_restore_detail">Rimette l\'archivio com\'era in un backup. Quello che c\'è adesso viene sostituito, non unito.</string>
+  <string name="backup_restore_action">Ripristina da un file</string>
+  <string name="backup_restore_confirm_title">Ripristinare questo backup?</string>
+  <string name="backup_restore_confirm_message">Dentro c\'è %1$s, di %2$s. Tutto quello che hai adesso nell\'app viene sostituito.</string>
+  <string name="backup_restore_confirm_action">Ripristina</string>
+  <string name="backup_restored_title">Ripristinato</string>
+  <string name="backup_restored_message">L\'app riparte per rileggere l\'archivio da capo.</string>
+  <string name="backup_restart">Riavvia</string>
+  <string name="backup_secrets_note">La chiave di Groq e il token del server non entrano nel backup: sono cifrati con il telefono, e su un altro dispositivo non si aprirebbero comunque. Si riscrivono in Servizi.</string>
+
+  <!-- Archiviazione -->
+  <string name="storage_audio">Registrazioni</string>
+  <string name="storage_sources">Documenti originali</string>
+  <string name="storage_sources_detail">I file da cui le note sono arrivate</string>
+  <string name="storage_database">Database</string>
+  <string name="storage_database_detail">Note, trascrizioni, indice di ricerca</string>
+  <string name="storage_jobs">Lavori in corso</string>
+  <string name="storage_jobs_detail">I pezzi intermedi delle trascrizioni</string>
+  <string name="storage_exports">Pacchetti esportati</string>
+  <string name="storage_exports_detail">Nella cache: si possono togliere sempre</string>
+  <string name="storage_total">In tutto</string>
+  <string name="storage_total_detail">Quello che Pampa Notes occupa sul telefono</string>
+  <string name="storage_cleanup">Fare spazio</string>
+  <string name="storage_cleanup_detail">Nessuna delle due tocca una nota o una registrazione che l\'app usa ancora.</string>
+  <string name="storage_sweep">Togli i file rimasti indietro</string>
+  <string name="storage_clear_exports">Svuota i pacchetti esportati</string>
+  <string name="storage_footnote">I file rimasti indietro sono quelli che nessuna riga cita più: succede quando una nota viene cancellata mentre un lavoro era ancora in coda.</string>
+  <plurals name="storage_swept">
+    <item quantity="one">Tolto %d file</item>
+    <item quantity="other">Tolti %d file</item>
+  </plurals>
+  <plurals name="storage_exports_cleared">
+    <item quantity="one">Tolto %d pacchetto</item>
+    <item quantity="other">Tolti %d pacchetti</item>
+  </plurals>
+
+  <!-- Impostazioni: le sezioni che mancavano -->
+  <string name="settings_section_export_detail">Cosa mettere dentro un pacchetto</string>
+  <string name="settings_section_backup_detail">Dove tenere una copia di tutto</string>
+  <string name="settings_section_storage_detail">Quanto spazio occupa, e come liberarne</string>
+  <string name="settings_export_explain">Con questi valori si apre il pannello di esportazione. Cambiandoli lì, tornano qui.</string>
+
+  <!-- Primo avvio -->
+  <string name="onboarding_step">Passo %1$d di %2$d</string>
+  <string name="onboarding_welcome_title">Pampa Notes</string>
+  <string name="onboarding_welcome_detail">Un ponte fra gli appunti che prendi altrove e gli assistenti a cui li dai da leggere.</string>
+  <string name="onboarding_step_import">Importa</string>
+  <string name="onboarding_step_import_detail">Samsung Notes, PDF, Word, testo e registrazioni</string>
+  <string name="onboarding_step_transcribe">Trascrivi</string>
+  <string name="onboarding_step_transcribe_detail">Whisper, su Groq o sul tuo computer</string>
+  <string name="onboarding_step_export">Esporta</string>
+  <string name="onboarding_step_export_detail">Un pacchetto Markdown con le regole per Claude, ChatGPT o Gemini</string>
+  <string name="onboarding_not_assistant">Quello che non fa: non riassume, non risponde a domande, non ha un assistente dentro.</string>
+  <string name="onboarding_import_title">Da dove arrivano gli appunti</string>
+  <string name="onboarding_import_detail">Non si scrive qui: si porta qui quello che hai già scritto altrove.</string>
+  <string name="onboarding_import_samsung">Da Samsung Notes</string>
+  <string name="onboarding_import_samsung_detail">Condividi la nota: arrivano titolo, testo e registrazioni insieme</string>
+  <string name="onboarding_import_share">Da qualsiasi app</string>
+  <string name="onboarding_import_share_detail">Condividi, oppure «Apri con» da un gestore file</string>
+  <string name="onboarding_import_picker">Dal tasto importa</string>
+  <string name="onboarding_import_picker_detail">In Altro, o dalla schermata di una cartella</string>
+  <string name="onboarding_provider_title">Chi trascrive</string>
+  <string name="onboarding_provider_detail">Groq è nel cloud e vuole una chiave gratuita. Il server personale gira sul tuo computer e dà anche i tempi di ogni parola.</string>
+  <string name="onboarding_server_detail">L\'indirizzo del computer di casa, con la porta. Il server si installa da companion/ nel repository.</string>
+  <string name="onboarding_provider_later">Si può anche lasciare stare adesso: la stessa pagina sta in Impostazioni, sotto Servizi.</string>
+  <string name="onboarding_backup_title">Una copia al sicuro</string>
+  <string name="onboarding_backup_detail">Una cartella dove tenere i backup e i pacchetti esportati. Va bene anche Drive: i file ci finiscono dentro come in una cartella qualsiasi.</string>
+  <string name="onboarding_backup_choose">Scegli la cartella</string>
+  <string name="onboarding_backup_chosen">Cartella scelta · cambiala</string>
+  <string name="onboarding_backup_later">Anche questa si può scegliere dopo, in Impostazioni.</string>
+  <string name="onboarding_next">Avanti</string>
+  <string name="onboarding_start">Comincia</string>
+  <string name="onboarding_skip">Salta</string>
 </resources>

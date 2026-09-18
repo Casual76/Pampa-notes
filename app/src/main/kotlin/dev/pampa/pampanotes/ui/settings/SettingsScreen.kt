@@ -30,7 +30,6 @@ import dev.antigravity.fluidengine.ui.fluid.FluidSectionHeader
 import dev.antigravity.fluidengine.ui.fluid.FluidSegmentedControl
 import dev.antigravity.fluidengine.ui.fluid.FluidSwitch
 import dev.antigravity.fluidengine.ui.fluid.FluidTextField
-import dev.antigravity.fluidengine.ui.theme.FluidEmptyState
 import dev.antigravity.fluidengine.ui.theme.FluidInlineMessage
 import dev.antigravity.fluidengine.ui.theme.FluidListDivider
 import dev.antigravity.fluidengine.ui.theme.FluidListGroup
@@ -39,6 +38,9 @@ import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.BuildConfig
 import dev.pampa.pampanotes.R
+import dev.pampa.pampanotes.core.export.ExportFormat
+import dev.pampa.pampanotes.core.export.ExportOptions
+import dev.pampa.pampanotes.core.export.TranscriptChoice
 import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.RefinementPreset
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
@@ -46,15 +48,18 @@ import dev.pampa.pampanotes.ui.common.jobErrorText
 import dev.pampa.pampanotes.ui.nav.SettingsSection
 
 /**
- * Le sezioni che hanno qualcosa dentro, nell'ordine in cui si leggono.
+ * Le sezioni, nell'ordine in cui si leggono.
  *
- * Le altre tre dell'enum — export, backup, archiviazione — arrivano con M8: elencare una pagina
- * vuota e' peggio di non elencarla.
+ * Prima quello che riguarda il testo che entra — servizi, trascrizione, raffinamento — poi quello
+ * che esce, poi l'app. Non e' l'ordine dell'enum: quello e' l'ordine in cui sono state scritte.
  */
 private val settingsSections = listOf(
   SettingsSection.SERVICES,
   SettingsSection.TRANSCRIPTION,
   SettingsSection.REFINEMENT,
+  SettingsSection.EXPORT,
+  SettingsSection.BACKUP,
+  SettingsSection.STORAGE,
   SettingsSection.APPEARANCE,
   SettingsSection.ABOUT,
 )
@@ -113,13 +118,33 @@ private fun SettingsSection.detail(): String = stringResource(
     SettingsSection.REFINEMENT -> R.string.settings_section_refinement_detail
     SettingsSection.APPEARANCE -> R.string.settings_section_appearance_detail
     SettingsSection.ABOUT -> R.string.settings_section_about_detail
-    SettingsSection.EXPORT, SettingsSection.BACKUP, SettingsSection.STORAGE -> R.string.settings_section_soon_detail
+    SettingsSection.EXPORT -> R.string.settings_section_export_detail
+    SettingsSection.BACKUP -> R.string.settings_section_backup_detail
+    SettingsSection.STORAGE -> R.string.settings_section_storage_detail
   },
 )
 
-/** Una sezione delle impostazioni: la sua pagina, con dentro solo le sue voci. */
+/**
+ * Una sezione delle impostazioni: la sua pagina, con dentro solo le sue voci.
+ *
+ * Backup e archiviazione hanno un ViewModel loro e stanno in un file loro: scrivono su disco e
+ * cancellano file, cioe' fanno un mestiere diverso dal salvare una preferenza, e tenerli qui
+ * avrebbe fatto di [SettingsViewModel] il posto da cui passa tutto.
+ */
 @Composable
 fun SettingsSectionRoute(
+  section: SettingsSection,
+  onBack: () -> Unit,
+) {
+  when (section) {
+    SettingsSection.BACKUP -> BackupSectionRoute(onBack = onBack)
+    SettingsSection.STORAGE -> StorageSectionRoute(onBack = onBack)
+    else -> PreferencesSectionRoute(section = section, onBack = onBack)
+  }
+}
+
+@Composable
+private fun PreferencesSectionRoute(
   section: SettingsSection,
   onBack: () -> Unit,
   viewModel: SettingsViewModel = hiltViewModel(),
@@ -127,6 +152,7 @@ fun SettingsSectionRoute(
   val engine by viewModel.engineSettings.collectAsStateWithLifecycle()
   val settings by viewModel.settings.collectAsStateWithLifecycle()
   val services by viewModel.services.collectAsStateWithLifecycle()
+  val exportDefaults by viewModel.exportDefaults.collectAsStateWithLifecycle()
 
   var groqKey by remember { mutableStateOf("") }
   var endpointUrl by remember(settings.endpointUrl) { mutableStateOf(settings.endpointUrl) }
@@ -165,12 +191,9 @@ fun SettingsSectionRoute(
       SettingsSection.REFINEMENT -> refinementSection(settings = settings, services = services, viewModel = viewModel)
       SettingsSection.APPEARANCE -> appearanceSection(engine = engine, viewModel = viewModel)
       SettingsSection.ABOUT -> aboutSection()
-      SettingsSection.EXPORT, SettingsSection.BACKUP, SettingsSection.STORAGE -> item {
-        FluidEmptyState(
-          title = stringResource(R.string.settings_section_soon_title),
-          detail = stringResource(R.string.settings_section_soon_detail),
-        )
-      }
+      SettingsSection.EXPORT -> exportSection(defaults = exportDefaults, viewModel = viewModel)
+      // Hanno una pagina loro, e qui non ci si arriva mai.
+      SettingsSection.BACKUP, SettingsSection.STORAGE -> Unit
     }
   }
 }
@@ -459,6 +482,94 @@ private fun LazyListScope.refinementSection(
           badge = if (settings.refinementModel == model) chosen else null,
         )
       }
+    }
+  }
+}
+
+// -------------------------------------------------------------------------------------------------
+// Esportazione
+// -------------------------------------------------------------------------------------------------
+
+/**
+ * Cosa finisce dentro un pacchetto, di default.
+ *
+ * Sono i valori con cui si apre il pannello di export, e si riscrivono da soli dopo ogni export
+ * riuscito: questa pagina serve a cambiarli senza dover esportare qualcosa per farlo.
+ */
+private fun LazyListScope.exportSection(defaults: ExportOptions, viewModel: SettingsViewModel) {
+  item { FluidSectionFootnote(text = stringResource(R.string.settings_export_explain)) }
+
+  item {
+    val formatLabels = mapOf(
+      ExportFormat.BUNDLE to stringResource(R.string.export_format_bundle),
+      ExportFormat.SINGLE to stringResource(R.string.export_format_single),
+    )
+    FluidSegmentedControl(
+      options = ExportFormat.entries.toList(),
+      selected = defaults.format,
+      onSelect = { viewModel.setExportDefaults(defaults.copy(format = it)) },
+      label = { formatLabels.getValue(it) },
+    )
+  }
+
+  item {
+    val transcriptLabels = mapOf(
+      TranscriptChoice.BEST to stringResource(R.string.export_transcript_best),
+      TranscriptChoice.RAW to stringResource(R.string.export_transcript_raw),
+    )
+    FluidSegmentedControl(
+      options = TranscriptChoice.entries.toList(),
+      selected = defaults.transcript,
+      onSelect = { viewModel.setExportDefaults(defaults.copy(transcript = it)) },
+      label = { transcriptLabels.getValue(it) },
+    )
+  }
+
+  item {
+    FluidListGroup {
+      FluidListRow(
+        title = stringResource(R.string.export_timestamps),
+        subtitle = stringResource(R.string.export_timestamps_detail),
+        badge = {
+          FluidSwitch(
+            checked = defaults.timestamps,
+            onCheckedChange = { viewModel.setExportDefaults(defaults.copy(timestamps = it)) },
+          )
+        },
+      )
+      FluidListDivider()
+      FluidListRow(
+        title = stringResource(R.string.export_skill),
+        subtitle = stringResource(R.string.export_skill_detail),
+        badge = {
+          FluidSwitch(
+            checked = defaults.includeSkill,
+            onCheckedChange = { viewModel.setExportDefaults(defaults.copy(includeSkill = it)) },
+          )
+        },
+      )
+      FluidListDivider()
+      FluidListRow(
+        title = stringResource(R.string.export_audio),
+        subtitle = stringResource(R.string.export_audio_detail),
+        badge = {
+          FluidSwitch(
+            checked = defaults.includeAudio,
+            onCheckedChange = { viewModel.setExportDefaults(defaults.copy(includeAudio = it)) },
+          )
+        },
+      )
+      FluidListDivider()
+      FluidListRow(
+        title = stringResource(R.string.export_sources),
+        subtitle = stringResource(R.string.export_sources_detail),
+        badge = {
+          FluidSwitch(
+            checked = defaults.includeSources,
+            onCheckedChange = { viewModel.setExportDefaults(defaults.copy(includeSources = it)) },
+          )
+        },
+      )
     }
   }
 }

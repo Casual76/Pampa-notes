@@ -1,8 +1,5 @@
 package dev.pampa.pampanotes.ui.more
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ListAlt
 import androidx.compose.material.icons.rounded.CloudUpload
@@ -10,26 +7,18 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.antigravity.fluidengine.ui.fluid.ContinuousCornerShape
 import dev.antigravity.fluidengine.ui.fluid.FluidAmbient
 import dev.antigravity.fluidengine.ui.fluid.FluidHeroMotif
 import dev.antigravity.fluidengine.ui.fluid.FluidHeroTone
-import dev.antigravity.fluidengine.ui.fluid.FluidRadius
 import dev.antigravity.fluidengine.ui.fluid.FluidScreen
 import dev.antigravity.fluidengine.ui.fluid.FluidSectionHeader
 import dev.antigravity.fluidengine.ui.theme.FluidListDivider
@@ -39,6 +28,7 @@ import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.export.ExportScope
+import dev.pampa.pampanotes.ui.common.RowIcon
 import dev.pampa.pampanotes.ui.export.ExportSheet
 
 /**
@@ -122,28 +112,5 @@ fun MoreRoute(
 
   if (exporting) {
     ExportSheet(scope = ExportScope.Everything, onDismiss = { exporting = false })
-  }
-}
-
-/** La piastrella colorata di una riga: il tono sta qui, mai sullo sfondo della riga. */
-@Composable
-private fun RowIcon(icon: ImageVector, tone: FluidTone) {
-  val scheme = MaterialTheme.colorScheme
-  val color = when (tone) {
-    FluidTone.Primary -> scheme.primary
-    FluidTone.Info -> scheme.secondary
-    FluidTone.Success -> scheme.tertiary
-    FluidTone.Warning -> scheme.secondary
-    FluidTone.Danger -> scheme.error
-    FluidTone.Neutral -> scheme.onSurfaceVariant
-  }
-  Box(
-    modifier = Modifier
-      .size(30.dp)
-      .clip(ContinuousCornerShape(FluidRadius.Small))
-      .background(color.copy(alpha = 0.16f)),
-    contentAlignment = Alignment.Center,
-  ) {
-    Icon(imageVector = icon, contentDescription = null, tint = color, modifier = Modifier.size(18.dp))
   }
 }

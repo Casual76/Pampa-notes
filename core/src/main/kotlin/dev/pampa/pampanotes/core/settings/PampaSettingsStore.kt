@@ -61,6 +61,14 @@ data class PampaSettings(
   val autoBackup: Boolean = false,
   val lastBackupAt: Long = 0L,
   val lastExportPresetId: String = "",
+  /**
+   * Le opzioni con cui si esporta, in JSON.
+   *
+   * Si riscrivono da sole dopo ogni export riuscito: chi esporta due volte di fila vuole quasi
+   * sempre le stesse cose dentro, e ritoccare cinque interruttori ogni volta e' il tipo di attrito
+   * per cui una funzione smette di essere usata.
+   */
+  val exportDefaultsJson: String = "",
   /** Il provider finto, solo nelle build di debug: la UI si prova senza spendere quota. */
   val fakeProviderEnabled: Boolean = false,
 ) {
@@ -99,6 +107,7 @@ class PampaSettingsStore(
   suspend fun setAutoBackup(enabled: Boolean) = edit { it[AutoBackup] = enabled }
   suspend fun setLastBackupAt(atMillis: Long) = edit { it[LastBackupAt] = atMillis }
   suspend fun setLastExportPresetId(id: String) = edit { it[LastExportPreset] = id }
+  suspend fun setExportDefaultsJson(json: String) = edit { it[ExportDefaults] = json }
   suspend fun setFakeProviderEnabled(enabled: Boolean) = edit { it[FakeProvider] = enabled }
 
   /** Il token in chiaro, decifrato al momento: non passa mai da un Flow. */
@@ -141,6 +150,7 @@ class PampaSettingsStore(
     autoBackup = this[AutoBackup] ?: false,
     lastBackupAt = this[LastBackupAt] ?: 0L,
     lastExportPresetId = this[LastExportPreset] ?: "",
+    exportDefaultsJson = this[ExportDefaults] ?: "",
     fakeProviderEnabled = this[FakeProvider] ?: false,
   )
 
@@ -167,6 +177,7 @@ class PampaSettingsStore(
     val AutoBackup = booleanPreferencesKey("auto_backup")
     val LastBackupAt = longPreferencesKey("last_backup_at")
     val LastExportPreset = stringPreferencesKey("last_export_preset")
+    val ExportDefaults = stringPreferencesKey("export_defaults")
     val FakeProvider = booleanPreferencesKey("fake_provider")
   }
 }

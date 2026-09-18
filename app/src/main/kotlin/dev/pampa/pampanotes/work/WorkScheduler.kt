@@ -45,6 +45,16 @@ class WorkScheduler @Inject constructor(
     WorkManager.getInstance(context).cancelUniqueWork(workName(providerId))
   }
 
+  /**
+   * Ferma tutte le code.
+   *
+   * Serve al ripristino: un worker che sta scrivendo il risultato di una trascrizione dentro il
+   * database che si sta per sostituire lo riscriverebbe un secondo dopo, sopra quello ripristinato.
+   */
+  fun stopAll() {
+    WorkManager.getInstance(context).cancelAllWorkByTag(TAG)
+  }
+
   private fun workName(providerId: String) = "$WORK_PREFIX$providerId"
 
   companion object {

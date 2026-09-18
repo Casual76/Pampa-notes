@@ -13,6 +13,7 @@ import dev.pampa.pampanotes.core.export.ExportDestination
 import dev.pampa.pampanotes.core.export.ExportFailure
 import dev.pampa.pampanotes.core.export.ExportLabels
 import dev.pampa.pampanotes.core.export.ExportOptions
+import dev.pampa.pampanotes.core.export.ExportOptionsCodec
 import dev.pampa.pampanotes.core.export.ExportResult
 import dev.pampa.pampanotes.core.export.ExportScope
 import dev.pampa.pampanotes.core.export.ExportService
@@ -72,6 +73,10 @@ class ExportViewModel @Inject constructor(
       _uiState.update {
         it.copy(
           stage = ExportStage.CONFIGURING,
+          // Le stesse opzioni dell'ultima volta: chi esporta due volte vuole quasi sempre le
+          // stesse cose dentro, e cinque interruttori da rimettere ogni volta sono il tipo di
+          // attrito per cui una funzione smette di essere usata.
+          options = ExportOptionsCodec.decode(current.exportDefaultsJson),
           result = null,
           error = null,
           progress = 0f,
@@ -146,6 +151,7 @@ class ExportViewModel @Inject constructor(
           labels = labels,
         ) { progress -> _uiState.update { it.copy(progress = progress) } }
         _uiState.update { it.copy(stage = ExportStage.DONE, result = result, progress = 1f) }
+        settings.setExportDefaultsJson(ExportOptionsCodec.encode(_uiState.value.options))
       } catch (cancelled: kotlinx.coroutines.CancellationException) {
         throw cancelled
       } catch (failure: Throwable) {

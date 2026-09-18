@@ -6,6 +6,7 @@ import dev.pampa.pampanotes.core.db.SourceKind
 import dev.pampa.pampanotes.core.db.SourceStatus
 import dev.pampa.pampanotes.core.db.TranscriptEntity
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
 /** Cosa si esporta: una nota, una cartella con tutto quello che contiene, o l'archivio intero. */
 sealed interface ExportScope {
@@ -41,6 +42,22 @@ data class ExportOptions(
   /** `SKILL.md` e `instructions.md`: le regole con cui un assistente deve trattare queste fonti. */
   val includeSkill: Boolean = true,
 )
+
+/**
+ * Le opzioni salvate come testo, per le preferenze.
+ *
+ * Indulgente in lettura: una stringa vuota, o scritta da una versione che aveva un'opzione in
+ * meno, torna ai default invece di far fallire l'apertura del pannello di export.
+ */
+object ExportOptionsCodec {
+  private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+  fun decode(raw: String): ExportOptions =
+    if (raw.isBlank()) ExportOptions()
+    else runCatching { json.decodeFromString(ExportOptions.serializer(), raw) }.getOrDefault(ExportOptions())
+
+  fun encode(options: ExportOptions): String = json.encodeToString(ExportOptions.serializer(), options)
+}
 
 // -------------------------------------------------------------------------------------------------
 // Quello che si e' raccolto dal database, pronto da scrivere. Nessun DAO oltre questo punto: i

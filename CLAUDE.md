@@ -95,6 +95,14 @@ Cartella (annidabile)
             └── Segmento — testo con i tempi, relativi alla parte e assoluti nella sessione
 ```
 
+Il **primo avvio** (`ui/onboarding/`) sono quattro passi e nessuno e' obbligatorio: cosa fa l'app,
+da dove arrivano gli appunti, chi trascrive, dove va il backup. Si puo' arrivare in fondo senza
+configurare niente, perche' un avvio che non lascia entrare finche' non gli si da' una chiave API e'
+un avvio che si chiude; quello che chiede lo chiede pero' adesso, che e' l'unico momento in cui
+qualcuno scrive l'indirizzo di un server. Finche' `onboardingDone` non si sa — e' `null`, non
+`false` — la shell non disegna niente: il default compilato direbbe «non fatto», e sarebbe un lampo
+di benvenuto a ogni apertura.
+
 `JobEntity` è la coda: una riga per lavoro, il worker la porta avanti, la UI la guarda. Una coda per
 provider (`groq`, `custom`), concorrenza 1 dentro ciascuna.
 
@@ -107,7 +115,32 @@ di una tabella con chiave testuale non promette di restare lo stesso.
 Gli URI che arrivano da una condivisione valgono una volta sola, quindi **si copia sempre**:
 `filesDir/audio/<partId>.<ext>`, `filesDir/sources/<sourceId>.<ext>`, `filesDir/jobs/<jobId>/` per i
 pezzi intermedi di una trascrizione, `cacheDir/exports/` per i bundle. `StorageRepository.sweepOrphans`
-toglie quelli che nessuna riga cita più.
+toglie quelli che nessuna riga cita più, e la pagina Archiviazione e' il posto da cui si chiede.
+
+## Backup e ripristino
+
+Un file solo, uno zip nella cartella che l'utente sceglie col SAF: `manifest.json` per primo, poi
+`database/pampa_notes.db`, poi `files/audio/` e `files/sources/`. Il manifesto sta davanti perche'
+leggerlo non costa aprire i gigabyte che seguono: e' cosi' che la schermata puo' dire «3 note, 1
+registrazione, di oggi» **prima** di chiedere conferma, che e' l'unico momento in cui accorgersi di
+aver scelto il backup di marzo costa un tocco invece di un mese di appunti.
+
+Quattro cose non ovvie, tutte in `core/backup/`:
+
+- **Il database si copia, non si zippa vivo.** Room scrive in WAL: il file principale da solo puo'
+  essere indietro di minuti. `snapshotDatabase` fa `PRAGMA wal_checkpoint(TRUNCATE)` e poi copia.
+- **Niente segreti dentro.** La chiave di Groq e il token del server sono cifrati col Keystore del
+  telefono, che non esce dal telefono: in un file su Drive sarebbero in chiaro e su un altro
+  dispositivo non si aprirebbero comunque. `BackupSettings` porta solo le preferenze.
+- **Si estrae in `filesDir/restore`, e solo alla fine si sposta.** Fino al penultimo passo un errore
+  lascia l'archivio dell'utente esattamente com'era. `BackupArchive.accepts` scarta ogni nome fuori
+  dai tre posti previsti: `../../databases/altro.db` dentro uno zip e' il modo classico di far
+  scrivere a un'app un file che non e' suo.
+- **Dopo, l'app si riavvia.** Il database e' un altro file e ogni ViewModel vivo tiene in mano le
+  righe di prima; ripartire da zero e' l'unico stato di cui fidarsi, e farlo subito evita che la
+  coda di trascrizione riscriva sopra quello appena ripristinato (per questo `WorkScheduler.stopAll`
+  viene prima). Un backup piu' vecchio dello schema corrente va bene — Room migra all'apertura —
+  uno piu' nuovo si rifiuta e lo dice.
 
 ## Stato
 
@@ -121,7 +154,7 @@ toglie quelli che nessuna riga cita più.
 | M5 export bundle e skill | fatto |
 | M6 raffinamento della trascrizione | fatto |
 | M7 DOCX, sdocx, share target completo | fatto |
-| M8 backup, onboarding, pubblicazione | da fare |
+| M8 backup, primo avvio, archiviazione | fatto |
 
 Dopo M7, il rifacimento dell'interfaccia (engine 1.32–1.35): misura di lettura e pagine intere,
 vetro solo sugli elementi piccoli, tre pannelli sul tablet, la materia che colora l'app, il testo

@@ -491,8 +491,6 @@
   <string name="settings_section_refinement_detail">How much to clean up, and with which model</string>
   <string name="settings_section_appearance_detail">Theme, colours, haptics</string>
   <string name="settings_section_about_detail">App and engine version</string>
-  <string name="settings_section_soon_title">Nothing here yet</string>
-  <string name="settings_section_soon_detail">Coming with backup and storage.</string>
   <string name="settings_model_auto">Automatic</string>
   <string name="settings_model_auto_detail">The best of what Groq lists: %1$s</string>
   <string name="settings_model_chosen">Chosen</string>
@@ -500,4 +498,95 @@
   <string name="settings_subject_accent_detail">With the brand colours, the app takes the colour of the subject you are in. With Material You or a chosen tint, that one stays.</string>
   <string name="note_sources_hint">The files the text came from. Tap a row to reopen the original.</string>
   <string name="session_words_estimated">Per-word timings are estimated: Groq gives per-sentence times, not per-word. With the personal server they are truly aligned.</string>
+  <!-- Backup -->
+  <string name="backup_explain">A backup is the whole archive in one file: notes, transcripts with their timings and, if you want, the recordings. It is written to the folder you choose, Drive included.</string>
+  <string name="backup_folder">Folder</string>
+  <string name="backup_folder_missing">Choose where to save</string>
+  <string name="backup_folder_change">Change</string>
+  <string name="backup_include_audio">Include the recordings</string>
+  <string name="backup_include_audio_detail">They are the heavy part. Without them you still get all the text.</string>
+  <string name="backup_include_sources">Include the original documents</string>
+  <string name="backup_include_sources_detail">The PDFs and files the notes came from</string>
+  <string name="backup_contents">What goes in</string>
+  <string name="backup_without_audio">· no recordings</string>
+  <string name="backup_last">Last backup</string>
+  <string name="backup_never">Never</string>
+  <string name="backup_now">Back up now</string>
+  <string name="backup_done">Backed up</string>
+  <string name="backup_done_detail">%1$s · %2$s</string>
+  <string name="backup_failed">That did not work</string>
+  <string name="backup_restore_title">Restore</string>
+  <string name="backup_restore_detail">Puts the archive back as it was in a backup. What is here now is replaced, not merged.</string>
+  <string name="backup_restore_action">Restore from a file</string>
+  <string name="backup_restore_confirm_title">Restore this backup?</string>
+  <string name="backup_restore_confirm_message">It holds %1$s, from %2$s. Everything you have in the app now is replaced.</string>
+  <string name="backup_restore_confirm_action">Restore</string>
+  <string name="backup_restored_title">Restored</string>
+  <string name="backup_restored_message">The app restarts to read the archive from scratch.</string>
+  <string name="backup_restart">Restart</string>
+  <string name="backup_secrets_note">The Groq key and the server token stay out of the backup: they are encrypted with this phone, and would not open on another device anyway. Type them again under Services.</string>
+
+  <!-- Storage -->
+  <string name="storage_audio">Recordings</string>
+  <string name="storage_sources">Original documents</string>
+  <string name="storage_sources_detail">The files the notes came from</string>
+  <string name="storage_database">Database</string>
+  <string name="storage_database_detail">Notes, transcripts, search index</string>
+  <string name="storage_jobs">Jobs in flight</string>
+  <string name="storage_jobs_detail">The intermediate pieces of a transcription</string>
+  <string name="storage_exports">Exported bundles</string>
+  <string name="storage_exports_detail">In the cache: always safe to remove</string>
+  <string name="storage_total">Altogether</string>
+  <string name="storage_total_detail">What Pampa Notes takes up on the phone</string>
+  <string name="storage_cleanup">Free some space</string>
+  <string name="storage_cleanup_detail">Neither one touches a note or a recording the app still uses.</string>
+  <string name="storage_sweep">Remove left-behind files</string>
+  <string name="storage_clear_exports">Empty the exported bundles</string>
+  <string name="storage_footnote">Left-behind files are the ones no row mentions any more: it happens when a note is deleted while a job was still queued.</string>
+  <plurals name="storage_swept">
+    <item quantity="one">Removed %d file</item>
+    <item quantity="other">Removed %d files</item>
+  </plurals>
+  <plurals name="storage_exports_cleared">
+    <item quantity="one">Removed %d bundle</item>
+    <item quantity="other">Removed %d bundles</item>
+  </plurals>
+
+  <!-- Settings: the sections that were missing -->
+  <string name="settings_section_export_detail">What goes inside a bundle</string>
+  <string name="settings_section_backup_detail">Where to keep a copy of everything</string>
+  <string name="settings_section_storage_detail">How much space it takes, and how to free some</string>
+  <string name="settings_export_explain">The export panel opens with these. Change them there and they come back here.</string>
+
+  <!-- First run -->
+  <string name="onboarding_step">Step %1$d of %2$d</string>
+  <string name="onboarding_welcome_title">Pampa Notes</string>
+  <string name="onboarding_welcome_detail">A bridge between the notes you take elsewhere and the assistants you hand them to.</string>
+  <string name="onboarding_step_import">Import</string>
+  <string name="onboarding_step_import_detail">Samsung Notes, PDF, Word, text and recordings</string>
+  <string name="onboarding_step_transcribe">Transcribe</string>
+  <string name="onboarding_step_transcribe_detail">Whisper, on Groq or on your own computer</string>
+  <string name="onboarding_step_export">Export</string>
+  <string name="onboarding_step_export_detail">A Markdown bundle with the rules for Claude, ChatGPT or Gemini</string>
+  <string name="onboarding_not_assistant">What it does not do: no summaries, no answers, no assistant inside.</string>
+  <string name="onboarding_import_title">Where the notes come from</string>
+  <string name="onboarding_import_detail">You do not write here: you bring in what you have already written elsewhere.</string>
+  <string name="onboarding_import_samsung">From Samsung Notes</string>
+  <string name="onboarding_import_samsung_detail">Share the note: title, text and recordings arrive together</string>
+  <string name="onboarding_import_share">From any app</string>
+  <string name="onboarding_import_share_detail">Share, or «Open with» from a file manager</string>
+  <string name="onboarding_import_picker">From the import button</string>
+  <string name="onboarding_import_picker_detail">Under More, or from a folder screen</string>
+  <string name="onboarding_provider_title">Who transcribes</string>
+  <string name="onboarding_provider_detail">Groq is in the cloud and wants a free key. The personal server runs on your computer and also gives per-word timings.</string>
+  <string name="onboarding_server_detail">The address of the computer at home, with its port. The server installs from companion/ in the repository.</string>
+  <string name="onboarding_provider_later">You can leave this for now: the same page lives in Settings, under Services.</string>
+  <string name="onboarding_backup_title">A copy kept safe</string>
+  <string name="onboarding_backup_detail">A folder for backups and exported bundles. Drive works too: files land there like in any other folder.</string>
+  <string name="onboarding_backup_choose">Choose the folder</string>
+  <string name="onboarding_backup_chosen">Folder chosen · change it</string>
+  <string name="onboarding_backup_later">This one can be chosen later too, in Settings.</string>
+  <string name="onboarding_next">Next</string>
+  <string name="onboarding_start">Start</string>
+  <string name="onboarding_skip">Skip</string>
 </resources>
