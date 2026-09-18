@@ -4,7 +4,7 @@
     "name": "Pampa Notes",
     "description": "Raccoglie appunti e registrazioni da altre app, li trascrive con Whisper e li esporta come fonti pronte per Claude, ChatGPT o Gemini.",
     "packageName": "dev.pampa.pampanotes",
-    "iconUrl": null,
+    "iconUrl": "",
     "category": "Produttività",
     "developer": "Antigravity",
     "screenshots": [],
