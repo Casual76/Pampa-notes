@@ -5,14 +5,17 @@
 .EXAMPLE
   .\run.ps1
   .\run.ps1 -Model medium -Port 9000
+  .\run.ps1 -IdleMinutes 30
   .\run.ps1 -Token unaparolasegreta
 
 .DESCRIPTION
-  Carica il modello e resta in ascolto. La prima volta scarica i pesi (qualche gigabyte per
-  large-v3) e ci mette un po'; dopo parte in mezzo minuto.
+  Si mette in ascolto subito: il modello si carica alla prima registrazione che arriva, e se ne va
+  da solo dopo qualche minuto di silenzio per restituire la VRAM.
 
-  Stampa gli indirizzi su cui il telefono lo trova. Se non lo trova, quasi sempre e' il firewall
-  di Windows: il comando per aprire la porta lo stampa lui.
+  Per l'uso di tutti i giorni c'e' avvia.cmd, che fa la stessa cosa con un doppio clic.
+
+  Se il tablet non lo trova, quasi sempre e' il firewall: apri-firewall.cmd apre la porta verso la
+  rete di casa, e basta lanciarlo una volta.
 #>
 [CmdletBinding()]
 param(
@@ -20,7 +23,11 @@ param(
   [ValidateSet("auto", "cuda", "cpu")][string]$Device = "auto",
   [int]$Port = 8765,
   [int]$BatchSize = 16,
-  [string]$Token = ""
+  [string]$Token = "",
+  # Dopo quanti minuti senza richieste liberare la memoria della scheda. 0 = tenerla occupata.
+  [int]$IdleMinutes = 10,
+  # Carica il modello subito invece che alla prima registrazione.
+  [switch]$Preload
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,17 +36,25 @@ Set-Location $here
 
 $venvPython = Join-Path $here ".venv\Scripts\python.exe"
 if (-not (Test-Path $venvPython)) {
-  Write-Host "Ambiente non trovato. Lancia prima .\setup.ps1" -ForegroundColor Red
+  Write-Host "Ambiente non trovato. Lancia prima installa.cmd (oppure .\setup.ps1)" -ForegroundColor Red
   exit 1
 }
 
-# La porta aperta nel firewall: senza, il server parte e il telefono non lo vede, che dall'app si
-# legge come "server non raggiungibile" e manda a cercare il problema dalla parte sbagliata.
-$rule = Get-NetFirewallRule -DisplayName "Pampa Notes $Port" -ErrorAction SilentlyContinue
-if (-not $rule) {
+# Il firewall si controlla per porta, non per nome: una regola chiamata come vogliamo noi puo'
+# esistere ed essere quella sbagliata (per esempio creata solo per il profilo Private, mentre la
+# rete di casa e' classificata Public). Cosi' invece si guarda se qualcosa lascia entrare davvero.
+$openForPort = Get-NetFirewallPortFilter -ErrorAction SilentlyContinue |
+  Where-Object { $_.Protocol -eq "TCP" -and $_.LocalPort -eq [string]$Port } |
+  Get-NetFirewallRule -ErrorAction SilentlyContinue |
+  Where-Object { $_.Direction -eq "Inbound" -and $_.Action -eq "Allow" -and $_.Enabled -eq "True" }
+
+if (-not $openForPort) {
   Write-Host "  La porta $Port non risulta aperta nel firewall." -ForegroundColor Yellow
-  Write-Host "  Se il telefono non trova il server, apri un PowerShell come amministratore e lancia:" -ForegroundColor Yellow
-  Write-Host "     New-NetFirewallRule -DisplayName 'Pampa Notes $Port' -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -Profile Private" -ForegroundColor Cyan
+  $public = Get-NetConnectionProfile -ErrorAction SilentlyContinue | Where-Object { $_.NetworkCategory -eq "Public" }
+  if ($public) {
+    Write-Host "  E la rete di questo computer e' classificata Public, dove Windows e' piu' severo." -ForegroundColor Yellow
+  }
+  Write-Host "  Se il tablet non lo trova, lancia apri-firewall.cmd: chiede lui i permessi." -ForegroundColor Cyan
   Write-Host ""
 }
 
@@ -48,8 +63,10 @@ $arguments = @(
   "--model", $Model,
   "--device", $Device,
   "--port", $Port,
-  "--batch-size", $BatchSize
+  "--batch-size", $BatchSize,
+  "--idle-minutes", $IdleMinutes
 )
 if ($Token) { $arguments += @("--token", $Token) }
+if ($Preload) { $arguments += "--preload" }
 
 & $venvPython @arguments
