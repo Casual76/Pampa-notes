@@ -14,11 +14,24 @@
       "manifestPath": "manifest.json",
       "ref": "main"
     },
-    "stable": null,
-    "beta": null,
+    "stable": {
+      "version": "0.1.0",
+      "releaseDate": "2026-09-18",
+      "changelog": "Prima versione pubblica.\n\nPampa Notes fa da ponte fra gli appunti che prendi altrove e gli assistenti IA: importa, trascrive, esporta. Non riassume e non risponde a domande.\n\n**Importa** da Samsung Notes (titolo, testo e registrazioni insieme), da PDF, Word, testo e file audio, condividendo o con «Apri con».\n\n**Trascrive** con Whisper, su Groq con la tua chiave o sul tuo computer con WhisperX. Premuto play, le parole si accendono una a una mentre vengono dette; con il server personale i tempi sono allineati davvero, con Groq sono stimati e l'app lo dice.\n\n**Ripulisce** una trascrizione con un modello di chat, se vuoi. La grezza resta sempre, con i suoi tempi.\n\n**Esporta** un pacchetto Markdown con l'indice e le regole per Claude, ChatGPT o Gemini, pronto da caricare in un Progetto o in un Gem.\n\n**Backup** dell'archivio intero in un file, nella cartella che scegli, Drive compreso. Il ripristino dice cosa c'e' dentro prima di sostituire quello che hai.\n\nSu tablet la barra laterale delle materie sta accanto a quello che stai leggendo, e l'app prende il colore della materia in cui ti trovi.",
+      "releaseTag": "stable-pampa-notes-v0.1.0",
+      "apkAsset": "pampa-notes-0.1.0.apk",
+      "sizeBytes": 10823181
+    },
+    "beta": {
+      "version": "0.1.0",
+      "releaseDate": "2026-09-18",
+      "changelog": "Prima versione pubblica.\n\nPampa Notes fa da ponte fra gli appunti che prendi altrove e gli assistenti IA: importa, trascrive, esporta. Non riassume e non risponde a domande.\n\n**Importa** da Samsung Notes (titolo, testo e registrazioni insieme), da PDF, Word, testo e file audio, condividendo o con «Apri con».\n\n**Trascrive** con Whisper, su Groq con la tua chiave o sul tuo computer con WhisperX. Premuto play, le parole si accendono una a una mentre vengono dette; con il server personale i tempi sono allineati davvero, con Groq sono stimati e l'app lo dice.\n\n**Ripulisce** una trascrizione con un modello di chat, se vuoi. La grezza resta sempre, con i suoi tempi.\n\n**Esporta** un pacchetto Markdown con l'indice e le regole per Claude, ChatGPT o Gemini, pronto da caricare in un Progetto o in un Gem.\n\n**Backup** dell'archivio intero in un file, nella cartella che scegli, Drive compreso. Il ripristino dice cosa c'e' dentro prima di sostituire quello che hai.\n\nSu tablet la barra laterale delle materie sta accanto a quello che stai leggendo, e l'app prende il colore della materia in cui ti trovi.",
+      "releaseTag": "stable-pampa-notes-v0.1.0",
+      "apkAsset": "pampa-notes-0.1.0.apk",
+      "sizeBytes": 10823181
+    },
     "history": []
   },
-
   "engine": {
     "schema": 1,
     "minimumVersion": "0.1.0",
