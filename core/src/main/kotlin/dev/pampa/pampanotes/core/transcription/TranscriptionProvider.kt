@@ -36,6 +36,20 @@ data class RawSegment(
   /** Quanto il modello crede che qui non ci fosse voce: sopra 0.9 di solito e' un'allucinazione. */
   val noSpeechProb: Float? = null,
   val avgLogProb: Float? = null,
+  /**
+   * Le parole con i loro tempi, quando il servizio le da'.
+   *
+   * Vuota di default perche' Groq non le da' mai: e' l'allineamento fonetico di WhisperX che le
+   * produce. Chi non le ha se le fa stimare da [WordTimings], cosi' la UI ha una strada sola.
+   */
+  val words: List<RawWord> = emptyList(),
+)
+
+/** Una parola con i suoi tempi. I millisecondi sono nello stesso riferimento del segmento. */
+data class RawWord(
+  val startMs: Long,
+  val endMs: Long,
+  val text: String,
 )
 
 data class TranscriptResult(

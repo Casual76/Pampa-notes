@@ -72,6 +72,11 @@ import androidx.compose.ui.geometry.Rect
 import dev.antigravity.fluidengine.ui.fluid.fluidExpandOrigin
 import dev.pampa.pampanotes.ui.common.ReportSubject
 import dev.pampa.pampanotes.ui.common.asSubject
+import dev.antigravity.fluidengine.ui.fluid.FluidSectionFootnote
+import dev.antigravity.fluidengine.ui.fluid.FluidSpokenText
+import dev.antigravity.fluidengine.ui.fluid.FluidSpokenWord
+import dev.pampa.pampanotes.core.transcription.WordSource
+import dev.pampa.pampanotes.core.transcription.WordTimings
 
 @Composable
 fun SessionRoute(
@@ -485,12 +490,22 @@ private fun LazyListScope.transcriptBody(
     return
   }
 
+  // Stimati anche quando le parole non ci sono affatto: una trascrizione di prima che il database
+  // le salvasse viene comunque interpolata a schermo, e dirlo e' l'unica cosa onesta.
+  if (state.segments.any { it.wordsEstimated || it.wordsJson == null }) {
+    item(key = "words-estimated") {
+      FluidSectionFootnote(text = stringResource(R.string.session_words_estimated))
+    }
+  }
+
   itemsIndexed(items = paragraphs, key = { index, _ -> "paragraph-$index" }) { index, paragraph ->
     val isActive = index == activeParagraph
     ParagraphCard(
       paragraph = paragraph,
       isActive = isActive,
-      positionMs = if (isActive) positionMs else 0L,
+      // Una lambda e non un valore: la posizione cambia cinque volte al secondo, e passandola come
+      // parametro ogni battito rimisurerebbe il paragrafo. Cosi' cambia solo il disegno.
+      positionMs = { if (isActive) positionMs else 0L },
       onSeek = onSeek,
     )
   }
@@ -511,14 +526,11 @@ private fun LazyListScope.transcriptBody(
 private fun ParagraphCard(
   paragraph: Paragraph,
   isActive: Boolean,
-  positionMs: Long,
+  positionMs: () -> Long,
   onSeek: (Long) -> Unit,
 ) {
   var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
-  val accent = MaterialTheme.colorScheme.primary
-  val spokenIndex = if (isActive) paragraph.segments.indexOfLast { it.sessionStartMs <= positionMs } else -1
-
-  val annotated = remember(paragraph, spokenIndex, accent) { paragraph.annotate(spokenIndex, accent) }
+  val scheme = MaterialTheme.colorScheme
 
   FluidCard(highlighted = isActive, onClick = null, animateContent = false) {
     val spoken = Formats.timestamp(paragraph.startMs)
@@ -526,13 +538,19 @@ private fun ParagraphCard(
     Text(
       text = spoken,
       style = MaterialTheme.typography.labelMedium,
-      color = if (isActive) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+      color = if (isActive) scheme.primary else scheme.onSurfaceVariant,
       fontWeight = FontWeight.SemiBold,
       modifier = Modifier.semantics { contentDescription = atLabel },
     )
-    Text(
-      text = annotated,
+    // Il paragrafo che si sta ascoltando si accende parola per parola; gli altri stanno nel colore
+    // pieno, perche' un testo velato che nessuno sta ascoltando e' solo un testo sbiadito.
+    FluidSpokenText(
+      text = paragraph.text,
+      words = if (isActive) paragraph.words else emptyList(),
+      positionMs = positionMs,
       style = MaterialTheme.typography.bodyLarge,
+      spokenColor = scheme.onSurface,
+      pendingColor = if (isActive) scheme.onSurfaceVariant.copy(alpha = 0.55f) else scheme.onSurface,
       onTextLayout = { layout = it },
       modifier = Modifier
         .fillMaxWidth()
@@ -557,22 +575,29 @@ private class Paragraph(
   val startMs: Long get() = segments.first().sessionStartMs
   val endMs: Long get() = segments.last().sessionEndMs
 
+  /**
+   * Le parole con i loro tempi, nel tempo della sessione.
+   *
+   * Calcolate una volta per paragrafo e non a ogni battito del cronometro: cambiano solo quando
+   * cambiano i segmenti. I tempi salvati sono relativi all'inizio del segmento dentro la parte —
+   * quello che non cambia mai — e qui si riportano alla sessione.
+   */
+  val words: List<FluidSpokenWord> by lazy {
+    val sources = segments.mapIndexed { index, segment ->
+      WordSource(
+        range = ranges[index],
+        startMs = segment.sessionStartMs,
+        endMs = segment.sessionEndMs,
+        words = WordTimings.decode(segment.wordsJson, originMs = segment.sessionStartMs),
+      )
+    }
+    WordTimings.spans(text, sources).map { FluidSpokenWord(it.start, it.end, it.startMs, it.endMs) }
+  }
+
   fun segmentAt(offset: Int): SegmentEntity? {
     val index = ranges.indexOfFirst { offset in it }
     return segments.getOrNull(if (index >= 0) index else ranges.lastIndex)
   }
-
-  fun annotate(spokenIndex: Int, accent: Color): AnnotatedString =
-    buildAnnotatedString {
-      segments.forEachIndexed { index, segment ->
-        if (index > 0) append(' ')
-        if (index == spokenIndex) {
-          withStyle(SpanStyle(color = accent, fontWeight = FontWeight.SemiBold)) { append(segment.text.trim()) }
-        } else {
-          append(segment.text.trim())
-        }
-      }
-    }
 }
 
 /**

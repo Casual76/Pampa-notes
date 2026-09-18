@@ -85,6 +85,9 @@ object SessionAssembler {
     parts.forEach { transcript ->
       val offset = offsets[transcript.part.id] ?: 0L
       transcript.segments.forEachIndexed { index, segment ->
+        // Le parole si riempiono qui, una volta sola: chi non le ha se le fa stimare, e da questo
+        // punto in poi il database ha sempre le parole e la UI ha una strada sola.
+        val filled = WordTimings.fill(segment.words, segment.text, segment.startMs, segment.endMs)
         segments += SessionSegment(
           partId = transcript.part.id,
           indexInPart = index,
@@ -95,6 +98,8 @@ object SessionAssembler {
           text = segment.text,
           noSpeechProb = segment.noSpeechProb,
           avgLogProb = segment.avgLogProb,
+          wordsEncoded = WordTimings.encode(filled.words, originMs = segment.startMs),
+          wordsEstimated = filled.estimated,
         )
       }
       if (transcript.text.isNotBlank()) texts += transcript.text

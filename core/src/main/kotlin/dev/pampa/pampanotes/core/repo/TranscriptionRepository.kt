@@ -272,6 +272,8 @@ class TranscriptionRepository @Inject constructor(
           text = segment.text,
           noSpeechProb = segment.noSpeechProb,
           avgLogProb = segment.avgLogProb,
+          wordsJson = segment.wordsEncoded,
+          wordsEstimated = segment.wordsEstimated,
         )
       },
     )

@@ -101,6 +101,8 @@ def health() -> dict[str, Any]:
         "device": STATE["device"],
         "compute_type": STATE["compute_type"],
         "busy": STATE["busy"],
+        # L'app lo guarda per sapere se il testo si accendera' parola per parola davvero o per stima.
+        "word_timestamps": True,
     }
 
 
@@ -219,6 +221,7 @@ def _transcribe(path: str, language: str | None) -> dict[str, Any]:
                 "compression_ratio": 1.0,
                 "temperature": 0.0,
                 "tokens": [],
+                "words": words_of(segment),
             }
         )
 
@@ -230,6 +233,34 @@ def _transcribe(path: str, language: str | None) -> dict[str, Any]:
         "text": " ".join(s["text"] for s in out),
         "segments": out,
     }
+
+
+def words_of(segment: dict) -> list[dict]:
+    """Le parole allineate di un segmento, quelle con dei tempi.
+
+    whisperx.align() restituisce senza `start`/`end` le parole su cui il modello fonetico non trova
+    il token — numeri, sigle, parole in un'altra lingua. Una parola senza tempi in mezzo alla frase
+    farebbe saltare il cursore dell'app, quindi non si manda: meglio una parola che non si accende
+    di una che si accende a caso.
+    """
+    out = []
+    for word in segment.get("words") or []:
+        text = (word.get("word") or "").strip()
+        if not text:
+            continue
+        start = word.get("start")
+        end = word.get("end")
+        if start is None or end is None:
+            continue
+        out.append(
+            {
+                "word": text,
+                "start": float(start),
+                "end": float(end),
+                "score": float(word.get("score", 0.0)),
+            }
+        )
+    return out
 
 
 def local_addresses(port: int) -> list[str]:

@@ -30,6 +30,8 @@ data class StitchedSegment(
   val avgLogProb: Float?,
   /** Da quale pezzo viene: serve solo a capire i difetti, non alla UI. */
   val chunkIndex: Int,
+  /** Le parole, gia' traslate come il segmento. Vuota quando il servizio non le da'. */
+  val words: List<RawWord> = emptyList(),
 ) : TimedText
 
 data class StitchedTranscript(
@@ -87,6 +89,13 @@ object TranscriptStitcher {
             noSpeechProb = segment.noSpeechProb,
             avgLogProb = segment.avgLogProb,
             chunkIndex = chunk.spec.index,
+            // Le parole portano i tempi del pezzo, come il segmento: stesso offset, stessa regola.
+            words = segment.words.map { word ->
+              word.copy(
+                startMs = chunk.spec.startMs + word.startMs,
+                endMs = chunk.spec.startMs + word.endMs,
+              )
+            },
           )
         }
         .filter { it.text.isNotEmpty() }

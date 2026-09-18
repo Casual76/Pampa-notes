@@ -499,4 +499,5 @@
   <string name="settings_models_missing">Verify the Groq key under Services to see the models to choose from.</string>
   <string name="settings_subject_accent_detail">With the brand colours, the app takes the colour of the subject you are in. With Material You or a chosen tint, that one stays.</string>
   <string name="note_sources_hint">The files the text came from. Tap a row to reopen the original.</string>
+  <string name="session_words_estimated">Per-word timings are estimated: Groq gives per-sentence times, not per-word. With the personal server they are truly aligned.</string>
 </resources>

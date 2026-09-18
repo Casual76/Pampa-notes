@@ -1,6 +1,7 @@
 package dev.pampa.pampanotes.core.db
 
 import android.content.Context
+import androidx.room.AutoMigration
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
@@ -15,8 +16,11 @@ import javax.inject.Singleton
 /**
  * Il database: entita', DAO e l'indice di ricerca.
  *
- * Versione 1. Le aggiunte di colonna passano da `@AutoMigration`; tutto il resto si scrive a mano
+ * Versione 2. Le aggiunte di colonna passano da `@AutoMigration`; tutto il resto si scrive a mano
  * in [Migrations] e si prova con `MigrationTest` sugli schemi esportati in `core/schemas`.
+ *
+ * 1 -> 2: le parole con i loro tempi sui segmenti (`wordsJson`, `wordsEstimated`), per il testo che
+ * si accende mentre l'audio va. Due colonne con un default: una migrazione automatica basta.
  */
 @Database(
   entities = [
@@ -33,8 +37,9 @@ import javax.inject.Singleton
     NoteFts::class,
     TranscriptFts::class,
   ],
-  version = 1,
+  version = 2,
   exportSchema = true,
+  autoMigrations = [AutoMigration(from = 1, to = 2)],
 )
 abstract class PampaDatabase : RoomDatabase() {
   abstract fun folders(): FolderDao

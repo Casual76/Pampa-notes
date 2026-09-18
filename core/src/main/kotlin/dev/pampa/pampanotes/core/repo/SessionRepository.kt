@@ -269,6 +269,8 @@ class SessionRepository @Inject constructor(
           text = segment.text,
           noSpeechProb = segment.noSpeechProb,
           avgLogProb = segment.avgLogProb,
+          wordsJson = segment.wordsEncoded,
+          wordsEstimated = segment.wordsEstimated,
         )
       },
     )
@@ -299,6 +301,10 @@ class SessionRepository @Inject constructor(
     text = entity.text,
     noSpeechProb = entity.noSpeechProb,
     avgLogProb = entity.avgLogProb,
+    // Le parole restano com'erano: i loro tempi sono relativi al segmento dentro la parte, e
+    // ricomporre una sessione non cambia nulla di quel riferimento.
+    wordsEncoded = entity.wordsJson,
+    wordsEstimated = entity.wordsEstimated,
   )
 
   /** Una grezza nuova che eredita l'anagrafica dalle trascrizioni da cui i segmenti vengono. */

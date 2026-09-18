@@ -36,7 +36,7 @@ Due moduli più l'engine come submodule.
 |---|---|
 | `:core` | dominio, Room, DataStore, file, import, trascrizione, raffinamento, export. I package puri (pianificatore dei chunk, cucitura, writer Markdown, parser DOCX) non importano niente di Android e si provano in JVM. |
 | `:app` | UI Compose, navigazione, DI, worker, share target, lettore audio. |
-| `engine/` | [Fluid Engine](https://github.com/Casual76/fluid-engine) 1.34.0, submodule. **Non si modifica da qui**: una modifica non committata a monte sparisce al primo aggiornamento. |
+| `engine/` | [Fluid Engine](https://github.com/Casual76/fluid-engine) 1.35.0, submodule. **Non si modifica da qui**: una modifica non committata a monte sparisce al primo aggiornamento. |
 
 Il design system è quello dell'engine: `FluidScreen`, `FluidListGroup`/`FluidListRow`,
 `ContinuousCornerShape` (mai `RoundedCornerShape`), nessun colore o dimensione scritti a mano,
@@ -115,6 +115,10 @@ toglie quelli che nessuna riga cita più.
 | M6 raffinamento della trascrizione | fatto |
 | M7 DOCX, sdocx, share target completo | fatto |
 | M8 backup, onboarding, pubblicazione | da fare |
+
+Dopo M7, il rifacimento dell'interfaccia (engine 1.32–1.35): misura di lettura e pagine intere,
+vetro solo sugli elementi piccoli, tre pannelli sul tablet, la materia che colora l'app, il testo
+che si accende.
 
 Il piano per esteso: `C:\Users\casua\.claude\plans\praticamente-vorrei-un-applicazione-che-crispy-falcon.md`
 
@@ -219,6 +223,22 @@ Il formato, decodificato da un file vero (`core/src/test/resources/sdocx/fichte.
 
 `SdocxParser` e' tarato su questo file: se non riconosce niente, l'archivio resta come fonte e lo
 dice, invece di importare una nota vuota.
+
+## Il testo che si accende
+
+Premuto play, le parole passano da velate a piene mentre vengono dette. Regge su tre cose:
+
+- **le parole stanno nel database**, sempre. WhisperX le allinea con un modello fonetico; Groq da'
+  solo i tempi di ogni frase, e allora `WordTimings.interpolate` le distribuisce nell'intervallo in
+  proporzione ai caratteri. L'interpolazione si fa **in scrittura** (`SessionAssembler.assemble`),
+  cosi' la UI ha una strada sola. `wordsEstimated` dice quale delle due, e la schermata lo scrive:
+  una parola che si accende e' una promessa di precisione.
+- **i tempi salvati sono relativi al segmento dentro la parte** (`WordTimings.encode`), che e'
+  l'unico riferimento che non cambia mai. Riordinare le parti resta una ricomposizione: se fossero
+  assoluti, ogni riordino vorrebbe dire riscrivere ogni parola di ogni segmento.
+- **il disegno non rimisura**. `FluidSpokenText` dell'engine prende la posizione come lambda e la
+  legge dentro il disegno: a cinque battiti al secondo un parametro rimisurerebbe il paragrafo
+  cinque volte al secondo.
 
 ## Trascrizione
 

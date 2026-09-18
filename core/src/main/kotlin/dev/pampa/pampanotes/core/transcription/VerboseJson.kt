@@ -62,7 +62,27 @@ object VerboseJson {
       text = text,
       noSpeechProb = obj["no_speech_prob"].asDouble()?.toFloat(),
       avgLogProb = obj["avg_logprob"].asDouble()?.toFloat(),
+      words = parseWords(obj["words"]),
     )
+  }
+
+  /**
+   * Le parole di un segmento, quando ci sono.
+   *
+   * Si scartano quelle senza tempi: l'allineamento di WhisperX non trova il token di certi numeri
+   * e sigle e le restituisce senza `start`, e una parola senza tempi in mezzo alla frase farebbe
+   * saltare il cursore. Meglio una parola che non si accende di una che si accende a caso.
+   */
+  private fun parseWords(element: JsonElement?): List<RawWord> {
+    val array = element as? JsonArray ?: return emptyList()
+    return array.mapNotNull { item ->
+      val obj = item as? JsonObject ?: return@mapNotNull null
+      val text = (obj["word"] ?: obj["text"]).asString()?.trim().orEmpty()
+      if (text.isEmpty()) return@mapNotNull null
+      val start = obj["start"].asDouble() ?: return@mapNotNull null
+      val end = obj["end"].asDouble() ?: return@mapNotNull null
+      RawWord(startMs = (start * 1000).roundToLong(), endMs = (end * 1000).roundToLong(), text = text)
+    }
   }
 
   /** L'elenco dei modelli di `GET /models`, in entrambe le forme che i server usano. */

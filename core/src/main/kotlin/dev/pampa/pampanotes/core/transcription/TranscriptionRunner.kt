@@ -53,6 +53,16 @@ data class SessionSegment(
   val text: String,
   val noSpeechProb: Float?,
   val avgLogProb: Float?,
+  /**
+   * Le parole, con i tempi **relativi all'inizio del segmento dentro la parte**.
+   *
+   * Relativi perche' e' quello che non cambia mai: riordinare le parti sposta i tempi di sessione,
+   * e una parola salvata con il tempo assoluto andrebbe riscritta a ogni riordino. Vedi
+   * [WordTimings.encode].
+   */
+  val wordsEncoded: String? = null,
+  /** Vero quando le parole sono una stima e non un allineamento. La schermata lo dice. */
+  val wordsEstimated: Boolean = false,
 )
 
 /** Il risultato di un pezzo, salvato su disco appena arriva. */
@@ -71,7 +81,12 @@ private data class StoredSegment(
   val text: String,
   val noSpeechProb: Float? = null,
   val avgLogProb: Float? = null,
+  /** Con il default vuoto, un lavoro a meta' della versione precedente si rilegge ancora. */
+  val words: List<StoredWord> = emptyList(),
 )
+
+@Serializable
+private data class StoredWord(val startMs: Long, val endMs: Long, val text: String)
 
 /**
  * Da un elenco di file audio a una trascrizione sola.
@@ -282,8 +297,15 @@ class TranscriptionRunner @Inject constructor(
       val stored = json.decodeFromString<StoredChunk>(file.readText())
       ChunkTranscript(
         spec = ChunkSpec(stored.index, stored.startMs, stored.endMs),
-        segments = stored.segments.map {
-          RawSegment(it.startMs, it.endMs, it.text, it.noSpeechProb, it.avgLogProb)
+        segments = stored.segments.map { segment ->
+          RawSegment(
+            startMs = segment.startMs,
+            endMs = segment.endMs,
+            text = segment.text,
+            noSpeechProb = segment.noSpeechProb,
+            avgLogProb = segment.avgLogProb,
+            words = segment.words.map { RawWord(it.startMs, it.endMs, it.text) },
+          )
         },
       )
     }.getOrNull()
@@ -294,8 +316,15 @@ class TranscriptionRunner @Inject constructor(
       index = chunk.spec.index,
       startMs = chunk.spec.startMs,
       endMs = chunk.spec.endMs,
-      segments = chunk.segments.map {
-        StoredSegment(it.startMs, it.endMs, it.text, it.noSpeechProb, it.avgLogProb)
+      segments = chunk.segments.map { segment ->
+        StoredSegment(
+          startMs = segment.startMs,
+          endMs = segment.endMs,
+          text = segment.text,
+          noSpeechProb = segment.noSpeechProb,
+          avgLogProb = segment.avgLogProb,
+          words = segment.words.map { StoredWord(it.startMs, it.endMs, it.text) },
+        )
       },
     )
     runCatching { chunkFile(workDir, chunk.spec.index).writeText(json.encodeToString(stored)) }

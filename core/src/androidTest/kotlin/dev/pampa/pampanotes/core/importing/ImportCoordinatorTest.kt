@@ -45,7 +45,7 @@ class ImportCoordinatorTest {
 
     val storage = StorageRepository(db.audioParts(), db.sources(), db.jobs(), files)
     val notes = NoteRepository(db.notes(), db.tags(), storage)
-    val extractors = TextExtractorRegistry(PlainTextExtractor(), PdfTextExtractor(context))
+    val extractors = TextExtractorRegistry(PlainTextExtractor(), PdfTextExtractor(context), DocxTextExtractor())
     val audio = AudioImporter(files, db.sessions(), db.audioParts())
     coordinator = ImportCoordinator(
       context = context,

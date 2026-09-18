@@ -529,4 +529,5 @@
   <string name="settings_models_missing">Verifica la chiave Groq in Servizi per vedere i modelli fra cui scegliere.</string>
   <string name="settings_subject_accent_detail">Con i colori del marchio, l\'app prende il colore della materia in cui ti trovi. Con Material You o una tinta scelta, resta quella.</string>
   <string name="note_sources_hint">I file da cui è arrivato il testo. Tocca una riga per riaprire l\'originale.</string>
+  <string name="session_words_estimated">I tempi delle singole parole sono stimati: Groq dà i tempi di ogni frase, non di ogni parola. Con il server personale sono allineati davvero.</string>
 </resources>

@@ -1,5 +1,6 @@
 package dev.pampa.pampanotes.core.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Fts4
@@ -175,6 +176,22 @@ data class SegmentEntity(
   val text: String,
   val noSpeechProb: Float? = null,
   val avgLogProb: Float? = null,
+  /**
+   * Le parole con i loro tempi, relativi a [partStartMs]. Vedi `WordTimings.encode`.
+   *
+   * Relativi e non assoluti perche' i tempi dentro la parte sono un fatto sul file audio e non
+   * cambiano mai, mentre quelli di sessione cambiano a ogni riordino: cosi' riordinare resta una
+   * ricomposizione e non una riscrittura di ogni parola di ogni segmento.
+   */
+  val wordsJson: String? = null,
+  /**
+   * Vero quando le parole sono una stima (Groq) e non un allineamento fonetico (WhisperX).
+   *
+   * Il default sta anche nella colonna e non solo in Kotlin: senza, la migrazione automatica non
+   * saprebbe cosa scrivere nelle righe che c'erano gia'.
+   */
+  @ColumnInfo(defaultValue = "0")
+  val wordsEstimated: Boolean = false,
 )
 
 enum class SourceKind { TEXT, MARKDOWN, PDF, DOCX, IMAGE, AUDIO, SDOCX, CLIPBOARD, SHARE, OTHER }
