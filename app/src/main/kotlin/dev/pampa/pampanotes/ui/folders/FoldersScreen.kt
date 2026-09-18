@@ -46,6 +46,10 @@ import dev.pampa.pampanotes.ui.common.folderVividColors
 import dev.pampa.pampanotes.ui.common.toneFromName
 import dev.pampa.pampanotes.core.export.ExportScope
 import dev.pampa.pampanotes.ui.export.ExportSheet
+import androidx.compose.foundation.layout.BoxWithConstraints
+import dev.antigravity.fluidengine.ui.fluid.FluidScreenDefaults
+import dev.antigravity.fluidengine.ui.fluid.fluidGridColumns
+import dev.antigravity.fluidengine.ui.fluid.fluidScreenPadding
 
 /**
  * Le cartelle, come tessere.
@@ -70,6 +74,11 @@ fun FoldersRoute(
   val deleteLabel = stringResource(R.string.action_delete)
   val exportLabel = stringResource(R.string.action_export)
 
+  // Le colonne dalla misura, non dal tipo di schermo: una tessera vale 180 dp, e quante ne stanno
+  // nella colonna di lettura lo dice la larghezza.
+  BoxWithConstraints {
+    val sidePadding = fluidScreenPadding(maxWidth, FluidScreenDefaults.HorizontalPadding, FluidScreenDefaults.ContentMaxWidth)
+    val columns = fluidGridColumns(maxWidth - sidePadding * 2)
   FluidScreen(
     title = stringResource(R.string.folders_title),
     subtitle = stringResource(R.string.folders_subtitle),
@@ -98,7 +107,7 @@ fun FoldersRoute(
     } else {
       // Due colonne a mano invece di una griglia pigra: il contenuto della schermata e' gia' una
       // lista pigra, e annidarne un'altra dentro le toglie l'altezza da misurare.
-      items(state.folders.chunked(2), key = { row -> row.first().folder.id }) { pair ->
+      items(state.folders.chunked(columns), key = { row -> row.first().folder.id }) { pair ->
         Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -118,12 +127,13 @@ fun FoldersRoute(
               },
             )
           }
-          // La riga dispari non lascia una tessera a tutta larghezza: sarebbe una tessera diversa
-          // dalle altre per il solo fatto di essere l'ultima.
-          if (pair.size == 1) Box(modifier = Modifier.weight(1f))
+          // L'ultima riga non lascia tessere piu' larghe delle altre: sarebbero diverse per il solo
+          // fatto di essere le ultime.
+          repeat(columns - pair.size) { Box(modifier = Modifier.weight(1f)) }
         }
       }
     }
+  }
   }
 
   exporting?.let { row ->
@@ -182,9 +192,9 @@ private fun FolderTile(
   FluidVividCard(
     colors = colors,
     modifier = modifier.aspectRatio(1.15f),
-    // Il luccichio sta su una tessera sola in tutta la pagina? No: qui sono tutte uguali, quindi
-    // nessuna lo porta. Una decorazione su tutte e' carta da parati.
-    effect = FluidVividEffect.None,
+    // Le righe del quaderno su tutte, perche' non sono una decorazione: sono quello che una materia
+    // e', un raccoglitore di appunti. Il luccichio invece su tutte sarebbe carta da parati.
+    effect = FluidVividEffect.Ruled,
     onClick = onClick,
     contextActions = contextActions,
   ) {

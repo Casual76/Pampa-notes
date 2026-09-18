@@ -27,6 +27,20 @@ object Routes {
    */
   const val IMPORT = "import"
 
+  /**
+   * La partenza del pannello di dettaglio su una pagina larga: niente di aperto.
+   *
+   * Esiste perche' il back funzioni da solo: con questa sotto, lo stack del dettaglio ha sempre
+   * due voci quando una nota e' aperta, il suo `NavHost` ha il back attivo e, componendosi per
+   * ultimo, vince. Nessun back handler scritto a mano.
+   */
+  const val DETAIL_EMPTY = "detail"
+
+  /** Le rotte che su una pagina larga stanno nel dettaglio: la nota, la sessione, l'editor, l'import. */
+  fun isDetail(route: String?): Boolean = route != null && detailPrefixes.any { route == it || route.startsWith("$it/") }
+
+  private val detailPrefixes = listOf("note", "session", "editor", IMPORT)
+
   fun folder(id: String) = "folder/${Uri.encode(id)}"
   fun note(id: String, tab: String? = null) = "note/${Uri.encode(id)}" + (tab?.let { "?tab=${Uri.encode(it)}" } ?: "")
   fun editor(noteId: String) = "editor/${Uri.encode(noteId)}"

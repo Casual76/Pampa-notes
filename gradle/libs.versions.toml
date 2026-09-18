@@ -4,7 +4,6 @@ agp = "8.13.2"
 kotlin = "2.2.20"
 composeBom = "2026.03.00"
 composeMaterial3Alpha = "1.5.0-alpha16"
-composeAdaptive = "1.2.0"
 ksp = "2.2.20-2.0.4"
 coreKtx = "1.18.0"
 lifecycle = "2.10.0"
@@ -42,9 +41,6 @@ compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview"
 compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
 compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 compose-material3 = { module = "androidx.compose.material3:material3", version.ref = "composeMaterial3Alpha" }
-compose-material3-adaptive = { module = "androidx.compose.material3.adaptive:adaptive", version.ref = "composeAdaptive" }
-compose-material3-adaptive-layout = { module = "androidx.compose.material3.adaptive:adaptive-layout", version.ref = "composeAdaptive" }
-compose-material3-adaptive-navigation = { module = "androidx.compose.material3.adaptive:adaptive-navigation", version.ref = "composeAdaptive" }
 compose-material-icons-extended = { module = "androidx.compose.material:material-icons-extended" }
 compose-foundation = { module = "androidx.compose.foundation:foundation" }
 compose-runtime = { module = "androidx.compose.runtime:runtime" }

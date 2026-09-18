@@ -4,49 +4,42 @@ import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.navigation.NavBackStackEntry
-import androidx.navigation.NavGraph.Companion.findStartDestination
-import androidx.navigation.NavHostController
-import androidx.navigation.NavType
-import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import androidx.navigation.navArgument
 import dev.antigravity.fluidengine.ui.fluid.FluidBarFold
 import dev.antigravity.fluidengine.ui.fluid.FluidChromeController
 import dev.antigravity.fluidengine.ui.fluid.FluidFoldAlignment
@@ -56,50 +49,39 @@ import dev.antigravity.fluidengine.ui.fluid.FluidGlassModalHost
 import dev.antigravity.fluidengine.ui.fluid.FluidMotion
 import dev.antigravity.fluidengine.ui.fluid.FluidMotionPolicyProvider
 import dev.antigravity.fluidengine.ui.fluid.FluidNotificationHost
+import dev.antigravity.fluidengine.ui.fluid.FluidPaneScaffold
 import dev.antigravity.fluidengine.ui.fluid.FluidScrollToTopBus
+import dev.antigravity.fluidengine.ui.fluid.FluidTabBarDefaults
 import dev.antigravity.fluidengine.ui.fluid.FluidTabItem
+import dev.antigravity.fluidengine.ui.fluid.FluidTabRail
+import dev.antigravity.fluidengine.ui.fluid.GlassBackdropState
 import dev.antigravity.fluidengine.ui.fluid.LocalFluidGlassModalHostState
 import dev.antigravity.fluidengine.ui.fluid.LocalFluidNotificationHostState
 import dev.antigravity.fluidengine.ui.fluid.ProvideFluidChrome
 import dev.antigravity.fluidengine.ui.fluid.fluidGlassModalObscured
+import dev.antigravity.fluidengine.ui.fluid.fluidPaneLayout
 import dev.antigravity.fluidengine.ui.fluid.rememberFluidBarFold
 import dev.antigravity.fluidengine.ui.fluid.rememberFluidChromeController
 import dev.antigravity.fluidengine.ui.fluid.rememberFluidChromeScrollConnection
 import dev.antigravity.fluidengine.ui.fluid.rememberFluidGlassModalHostState
 import dev.antigravity.fluidengine.ui.fluid.rememberFluidNotificationHostState
 import dev.antigravity.fluidengine.ui.fluid.rememberGlassBackdrop
-import dev.antigravity.fluidengine.ui.theme.FluidRouteMotion
-import dev.antigravity.fluidengine.ui.theme.FluidRouteMotionHost
+import dev.antigravity.fluidengine.ui.theme.FluidEmptyState
 import dev.antigravity.fluidengine.ui.theme.FluidScreenSurface
 import dev.antigravity.fluidengine.ui.theme.LocalRouteMotionSignals
-import dev.antigravity.fluidengine.ui.theme.MotionOrigin
-import dev.antigravity.fluidengine.ui.theme.RouteMotionSignals
 import dev.antigravity.fluidengine.ui.theme.fluidTouchOriginTracker
 import dev.antigravity.fluidengine.ui.theme.rememberFluidTouchOrigin
 import dev.antigravity.fluidengine.ui.theme.rememberRouteMotionSignals
 import dev.pampa.pampanotes.R
-import dev.pampa.pampanotes.ui.editor.EditorRoute
-import dev.pampa.pampanotes.ui.folder.FolderRoute
-import dev.pampa.pampanotes.ui.home.HomeRoute
 import dev.pampa.pampanotes.ui.importing.ImportRequest
-import dev.pampa.pampanotes.ui.importing.ImportRoute
-import dev.pampa.pampanotes.ui.folders.FoldersRoute
-import dev.pampa.pampanotes.ui.jobs.JobsRoute
-import dev.pampa.pampanotes.ui.more.MoreRoute
-import dev.pampa.pampanotes.ui.note.NoteRoute
-import dev.pampa.pampanotes.ui.nav.RouteMotionDecision
-import dev.pampa.pampanotes.ui.nav.RouteMotionKind
+import dev.pampa.pampanotes.ui.nav.PampaNavActions
+import dev.pampa.pampanotes.ui.nav.PampaNavHost
+import dev.pampa.pampanotes.ui.nav.PampaSidebar
 import dev.pampa.pampanotes.ui.nav.Routes
-import dev.pampa.pampanotes.ui.nav.decideRouteMotion
-import dev.pampa.pampanotes.ui.nav.readMotionKind
-import dev.pampa.pampanotes.ui.nav.readMotionOrigin
-import dev.pampa.pampanotes.ui.nav.writeExpandMotion
-import dev.pampa.pampanotes.ui.nav.writePeerMotion
-import dev.pampa.pampanotes.ui.search.SearchRoute
-import dev.pampa.pampanotes.ui.session.SessionRoute
-import dev.pampa.pampanotes.ui.settings.SettingsRoute
+import dev.pampa.pampanotes.ui.nav.detailDestinations
+import dev.pampa.pampanotes.ui.nav.listDestinations
+import dev.pampa.pampanotes.ui.nav.syncPanes
 import dev.pampa.pampanotes.ui.theme.PampaTheme
-import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 
@@ -153,6 +135,13 @@ fun MainApp(
   }
 }
 
+/**
+ * La shell: i pannelli, la chrome che li affianca, e i due padroni di casa della navigazione.
+ *
+ * I controller stanno qui e non dentro i pannelli: in una finestra stretta il dettaglio non si
+ * emette, il suo `NavController` conserva lo stack, e una rotazione e' un cambio di layout e
+ * basta — con [syncPanes] che sposta la nota aperta nel pannello giusto.
+ */
 @Composable
 private fun AppShell(
   chromeController: FluidChromeController,
@@ -160,211 +149,141 @@ private fun AppShell(
   onIntent: (Intent) -> Boolean,
   onPickFiles: (List<android.net.Uri>, String?) -> Unit,
 ) {
-  val navController = rememberNavController()
-  val backStackEntry by navController.currentBackStackEntryAsState()
-  val currentRoute = backStackEntry?.destination?.route?.substringBefore("?")
-  val showTabBar = currentRoute in Routes.topLevelSet
-
+  val listNav = rememberNavController()
+  val detailNav = rememberNavController()
   val scrollToTop = remember { FluidScrollToTopBus() }
   val touchOrigin = rememberFluidTouchOrigin()
-  val motionSignals = LocalRouteMotionSignals.current
 
-  // La destinazione porta con se' sia il punto da cui e' stata aperta sia il fatto che sia stata
-  // *aperta* invece che raggiunta di lato: tornare indietro disfa lo stesso movimento, comunque si
-  // scelga di uscire.
-  fun navigateRoute(route: String) {
-    navController.navigate(route)
-    navController.currentBackStackEntry?.savedStateHandle?.writeExpandMotion(touchOrigin.origin)
-  }
+  BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    val layout = remember(maxWidth) { fluidPaneLayout(maxWidth, hasSide = true, hasRail = true) }
+    val twoPane = rememberUpdatedState(layout.twoPane)
 
-  fun navigateTopLevel(route: String) {
-    navController.navigateTopLevelRoute(route)
-    navController.currentBackStackEntry?.savedStateHandle?.writePeerMotion()
-  }
-
-  // Il selettore file: la stessa lista di tipi che il manifest dichiara per la condivisione.
-  val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-    if (uris.isNotEmpty()) {
-      onPickFiles(uris, null)
-      navigateRoute(Routes.IMPORT)
+    // Il selettore file e le azioni si conoscono a vicenda: il selettore, finito, apre il wizard;
+    // le azioni lanciano il selettore. Il rimando passa da uno stato perche' i due nascono in
+    // ordine e nessuno dei due puo' nascere per primo.
+    val launchPicker = remember { mutableStateOf<() -> Unit>({}) }
+    val actions = remember(listNav, detailNav, touchOrigin) {
+      PampaNavActions(
+        listNav = listNav,
+        detailNav = detailNav,
+        twoPane = { twoPane.value },
+        touchOrigin = touchOrigin,
+        pickFiles = { launchPicker.value() },
+        pickFilesInto = { noteId ->
+          onPickFiles(emptyList(), noteId)
+          launchPicker.value()
+        },
+      )
     }
-  }
+    // Il selettore file: la stessa lista di tipi che il manifest dichiara per la condivisione.
+    val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+      if (uris.isNotEmpty()) {
+        onPickFiles(uris, null)
+        actions.openImport()
+      }
+    }
+    launchPicker.value = { pickFiles.launch(ImportRequest.PICKER_MIME_TYPES) }
 
-  LaunchedEffect(navController, incomingIntents) {
-    incomingIntents.collect { intent ->
-      // Prima la condivisione, poi i deep link: un intent di SEND non e' un link e non ha una rotta.
-      if (onIntent(intent)) {
-        navController.navigate(Routes.IMPORT)
-      } else {
-        navController.handleDeepLink(intent)
+    LaunchedEffect(layout.twoPane) { syncPanes(listNav, detailNav, layout.twoPane) }
+
+    LaunchedEffect(listNav, incomingIntents) {
+      incomingIntents.collect { intent ->
+        // Prima la condivisione, poi i deep link: un intent di SEND non e' un link e non ha una rotta.
+        if (onIntent(intent)) actions.openImport() else listNav.handleDeepLink(intent)
+      }
+    }
+
+    val listEntry by listNav.currentBackStackEntryAsState()
+    val listRoute = listEntry?.destination?.route?.substringBefore("?")
+    val selectedFolderId = listEntry?.takeIf { it.destination.route == Routes.FOLDER }?.arguments?.getString("folderId")
+    // La pillola in basso solo dove non c'e' altra chrome: col rail o con la barra laterale
+    // sarebbe la stessa cosa detta due volte.
+    val showTabBar = !layout.showRail && !layout.twoPane && listRoute in Routes.topLevelSet
+
+    val tabItems = listOf(
+      FluidTabItem(Routes.HOME, stringResource(R.string.tab_home), Icons.Rounded.Home),
+      FluidTabItem(Routes.FOLDERS, stringResource(R.string.tab_folders), Icons.Rounded.GridView),
+      FluidTabItem(Routes.MORE, stringResource(R.string.tab_more), Icons.Rounded.MoreHoriz),
+    )
+
+    // La policy avvolge tutta la shell: anche la chrome in cima e' movimento, non solo il contenuto.
+    FluidMotionPolicyProvider {
+      TabBarScaffold(
+        items = tabItems,
+        currentRoute = listRoute,
+        showTabBar = showTabBar,
+        chromeController = chromeController,
+        scrollToTop = scrollToTop,
+        onSelect = { item -> actions.switchTopLevel(item.route) },
+        onReselect = { scrollToTop.request() },
+      ) { backdrop ->
+        FluidPaneScaffold(
+          layout = layout,
+          rail = {
+            Box(modifier = Modifier.fillMaxHeight(), contentAlignment = Alignment.CenterStart) {
+              FluidTabRail(
+                items = tabItems,
+                selectedRoute = listRoute,
+                onSelect = { item -> actions.switchTopLevel(item.route) },
+                onReselect = { scrollToTop.request() },
+                backdrop = backdrop,
+                modifier = Modifier
+                  .windowInsetsPadding(WindowInsets.systemBars)
+                  .padding(horizontal = FluidTabBarDefaults.HorizontalMargin)
+                  .height(FluidTabBarDefaults.Height * tabItems.size),
+              )
+            }
+          },
+          side = {
+            PampaSidebar(
+              selectedRoute = listRoute,
+              selectedFolderId = selectedFolderId,
+              backdrop = backdrop,
+              onHome = { actions.switchTopLevel(Routes.HOME) },
+              onFolder = actions::showFolder,
+              onAllFolders = { actions.switchTopLevel(Routes.FOLDERS) },
+              onSearch = actions::openSearch,
+              onMore = { actions.switchTopLevel(Routes.MORE) },
+            )
+          },
+          list = {
+            PampaNavHost(
+              controller = listNav,
+              startDestination = Routes.HOME,
+              modifier = Modifier.fillMaxSize().fluidTouchOriginTracker(touchOrigin),
+            ) {
+              listDestinations(actions, listNav)
+              // Su una pagina stretta il dettaglio sta qui, sopra chi lo ha aperto.
+              detailDestinations(actions, listNav)
+            }
+          },
+          detail = {
+            PampaNavHost(
+              controller = detailNav,
+              startDestination = Routes.DETAIL_EMPTY,
+              modifier = Modifier.fillMaxSize().fluidTouchOriginTracker(touchOrigin),
+            ) {
+              composable(Routes.DETAIL_EMPTY) { EmptyDetail() }
+              detailDestinations(actions, detailNav)
+            }
+          },
+        )
       }
     }
   }
+}
 
-  val tabItems = listOf(
-    FluidTabItem(Routes.HOME, stringResource(R.string.tab_home), Icons.Rounded.Home),
-    FluidTabItem(Routes.FOLDERS, stringResource(R.string.tab_folders), Icons.Rounded.GridView),
-    FluidTabItem(Routes.MORE, stringResource(R.string.tab_more), Icons.Rounded.MoreHoriz),
-  )
-
-  // La policy avvolge tutta la shell: anche la chrome in cima e' movimento, non solo il contenuto.
-  FluidMotionPolicyProvider {
-    TabBarScaffold(
-      items = tabItems,
-      currentRoute = currentRoute,
-      showTabBar = showTabBar,
-      chromeController = chromeController,
-      scrollToTop = scrollToTop,
-      onSelect = { item -> navigateTopLevel(item.route) },
-      onReselect = { scrollToTop.request() },
-    ) {
-      NavHost(
-        navController = navController,
-        startDestination = Routes.HOME,
-        modifier = Modifier
-          .fillMaxSize()
-          .fluidTouchOriginTracker(touchOrigin),
-        enterTransition = {
-          routeEnterTransition(
-            decision = motionSignals.resolve(initialState, targetState, isPop = false),
-            origin = targetState.savedStateHandle.readMotionOrigin(),
-            isPop = false,
-          )
-        },
-        exitTransition = {
-          routeExitTransition(
-            decision = motionSignals.resolve(initialState, targetState, isPop = false),
-            origin = targetState.savedStateHandle.readMotionOrigin(),
-            isPop = false,
-          )
-        },
-        popEnterTransition = {
-          routeEnterTransition(
-            decision = motionSignals.resolve(initialState, targetState, isPop = true),
-            origin = initialState.savedStateHandle.readMotionOrigin(),
-            isPop = true,
-          )
-        },
-        popExitTransition = {
-          routeExitTransition(
-            decision = motionSignals.resolve(initialState, targetState, isPop = true),
-            origin = initialState.savedStateHandle.readMotionOrigin(),
-            isPop = true,
-          )
-        },
-      ) {
-        composable(Routes.HOME) {
-          FluidRouteMotionHost(this@composable) {
-            HomeRoute(
-              onOpenNote = { id -> navigateRoute(Routes.note(id)) },
-              onImport = { pickFiles.launch(ImportRequest.PICKER_MIME_TYPES) },
-              onOpenJobs = { navigateRoute(Routes.JOBS) },
-            )
-          }
-        }
-        composable(Routes.FOLDERS) {
-          FluidRouteMotionHost(this@composable) {
-            FoldersRoute(
-              onOpenFolder = { id -> navigateRoute(Routes.folder(id)) },
-              onImport = { pickFiles.launch(ImportRequest.PICKER_MIME_TYPES) },
-            )
-          }
-        }
-        composable(Routes.MORE) {
-          FluidRouteMotionHost(this@composable) {
-            MoreRoute(
-              onOpenSearch = { navigateRoute(Routes.SEARCH) },
-              onOpenJobs = { navigateRoute(Routes.JOBS) },
-              onOpenSettings = { navigateRoute(Routes.SETTINGS) },
-              onImport = { pickFiles.launch(ImportRequest.PICKER_MIME_TYPES) },
-            )
-          }
-        }
-        composable(Routes.SEARCH) {
-          FluidRouteMotionHost(this@composable) {
-            SearchRoute(
-              onBack = { navController.popBackStack() },
-              onOpenNote = { id -> navigateRoute(Routes.note(id)) },
-            )
-          }
-        }
-        composable(Routes.JOBS) {
-          FluidRouteMotionHost(this@composable) { JobsRoute(onBack = { navController.popBackStack() }) }
-        }
-        composable(Routes.SETTINGS) {
-          FluidRouteMotionHost(this@composable) { SettingsRoute(onBack = { navController.popBackStack() }) }
-        }
-        composable(
-          route = Routes.FOLDER,
-          arguments = listOf(navArgument("folderId") { type = NavType.StringType }),
-        ) { entry ->
-          FluidRouteMotionHost(this@composable) {
-            FolderRoute(
-              folderId = entry.arguments?.getString("folderId").orEmpty(),
-              onBack = { navController.popBackStack() },
-              onOpenFolder = { id -> navigateRoute(Routes.folder(id)) },
-              onOpenNote = { id -> navigateRoute(Routes.note(id)) },
-              onImport = { pickFiles.launch(ImportRequest.PICKER_MIME_TYPES) },
-            )
-          }
-        }
-        composable(
-          route = Routes.NOTE,
-          arguments = listOf(
-            navArgument("noteId") { type = NavType.StringType },
-            navArgument("tab") { nullable = true; defaultValue = null },
-          ),
-        ) { entry ->
-          FluidRouteMotionHost(this@composable) {
-            NoteRoute(
-              initialTab = entry.arguments?.getString("tab"),
-              onBack = { navController.popBackStack() },
-              onEdit = { id -> navigateRoute(Routes.editor(id)) },
-              onOpenSession = { id -> navigateRoute(Routes.session(id)) },
-              onImportInto = { id ->
-                onPickFiles(emptyList(), id)
-                pickFiles.launch(ImportRequest.PICKER_MIME_TYPES)
-              },
-            )
-          }
-        }
-        composable(
-          route = Routes.SESSION,
-          arguments = listOf(navArgument("sessionId") { type = NavType.StringType }),
-        ) {
-          FluidRouteMotionHost(this@composable) {
-            SessionRoute(
-              onBack = { navController.popBackStack() },
-              // Separare una sessione apre quella nuova al posto di questa: e' li' che si finisce
-              // il lavoro, ed e' li' che si torna indietro da.
-              onOpenSession = { id ->
-                navController.popBackStack()
-                navigateRoute(Routes.session(id))
-              },
-            )
-          }
-        }
-        composable(
-          route = Routes.EDITOR,
-          arguments = listOf(navArgument("noteId") { type = NavType.StringType }),
-        ) {
-          FluidRouteMotionHost(this@composable) {
-            EditorRoute(onDone = { navController.popBackStack() })
-          }
-        }
-        composable(Routes.IMPORT) {
-          FluidRouteMotionHost(this@composable) {
-            ImportRoute(
-              onClose = { navController.popBackStack() },
-              onOpenNote = { id ->
-                navController.popBackStack()
-                navigateRoute(Routes.note(id))
-              },
-            )
-          }
-        }
-      }
-    }
+/** Il dettaglio quando non c'e' niente di aperto: una pagina calma, non una pagina vuota. */
+@Composable
+private fun EmptyDetail() {
+  Box(
+    modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
+    contentAlignment = Alignment.Center,
+  ) {
+    FluidEmptyState(
+      title = stringResource(R.string.detail_empty_title),
+      detail = stringResource(R.string.detail_empty_detail),
+    )
   }
 }
 
@@ -378,7 +297,7 @@ private fun TabBarScaffold(
   scrollToTop: FluidScrollToTopBus,
   onSelect: (FluidTabItem) -> Unit,
   onReselect: (FluidTabItem) -> Unit,
-  content: @Composable () -> Unit,
+  content: @Composable (GlassBackdropState) -> Unit,
 ) {
   val fallbackBackdrop = rememberGlassBackdrop()
   val barFold: FluidBarFold = rememberFluidBarFold()
@@ -394,7 +313,7 @@ private fun TabBarScaffold(
     val backdrop = chromeController.activeBackdrop.value ?: fallbackBackdrop
 
     ProvideFluidChrome(controller = chromeController, bottomInset = bottomInset, scrollToTop = scrollToTop) {
-      Box(modifier = Modifier.fillMaxSize()) { content() }
+      Box(modifier = Modifier.fillMaxSize()) { content(backdrop) }
     }
 
     AnimatedVisibility(
@@ -427,22 +346,6 @@ private fun TabBarScaffold(
 }
 
 /**
- * Passa a una scheda principale mantenendo lo stato delle altre.
- *
- * Ripristinare la rotta di partenza qui ripristinerebbe anche la scheda appena tolta da sotto, e il
- * back dalla Home riaprirebbe quella scheda. Il suo stato resta comunque salvato per dopo.
- */
-private fun NavHostController.navigateTopLevelRoute(targetRoute: String) {
-  val startDestination = graph.findStartDestination()
-  val targetsStart = targetRoute.substringBefore('?') == startDestination.route?.substringBefore('?')
-  navigate(targetRoute) {
-    popUpTo(startDestination.id) { saveState = true }
-    launchSingleTop = true
-    restoreState = !targetsStart
-  }
-}
-
-/**
  * La barra ha il suo tempo, piu' rapido della pagina: e' chrome, deve essersi gia' tolta di mezzo
  * quando la schermata nuova finisce di arrivare.
  */
@@ -450,86 +353,3 @@ private fun barSlideSpec() = FluidMotion.intOffset(
   dampingRatio = FluidMotion.DampingChrome,
   stiffness = FluidMotion.ResponseSnappy,
 )
-
-/**
- * Un solo movimento gerarchico per tutta l'app: la destinazione cresce dal punto toccato mentre la
- * pagina che copre arretra appena sotto di lei.
- *
- * Tutto a durata, e non e' una preferenza di stile: il back predittivo guida queste transizioni
- * *scorrendole*, e solo una curva finita e monotona si puo' scorrere.
- */
-private fun expandSpec() = tween<Float>(durationMillis = FluidMotion.DurationExpand, easing = FluidMotion.EaseEmphasized)
-
-private fun collapseSpec() = tween<Float>(durationMillis = FluidMotion.DurationCollapse, easing = FluidMotion.EaseEmphasized)
-
-private fun peerSlideSpec() = tween<IntOffset>(durationMillis = FluidMotion.DurationPeer, easing = FluidMotion.EaseEmphasized)
-
-/** La pagina che viene coperta: lascia il passo mentre la nuova sta ancora diventando opaca. */
-private fun coveredFadeOut() = tween<Float>(durationMillis = FluidMotion.DurationRouteFadeOut, easing = FluidMotion.EaseIn)
-
-/**
- * La pagina che viene congedata: resta solida mentre si stringe e sparisce solo alla fine. Una
- * pagina che comincia a dissolversi appena inizia il gesto si legge come una pagina che si sfalda.
- */
-private fun dismissedFadeOut() = tween<Float>(durationMillis = 170, delayMillis = 90, easing = FluidMotion.EaseIn)
-
-private fun peerSlidePx(width: Int, direction: Int): Int =
-  (width * FluidMotion.PeerSlideFraction * direction).roundToInt()
-
-/**
- * Risolve il movimento fra due voci e registra, per i livelli che stanno per disegnare, se la
- * pagina che se ne va deve perdere il fuoco mentre esce.
- */
-private fun RouteMotionSignals.resolve(
-  initialState: NavBackStackEntry,
-  targetState: NavBackStackEntry,
-  isPop: Boolean,
-): RouteMotionDecision {
-  val carrier = if (isPop) initialState else targetState
-  val decision = decideRouteMotion(
-    fromRoute = initialState.destination.route,
-    toRoute = targetState.destination.route,
-    requestedKind = carrier.savedStateHandle.readMotionKind(),
-  )
-  hierarchical = decision.kind == RouteMotionKind.Expand
-  return decision
-}
-
-private fun routeEnterTransition(
-  decision: RouteMotionDecision,
-  origin: MotionOrigin,
-  isPop: Boolean,
-): EnterTransition = when (decision.kind) {
-  // Le pari scorrono di lato insieme. Opache dal primo fotogramma: una dissolvenza incrociata
-  // tenuta ferma a meta' da un back trascinato e' due schede stampate una sopra l'altra.
-  RouteMotionKind.TopLevelSwitch -> if (decision.direction == 0) {
-    fadeIn(tween(FluidMotion.DurationPeerFadeIn, easing = FluidMotion.EaseOut))
-  } else {
-    slideInHorizontally(peerSlideSpec()) { width -> peerSlidePx(width, decision.direction) }
-  }
-
-  RouteMotionKind.Expand -> if (isPop) {
-    // Tornando indietro, la pagina sotto viene scoperta: rientra da poco troppo vicino, che e'
-    // esattamente dove l'andata l'aveva lasciata.
-    scaleIn(animationSpec = collapseSpec(), initialScale = FluidRouteMotion.ExpandParentScale, transformOrigin = origin.toTransformOrigin())
-  } else {
-    scaleIn(animationSpec = expandSpec(), initialScale = FluidRouteMotion.ExpandInitialScale, transformOrigin = origin.toTransformOrigin())
-  }
-}
-
-private fun routeExitTransition(
-  decision: RouteMotionDecision,
-  origin: MotionOrigin,
-  isPop: Boolean,
-): ExitTransition = when (decision.kind) {
-  RouteMotionKind.TopLevelSwitch -> {
-    val fade = fadeOut(tween(FluidMotion.DurationPeerFadeOut, easing = FluidMotion.EaseIn))
-    if (decision.direction == 0) fade else fade + slideOutHorizontally(peerSlideSpec()) { width -> peerSlidePx(width, -decision.direction) }
-  }
-
-  RouteMotionKind.Expand -> if (isPop) {
-    fadeOut(dismissedFadeOut()) + scaleOut(animationSpec = collapseSpec(), targetScale = FluidRouteMotion.ExpandInitialScale, transformOrigin = origin.toTransformOrigin())
-  } else {
-    fadeOut(coveredFadeOut()) + scaleOut(animationSpec = expandSpec(), targetScale = FluidRouteMotion.ExpandParentScale, transformOrigin = origin.toTransformOrigin())
-  }
-}

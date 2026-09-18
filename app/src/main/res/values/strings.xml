@@ -512,4 +512,8 @@
   </plurals>
   <string name="import_done_recording">Registrazione, nella sua sessione</string>
   <string name="import_samsung_duplicate">L\'hai già importata in «%1$s». Importarla di nuovo crea una seconda nota, e non tocca quella.</string>
+  <string name="sidebar_subjects">Materie</string>
+  <string name="sidebar_all_folders">Tutte le cartelle</string>
+  <string name="detail_empty_title">Niente di aperto</string>
+  <string name="detail_empty_detail">Scegli una nota dalla lista, o importane una.</string>
 </resources>

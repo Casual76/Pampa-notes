@@ -7,3 +7,19 @@ plugins {
   alias(libs.plugins.ksp) apply false
   alias(libs.plugins.hilt) apply false
 }
+
+// Google Drive sincronizza "C:\VibeCoded Projects", e ogni file che Gradle scrive in build/ viene
+// preso in carico per il caricamento: finche' Drive lo tiene aperto Gradle non lo puo' cancellare,
+// e una ricompilazione muore con "Unable to delete directory". Le cartelle di build stanno quindi
+// FUORI dalla cartella sincronizzata, una per modulo. Si puo' scegliere dove con
+// -Ppampa.buildRoot=...; senza LOCALAPPDATA (Linux, CI) resta il build/ di sempre.
+def pampaBuildRoot = providers.gradleProperty('pampa.buildRoot').orNull
+if (pampaBuildRoot == null && System.getenv('LOCALAPPDATA')) {
+  pampaBuildRoot = new File(System.getenv('LOCALAPPDATA'), 'PampaNotes/build').path
+}
+if (pampaBuildRoot != null) {
+  allprojects {
+    def slot = project.path == ':' ? 'root' : project.name
+    layout.buildDirectory.set(file("${pampaBuildRoot}/${slot}"))
+  }
+}

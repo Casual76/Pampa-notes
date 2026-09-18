@@ -10,8 +10,12 @@ di un LLM è il raffinamento opzionale di una trascrizione grezza, e la grezza r
 
 ## Comandi
 
-Su questa macchina qualcosa tiene aperti handle dentro `build/` e ogni tanto una build muore con
-`Unable to delete directory`. Non e' un difetto del progetto: si rilancia, e la seconda volta passa.
+`C:\VibeCoded Projects` e' sincronizzata da Google Drive, e Drive prende in carico ogni file che
+Gradle scrive: per questo le cartelle di build stanno **fuori dal progetto**, in
+`%LOCALAPPDATA%\PampaNotesuild\<modulo>` (vedi `build.gradle` di radice; `-Ppampa.buildRoot=`
+per spostarle). L'APK di debug e' quindi in `%LOCALAPPDATA%\PampaNotesuildpp\outputspk\debug\`.
+Se una build muore lo stesso con `Unable to delete directory`, e' Drive che sta ancora smaltendo
+un arretrato: si rilancia.
 
 ```powershell
 .\gradlew.bat :app:assembleDebug                    # build
@@ -32,11 +36,27 @@ Due moduli più l'engine come submodule.
 |---|---|
 | `:core` | dominio, Room, DataStore, file, import, trascrizione, raffinamento, export. I package puri (pianificatore dei chunk, cucitura, writer Markdown, parser DOCX) non importano niente di Android e si provano in JVM. |
 | `:app` | UI Compose, navigazione, DI, worker, share target, lettore audio. |
-| `engine/` | [Fluid Engine](https://github.com/Casual76/fluid-engine) 1.32.0, submodule. **Non si modifica da qui**: una modifica non committata a monte sparisce al primo aggiornamento. |
+| `engine/` | [Fluid Engine](https://github.com/Casual76/fluid-engine) 1.33.0, submodule. **Non si modifica da qui**: una modifica non committata a monte sparisce al primo aggiornamento. |
 
 Il design system è quello dell'engine: `FluidScreen`, `FluidListGroup`/`FluidListRow`,
 `ContinuousCornerShape` (mai `RoundedCornerShape`), nessun colore o dimensione scritti a mano,
 transizioni di rotta laterali e opache. Le regole per esteso stanno nella skill `fluid-engine`.
+
+### I pannelli
+
+Tre regimi, decisi da `fluidPaneLayout` dell'engine sulla larghezza della finestra: sotto i 600 dp
+un pannello e la pillola in basso (il telefono di sempre); fino a 1000 dp il `FluidTabRail` di
+fianco a un pannello (tablet in ritratto); oltre, barra laterale con le materie + lista + dettaglio
+(tablet in orizzontale). Non si usa `material3-adaptive`: consegna lambda di contenuto, non
+`NavBackStackEntry`, e i ViewModel leggono l'id dalla rotta.
+
+Due `NavHost`, issati nella shell (`MainApp.kt`) e descritti in `ui/nav/PampaGraph.kt`: `listNav`
+ha **tutte** le destinazioni, `detailNav` solo quelle di dettaglio piu' `DETAIL_EMPTY`. Dove va una
+rotta lo decide `PampaNavActions` al momento del tocco, in base al regime: su una pagina larga la
+nota va nel dettaglio, su una stretta in cima alla lista. `syncPanes` sposta la nota aperta da un
+padrone di casa all'altro quando la finestra cambia regime, ricostruendo la rotta dagli argomenti:
+la rotazione non perde il posto. Il back non ha handler scritti a mano: con `DETAIL_EMPTY` sotto,
+lo stack del dettaglio ha due voci quando una nota e' aperta e il suo `NavHost` vince.
 
 ### Il modello dei dati
 

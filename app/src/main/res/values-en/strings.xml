@@ -482,4 +482,8 @@
   </plurals>
   <string name="import_done_recording">Recording, in its session</string>
   <string name="import_samsung_duplicate">You already imported this into “%1$s”. Importing it again creates a second note and leaves that one alone.</string>
+  <string name="sidebar_subjects">Subjects</string>
+  <string name="sidebar_all_folders">All folders</string>
+  <string name="detail_empty_title">Nothing open</string>
+  <string name="detail_empty_detail">Pick a note from the list, or import one.</string>
 </resources>
