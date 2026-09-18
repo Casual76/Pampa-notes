@@ -113,7 +113,7 @@ private fun EditorScreen(
 
     if (preview) {
       item {
-        FluidCard(glass = true) {
+        FluidCard {
           if (body.isBlank()) {
             FluidSectionFootnote(text = stringResource(R.string.editor_preview_empty))
           } else {

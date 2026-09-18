@@ -296,7 +296,7 @@ private fun headerItemCount(state: SessionUiState): Int {
 private fun LazyListScope.jobItem(state: SessionUiState, onCancelJob: (String) -> Unit) {
   val job = state.job ?: return
   item(key = "job") {
-    FluidCard(glass = true) {
+    FluidCard {
       Text(
         text = jobPhaseText(job),
         style = MaterialTheme.typography.titleSmall,
@@ -337,7 +337,7 @@ private fun LazyListScope.partsSection(
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(start = 4.dp),
       )
-      FluidListGroup(glass = true) {
+      FluidListGroup {
         var offset = 0L
         state.parts.forEachIndexed { index, part ->
           val start = offset
@@ -473,7 +473,7 @@ private fun LazyListScope.transcriptBody(
   if (active.kind != TranscriptKind.RAW || paragraphs.isEmpty()) {
     if (active.text.isNotBlank()) {
       item(key = "refined-${active.id}") {
-        FluidCard(glass = true) {
+        FluidCard {
           MarkdownText(markdown = active.text, modifier = Modifier.fillMaxWidth())
         }
       }
@@ -516,7 +516,7 @@ private fun ParagraphCard(
 
   val annotated = remember(paragraph, spokenIndex, accent) { paragraph.annotate(spokenIndex, accent) }
 
-  FluidCard(glass = true, highlighted = isActive, onClick = null, animateContent = false) {
+  FluidCard(highlighted = isActive, onClick = null, animateContent = false) {
     val spoken = Formats.timestamp(paragraph.startMs)
     val atLabel = stringResource(R.string.session_at, spoken)
     Text(

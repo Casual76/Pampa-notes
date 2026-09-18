@@ -82,7 +82,7 @@ fun SettingsRoute(onBack: () -> Unit, viewModel: SettingsViewModel = hiltViewMod
     item { FluidSectionHeader(title = stringResource(R.string.settings_section_services)) }
 
     item {
-      FluidListGroup(glass = true) {
+      FluidListGroup {
         FluidListRow(
           title = stringResource(R.string.settings_groq),
           subtitle = when {
@@ -220,7 +220,7 @@ fun SettingsRoute(onBack: () -> Unit, viewModel: SettingsViewModel = hiltViewMod
     }
 
     item {
-      FluidListGroup(glass = true) {
+      FluidListGroup {
         FluidListRow(
           title = stringResource(R.string.settings_auto_transcribe),
           subtitle = stringResource(R.string.settings_auto_transcribe_detail),
@@ -317,7 +317,7 @@ fun SettingsRoute(onBack: () -> Unit, viewModel: SettingsViewModel = hiltViewMod
       )
     }
     item {
-      FluidListGroup(glass = true) {
+      FluidListGroup {
         FluidListRow(
           title = stringResource(R.string.settings_dynamic_color),
           subtitle = stringResource(R.string.settings_dynamic_color_detail),
@@ -341,7 +341,7 @@ fun SettingsRoute(onBack: () -> Unit, viewModel: SettingsViewModel = hiltViewMod
     // --- Informazioni ---
     item { FluidSectionHeader(title = stringResource(R.string.settings_section_about)) }
     item {
-      FluidListGroup(glass = true) {
+      FluidListGroup {
         FluidListRow(
           title = stringResource(R.string.settings_version),
           subtitle = BuildConfig.VERSION_NAME,

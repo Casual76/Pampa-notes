@@ -65,7 +65,7 @@ fun SearchRoute(
       }
 
       else -> item {
-        FluidListGroup(glass = true) {
+        FluidListGroup {
           state.results.forEachIndexed { index, result ->
             if (index > 0) FluidListDivider()
             FluidListRow(

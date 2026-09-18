@@ -141,7 +141,7 @@ private fun FolderScreen(
     if (state.subfolders.isNotEmpty()) {
       item { FluidSectionHeader(title = stringResource(R.string.home_section_folders)) }
       item {
-        FluidListGroup(glass = true) {
+        FluidListGroup {
           state.subfolders.forEachIndexed { index, row ->
             if (index > 0) FluidListDivider()
             FluidListRow(
@@ -168,7 +168,7 @@ private fun FolderScreen(
         item { FluidSectionHeader(title = stringResource(R.string.folder_section_notes)) }
       }
       item {
-        FluidListGroup(glass = true) {
+        FluidListGroup {
           notes.forEachIndexed { index, row ->
             if (index > 0) FluidListDivider()
             FluidListRow(

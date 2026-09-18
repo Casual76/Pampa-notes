@@ -201,7 +201,6 @@ private fun RecentNoteCard(
 
   FluidCard(
     onClick = onClick,
-    glass = true,
     modifier = Modifier.fluidContextMenu(contextActions),
   ) {
     Row(

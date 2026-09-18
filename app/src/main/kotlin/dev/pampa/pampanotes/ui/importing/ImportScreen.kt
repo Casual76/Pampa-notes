@@ -171,7 +171,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.reviewStep(
   }
 
   item {
-    FluidListGroup(glass = true) {
+    FluidListGroup {
       state.candidates.forEachIndexed { index, candidate ->
         if (index > 0) FluidListDivider()
         val included = candidate.id !in state.excluded
@@ -220,7 +220,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.samsungStep(
   val doc = candidate.sdocx ?: return
 
   item {
-    FluidListGroup(glass = true) {
+    FluidListGroup {
       FluidListRow(
         title = doc.title ?: candidate.displayName,
         subtitle = samsungSummary(doc),
@@ -258,7 +258,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.samsungStep(
     }
   } else {
     item {
-      FluidListGroup(glass = true) {
+      FluidListGroup {
         state.folders.forEachIndexed { index, folder ->
           if (index > 0) FluidListDivider()
           FluidListRow(
@@ -328,7 +328,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.destinationStep(
     }
   } else {
     item {
-      FluidListGroup(glass = true) {
+      FluidListGroup {
         state.folders.forEachIndexed { index, folder ->
           if (index > 0) FluidListDivider()
           FluidListRow(
@@ -361,7 +361,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.destinationStep(
 
   item { FluidSectionHeader(title = stringResource(R.string.import_note)) }
   item {
-    FluidListGroup(glass = true) {
+    FluidListGroup {
       FluidListRow(
         title = stringResource(R.string.import_new_note),
         subtitle = stringResource(R.string.import_new_note_detail),
@@ -418,7 +418,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioStep(
   item { FluidSectionHeader(title = stringResource(R.string.import_audio_where), detail = stringResource(R.string.import_audio_where_detail)) }
 
   item {
-    FluidListGroup(glass = true) {
+    FluidListGroup {
       FluidListRow(
         title = stringResource(R.string.import_new_session),
         subtitle = stringResource(R.string.import_new_session_detail),
@@ -480,7 +480,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.doneStep(
     }
   } else {
     item {
-      FluidListGroup(glass = true) {
+      FluidListGroup {
         outcome.imported.forEachIndexed { index, item ->
           if (index > 0) FluidListDivider()
           FluidListRow(

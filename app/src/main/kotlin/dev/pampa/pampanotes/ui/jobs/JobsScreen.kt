@@ -69,7 +69,7 @@ fun JobsRoute(
     if (state.finished.isNotEmpty()) {
       item { FluidSectionHeader(title = stringResource(R.string.jobs_section_finished)) }
       item {
-        FluidListGroup(glass = true) {
+        FluidListGroup {
           state.finished.forEachIndexed { index, row ->
             if (index > 0) FluidListDivider()
             FluidListRow(
@@ -110,7 +110,7 @@ fun JobsRoute(
 
 @Composable
 private fun ActiveJobCard(row: JobRow, onCancel: () -> Unit, cancelLabel: String) {
-  FluidCard(glass = true) {
+  FluidCard {
     FluidListRow(
       title = row.noteTitle.ifBlank { stringResource(R.string.jobs_unknown_note) },
       subtitle = jobPhaseText(row.job),

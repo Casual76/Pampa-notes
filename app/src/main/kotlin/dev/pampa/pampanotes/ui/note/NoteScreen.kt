@@ -203,7 +203,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.textTab(state: NoteUi
     }
   } else {
     item {
-      FluidCard(glass = true) {
+      FluidCard {
         MarkdownText(markdown = body, modifier = Modifier.fillMaxWidth())
       }
     }
@@ -244,7 +244,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
           color = MaterialTheme.colorScheme.onSurfaceVariant,
           modifier = Modifier.padding(start = 4.dp),
         )
-        FluidListGroup(glass = true) {
+        FluidListGroup {
           session.partsSorted.forEachIndexed { partIndex, part ->
             if (partIndex > 0) FluidListDivider()
             FluidListRow(
@@ -263,7 +263,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
         // Un assaggio, non il testo intero. Una lezione da un'ora sono tremila parole, e stamparle
         // qui vorrebbe dire una nota in cui per arrivare alla seconda sessione si scorre un minuto.
         transcript?.let {
-          FluidCard(glass = true, onClick = { onOpenSession(sessionId) }) {
+          FluidCard(onClick = { onOpenSession(sessionId) }) {
             Text(
               text = stringResource(R.string.note_transcript_meta, it.wordCount, it.model),
               style = MaterialTheme.typography.labelMedium,

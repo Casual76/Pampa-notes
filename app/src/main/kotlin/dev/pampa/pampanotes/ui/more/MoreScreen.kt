@@ -64,7 +64,7 @@ fun MoreRoute(
   ) {
     item { FluidSectionHeader(title = stringResource(R.string.more_section_work)) }
     item {
-      FluidListGroup(glass = true) {
+      FluidListGroup {
         FluidListRow(
           title = stringResource(R.string.search_title),
           subtitle = stringResource(R.string.more_search_detail),
@@ -102,7 +102,7 @@ fun MoreRoute(
 
     item { FluidSectionHeader(title = stringResource(R.string.more_section_app)) }
     item {
-      FluidListGroup(glass = true) {
+      FluidListGroup {
         FluidListRow(
           title = stringResource(R.string.settings_title),
           subtitle = stringResource(R.string.more_settings_detail),
