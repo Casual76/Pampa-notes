@@ -75,7 +75,7 @@ toglie quelli che nessuna riga cita più.
 | M4 lettore audio con i segmenti, riordino delle parti | fatto |
 | M5 export bundle e skill | fatto |
 | M6 raffinamento della trascrizione | fatto |
-| M7 DOCX, sdocx, share target completo | da fare |
+| M7 DOCX, sdocx, share target completo | fatto |
 | M8 backup, onboarding, pubblicazione | da fare |
 
 Il piano per esteso: `C:\Users\casua\.claude\plans\praticamente-vorrei-un-applicazione-che-crispy-falcon.md`
@@ -152,6 +152,35 @@ archivio.
 
 Le parole che finiscono dentro il pacchetto passano da `ExportLabels`, riempito dall'app con le
 stringhe della sua lingua: i writer stanno in `:core` e non possono leggere `res/values`.
+
+## Import
+
+Gli URI di una condivisione si copiano subito (vedi sopra) e poi si legge la copia. Un tipo per
+lettore: `TextExtractor` per testo, PDF (PdfBox) e DOCX (`DocxParser`, SAX su `word/document.xml`,
+puro e provato in JVM). `MimeSniffer` non si fida del MIME dichiarato: guarda l'estensione, poi i
+primi byte, e uno zip lo apre per distinguere `.docx` da `.sdocx`. "Apri con" da un gestore file e'
+un `ACTION_VIEW` con il file in `data`: `ImportRequest.fromIntent` lo tratta come una condivisione.
+
+### Samsung Notes (`.sdocx`), la strada principale
+
+E' quello che l'utente usa ogni giorno, quindi ha un percorso corto: una schermata sola con titolo,
+paragrafi, registrazioni e la cartella indovinata dal titolo, un tasto, e la trascrizione parte da
+sola se `autoTranscribeOnImport` e' acceso. L'archivio originale resta come fonte `SDOCX`.
+
+Il formato, decodificato da un file vero (`core/src/test/resources/sdocx/fichte.sdocx`):
+
+- e' uno zip; il tablet lo condivide con MIME **`application/sdoc`**, che va nel manifest, nel
+  selettore e in `MimeSniffer`, altrimenti l'app non compare fra quelle proposte;
+- `note.note`: stringhe UTF-16LE con prefisso int32 di lunghezza in caratteri; la prima lunga e'
+  il titolo, la seconda il corpo. Il filtro "quasi solo lettere latine" serve: i tratti della S-Pen
+  sono coppie di byte che `isLetter` accetta;
+- i nomi delle registrazioni ("Voce 001", "HH:MM:SS") hanno il prefisso **int16**;
+- `media/mediaInfo.dat`: un record per file, int32 tag `0x79`, int32 indice, **int16** lunghezza
+  del nome, nome UTF-16LE, sha256 in esadecimale, 2 byte, int64 timestamp in microsecondi. L'ordine
+  dei record e' l'ordine cronologico delle parti.
+
+`SdocxParser` e' tarato su questo file: se non riconosce niente, l'archivio resta come fonte e lo
+dice, invece di importare una nota vuota.
 
 ## Trascrizione
 

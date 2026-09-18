@@ -5,9 +5,9 @@ import dev.pampa.pampanotes.core.db.SourceKind
 /**
  * Che cos'e' davvero questo file.
  *
- * Serve perche' il MIME che arriva da una condivisione e' inaffidabile: Samsung Notes manda i suoi
- * `.sdocx` come `application/octet-stream`, un gestore di file qualsiasi manda il tipo generico, e
- * un `.md` arriva quasi sempre come `text/plain`. Il nome e i primi byte ne sanno di piu'.
+ * Serve perche' il MIME che arriva da una condivisione e' inaffidabile: un `.sdocx` arriva come
+ * `application/sdoc` dal tablet e come `application/octet-stream` da un gestore di file, e un `.md`
+ * arriva quasi sempre come `text/plain`. Il nome e i primi byte ne sanno di piu'.
  */
 object MimeSniffer {
 
@@ -45,6 +45,7 @@ object MimeSniffer {
       mime.startsWith("audio/") -> return SourceKind.AUDIO
       mime.startsWith("image/") -> return SourceKind.IMAGE
       mime == "application/pdf" -> return SourceKind.PDF
+      mime == "application/sdoc" || mime == "application/sdocx" -> return SourceKind.SDOCX
       mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> return SourceKind.DOCX
       mime == "text/markdown" || mime == "text/x-markdown" -> return SourceKind.MARKDOWN
       mime.startsWith("text/") -> return SourceKind.TEXT
@@ -87,7 +88,7 @@ object MimeSniffer {
     return when (kind) {
       SourceKind.PDF -> "application/pdf"
       SourceKind.DOCX -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-      SourceKind.SDOCX -> "application/zip"
+      SourceKind.SDOCX -> "application/sdoc"
       SourceKind.MARKDOWN -> "text/markdown"
       SourceKind.TEXT, SourceKind.CLIPBOARD, SourceKind.SHARE -> "text/plain"
       SourceKind.AUDIO -> "audio/mp4"

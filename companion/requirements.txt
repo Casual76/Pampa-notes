@@ -1,6 +1,6 @@
-# Le dipendenze CUDA (torch, torchaudio) NON sono qui: vanno installate prima, con la riga che
-# pytorch.org da' per la propria scheda, perche' quella dipende dal driver e non dal progetto.
-# setup.ps1 se ne accorge e lo dice.
+# torch qui non c'e' di proposito. WhisperX se lo porta dietro nella versione per CPU, e setup.ps1
+# lo sostituisce subito dopo con quella per la scheda (--force-reinstall --no-deps): metterlo qui
+# non servirebbe, pip prenderebbe comunque l'ultimo torch dell'indice normale, che CUDA non ce l'ha.
 whisperx>=3.3.0
 fastapi>=0.115.0
 uvicorn>=0.32.0

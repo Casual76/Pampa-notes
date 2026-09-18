@@ -53,6 +53,9 @@ data class ImportRequest(
       "image/*",
       "application/zip",
       "application/octet-stream",
+      // Samsung Notes: il tipo che il sistema assegna a un .sdocx.
+      "application/sdoc",
+      "application/sdocx",
     )
 
     /** La richiesta dentro un intent di condivisione, o null se l'intent non ne porta una. */
@@ -60,22 +63,32 @@ data class ImportRequest(
       intent ?: return null
       val single = intent.action == Intent.ACTION_SEND
       val multiple = intent.action == Intent.ACTION_SEND_MULTIPLE
-      if (!single && !multiple) return null
+      // "Apri con": il gestore file mette il file in data, non negli extra. Il deep link del server
+      // e' un VIEW anche lui, ma con lo schema pampanotes, e non e' un file.
+      val view = intent.action == Intent.ACTION_VIEW && intent.data?.scheme in FILE_SCHEMES
+      if (!single && !multiple && !view) return null
 
       val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.takeIf { it.isNotBlank() }
-      val uris = if (single) listOfNotNull(streamOf(intent)) else streamsOf(intent)
+      val uris = when {
+        single -> listOfNotNull(streamOf(intent))
+        multiple -> streamsOf(intent)
+        else -> listOfNotNull(intent.data)
+      }
       if (text == null && uris.isEmpty()) return null
 
       // Gli extra si tolgono: una rotazione ricrea l'Activity con lo stesso intent, e senza questo
       // ogni giro riproporrebbe lo stesso import.
       intent.removeExtra(Intent.EXTRA_TEXT)
       intent.removeExtra(Intent.EXTRA_STREAM)
+      if (view) intent.data = null
 
       return ImportRequest(uris = uris.take(MAX_ITEMS), text = text)
     }
 
     /** Oltre questo il wizard diventa un elenco da scorrere, e l'import un'attesa senza fine. */
     const val MAX_ITEMS = 40
+
+    private val FILE_SCHEMES = setOf("content", "file")
 
     @Suppress("DEPRECATION")
     private fun streamOf(intent: Intent): Uri? =

@@ -10,7 +10,7 @@ il secondo: WhisperX dietro le tre chiamate dell'API di OpenAI che l'app conosce
 | Limite per richiesta | 25 MB, quindi un'ora va tagliata e ricucita | nessuno, il file va intero |
 | Dove finiscono i file | su un server americano | in casa |
 | Tempi delle parole | quelli che Whisper stima | allineati con un modello fonetico |
-| Velocità | un'ora in pochi minuti | dipende dalla tua scheda |
+| Velocità | un'ora in pochi minuti | 42 volte il tempo reale su una 4070 Ti |
 | Serve | una chiave gratuita | una GPU, o molta pazienza |
 
 Una cucitura che non si fa è una cucitura che non può sbagliare: sul computer il file non viene mai
@@ -22,17 +22,30 @@ diviso, quindi non c'è un confine in cui una frase possa perdersi.
 powershell -ExecutionPolicy Bypass -File setup.ps1
 ```
 
-Crea un ambiente Python a sé in `.venv` e ci installa WhisperX. **Non installa torch**: la versione
-giusta dipende dalla tua scheda e dal driver, non dal progetto, e installare quella sbagliata è il
-modo più rapido di ritrovarsi con una GPU che non viene vista. Se manca, lo script lo dice e
-stampa la riga da lanciare.
+Crea un ambiente Python a sé in `.venv`, ci installa WhisperX, e poi rimette torch nella versione
+per la tua scheda. Lo fa lui, e nell'ordine giusto: WhisperX si porta dietro un torch senza CUDA
+che scavalca quello che c'era, quindi la versione CUDA va messa **dopo**. È l'inciampo che ha
+tenuto fermo questo server per un giorno, e adesso sta dentro lo script.
+
+L'altro inciampo è la versione di Python. WhisperX va su **3.9–3.12**: con un Python più nuovo
+(3.13, 3.14) l'installazione muore a metà con un errore che parla di compilatori C. Lo script cerca
+da solo un 3.11 o un 3.12; se non lo trova, lo installa lui, accanto a quello che c'è:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File setup.ps1 -InstallPython
+```
+
+Con un driver NVIDIA vecchio, `-Cuda cu126`. Senza scheda, `-Cuda cpu`.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File run.ps1
 ```
 
-Carica il modello e resta in ascolto. La prima volta scarica qualche gigabyte di pesi; dopo parte
-in una decina di secondi. Stampa gli indirizzi su cui il telefono lo trova.
+Carica il modello e resta in ascolto. La prima volta scarica qualche gigabyte: il modello, e un
+allineatore per ogni lingua la prima volta che la incontra. Dopo, parte in mezzo minuto. Stampa gli
+indirizzi su cui il telefono lo trova.
+
+Per dare un'idea: su una RTX 4070 Ti, `large-v3` fa una lezione di **31 minuti in 45 secondi**.
 
 Poi nell'app: **Altro → Impostazioni → Server personale**, incolli l'indirizzo, tocchi «Prova la
 connessione». Se risponde, in Trascrizione scegli «Server personale» e da lì in poi le lezioni

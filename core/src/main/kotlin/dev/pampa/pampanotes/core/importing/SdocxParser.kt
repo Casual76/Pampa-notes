@@ -1,0 +1,289 @@
+package dev.pampa.pampanotes.core.importing
+
+import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.zip.ZipFile
+
+/** Una registrazione dentro un file di Samsung Notes. */
+data class SdocxRecording(
+  /** Il nome della voce nello ZIP, per tirarla fuori: `media/3@6aabb551_60b18.m4a`. */
+  val entryName: String,
+  /** Il nome che Samsung Notes mostra, «Voce 001», quando si e' riusciti a leggerlo. */
+  val title: String?,
+  /** La durata che Samsung Notes scrive accanto al nome, in millisecondi; 0 se non l'ha scritta. */
+  val durationMs: Long,
+  val sha256: String?,
+  /** Quando la registrazione e' stata fatta, in millisecondi epoch; null se il record non lo dice. */
+  val createdAtMillis: Long?,
+)
+
+/** Quello che si e' riusciti a leggere da un `.sdocx`. */
+data class SdocxDocument(
+  val title: String?,
+  /** Il testo battuto, con gli a capo di chi l'ha scritto. Vuoto se nella nota c'era solo inchiostro. */
+  val body: String,
+  val recordings: List<SdocxRecording>,
+) {
+  /** In Samsung Notes ogni riga e' un paragrafo: fra due non c'e' sempre una riga vuota. */
+  val paragraphCount: Int get() = body.lineSequence().count { it.isNotBlank() }
+  val totalDurationMs: Long get() = recordings.sumOf { it.durationMs }
+  val isEmpty: Boolean get() = body.isBlank() && recordings.isEmpty() && title.isNullOrBlank()
+}
+
+/**
+ * Legge un `.sdocx` di Samsung Notes senza che nessuno abbia mai pubblicato il formato.
+ *
+ * E' uno ZIP. Dentro, `note.note` e' un binario dell'S-Pen SDK in cui il testo battuto sta in
+ * chiaro come stringhe UTF-16LE precedute dalla lunghezza in caratteri; il resto del file sono i
+ * tratti dell'inchiostro e la struttura della pagina, che non ci servono. `media/mediaInfo.dat`
+ * elenca le registrazioni, una per record, **nell'ordine in cui sono state fatte**, con il nome
+ * della voce nello ZIP e l'ora di creazione.
+ *
+ * Il metodo e' quello di chi legge un formato senza specifica: si cerca quello che si sa
+ * riconoscere e si ignora il resto. Per questo il parser e' pieno di controlli di plausibilita' —
+ * non e' diffidenza, e' l'unico modo di non scambiare per una parola una coppia di byte di un tratto
+ * di penna. Tutto quello che non si riconosce si lascia stare, e chi chiama tiene l'archivio
+ * originale come fonte cosi' un parser migliore, domani, potra' rileggerlo.
+ *
+ * Tarato su un file vero: una nota di filosofia con quattro paragrafi e due registrazioni, che e'
+ * anche la fixture del test.
+ */
+object SdocxParser {
+
+  private const val NOTE_ENTRY = "note.note"
+  private const val MEDIA_INFO_ENTRY = "media/mediaInfo.dat"
+  private val AUDIO_EXTENSIONS = setOf("m4a", "mp3", "wav", "aac", "ogg", "3gp", "amr", "mp4")
+
+  /** Il tag con cui `mediaInfo.dat` apre ogni record. Uno solo visto finora; se ne accettano altri per tolleranza. */
+  private const val MEDIA_RECORD_TAG = 0x79
+
+  fun parse(file: File): SdocxDocument = ZipFile(file).use { zip -> parse(zip) }
+
+  fun parse(zip: ZipFile): SdocxDocument {
+    val note = zip.getEntry(NOTE_ENTRY)?.let { zip.getInputStream(it).use { s -> s.readBytes() } }
+    val mediaInfo = zip.getEntry(MEDIA_INFO_ENTRY)?.let { zip.getInputStream(it).use { s -> s.readBytes() } }
+
+    val prose = note?.let(::readProse).orEmpty()
+    // La prima stringa e' il titolo: e' corta e viene prima di tutto. Quando la nota non ha un
+    // titolo, Samsung Notes non ne scrive uno e la prima stringa e' gia' il corpo.
+    val title = prose.firstOrNull()?.takeIf { it.length <= TITLE_MAX_CHARS && !it.contains('\n') }
+    val body = (if (title != null) prose.drop(1) else prose).joinToString("\n\n").trim()
+
+    val voices = note?.let(::readVoices).orEmpty()
+    val media = mediaInfo?.let(::readMediaInfo).orEmpty()
+    val audioEntries = zip.entries().asSequence()
+      .map { it.name }
+      .filter { it.substringAfterLast('.', "").lowercase() in AUDIO_EXTENSIONS }
+      .toList()
+
+    return SdocxDocument(title = title, body = body, recordings = pairRecordings(media, voices, audioEntries))
+  }
+
+  // -----------------------------------------------------------------------------------------------
+  // note.note
+  // -----------------------------------------------------------------------------------------------
+
+  /**
+   * Le stringhe di testo battuto, nell'ordine in cui compaiono.
+   *
+   * Un int32 di lunghezza in caratteri seguito da altrettanti code unit UTF-16LE. La lunghezza da
+   * sola non basta: in un file pieno di coordinate qualunque quattro byte sembrano una lunghezza, e
+   * i due byte che seguono decodificano sempre a *qualcosa*. Quello che distingue una frase da un
+   * tratto di penna e' che la frase e' fatta di lettere di un alfabeto, spazi e punteggiatura, e
+   * ha una lunghezza da frase.
+   */
+  internal fun readProse(bytes: ByteArray): List<String> {
+    val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+    val result = mutableListOf<String>()
+    var i = 0
+    while (i + 4 <= bytes.size) {
+      val length = buffer.getInt(i)
+      if (length in PROSE_MIN_CHARS..PROSE_MAX_CHARS && i + 4 + length * 2 <= bytes.size) {
+        val text = decodeUtf16(bytes, i + 4, length)
+        if (text != null && looksLikeProse(text)) {
+          result += text.trim()
+          i += 4 + length * 2
+          continue
+        }
+      }
+      i++
+    }
+    return result
+  }
+
+  /**
+   * Le registrazioni come Samsung Notes le mostra: «Voce 001» e la sua durata «00:27:29».
+   *
+   * Stanno in un'altra parte del file, con un prefisso a 16 bit invece che a 32, e sempre nome e
+   * durata una dopo l'altra. Si cerca la durata, che ha una forma inconfondibile, e da li' si torna
+   * indietro a prendere il nome.
+   */
+  internal fun readVoices(bytes: ByteArray): List<Pair<String, Long>> {
+    val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+    val result = mutableListOf<Pair<String, Long>>()
+    val durationBytes = 8 * 2
+    var i = 2
+    while (i + durationBytes <= bytes.size) {
+      if (buffer.getShort(i - 2).toInt() == 8) {
+        val text = decodeUtf16(bytes, i, 8)
+        if (text != null && DURATION.matches(text)) {
+          val name = nameBefore(bytes, buffer, i - 2)
+          result += (name ?: "") to parseDuration(text)
+          i += durationBytes
+          continue
+        }
+      }
+      i++
+    }
+    return result
+  }
+
+  /** Il nome che sta subito prima di un prefisso a [end]: `len16 + nome` con la fine a filo. */
+  private fun nameBefore(bytes: ByteArray, buffer: ByteBuffer, end: Int): String? {
+    for (length in 1..VOICE_NAME_MAX_CHARS) {
+      val start = end - length * 2
+      val prefixAt = start - 2
+      if (prefixAt < 0) return null
+      if (buffer.getShort(prefixAt).toInt() != length) continue
+      val text = decodeUtf16(bytes, start, length) ?: continue
+      if (text.isNotBlank() && text.all { it.isLetterOrDigit() || it == ' ' || it == '_' || it == '-' }) return text.trim()
+    }
+    return null
+  }
+
+  // -----------------------------------------------------------------------------------------------
+  // media/mediaInfo.dat
+  // -----------------------------------------------------------------------------------------------
+
+  internal data class MediaRecord(
+    val index: Int,
+    val name: String,
+    val sha256: String?,
+    val createdAtMillis: Long?,
+  )
+
+  /**
+   * Un record per file: tag int32, indice int32, nome (lunghezza **int16** + UTF-16LE), sha256 in
+   * esadecimale ASCII, due byte, ora di creazione come int64 in microsecondi. L'ordine dei record
+   * e' l'ordine delle registrazioni, e le ore lo confermano.
+   *
+   * La lunghezza a sedici bit e' la differenza con `note.note`, dove le stringhe lunghe hanno un
+   * prefisso a trentadue: letta a trentadue, il nome partiva due byte dopo e nessun record passava
+   * il controllo sull'estensione.
+   */
+  internal fun readMediaInfo(bytes: ByteArray): List<MediaRecord> {
+    val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+    val result = mutableListOf<MediaRecord>()
+    var i = 0
+    while (i + 10 <= bytes.size) {
+      val tag = buffer.getInt(i)
+      val index = buffer.getInt(i + 4)
+      val length = buffer.getShort(i + 8).toInt()
+      if (tag == MEDIA_RECORD_TAG && index in 0..9_999 && length in 1..255 && i + 10 + length * 2 <= bytes.size) {
+        val name = decodeUtf16(bytes, i + 10, length)
+        if (name != null && name.substringAfterLast('.', "").lowercase() in AUDIO_EXTENSIONS) {
+          var cursor = i + 10 + length * 2
+          val sha = if (cursor + 64 <= bytes.size) String(bytes, cursor, 64, Charsets.US_ASCII).takeIf { HEX64.matches(it) } else null
+          if (sha != null) cursor += 64
+          // Due byte di separatore, poi l'ora. Si legge solo se ha un valore da orologio.
+          val createdAt = if (sha != null && cursor + 2 + 8 <= bytes.size) plausibleEpochMillis(buffer.getLong(cursor + 2)) else null
+          result += MediaRecord(index, name, sha, createdAt)
+          i = cursor
+          continue
+        }
+      }
+      i++
+    }
+    return result
+  }
+
+  /**
+   * Mette insieme le tre fonti: i record di `mediaInfo.dat` (ordine, nome nello ZIP, ora), le voci
+   * di `note.note` (titolo e durata) e le voci dello ZIP (quello che c'e' davvero).
+   *
+   * L'accoppiamento e' per posizione: la prima registrazione di `mediaInfo.dat` e' «Voce 001».
+   * Quando i conti non tornano si tiene quello che e' certo — i file — e si lascia vuoto il resto,
+   * invece di assegnare un titolo a caso.
+   */
+  private fun pairRecordings(
+    media: List<MediaRecord>,
+    voices: List<Pair<String, Long>>,
+    audioEntries: List<String>,
+  ): List<SdocxRecording> {
+    val byName = audioEntries.associateBy { it.substringAfterLast('/') }
+    val ordered = media.mapNotNull { record -> byName[record.name]?.let { record to it } }
+    // Un file che c'e' nello ZIP ma non nell'indice si accoda: meglio importarlo senza nome che perderlo.
+    val listed = ordered.map { it.second }.toSet()
+    val orphans = audioEntries.filter { it !in listed }.sorted()
+
+    val paired = ordered.mapIndexed { position, (record, entry) ->
+      val voice = voices.getOrNull(position)?.takeIf { voices.size == ordered.size }
+      SdocxRecording(
+        entryName = entry,
+        title = voice?.first?.takeIf { it.isNotBlank() },
+        durationMs = voice?.second ?: 0L,
+        sha256 = record.sha256,
+        createdAtMillis = record.createdAtMillis,
+      )
+    }
+    return paired + orphans.map { SdocxRecording(it, null, 0L, null, null) }
+  }
+
+  // -----------------------------------------------------------------------------------------------
+
+  private fun decodeUtf16(bytes: ByteArray, offset: Int, chars: Int): String? {
+    if (offset < 0 || offset + chars * 2 > bytes.size) return null
+    val text = String(bytes, offset, chars * 2, Charsets.UTF_16LE)
+    if (text.any { it == '\u0000' || it == '\uFFFD' }) return null
+    return text
+  }
+
+  /**
+   * Una frase, non un tratto di penna.
+   *
+   * Lettere di un alfabeto (latino, greco, cirillico), cifre, spazi e punteggiatura per quasi tutto
+   * il testo, e una quota minima di lettere vere: una sequenza di soli spazi e punti e' un altro
+   * pezzo di struttura che si e' vestito da testo.
+   */
+  internal fun looksLikeProse(text: String): Boolean {
+    if (text.length < PROSE_MIN_CHARS) return false
+    var letters = 0
+    var acceptable = 0
+    for (c in text) {
+      when {
+        c.isLetter() -> {
+          val script = Character.UnicodeScript.of(c.code)
+          if (script == Character.UnicodeScript.LATIN || script == Character.UnicodeScript.GREEK || script == Character.UnicodeScript.CYRILLIC) {
+            letters++
+            acceptable++
+          }
+        }
+        c.isDigit() || c.isWhitespace() || c in PUNCTUATION -> acceptable++
+      }
+    }
+    return acceptable * 100 / text.length >= 95 && letters * 100 / text.length >= 35
+  }
+
+  private fun parseDuration(text: String): Long {
+    val (h, m, s) = text.split(':').map { it.toLong() }
+    return ((h * 60 + m) * 60 + s) * 1000
+  }
+
+  /** Microsecondi dal 1970, e solo se cadono in un intervallo da orologio; altrimenti null. */
+  private fun plausibleEpochMillis(raw: Long): Long? {
+    val millis = raw / 1000
+    return millis.takeIf { it in EPOCH_2010_MS..EPOCH_2100_MS }
+  }
+
+  private const val PROSE_MIN_CHARS = 8
+  private const val PROSE_MAX_CHARS = 2_000_000
+  private const val TITLE_MAX_CHARS = 160
+  private const val VOICE_NAME_MAX_CHARS = 80
+  private const val EPOCH_2010_MS = 1_262_304_000_000L
+  private const val EPOCH_2100_MS = 4_102_444_800_000L
+
+  private val DURATION = Regex("\\d\\d:\\d\\d:\\d\\d")
+  private val HEX64 = Regex("[0-9a-fA-F]{64}")
+  private const val PUNCTUATION = ".,;:!?'\"()[]{}<>«»‘’“”–—-…/\\&%€$@#*+=°§~^|"
+}

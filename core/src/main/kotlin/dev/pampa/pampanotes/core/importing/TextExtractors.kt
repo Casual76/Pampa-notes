@@ -109,3 +109,23 @@ class PdfTextExtractor @Inject constructor(
     const val MAX_PAGES = 300
   }
 }
+
+/**
+ * Il testo di un `.docx`, via [DocxParser].
+ *
+ * Un documento senza paragrafi (solo immagini, o un file rotto) non e' un import: la fonte resta
+ * `FAILED` e lo dice, invece di appendere una riga vuota alla nota.
+ */
+@Singleton
+class DocxTextExtractor @Inject constructor() : TextExtractor {
+  override val kind: SourceKind = SourceKind.DOCX
+
+  override suspend fun extract(file: File, displayName: String): ExtractedText = withContext(Dispatchers.IO) {
+    runCatching { DocxParser.parse(file) }
+      .map { text ->
+        if (text.isBlank()) ExtractedText("", SourceStatus.FAILED, "Nessun testo nel documento")
+        else ExtractedText(text)
+      }
+      .getOrElse { error -> ExtractedText("", SourceStatus.FAILED, error.message ?: "DOCX illeggibile") }
+  }
+}

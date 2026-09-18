@@ -466,4 +466,20 @@
   <string name="settings_refinement_model_detail">Empty: picks the best one Groq offers</string>
   <string name="settings_refinement_preset">How to clean up, by default</string>
   <string name="job_phase_refining">Cleaning up piece %1$d of %2$d</string>
+
+  <!-- Import: a Samsung Notes file, the everyday case -->
+  <string name="import_samsung_eyebrow">Samsung Notes</string>
+  <string name="import_samsung_title">Note title</string>
+  <string name="import_samsung_folder">Which subject</string>
+  <string name="import_samsung_empty">Ink only: no typed text and no recordings</string>
+  <plurals name="import_samsung_paragraphs">
+    <item quantity="one">%d paragraph</item>
+    <item quantity="other">%d paragraphs</item>
+  </plurals>
+  <plurals name="import_samsung_recordings">
+    <item quantity="one">%d recording</item>
+    <item quantity="other">%d recordings</item>
+  </plurals>
+  <string name="import_done_recording">Recording, in its session</string>
+  <string name="import_samsung_duplicate">You already imported this into “%1$s”. Importing it again creates a second note and leaves that one alone.</string>
 </resources>

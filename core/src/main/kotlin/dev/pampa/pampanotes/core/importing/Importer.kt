@@ -29,8 +29,18 @@ data class ImportCandidate(
   val duplicateOfNoteTitle: String? = null,
   /** La durata, per l'audio: serve al wizard per dire "42 min" prima di importare. */
   val durationMs: Long = 0,
+  /**
+   * Quello che si e' letto da un file di Samsung Notes, gia' all'ispezione.
+   *
+   * Serve prima dell'import, non dopo: e' il momento in cui il wizard puo' dire «Fichte, quattro
+   * paragrafi, due registrazioni» e proporre titolo e cartella, invece di mostrare un nome di file.
+   */
+  val sdocx: SdocxDocument? = null,
 ) {
   val isAudio: Boolean get() = kind == SourceKind.AUDIO
+
+  /** Una nota di Samsung Notes letta bene: ha qualcosa dentro e sappiamo cos'e'. */
+  val isSamsungNote: Boolean get() = sdocx != null && !sdocx.isEmpty
   val isDuplicate: Boolean get() = duplicateOfNoteId != null
 }
 

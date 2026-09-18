@@ -13,6 +13,7 @@ import dev.pampa.pampanotes.core.db.SourceKind
 import dev.pampa.pampanotes.core.db.SourceStatus
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.files.Hashing
+import dev.pampa.pampanotes.core.model.Dates
 import dev.pampa.pampanotes.core.model.Ids
 import dev.pampa.pampanotes.core.repo.NoteRepository
 import java.io.File
@@ -77,7 +78,14 @@ class ImportCoordinator @Inject constructor(
    * chiama, confrontando le dimensioni, e l'utente vede solo quello su cui puo' decidere.
    */
   suspend fun inspect(uris: List<Uri>): List<ImportCandidate> = withContext(Dispatchers.IO) {
-    uris.mapNotNull { uri -> runCatching { inspectOne(uri) }.getOrNull() }
+    uris.mapNotNull { uri ->
+      runCatching { inspectOne(uri) }
+        // Il fallimento resta silenzioso per l'utente, che vede «niente da importare», ma non per
+        // chi legge il log: un URI che non si apre e' quasi sempre un permesso, e senza la riga qui
+        // sotto si passa un pomeriggio a cercare il difetto nel posto sbagliato.
+        .onFailure { android.util.Log.w("PampaNotes", "import: non riesco a leggere $uri", it) }
+        .getOrNull()
+    }
   }
 
   /** Il testo incollato o condiviso come testo: niente file, niente copia. */
@@ -137,6 +145,9 @@ class ImportCoordinator @Inject constructor(
       duplicateOfNoteId = duplicateNoteId,
       duplicateOfNoteTitle = duplicateNoteId?.let { noteDao.get(it)?.title },
       durationMs = if (kind == SourceKind.AUDIO) audioImporter.probeDuration(temp) else 0,
+      // Si legge subito, all'ispezione: un file che non si capisce resta un allegato, e uno che si
+      // capisce diventa una nota con un titolo, prima ancora di premere niente.
+      sdocx = if (kind == SourceKind.SDOCX) runCatching { SdocxParser.parse(temp) }.getOrNull() else null,
     )
   }
 
@@ -158,15 +169,23 @@ class ImportCoordinator @Inject constructor(
 
     val results = mutableListOf<ImportedItem>()
     val audio = candidates.filter { it.isAudio }
-    val documents = candidates.filterNot { it.isAudio }
+    val samsung = candidates.filter { it.isSamsungNote }
+    val documents = candidates.filterNot { it.isAudio || it.isSamsungNote }
 
     documents.forEachIndexed { index, candidate ->
       onProgress(index, candidates.size, candidate.displayName)
       results += importDocument(candidate, noteId)
     }
 
+    // Una nota di Samsung Notes non e' un documento: e' testo *e* registrazioni insieme, e le
+    // registrazioni vanno in una sessione loro, datata dal giorno in cui sono state fatte.
+    samsung.forEachIndexed { index, candidate ->
+      onProgress(documents.size + index, candidates.size, candidate.displayName)
+      results += importSamsungNote(candidate, noteId, audioPlacement)
+    }
+
     if (audio.isNotEmpty()) {
-      onProgress(documents.size, candidates.size, audio.first().displayName)
+      onProgress(documents.size + samsung.size, candidates.size, audio.first().displayName)
       results += audioImporter.importAll(audio, noteId, audioPlacement)
     }
 
@@ -235,6 +254,102 @@ class ImportCoordinator @Inject constructor(
   }
 
   /**
+   * Una nota di Samsung Notes: il testo nel corpo, le registrazioni in una sessione, l'archivio
+   * conservato come fonte.
+   *
+   * Il testo entra senza l'intestazione con il nome del file: in una nota nuova *e'* la nota, e un
+   * titolo «File samsung notes di test.sdocx» sopra gli appunti di Fichte e' rumore. L'intestazione
+   * torna solo quando la nota aveva gia' un corpo, dove serve a dire dove finisce l'uno e comincia
+   * l'altro.
+   *
+   * Le registrazioni si tirano fuori dallo ZIP una alla volta in un file temporaneo e passano per
+   * [AudioImporter] come qualsiasi altro audio, con il nome che Samsung Notes gli dava — «Voce
+   * 001» — e nell'ordine in cui sono state fatte. La sessione prende la data della prima
+   * registrazione, che e' il giorno della lezione, non il giorno dell'import.
+   */
+  private suspend fun importSamsungNote(
+    candidate: ImportCandidate,
+    noteId: String,
+    placement: AudioPlacement,
+  ): List<ImportedItem> {
+    val doc = candidate.sdocx ?: return listOf(ImportedItem(candidate.id, candidate.displayName, candidate.kind, SourceStatus.FAILED, "File non leggibile"))
+    val temp = candidate.file ?: return listOf(ImportedItem(candidate.id, candidate.displayName, candidate.kind, SourceStatus.FAILED, "File non disponibile"))
+    val results = mutableListOf<ImportedItem>()
+
+    // 1. L'archivio originale, per sempre.
+    val sourceId = Ids.newId()
+    val storedName = files.newSourceName(sourceId, candidate.displayName, candidate.mime)
+    val stored = files.sourceFile(storedName)
+    temp.copyTo(stored, overwrite = true)
+    temp.delete()
+
+    // 2. Il testo.
+    val body = doc.body.trim()
+    if (body.isNotEmpty()) {
+      val hadBody = !noteDao.get(noteId)?.body.isNullOrBlank()
+      notes.appendBody(noteId, if (hadBody) "## ${doc.title ?: candidate.displayName}\n\n$body" else body)
+    }
+
+    // 3. Le registrazioni.
+    val extracted = mutableListOf<ImportCandidate>()
+    java.util.zip.ZipFile(stored).use { zip ->
+      doc.recordings.forEachIndexed { index, recording ->
+        val entry = zip.getEntry(recording.entryName) ?: return@forEachIndexed
+        val extension = recording.entryName.substringAfterLast('.', "m4a")
+        val audioTemp = files.tempFile(prefix = "sdocx", suffix = ".$extension")
+        val (sha, size) = zip.getInputStream(entry).use { input -> Hashing.copyHashing(input, audioTemp) }
+        // Un nome che ordina come Samsung Notes: «Voce 001» viene prima di «Voce 002» anche
+        // quando i file dentro lo ZIP si chiamano al contrario.
+        val name = recording.title ?: "Registrazione ${"%02d".format(index + 1)}"
+        extracted += ImportCandidate(
+          id = Ids.newId(),
+          uri = null,
+          file = audioTemp,
+          displayName = "$name.$extension",
+          kind = SourceKind.AUDIO,
+          mime = MimeSniffer.mimeFor(SourceKind.AUDIO, null),
+          sizeBytes = size,
+          sha256 = sha,
+          durationMs = audioImporter.probeDuration(audioTemp).takeIf { it > 0 } ?: recording.durationMs,
+        )
+      }
+    }
+
+    if (extracted.isNotEmpty()) {
+      val sessionPlacement = when (placement) {
+        is AudioPlacement.Append -> placement
+        is AudioPlacement.NewSession -> AudioPlacement.NewSession(
+          date = doc.recordings.firstNotNullOfOrNull { it.createdAtMillis }?.let { Dates.fromMillis(it) } ?: placement.date,
+          title = placement.title,
+        )
+      }
+      results += audioImporter.importAll(extracted, noteId, sessionPlacement)
+    }
+
+    // 4. La fonte.
+    val status = if (body.isEmpty() && extracted.isEmpty()) SourceStatus.PARTIAL else SourceStatus.OK
+    val detail = if (status == SourceStatus.PARTIAL) "Nella nota non c'era testo battuto ne' registrazioni: solo inchiostro, che non si legge" else null
+    sources.upsert(
+      SourceEntity(
+        id = sourceId,
+        noteId = noteId,
+        kind = SourceKind.SDOCX,
+        originalName = candidate.displayName,
+        mime = candidate.mime,
+        sizeBytes = candidate.sizeBytes,
+        sha256 = candidate.sha256,
+        storedFileName = storedName,
+        extractedChars = body.length,
+        status = status,
+        detail = detail,
+        importedAt = System.currentTimeMillis(),
+      ),
+    )
+    results.add(0, ImportedItem(candidate.id, doc.title ?: candidate.displayName, SourceKind.SDOCX, status, detail, body.length, sourceId))
+    return results
+  }
+
+  /**
    * Il testo estratto, con sopra da dove viene.
    *
    * Un intestazione invece di niente perche' una nota che mette insieme tre PDF senza dire dove
@@ -258,6 +373,7 @@ class ImportCoordinator @Inject constructor(
 class TextExtractorRegistry @Inject constructor(
   plain: PlainTextExtractor,
   pdf: PdfTextExtractor,
+  docx: DocxTextExtractor,
 ) {
   private val byKind: Map<SourceKind, TextExtractor> = mapOf(
     SourceKind.TEXT to plain,
@@ -265,6 +381,7 @@ class TextExtractorRegistry @Inject constructor(
     SourceKind.CLIPBOARD to plain,
     SourceKind.SHARE to plain,
     SourceKind.PDF to pdf,
+    SourceKind.DOCX to docx,
   )
 
   fun forKind(kind: SourceKind): TextExtractor? = byKind[kind]

@@ -16,6 +16,7 @@ import dev.pampa.pampanotes.core.importing.ImportTarget
 import dev.pampa.pampanotes.core.model.Dates
 import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.repo.NoteRepository
+import dev.pampa.pampanotes.ui.common.FolderIcon
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -45,7 +46,9 @@ data class ImportUiState(
   val error: String? = null,
 ) {
   val included: List<ImportCandidate> get() = candidates.filterNot { it.id in excluded }
-  val hasAudio: Boolean get() = included.any { it.isAudio }
+  val hasAudio: Boolean get() = included.any { it.isAudio || (it.sdocx?.recordings?.isNotEmpty() == true) }
+  /** Una nota di Samsung Notes da sola: il caso di tutti i giorni, e quello con il percorso corto. */
+  val samsungNote: ImportCandidate? get() = candidates.singleOrNull()?.takeIf { it.isSamsungNote }
   val hasDocuments: Boolean get() = included.any { !it.isAudio }
   /** Quando la nota e' gia' decisa (import da dentro una nota) il passo destinazione non serve. */
   val targetIsFixed: Boolean get() = selectedNoteId != null && selectedFolderId == null
@@ -58,6 +61,9 @@ class ImportViewModel @Inject constructor(
   private val notes: NoteRepository,
   private val sessions: SessionDao,
   private val requests: ImportRequestHolder,
+  private val settingsStore: dev.pampa.pampanotes.core.settings.PampaSettingsStore,
+  private val transcription: dev.pampa.pampanotes.core.repo.TranscriptionRepository,
+  private val scheduler: dev.pampa.pampanotes.work.WorkScheduler,
 ) : ViewModel() {
 
   private val _uiState = MutableStateFlow(ImportUiState())
@@ -97,18 +103,30 @@ class ImportViewModel @Inject constructor(
         return@launch
       }
 
-      val defaultTitle = all.firstOrNull { !it.isAudio }?.displayName?.substringBeforeLast('.')
+      // Una nota di Samsung Notes porta il suo titolo: e' quello, non il nome del file.
+      val samsung = all.singleOrNull()?.sdocx?.takeIf { !it.isEmpty }
+      val defaultTitle = samsung?.title?.takeIf { it.isNotBlank() }
+        ?: all.firstOrNull { !it.isAudio }?.displayName?.substringBeforeLast('.')
         ?: all.first().displayName.substringBeforeLast('.')
+      // E dal titolo si indovina la materia: «Fichte» da solo non basta, ma «Storia» o «Filosofia»
+      // nel titolo o nelle prime righe si'. Quando non si indovina resta la prima cartella.
+      val guessedFolder = samsung?.let { doc ->
+        val hint = FolderIcon.guessFrom(listOfNotNull(doc.title, doc.body.take(400)).joinToString(" "))
+        if (hint == FolderIcon.Folder) null else allFolders.firstOrNull { FolderIcon.guessFrom(it.name) == hint }
+      }
 
       _uiState.update {
         it.copy(
           step = ImportStep.REVIEW,
           candidates = all,
           // I doppioni partono esclusi: reimportare due volte lo stesso PDF e' quasi sempre un errore.
-          excluded = all.filter { candidate -> candidate.isDuplicate }.map { candidate -> candidate.id }.toSet(),
+          // Non nel percorso corto, che non ha un interruttore per riammetterli: li' si avvisa e si
+          // lascia decidere con il tasto, perche' una nota Samsung ricondivisa dopo una modifica e'
+          // un caso normale, non un errore.
+          excluded = if (samsung != null) emptySet() else all.filter { candidate -> candidate.isDuplicate }.map { candidate -> candidate.id }.toSet(),
           folders = allFolders,
           folderPaths = paths,
-          selectedFolderId = if (intoNoteId != null) null else allFolders.firstOrNull()?.id,
+          selectedFolderId = if (intoNoteId != null) null else (guessedFolder ?: allFolders.firstOrNull())?.id,
           newNoteTitle = defaultTitle,
         )
       }
@@ -155,7 +173,15 @@ class ImportViewModel @Inject constructor(
     val state = _uiState.value
     when (state.step) {
       ImportStep.REVIEW -> _uiState.update {
-        it.copy(step = if (it.targetIsFixed) (if (it.hasAudio) ImportStep.AUDIO else ImportStep.RUNNING) else ImportStep.DESTINATION)
+        it.copy(
+          step = when {
+            it.targetIsFixed -> if (it.hasAudio) ImportStep.AUDIO else ImportStep.RUNNING
+            // Il percorso corto: la nota Samsung ha gia' scelto titolo e cartella nella prima
+            // schermata, e le sue registrazioni vanno in una sessione loro. Non c'e' altro da chiedere.
+            it.samsungNote != null && it.selectedFolderId != null -> ImportStep.RUNNING
+            else -> ImportStep.DESTINATION
+          },
+        )
       }
       ImportStep.DESTINATION -> _uiState.update {
         it.copy(step = if (it.hasAudio) ImportStep.AUDIO else ImportStep.RUNNING)
@@ -218,10 +244,27 @@ class ImportViewModel @Inject constructor(
         }
       }.onSuccess { outcome ->
         _uiState.update { it.copy(step = ImportStep.DONE, outcome = outcome, progress = 1f) }
+        transcribeIfAsked(outcome.noteId)
       }.onFailure { error ->
         _uiState.update { it.copy(step = ImportStep.DONE, error = error.message ?: "Import non riuscito") }
       }
     }
+  }
+
+  /**
+   * Mette in coda la trascrizione di quello che e' appena arrivato, se l'impostazione lo chiede.
+   *
+   * L'impostazione «Trascrivi appena importi» esisteva, era accesa di default, e non la applicava
+   * nessuno. Qui si guardano le sessioni della nota rimaste senza trascrizione — quelle appena
+   * create, ma anche una vecchia mai trascritta — e si mettono in coda una per una.
+   */
+  private suspend fun transcribeIfAsked(noteId: String) {
+    val settings = settingsStore.current()
+    if (!settings.autoTranscribeOnImport) return
+    val pending = sessions.byNote(noteId).filter { it.parts.isNotEmpty() && it.session.activeTranscriptId == null }
+    if (pending.isEmpty()) return
+    pending.forEach { transcription.enqueue(it.session.id, settings.preferredProvider) }
+    scheduler.kick(settings.preferredProvider.id)
   }
 
   /**

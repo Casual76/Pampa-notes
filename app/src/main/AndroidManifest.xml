@@ -65,6 +65,9 @@
         <data android:mimeType="video/mp4" />
         <data android:mimeType="application/zip" />
         <data android:mimeType="application/octet-stream" />
+        <!-- Samsung Notes condivide i suoi .sdocx cosi', e senza questa riga l'app non compare fra quelle proposte. -->
+        <data android:mimeType="application/sdoc" />
+        <data android:mimeType="application/sdocx" />
       </intent-filter>
       <intent-filter>
         <action android:name="android.intent.action.SEND_MULTIPLE" />
@@ -80,6 +83,25 @@
         <data android:mimeType="video/mp4" />
         <data android:mimeType="application/zip" />
         <data android:mimeType="application/octet-stream" />
+        <!-- Samsung Notes condivide i suoi .sdocx cosi', e senza questa riga l'app non compare fra quelle proposte. -->
+        <data android:mimeType="application/sdoc" />
+        <data android:mimeType="application/sdocx" />
+      </intent-filter>
+
+      <!-- "Apri con Pampa Notes" da un gestore file: i tipi che si sanno leggere. Non text/plain,
+           che proporrebbe l'app per ogni .txt del telefono. -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:scheme="content" />
+        <data android:scheme="file" />
+        <data android:mimeType="application/pdf" />
+        <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+        <data android:mimeType="application/sdoc" />
+        <data android:mimeType="application/sdocx" />
+        <data android:mimeType="text/markdown" />
+        <data android:mimeType="text/x-markdown" />
+        <data android:mimeType="audio/*" />
       </intent-filter>
 
       <!-- Il QR stampato dal server companion: pampanotes://endpoint?url=...&token=... -->

@@ -105,7 +105,14 @@ private fun ImportScreen(
         }
       }
 
-      ImportStep.REVIEW -> reviewStep(state, onToggle, onNext, onClose)
+      ImportStep.REVIEW -> {
+        val samsung = state.samsungNote
+        if (samsung != null) {
+          samsungStep(state, samsung, onSelectFolder, onTitleChange, onNext, { creatingFolder = true })
+        } else {
+          reviewStep(state, onToggle, onNext, onClose)
+        }
+      }
       ImportStep.DESTINATION -> destinationStep(state, onSelectFolder, onSelectNote, onTitleChange, onNext, { creatingFolder = true })
       ImportStep.AUDIO -> audioStep(state, onSelectSession, onNext)
       ImportStep.RUNNING -> runningStep(state)
@@ -192,6 +199,114 @@ private fun androidx.compose.foundation.lazy.LazyListScope.reviewStep(
       modifier = Modifier.fillMaxWidth(),
     )
   }
+}
+
+/**
+ * Il percorso corto: una nota di Samsung Notes, da sola.
+ *
+ * E' il caso di tutti i giorni, quindi non passa dal wizard a quattro passi: una schermata che dice
+ * cosa ha letto — titolo, quanti paragrafi, quante registrazioni e quanto durano — propone la
+ * materia indovinata dal titolo, e un tasto. La destinazione si sceglie qui, non in un passo dopo,
+ * perche' l'unica domanda che resta e' «in quale cartella», e una domanda sola non merita una pagina.
+ */
+private fun androidx.compose.foundation.lazy.LazyListScope.samsungStep(
+  state: ImportUiState,
+  candidate: ImportCandidate,
+  onSelectFolder: (String) -> Unit,
+  onTitleChange: (String) -> Unit,
+  onNext: () -> Unit,
+  onCreateFolder: () -> Unit,
+) {
+  val doc = candidate.sdocx ?: return
+
+  item {
+    FluidListGroup(glass = true) {
+      FluidListRow(
+        title = doc.title ?: candidate.displayName,
+        subtitle = samsungSummary(doc),
+        eyebrow = stringResource(R.string.import_samsung_eyebrow),
+        meta = Formats.bytes(candidate.sizeBytes),
+        tone = if (candidate.isDuplicate) FluidTone.Warning else FluidTone.Primary,
+      )
+    }
+  }
+  if (candidate.isDuplicate) {
+    // Qui non c'e' un interruttore da accendere: si dice cosa succede premendo il tasto.
+    item {
+      FluidSectionFootnote(
+        text = stringResource(R.string.import_samsung_duplicate, candidate.duplicateOfNoteTitle.orEmpty()),
+      )
+    }
+  }
+
+  item {
+    FluidTextField(
+      value = state.newNoteTitle,
+      onValueChange = onTitleChange,
+      label = stringResource(R.string.import_samsung_title),
+      modifier = Modifier.fillMaxWidth(),
+    )
+  }
+
+  item { FluidSectionHeader(title = stringResource(R.string.import_samsung_folder)) }
+  if (state.folders.isEmpty()) {
+    item {
+      FluidEmptyState(
+        title = stringResource(R.string.home_empty_title),
+        detail = stringResource(R.string.import_no_folder_detail),
+      )
+    }
+  } else {
+    item {
+      FluidListGroup(glass = true) {
+        state.folders.forEachIndexed { index, folder ->
+          if (index > 0) FluidListDivider()
+          FluidListRow(
+            title = folder.name,
+            subtitle = state.folderPaths[folder.id]?.takeIf { it.isNotBlank() } ?: stringResource(R.string.import_folder_root),
+            onClick = { onSelectFolder(folder.id) },
+            badge = if (folder.id == state.selectedFolderId) {
+              { FluidStatusBadge(label = stringResource(R.string.import_chosen), tone = FluidTone.Primary) }
+            } else {
+              null
+            },
+          )
+        }
+      }
+    }
+  }
+  item {
+    FluidButton(
+      text = stringResource(R.string.home_new_folder),
+      onClick = onCreateFolder,
+      style = FluidButtonStyle.Plain,
+      fillWidth = true,
+      modifier = Modifier.fillMaxWidth(),
+    )
+  }
+
+  item {
+    FluidButton(
+      text = stringResource(R.string.action_import),
+      onClick = onNext,
+      enabled = state.selectedFolderId != null && state.newNoteTitle.isNotBlank(),
+      fillWidth = true,
+      modifier = Modifier.fillMaxWidth(),
+    )
+  }
+}
+
+/** «4 paragrafi · 2 registrazioni, 1 h 8» — quello che si e' letto, prima di importare. */
+@Composable
+private fun samsungSummary(doc: dev.pampa.pampanotes.core.importing.SdocxDocument): String {
+  val pieces = buildList {
+    if (doc.paragraphCount > 0) add(pluralStringResource(R.plurals.import_samsung_paragraphs, doc.paragraphCount, doc.paragraphCount))
+    if (doc.recordings.isNotEmpty()) {
+      val recordings = pluralStringResource(R.plurals.import_samsung_recordings, doc.recordings.size, doc.recordings.size)
+      add(if (doc.totalDurationMs > 0) "$recordings, ${Formats.durationShort(doc.totalDurationMs)}" else recordings)
+    }
+  }
+  return pieces.ifEmpty { listOf(stringResource(R.string.import_samsung_empty)) }.joinToString(" · ")
 }
 
 private fun androidx.compose.foundation.lazy.LazyListScope.destinationStep(
@@ -370,7 +485,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.doneStep(
           if (index > 0) FluidListDivider()
           FluidListRow(
             title = item.displayName,
-            subtitle = item.detail ?: importedSubtitle(item.charsAdded),
+            subtitle = item.detail ?: importedSubtitle(item),
             tone = when (item.status) {
               SourceStatus.OK -> FluidTone.Success
               SourceStatus.PARTIAL -> FluidTone.Warning
@@ -401,8 +516,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.doneStep(
 }
 
 @Composable
-private fun importedSubtitle(chars: Int): String =
-  if (chars > 0) pluralStringResource(R.plurals.note_source_chars, chars, chars) else stringResource(R.string.note_source_attached)
+private fun importedSubtitle(item: dev.pampa.pampanotes.core.importing.ImportedItem): String = when {
+  item.charsAdded > 0 -> pluralStringResource(R.plurals.note_source_chars, item.charsAdded, item.charsAdded)
+  // Una registrazione non e' un allegato: e' finita in una sessione, ed e' quello che va detto.
+  item.kind == SourceKind.AUDIO -> stringResource(R.string.import_done_recording)
+  else -> stringResource(R.string.note_source_attached)
+}
 
 @Composable
 private fun candidateSubtitle(candidate: ImportCandidate): String {

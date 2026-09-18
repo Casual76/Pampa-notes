@@ -496,4 +496,20 @@
   <string name="settings_refinement_model_detail">Vuoto: sceglie il migliore che Groq offre</string>
   <string name="settings_refinement_preset">Come ripulire, di default</string>
   <string name="job_phase_refining">Sto ripulendo il pezzo %1$d di %2$d</string>
+
+  <!-- Import: la nota di Samsung Notes, il caso di tutti i giorni -->
+  <string name="import_samsung_eyebrow">Samsung Notes</string>
+  <string name="import_samsung_title">Titolo della nota</string>
+  <string name="import_samsung_folder">In quale materia</string>
+  <string name="import_samsung_empty">Solo inchiostro: niente testo battuto né registrazioni</string>
+  <plurals name="import_samsung_paragraphs">
+    <item quantity="one">%d paragrafo</item>
+    <item quantity="other">%d paragrafi</item>
+  </plurals>
+  <plurals name="import_samsung_recordings">
+    <item quantity="one">%d registrazione</item>
+    <item quantity="other">%d registrazioni</item>
+  </plurals>
+  <string name="import_done_recording">Registrazione, nella sua sessione</string>
+  <string name="import_samsung_duplicate">L\'hai già importata in «%1$s». Importarla di nuovo crea una seconda nota, e non tocca quella.</string>
 </resources>

@@ -9,7 +9,7 @@
 
 .DESCRIPTION
   Carica il modello e resta in ascolto. La prima volta scarica i pesi (qualche gigabyte per
-  large-v3) e ci mette un po'; dopo parte in una decina di secondi.
+  large-v3) e ci mette un po'; dopo parte in mezzo minuto.
 
   Stampa gli indirizzi su cui il telefono lo trova. Se non lo trova, quasi sempre e' il firewall
   di Windows: il comando per aprire la porta lo stampa lui.

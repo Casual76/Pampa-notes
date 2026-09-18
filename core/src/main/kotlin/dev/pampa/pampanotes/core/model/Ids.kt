@@ -14,6 +14,10 @@ object Dates {
   fun today(): String = LocalDate.now().format(isoDate)
 
   fun parseOrNull(value: String): LocalDate? = runCatching { LocalDate.parse(value, isoDate) }.getOrNull()
+
+  /** Il giorno, nel fuso del telefono, di un istante in millisecondi epoch. */
+  fun fromMillis(epochMillis: Long): String =
+    java.time.Instant.ofEpochMilli(epochMillis).atZone(java.time.ZoneId.systemDefault()).toLocalDate().format(isoDate)
 }
 
 /** Da un titolo a un nome di file: ASCII, minuscolo, trattini, mai vuoto. */
