@@ -36,7 +36,7 @@ Due moduli più l'engine come submodule.
 |---|---|
 | `:core` | dominio, Room, DataStore, file, import, trascrizione, raffinamento, export. I package puri (pianificatore dei chunk, cucitura, writer Markdown, parser DOCX) non importano niente di Android e si provano in JVM. |
 | `:app` | UI Compose, navigazione, DI, worker, share target, lettore audio. |
-| `engine/` | [Fluid Engine](https://github.com/Casual76/fluid-engine) 1.35.0, submodule. **Non si modifica da qui**: una modifica non committata a monte sparisce al primo aggiornamento. |
+| `engine/` | [Fluid Engine](https://github.com/Casual76/fluid-engine) 1.36.0, submodule. **Non si modifica da qui**: una modifica non committata a monte sparisce al primo aggiornamento. |
 
 Il design system è quello dell'engine: `FluidScreen`, `FluidListGroup`/`FluidListRow`,
 `ContinuousCornerShape` (mai `RoundedCornerShape`), nessun colore o dimensione scritti a mano,
@@ -46,9 +46,16 @@ transizioni di rotta laterali e opache. Le regole per esteso stanno nella skill 
 
 Tre regimi, decisi da `fluidPaneLayout` dell'engine sulla larghezza della finestra: sotto i 600 dp
 un pannello e la pillola in basso (il telefono di sempre); fino a 1000 dp il `FluidTabRail` di
-fianco a un pannello (tablet in ritratto); oltre, barra laterale con le materie + lista + dettaglio
-(tablet in orizzontale). Non si usa `material3-adaptive`: consegna lambda di contenuto, non
-`NavBackStackEntry`, e i ViewModel leggono l'id dalla rotta.
+fianco a un pannello (tablet in ritratto); oltre, **la barra laterale con le materie piu' uno** — o
+l'elenco, o quello che si e' aperto. Non si usa `material3-adaptive`: consegna lambda di contenuto,
+non `NavBackStackEntry`, e i ViewModel leggono l'id dalla rotta.
+
+**Due pannelli al massimo, e la barra laterale e' uno dei due.** Tre si leggono come tre pagine
+appiccicate, e sulle impostazioni diventano tre livelli della stessa gerarchia in una volta:
+l'indice, la sezione, e un menu che con quella sezione non c'entra. Con due c'e' anche un solo tasto
+indietro. Scegliere qualcosa dalla barra laterale **chiude** quello che era aperto
+(`PampaNavActions.closeDetail`): senza, il tocco cambierebbe un elenco che in quel momento nessuno
+vede.
 
 Due `NavHost`, issati nella shell (`MainApp.kt`) e descritti in `ui/nav/PampaGraph.kt`: `listNav`
 ha **tutte** le destinazioni, `detailNav` solo quelle di dettaglio piu' `DETAIL_EMPTY`. Dove va una

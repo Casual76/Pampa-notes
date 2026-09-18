@@ -73,17 +73,32 @@ class PampaNavActions(
 
   /** Una scheda principale: si scambia con quella di prima, non si impila. */
   fun switchTopLevel(route: String) {
+    closeDetail()
     listNav.navigateTopLevelRoute(route)
     listNav.currentBackStackEntry?.savedStateHandle?.writePeerMotion()
   }
 
   /** Dalla barra laterale: una materia al posto di quella di prima, sopra la Home. */
   fun showFolder(id: String) {
+    closeDetail()
     listNav.navigate(Routes.folder(id)) {
       popUpTo(Routes.HOME)
       launchSingleTop = true
     }
     listNav.currentBackStackEntry?.savedStateHandle?.writePeerMotion()
+  }
+
+  /**
+   * Chiude quello che e' aperto, quando si chiede di guardare qualcos'altro.
+   *
+   * Su una finestra larga l'elenco e la cosa aperta si danno il cambio nello stesso posto: scegliere
+   * una materia dalla barra laterale mentre una nota e' aperta, senza questo, cambierebbe l'elenco
+   * che in quel momento nessuno vede — un tocco che non fa niente.
+   */
+  private fun closeDetail() {
+    if (!twoPane()) return
+    if (detailNav.currentBackStackEntry?.destination?.route == Routes.DETAIL_EMPTY) return
+    runCatching { detailNav.popBackStack(Routes.DETAIL_EMPTY, inclusive = false) }
   }
 
   /**
@@ -99,7 +114,10 @@ class PampaNavActions(
     }
   }
 
-  private fun openList(route: String) = navigateExpanding(listNav, route)
+  private fun openList(route: String) {
+    closeDetail()
+    navigateExpanding(listNav, route)
+  }
 
   private fun openDetail(route: String, fresh: Boolean = false) {
     if (!twoPane()) {

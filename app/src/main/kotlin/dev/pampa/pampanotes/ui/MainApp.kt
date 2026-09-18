@@ -167,8 +167,14 @@ private fun AppShell(
   val subject = LocalSubjectRegistry.current?.current
 
   BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-    val layout = remember(maxWidth) { fluidPaneLayout(maxWidth, hasSide = true, hasRail = true) }
-    val twoPane = rememberUpdatedState(layout.twoPane)
+    // Cosa c'e' aperto nel dettaglio: e' quello che decide se accanto alla barra laterale sta
+    // l'elenco o la cosa aperta. Due pannelli, mai tre.
+    val detailEntry by detailNav.currentBackStackEntryAsState()
+    val detailOpen = detailEntry != null && detailEntry?.destination?.route != Routes.DETAIL_EMPTY
+    val layout = remember(maxWidth, detailOpen) {
+      fluidPaneLayout(maxWidth, hasSide = true, hasRail = true, showDetail = detailOpen)
+    }
+    val splits = rememberUpdatedState(layout.splits)
 
     // Il selettore file e le azioni si conoscono a vicenda: il selettore, finito, apre il wizard;
     // le azioni lanciano il selettore. Il rimando passa da uno stato perche' i due nascono in
@@ -178,7 +184,7 @@ private fun AppShell(
       PampaNavActions(
         listNav = listNav,
         detailNav = detailNav,
-        twoPane = { twoPane.value },
+        twoPane = { splits.value },
         touchOrigin = touchOrigin,
         pickFiles = { launchPicker.value() },
         pickFilesInto = { noteId ->
@@ -196,7 +202,7 @@ private fun AppShell(
     }
     launchPicker.value = { pickFiles.launch(ImportRequest.PICKER_MIME_TYPES) }
 
-    LaunchedEffect(layout.twoPane) { syncPanes(listNav, detailNav, layout.twoPane) }
+    LaunchedEffect(layout.splits) { syncPanes(listNav, detailNav, layout.splits) }
 
     LaunchedEffect(listNav, incomingIntents) {
       incomingIntents.collect { intent ->
@@ -210,7 +216,7 @@ private fun AppShell(
     val selectedFolderId = listEntry?.takeIf { it.destination.route == Routes.FOLDER }?.arguments?.getString("folderId")
     // La pillola in basso solo dove non c'e' altra chrome: col rail o con la barra laterale
     // sarebbe la stessa cosa detta due volte.
-    val showTabBar = !layout.showRail && !layout.twoPane && listRoute in Routes.topLevelSet
+    val showTabBar = !layout.showRail && !layout.showSide && listRoute in Routes.topLevelSet
 
     val tabItems = listOf(
       FluidTabItem(Routes.HOME, stringResource(R.string.tab_home), Icons.Rounded.Home),
