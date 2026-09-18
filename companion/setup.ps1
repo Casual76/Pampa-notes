@@ -23,6 +23,10 @@
 .PARAMETER InstallPython
   Se non trova un Python adatto, lo installa con winget.
 
+.PARAMETER Force
+  Riscarica torch anche quando quello giusto c'e' gia'. Senza, rilanciare lo script costa secondi
+  invece di un paio di gigabyte.
+
 .EXAMPLE
   .\setup.ps1
   .\setup.ps1 -InstallPython
@@ -33,7 +37,9 @@
 param(
   [string]$Python = "",
   [ValidateSet("cu128", "cu126", "cpu")][string]$Cuda = "cu128",
-  [switch]$InstallPython
+  [switch]$InstallPython,
+  # Rimette torch anche se quello giusto c'e' gia': serve quando l'installazione e' rimasta a meta'.
+  [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -125,12 +131,37 @@ if ($LASTEXITCODE -ne 0) {
 
 # 4. torch per la scheda. --force-reinstall perche' pip vede gia' un torch e crederebbe di avere
 # finito; --no-deps perche' le dipendenze ci sono gia' e torch e' l'unico pezzo da sostituire.
+#
+# Prima pero' si guarda se c'e' gia' quello giusto: --force-reinstall non chiede, riscarica, e sono
+# due gigabyte e mezzo ogni volta che si rilancia questo script. Rilanciarlo capita — dopo un
+# errore, dopo un aggiornamento — e uno script che si puo' rifare a costo zero e' uno script che si
+# rifa' invece di indovinare cos'era rimasto a meta'.
 if ($Cuda -ne "cpu") {
-  Write-Host "  metto torch $torchVersion per CUDA ($Cuda, un paio di gigabyte)..."
-  & $venvPython -m pip install --force-reinstall --no-deps "torch==$torchVersion" "torchaudio==$torchVersion" --index-url "https://download.pytorch.org/whl/$Cuda"
-  if ($LASTEXITCODE -ne 0) {
-    Write-Host "  pip ha fallito: l'errore e' qui sopra. Con un driver vecchio prova -Cuda cu126." -ForegroundColor Red
-    exit 1
+  $already = $false
+  if (Test-Path $venvPython) {
+    # SilentlyContinue intorno alla prova, e non e' pignoleria: quando torch non c'e' ancora python
+    # esce con un traceback, e in PowerShell 5.1 lo stderr di un programma esterno rediretto diventa
+    # un errore vero. Con $ErrorActionPreference = "Stop" fermerebbe l'installazione proprio nel
+    # caso in cui deve andare avanti — la prima volta.
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    try {
+      $have = @(& $venvPython -c "import torch; print(torch.__version__); print(torch.cuda.is_available())" 2>$null)
+      if ($LASTEXITCODE -eq 0 -and $have.Count -ge 2) {
+        $version = "$($have[0])".Trim()
+        $sees = "$($have[1])".Trim() -eq "True"
+        $already = ($version -eq "$torchVersion+$Cuda") -and $sees
+        if ($already) { Write-Host "  torch $version c'e' gia' e vede la scheda: non lo riscarico (-Force per rifarlo)." }
+      }
+    } catch { } finally { $ErrorActionPreference = $old }
+  }
+  if ($Force -or -not $already) {
+    Write-Host "  metto torch $torchVersion per CUDA ($Cuda, un paio di gigabyte)..."
+    & $venvPython -m pip install --force-reinstall --no-deps "torch==$torchVersion" "torchaudio==$torchVersion" --index-url "https://download.pytorch.org/whl/$Cuda"
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host "  pip ha fallito: l'errore e' qui sopra. Con un driver vecchio prova -Cuda cu126." -ForegroundColor Red
+      exit 1
+    }
   }
 }
 
@@ -147,11 +178,14 @@ if ("$($check[1])".Trim() -eq "True") {
 } elseif ($Cuda -eq "cpu") {
   Write-Host "  senza scheda: funziona, ma un'ora di lezione ci mette decine di minuti." -ForegroundColor Yellow
 } else {
-  Write-Host "  torch non vede la scheda. Quasi sempre e' il driver troppo vecchio per $Cuda:" -ForegroundColor Yellow
+  # Le graffe non sono un vezzo: "$Cuda:" PowerShell lo legge come un'unita' (`$unita:percorso`),
+  # e lo script non si avvia nemmeno — errore di sintassi, non di esecuzione.
+  Write-Host "  torch non vede la scheda. Quasi sempre e' il driver troppo vecchio per ${Cuda}:" -ForegroundColor Yellow
   Write-Host "  aggiornalo da nvidia.com, oppure rilancia con -Cuda cu126." -ForegroundColor Yellow
 }
 
 Write-Host ""
-Write-Host "Fatto. Avvia con:" -ForegroundColor Green
-Write-Host "   .\run.ps1" -ForegroundColor Cyan
+Write-Host "Fatto. Avvia con un doppio clic su:" -ForegroundColor Green
+Write-Host "   avvia.cmd" -ForegroundColor Cyan
+Write-Host "   (o .\run.ps1, se preferisci il terminale)" -ForegroundColor DarkGray
 Write-Host ""
