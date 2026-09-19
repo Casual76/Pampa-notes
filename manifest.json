@@ -15,22 +15,31 @@
       "ref": "main"
     },
     "stable": {
-      "version": "0.1.0",
-      "releaseDate": "2026-09-18",
-      "changelog": "Prima versione pubblica.\n\nPampa Notes fa da ponte fra gli appunti che prendi altrove e gli assistenti IA: importa, trascrive, esporta. Non riassume e non risponde a domande.\n\n**Importa** da Samsung Notes (titolo, testo e registrazioni insieme), da PDF, Word, testo e file audio, condividendo o con «Apri con».\n\n**Trascrive** con Whisper, su Groq con la tua chiave o sul tuo computer con WhisperX. Premuto play, le parole si accendono una a una mentre vengono dette; con il server personale i tempi sono allineati davvero, con Groq sono stimati e l'app lo dice.\n\n**Ripulisce** una trascrizione con un modello di chat, se vuoi. La grezza resta sempre, con i suoi tempi.\n\n**Esporta** un pacchetto Markdown con l'indice e le regole per Claude, ChatGPT o Gemini, pronto da caricare in un Progetto o in un Gem.\n\n**Backup** dell'archivio intero in un file, nella cartella che scegli, Drive compreso. Il ripristino dice cosa c'e' dentro prima di sostituire quello che hai.\n\nSu tablet la barra laterale delle materie sta accanto a quello che stai leggendo, e l'app prende il colore della materia in cui ti trovi.",
-      "releaseTag": "stable-pampa-notes-v0.1.0",
-      "apkAsset": "pampa-notes-0.1.0.apk",
-      "sizeBytes": 10823181
+      "version": "0.1.1",
+      "releaseDate": "2026-09-19",
+      "changelog": "La pillola in basso e gli interruttori.\n\nLa barra di navigazione e' piu' bassa e le scritte hanno la misura di un'etichetta: prima le schede venivano disposte alla larghezza piena qualunque fosse lo schermo, quindi le parole andavano a capo e la barra cresceva per contenerle. L'indicatore della scheda scelta ha preso il colore dell'app, parte insieme al dito e si vede muoversi per intero prima che la pagina cambi. Si puo' anche trascinare, e resta sotto il dito per tutta la corsa.\n\nRipiegandosi si raccoglie a sinistra, dove il pollice la raggiunge, come un tasto tondo piu' grande.\n\nGli interruttori sono quelli di vetro vero: il pomello e' l'unica lastra, a riposo bianco pieno, e tenuto premuto il bianco sparisce e sotto si apre una copia schiacciata della pista. Si commutano con un tocco ovunque oppure trascinandoli.\n\nFluid Engine 2.3.2.",
+      "releaseTag": "stable-pampa-notes-v0.1.1",
+      "apkAsset": "pampa-notes-0.1.1.apk",
+      "sizeBytes": 10872320
     },
     "beta": {
-      "version": "0.1.0",
-      "releaseDate": "2026-09-18",
-      "changelog": "Prima versione pubblica.\n\nPampa Notes fa da ponte fra gli appunti che prendi altrove e gli assistenti IA: importa, trascrive, esporta. Non riassume e non risponde a domande.\n\n**Importa** da Samsung Notes (titolo, testo e registrazioni insieme), da PDF, Word, testo e file audio, condividendo o con «Apri con».\n\n**Trascrive** con Whisper, su Groq con la tua chiave o sul tuo computer con WhisperX. Premuto play, le parole si accendono una a una mentre vengono dette; con il server personale i tempi sono allineati davvero, con Groq sono stimati e l'app lo dice.\n\n**Ripulisce** una trascrizione con un modello di chat, se vuoi. La grezza resta sempre, con i suoi tempi.\n\n**Esporta** un pacchetto Markdown con l'indice e le regole per Claude, ChatGPT o Gemini, pronto da caricare in un Progetto o in un Gem.\n\n**Backup** dell'archivio intero in un file, nella cartella che scegli, Drive compreso. Il ripristino dice cosa c'e' dentro prima di sostituire quello che hai.\n\nSu tablet la barra laterale delle materie sta accanto a quello che stai leggendo, e l'app prende il colore della materia in cui ti trovi.",
-      "releaseTag": "stable-pampa-notes-v0.1.0",
-      "apkAsset": "pampa-notes-0.1.0.apk",
-      "sizeBytes": 10823181
+      "version": "0.1.1",
+      "releaseDate": "2026-09-19",
+      "changelog": "La pillola in basso e gli interruttori.\n\nLa barra di navigazione e' piu' bassa e le scritte hanno la misura di un'etichetta: prima le schede venivano disposte alla larghezza piena qualunque fosse lo schermo, quindi le parole andavano a capo e la barra cresceva per contenerle. L'indicatore della scheda scelta ha preso il colore dell'app, parte insieme al dito e si vede muoversi per intero prima che la pagina cambi. Si puo' anche trascinare, e resta sotto il dito per tutta la corsa.\n\nRipiegandosi si raccoglie a sinistra, dove il pollice la raggiunge, come un tasto tondo piu' grande.\n\nGli interruttori sono quelli di vetro vero: il pomello e' l'unica lastra, a riposo bianco pieno, e tenuto premuto il bianco sparisce e sotto si apre una copia schiacciata della pista. Si commutano con un tocco ovunque oppure trascinandoli.\n\nFluid Engine 2.3.2.",
+      "releaseTag": "stable-pampa-notes-v0.1.1",
+      "apkAsset": "pampa-notes-0.1.1.apk",
+      "sizeBytes": 10872320
     },
-    "history": []
+    "history": [
+      {
+        "version": "0.1.0",
+        "releaseDate": "2026-09-18",
+        "changelog": "Prima versione pubblica.\n\nPampa Notes fa da ponte fra gli appunti che prendi altrove e gli assistenti IA: importa, trascrive, esporta. Non riassume e non risponde a domande.\n\n**Importa** da Samsung Notes (titolo, testo e registrazioni insieme), da PDF, Word, testo e file audio, condividendo o con «Apri con».\n\n**Trascrive** con Whisper, su Groq con la tua chiave o sul tuo computer con WhisperX. Premuto play, le parole si accendono una a una mentre vengono dette; con il server personale i tempi sono allineati davvero, con Groq sono stimati e l'app lo dice.\n\n**Ripulisce** una trascrizione con un modello di chat, se vuoi. La grezza resta sempre, con i suoi tempi.\n\n**Esporta** un pacchetto Markdown con l'indice e le regole per Claude, ChatGPT o Gemini, pronto da caricare in un Progetto o in un Gem.\n\n**Backup** dell'archivio intero in un file, nella cartella che scegli, Drive compreso. Il ripristino dice cosa c'e' dentro prima di sostituire quello che hai.\n\nSu tablet la barra laterale delle materie sta accanto a quello che stai leggendo, e l'app prende il colore della materia in cui ti trovi.",
+        "releaseTag": "stable-pampa-notes-v0.1.0",
+        "apkAsset": "pampa-notes-0.1.0.apk",
+        "sizeBytes": 10823181
+      }
+    ]
   },
   "engine": {
     "schema": 1,
