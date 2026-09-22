@@ -20,6 +20,7 @@ import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
 import dev.pampa.pampanotes.core.transcription.EndpointHealth
+import dev.pampa.pampanotes.core.transcription.EndpointResolver
 import dev.pampa.pampanotes.core.transcription.GroqWhisperProvider
 import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
 import dev.pampa.pampanotes.core.transcription.TranscriptionError
@@ -72,8 +73,15 @@ class SettingsViewModel @Inject constructor(
   private val verifier: AiKeyVerifier,
   private val aiSettings: AiSettingsStore,
   private val http: TranscriptionHttp,
+  private val resolver: EndpointResolver,
   private val refinement: RefinementRepository,
 ) : ViewModel() {
+
+  companion object {
+    /** In [CheckState.Ok.detail] per un endpoint: da quale strada e' arrivata la risposta. */
+    const val ENDPOINT_VIA_LAN = "lan"
+    const val ENDPOINT_VIA_REMOTE = "remote"
+  }
 
   val engineSettings: StateFlow<EngineSettings> = engineSettingsStore.settings
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), EngineSettings())
@@ -163,17 +171,26 @@ class SettingsViewModel @Inject constructor(
   }
 
   fun setEndpointToken(token: String?) = viewModelScope.launch { settingsStore.setEndpointToken(token) }
+  fun setEndpointRemoteUrl(url: String) = viewModelScope.launch { settingsStore.setEndpointRemoteUrl(url) }
 
-  fun testEndpoint(url: String) {
+  /**
+   * Prova i due indirizzi nell'ordine in cui li proverebbe una trascrizione — prima casa, con due
+   * secondi di pazienza, poi Tailscale — e dice **quale** ha risposto: e' l'unico modo di sapere
+   * se l'indirizzo di fuori funziona mentre si e' ancora a casa a configurarlo.
+   */
+  fun testEndpoint(lanUrl: String, remoteUrl: String) {
     viewModelScope.launch {
-      if (url.isBlank()) {
+      if (lanUrl.isBlank() && remoteUrl.isBlank()) {
         _services.update { it.copy(endpointCheck = CheckState.Failed("empty")) }
         return@launch
       }
       _services.update { it.copy(endpointCheck = CheckState.Running) }
+      // La cache del risolutore va buttata: chi preme «prova» ha appena cambiato qualcosa.
+      resolver.invalidate()
+      val endpoint = resolver.resolve(lanUrl, remoteUrl) ?: return@launch
       val provider = OpenAiCompatProvider(
         http = http,
-        baseUrl = url,
+        baseUrl = endpoint.url,
         token = settingsStore.endpointToken(),
         readTimeoutMillis = 15_000,
       )
@@ -182,7 +199,11 @@ class SettingsViewModel @Inject constructor(
         if (health.reachable) {
           it.copy(
             endpointModels = health.models,
-            endpointCheck = CheckState.Ok(latencyMs = health.latencyMs, modelCount = health.models.size),
+            endpointCheck = CheckState.Ok(
+              detail = if (endpoint.viaLan) ENDPOINT_VIA_LAN else ENDPOINT_VIA_REMOTE,
+              latencyMs = health.latencyMs,
+              modelCount = health.models.size,
+            ),
           )
         } else {
           it.copy(endpointCheck = CheckState.Failed(health.detail ?: "network"))
@@ -195,6 +216,8 @@ class SettingsViewModel @Inject constructor(
   fun setPreferredProvider(provider: TranscriptionProviderId) = viewModelScope.launch {
     settingsStore.setPreferredProvider(provider)
   }
+
+  fun setCustomOnly(only: Boolean) = viewModelScope.launch { settingsStore.setCustomOnly(only) }
 
   fun setLanguage(language: String) = viewModelScope.launch { settingsStore.setLanguage(language) }
   fun setVocabulary(text: String) = viewModelScope.launch { settingsStore.setVocabulary(text) }

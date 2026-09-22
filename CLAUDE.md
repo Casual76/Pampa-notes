@@ -155,12 +155,143 @@ Quattro cose non ovvie, tutte in `core/backup/`:
 | M6 raffinamento della trascrizione | fatto |
 | M7 DOCX, sdocx, share target completo | fatto |
 | M8 backup, primo avvio, archiviazione | fatto |
+| M9 companion in background (tray, QR, avvio automatico), Tailscale, archivio dei file sul PC | fatto |
+| M10 l'indice in cloud (Worker + D1, merge a tre vie, note di conflitto) | fatto, accesso Google da configurare |
+| M11 i file di un altro dispositivo (scaricati dal PC quando servono) | fatto |
+| M12 condividere una nota: pagina `/s/<token>` con le parole che si accendono, audio su R2, pannello Condivisioni | fatto |
+| M13 accesso Google (sessioni per dispositivo), Worker pubblicato, ospiti del computer | fatto |
+| M14 aggiornare una nota da un `.sdocx` piu' nuovo, libera spazio, «solo il computer di casa», «tieni tutto anche qui», ritrascrivi, selezione multipla | fatto |
 
 Dopo M7, il rifacimento dell'interfaccia (engine 1.32–1.35): misura di lettura e pagine intere,
 vetro solo sugli elementi piccoli, tre pannelli sul tablet, la materia che colora l'app, il testo
 che si accende.
 
 Il piano per esteso: `C:\Users\casua\.claude\plans\praticamente-vorrei-un-applicazione-che-crispy-falcon.md`
+
+## Sincronizzazione
+
+L'indice in cloud (`worker/`, Cloudflare Worker + D1) tiene allineate note, cartelle, sessioni,
+trascrizioni coi segmenti, fonti e preset fra i dispositivi. **Solo testo**: registrazioni e
+originali vanno da dispositivo a computer (`companion/archive.py`) e basta, e `jobs` resta la coda
+di quel dispositivo. In locale: `cd worker && npm run dev` (D1 su disco in `.wrangler/`, token in
+`wrangler.toml`), e `pampanotes://sync?url=...&token=...&name=...` configura l'app senza scrivere
+niente — sul tablet la dettatura di KeyVoice si infila in qualunque campo a fuoco.
+
+Il client sta in `core/sync/`. Cinque cose che reggono tutto:
+
+- **L'outbox la scrivono i trigger SQL** (`PampaDatabase.SYNC_TRIGGERS`), non i repository: e'
+  l'unico modo di registrare una cancellazione in cascata. Una guardia (`sync_guard.applying`) li
+  ferma mentre si applica un pull, o ogni riga ricevuta tornerebbe sporca e rimbalzerebbe fra i
+  dispositivi. Per lo stesso motivo `INSERT OR REPLACE` e' vietato sulle tabelle sincronizzate: un
+  REPLACE su un padre cancella i figli in cascata.
+- **Il confronto e' a tre vie** (`SyncMerge`): locale, remoto, e l'impronta dell'ultima versione
+  concordata (`sync_meta`). L'impronta salta `updatedAt`, perche' `notes.touch()` lo alza senza
+  cambiare niente, e una riga «toccata» non deve vincere su una modifica vera.
+- **Prima si tira, poi si manda**, e il push dichiara per ogni riga la base su cui ha scritto
+  (`baseHash`): il server rifiuta (`stale`) quello che non parte dalla versione corrente, **senza
+  guardare l'orologio**. Le righe rifiutate restano nell'outbox: e' cosi' che il pull le trova
+  sporche e le biforca invece di sovrascriverle.
+- **Il testo scritto a mano non si perde mai.** Una nota cambiata da tutte e due le parti: vince la
+  piu' recente e l'altra diventa una nota «(conflitto — dispositivo, data)» nella stessa cartella,
+  in tutti e due i versi. Per tutto il resto (sessioni, parti, cartelle) vale l'ultimo che ha scritto.
+- **Un dispositivo nuovo, o un backup ripristinato**, riparte da zero: `deviceId` diverso da quello
+  in `sync_state`, impronte azzerate, e l'outbox seminata con tutto quello che c'e'
+  (`SyncRepository.ensureIdentity`), perche' i trigger registrano solo il futuro.
+- **L'accesso e' un token, sempre.** Con `pampa.googleClientId` in `local.properties` (e lo stesso
+  valore in `GOOGLE_CLIENT_ID` del Worker) la pagina mostra «Accedi con Google»: il Credential
+  Manager da' un ID token, `POST /v1/auth/google` lo verifica e apre una **sessione** per
+  dispositivo, e il token di sessione va nel Keystore al posto del codice. L'ID token dura un'ora e
+  non si tiene. Senza client ID (sviluppo) la pagina chiede un codice, e il server accetta quelli di
+  `AUTH_DEV_TOKENS`. Il client non sa quale dei due sta mandando, e non deve.
+
+I file di una parte o di una fonte cancellate altrove non si buttano: vanno in
+`filesDir/trash/<giorno>/`, perche' questo dispositivo potrebbe averne l'unica copia. Il worker
+(`SyncWorker`) non e' in primo piano: dura secondi. Gira all'apertura, dopo ogni import e ogni sei
+ore; «Sincronizza adesso» sta in Impostazioni → Sincronizzazione.
+
+### I file di un altro dispositivo
+
+Con l'indice in cloud **«il file non c'e'» e' uno stato normale**: la riga di una parte audio o di
+una fonte arriva dal sync, il file sta sul dispositivo che l'ha registrata e — se quello l'ha
+archiviata — sul computer di casa (`archivedAt > 0`). `ArchiveFetcher` lo prende da li' quando
+serve: `GET /v1/files/<sha256>` sull'endpoint risolto (LAN o Tailscale), scaricato in `cacheDir/tmp`
+con l'impronta calcolata in scrittura, e spostato in `audio/` o `sources/` solo se torna. Un file a
+meta' non prende mai il nome di quello buono, e `sweepOrphans` non guarda `tmp`.
+
+**Libera spazio** (Archiviazione → «Qui e anche sul computer»): quello che ha `archivedAt > 0` e sta
+ancora qui si puo' togliere dal dispositivo — originali e registrazioni con due tasti separati,
+perche' un PDF si riapre in un secondo e una lezione da un'ora senza il PC non si ascolta
+(`StorageRepository.evictArchived`; non tocca una registrazione con un lavoro in corso). Le righe
+restano: e' lo stesso stato «il file non c'e'» di una riga arrivata dal sync, e tutto quello che
+segue vale anche qui. L'export dichiara anche gli originali saltati (`skippedSources`).
+
+**Tieni tutto anche qui** (Archiviazione, `mirrorEnabled`) e' il verso opposto per chi vuole
+consultare offline: `FetchWorker` — in primo piano, come l'archivio — scarica tutto quello che il
+computer ha e il dispositivo no (`ArchiveFetcher.fetchAll`, registrazioni prima degli originali,
+dal piu' recente), dopo ogni giro di sync riuscito e dal tasto «Scarica adesso», che vale una volta
+anche con l'interruttore spento. Segue «solo su Wi-Fi» dell'archivio. Senza, l'indice in cloud
+porta solo le righe: e' per questo che un tablet appena sincronizzato con 42 note occupa 14 kB.
+
+Chi lo chiede: il **lettore** (`SessionViewModel` guarda su disco a ogni cambio di parti e non
+carica ExoPlayer finche' non ha guardato; se manca qualcosa la pagina mostra peso e tasto «Scarica»,
+o «registrate su un altro dispositivo» se il PC non le ha ancora); la **coda di trascrizione**
+(`TranscriptionRunner` scarica da solo prima di decodificare, cosi' una lezione registrata sul
+tablet si trascrive dal telefono); le **fonti** della nota (tocco → scarica → apre). L'**export**
+non scarica: dice quante registrazioni non sono entrate (`ExportResult.skippedAudio`), perche' un
+semestre sono gigabyte e non si tirano giu' per sbaglio. Archiviazione conta i file che ci sono
+davvero, piu' una riga «Sul computer, non qui».
+
+## Condividere una nota
+
+Il bundle ZIP serve a un assistente; a un compagno serve **un link che si apre e si ascolta**.
+`POST /v1/shares` crea una riga in `shares` con un token da 24 byte casuali; la pagina
+(`worker/src/page.ts`, un file solo, nessuna risorsa esterna) legge testo, sessioni, trascrizione
+e segmenti **dall'indice al momento dell'apertura**, quindi una condivisione non copia niente ed e'
+sempre aggiornata. Solo l'audio sale, in R2 sotto `<ownerId>/<shareId>/<partId>`, e solo quello
+della nota condivisa: revocare cancella per prefisso e il link muore (404 su pagina, dati, audio).
+
+Tre cose non ovvie:
+
+- **L'audio sale a blocchi da 20 MB** (`ShareApi.uploadAudio`, multipart di R2): una richiesta a
+  un Worker porta al massimo 100 MB e una lezione da due ore e' di piu'. Un `HEAD` prima di ogni
+  parte rende il caricamento ripetibile, e un blocco a meta' si butta (`abort`). Prima di caricare
+  si fa un giro di sync (`ShareRepository.share`), perche' la pagina mostra quello che l'indice ha
+  *adesso*; una parte che sta solo sul PC passa da `ArchiveFetcher`.
+- **La pagina accende le parole** con un port in JavaScript di `SessionAssembler.locate` e del
+  formato di `WordTimings`: tempi relativi all'inizio del segmento, sommati a `sessionStartMs`. Se
+  la sessione ha una raffinata attiva, la pagina la mostra in una scheda e la grezza in un'altra,
+  perche' la raffinata non ha tempi. L'audio si serve con `Range` (206), o il salto al minuto
+  quaranta scaricherebbe i primi trentanove.
+- **Il controllo e' sul server, per proprietario**: elenco, revoca e caricamento passano dal token
+  di chi ha creato la condivisione; un altro proprietario vede 404. Il link invece e' pubblico per
+  costruzione — e' la chiave — e la schermata lo dice.
+
+In locale R2 e' una cartella in `.wrangler/`; per il deploy vero `npx wrangler r2 bucket create
+pampa-notes-audio`. `worker/test_share.py` fa il giro intero contro un'istanza vuota.
+
+## Gli ospiti del computer
+
+Un amico che trascrive col tuo PC. Il companion ha un token solo, quello del proprietario, che
+apre anche l'archivio e lo sfratto del modello: un amico non deve averlo. Gli ospiti hanno un
+token loro (`pg_…`), emesso dal Worker (`POST /v1/guests`, pannello Impostazioni → Ospiti del
+computer) e revocabile da li'. Il companion, ricevuto un `pg_…`, chiede al Worker
+(`POST /v1/guests/verify` con `owner` = l'account Google scritto nel suo `config.json`,
+`index_url` = il Worker) e tiene la risposta dieci minuti (`GUEST_CACHE`): un token revocato
+smette di valere entro dieci minuti, uno inventato non fa una richiesta a ogni tentativo. A fine
+trascrizione riporta i secondi (`/v1/guests/usage`), e il pannello dice chi ha trascritto quanto.
+
+Due scelte che non si vedono:
+
+- **Il proprietario passa davanti.** `PriorityGate` sostituisce il lucchetto: una trascrizione
+  alla volta, ma la prossima e' quella con la priorita' piu' alta (proprietario 0, ospiti 1,
+  sfratto del modello 0), non la prima arrivata. Nessuno viene interrotto a meta'.
+- **`owner` e' un'email, non un segreto.** Un token di ospite vale solo per il PC del proprietario
+  che l'ha creato: il Worker confronta l'`ownerId` dell'ospite con le sessioni aperte da quell'email.
+  Un altro utente dello stesso Worker non puo' fabbricare un ospite per il PC di qualcun altro.
+
+L'ospite deve entrare nella rete Tailscale del proprietario (invito dal pannello di Tailscale, o
+nodo condiviso): l'invito che l'app compone dice indirizzo e codice, e il link
+`pampanotes://endpoint?url=…&token=…` incollato nella barra del browser configura tutto.
 
 ## Sessioni, parti, segmenti
 
@@ -264,6 +395,15 @@ Il formato, decodificato da un file vero (`core/src/test/resources/sdocx/fichte.
 `SdocxParser` e' tarato su questo file: se non riconosce niente, l'archivio resta come fonte e lo
 dice, invece di importare una nota vuota.
 
+**La stessa nota, una versione dopo.** Gli appunti si prendono in Samsung Notes e si ricondividono
+quando crescono: se il titolo e' quello di una nota gia' importata da un `.sdocx`
+(`ImportCandidate.updateOfNoteId`, cercato all'ispezione) il wizard propone «Aggiorna» per primo.
+`ImportTarget.UpdateNote`: il testo si **sostituisce**, le registrazioni con la stessa impronta
+restano con le loro trascrizioni, le nuove entrano una sessione per giorno di registrazione, e il
+`.sdocx` vecchio se ne va — riga, file, e blob sul PC (`DELETE /v1/files/<sha>` del companion,
+solo se nessun'altra fonte lo cita). Stesso contenuto (stessa impronta) e' invece un doppione, e
+resta l'avviso di prima.
+
 ## Il testo che si accende
 
 Premuto play, le parole passano da velate a piene mentre vengono dette. Regge su tre cose:
@@ -292,6 +432,34 @@ Due strade, stessa interfaccia (`TranscriptionProvider`):
 
 Il raffinamento passa da `ChatProvider.complete` di `engine-ai` su Groq. Non è un assistente: è un
 passaggio che toglie intercalari e rimette la punteggiatura senza cambiare il contenuto.
+
+### Solo il computer di casa
+
+`customOnly`: mai con Groq, nemmeno in automatico. `PampaSettings.transcriptionProvider` e' quello
+che ogni `enqueue` usa (import, nota, sessione, selezione), e con l'interruttore acceso e' sempre
+`CUSTOM`; il selettore del servizio sparisce dalle impostazioni. E' la garanzia che serve per tenere
+accesa «trascrivi appena importi» senza che una lezione finisca nel cloud per sbaglio.
+
+Quello che la rende utilizzabile e' che **la coda del computer di casa aspetta invece di fallire**.
+`TranscriptionQueueWorker`, prima di ogni lavoro di quella coda, chiede
+`TranscriptionRepository.endpointState()`: `/health` sull'indirizzo scelto, due secondi. Se il
+computer e' configurato ma non risponde, il lavoro resta `QUEUED` con la fase `endpoint` («In
+attesa del computer di casa»), il worker si chiude con `retry` (trenta secondi, poi il doppio) e
+accende la sonda `EndpointWatchWorker`, ogni quarto d'ora finche' la fila non e' vuota. Un errore di
+rete a meta' lavoro col computer muto rimette in fila invece di fallire (`requeueForEndpoint`). Chi
+vede il computer rispondere lo sveglia prima: l'archivio dopo un giro andato bene, l'apertura
+dell'app (`WorkScheduler.wake`, che sostituisce un tentativo in attesa ma mai un worker che lavora).
+Attenzione al resolver: con due indirizzi `EndpointResolver.resolve` **restituisce sempre una
+strada**, anche se nessuna delle due risponde — decide *quale*, non *se*. Per sapere se il computer
+c'e' bisogna battere `/health`, ed e' il bug che il primo giro di prova ha trovato («Il servizio non
+ha risposto in tempo» invece dell'attesa).
+
+**Ritrascrivi** (menu della sessione, con conferma) e' un `enqueue` come gli altri: `saveTranscript`
+sostituisce la grezza e porta via le raffinate. **Selezione multipla** («Seleziona» nel menu della
+barra): nella nota, le sessioni (ritrascrivi, elimina); nella cartella, le note (trascrivi quelle
+da fare, sposta con `FolderPickerSheet`, esporta con `ExportScope.Notes`, elimina). La barra in alto
+diventa quella della selezione — titolo «N selezionate», indietro la chiude — invece di una barra
+in basso che non esiste nell'engine. In Lavori, «Riprova tutti i falliti».
 
 ## Firma e pubblicazione
 

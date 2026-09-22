@@ -16,6 +16,33 @@
   <string name="action_ok">OK</string>
   <string name="action_save">Save</string>
   <string name="action_delete">Delete</string>
+  <string name="action_select">Select</string>
+  <plurals name="selection_count">
+    <item quantity="one">%d selected</item>
+    <item quantity="other">%d selected</item>
+  </plurals>
+  <string name="selection_delete_title">Delete the selection?</string>
+  <plurals name="selection_delete_sessions_message">
+    <item quantity="one">One session, with its recordings and transcripts.</item>
+    <item quantity="other">%d sessions, with their recordings and transcripts.</item>
+  </plurals>
+  <plurals name="selection_delete_notes_message">
+    <item quantity="one">One note, with recordings, transcripts and originals.</item>
+    <item quantity="other">%d notes, with recordings, transcripts and originals.</item>
+  </plurals>
+  <plurals name="selection_retranscribe_message">
+    <item quantity="one">This session\u2019s transcript will be redone from scratch, along with its cleaned-up versions. The recordings stay.</item>
+    <item quantity="other">The transcripts of %d sessions will be redone from scratch, along with their cleaned-up versions. The recordings stay.</item>
+  </plurals>
+  <string name="selection_move">Move to</string>
+  <string name="selection_transcribe">Transcribe the pending ones</string>
+  <string name="folder_picker_empty">No other folder</string>
+  <plurals name="session_part_count">
+    <item quantity="one">%d recording</item>
+    <item quantity="other">%d recordings</item>
+  </plurals>
+  <string name="note_transcribed">Transcribed</string>
+  <string name="jobs_retry_failed">Retry all failed</string>
   <string name="action_rename">Rename</string>
   <string name="action_create">Create</string>
   <string name="action_import">Import</string>
@@ -124,6 +151,53 @@
   <string name="note_tab_audio">Audio</string>
   <string name="note_tab_sources">Sources</string>
   <string name="note_edit">Edit</string>
+  <string name="note_share">Share with a link</string>
+  <string name="share_title">Share with a link</string>
+  <string name="share_intro">Whoever opens the link sees the notes and the transcript, and listens to the audio with the words lighting up as they are spoken. Nothing to install, no account.</string>
+  <string name="share_not_configured_title">Needs the cloud index</string>
+  <string name="share_not_configured_detail">The link lives in the sync service: set it up in Settings → Sync.</string>
+  <string name="share_text_row">Notes and transcript</string>
+  <string name="share_text_detail">From the cloud index, always current</string>
+  <string name="share_audio_row">Audio to upload</string>
+  <string name="share_audio_none">This note has no recordings</string>
+  <plurals name="share_audio_detail">
+    <item quantity="one">One recording, %2$s: uploaded once, kept while the link is alive</item>
+    <item quantity="other">%1$d recordings, %2$s: uploaded once, kept while the link is alive</item>
+  </plurals>
+  <string name="share_unavailable_title">Some audio is missing</string>
+  <plurals name="share_unavailable_detail">
+    <item quantity="one">One recording is neither here nor on your home computer: the page will say so.</item>
+    <item quantity="other">%d recordings are neither here nor on your home computer: the page will say so.</item>
+  </plurals>
+  <string name="share_create">Create the link</string>
+  <string name="share_stage_syncing">Syncing the index…</string>
+  <string name="share_stage_creating">Creating the link…</string>
+  <string name="share_stage_fetching">Fetching %1$s from your home computer…</string>
+  <string name="share_stage_uploading">Uploading %1$s…</string>
+  <string name="share_stage_done">Done</string>
+  <string name="share_send">Send the link</string>
+  <string name="share_copy">Copy the link</string>
+  <string name="share_open">Open</string>
+  <string name="share_copied">Link copied</string>
+  <string name="share_revoke">Revoke the link</string>
+  <string name="share_link_hint">The link is the key: anyone who has it can open the page. Revoking it turns it off and deletes the audio from the cloud.</string>
+  <string name="share_audio_missing_title">Audio not uploaded</string>
+  <string name="share_audio_missing_detail">The link exists, but the recordings have not gone up yet: the page shows only the text.</string>
+  <string name="share_upload_audio">Upload the audio</string>
+  <string name="share_error_title">It did not go through</string>
+  <plurals name="share_opened">
+    <item quantity="one">Opened once, %2$s</item>
+    <item quantity="other">Opened %1$d times, last %2$s</item>
+  </plurals>
+  <string name="share_never_opened">Never opened</string>
+  <string name="share_audio_size">%1$s of audio in the cloud</string>
+  <string name="share_audio_none_short">no audio</string>
+  <string name="shares_intro">Each link is a note someone can read and listen to until you revoke it. Audio stays in the cloud only for shared notes.</string>
+  <string name="shares_empty_title">No links out there</string>
+  <string name="shares_empty_detail">From a note: “Share with a link”.</string>
+  <string name="shares_created">Created %1$s</string>
+  <string name="shares_refresh">Refresh</string>
+  <string name="shares_footnote">Long-press a link to copy, send or revoke it.</string>
   <string name="note_empty_title">Empty note</string>
   <string name="note_empty_detail">Write something, or import a file: the text lands here.</string>
   <string name="note_audio_empty_title">No recordings</string>
@@ -134,6 +208,9 @@
   <string name="note_session_number">Session %1$d</string>
   <string name="note_part_number">Part %1$d</string>
   <string name="note_source_attached">Attached</string>
+  <string name="note_source_remote">On your home computer: tap to download</string>
+  <string name="note_source_elsewhere">On another device, not archived yet</string>
+  <string name="note_source_fetch_failed">Could not download it: %1$s</string>
   <plurals name="note_source_chars">
     <item quantity="one">%d character</item>
     <item quantity="other">%d characters</item>
@@ -214,6 +291,20 @@
   <string name="home_metric_folders">Folders</string>
   <string name="home_metric_audio">Audio</string>
   <string name="home_metric_jobs">Running</string>
+  <string name="home_metric_hours">Of lessons</string>
+  <string name="home_metric_words">Words</string>
+  <string name="home_metric_days">Days</string>
+  <string name="home_fun_words">%1$s words transcribed: about %2$s.</string>
+  <plurals name="home_fun_novels">
+    <item quantity="one">one novel</item>
+    <item quantity="other">%d novels</item>
+  </plurals>
+  <plurals name="home_fun_pages">
+    <item quantity="one">one page</item>
+    <item quantity="other">%d pages</item>
+  </plurals>
+  <string name="home_fun_subject">%1$s is your most listened subject, with %2$s.</string>
+  <string name="home_fun_days">You sat through %1$d days of lessons.</string>
 
   <string name="folders_title">Folders</string>
   <string name="folders_subtitle">One per subject, one per topic</string>
@@ -269,6 +360,7 @@
   <string name="job_phase_uploading">Uploading chunk %1$d of %2$d, %3$d%%</string>
   <string name="job_phase_transcribing">Chunk %1$d of %2$d</string>
   <string name="job_phase_waiting">Waiting on the rate limit, %1$d s</string>
+  <string name="job_phase_endpoint">Waiting for the home computer</string>
 
   <string name="error_unauthorized">Invalid key. Set it again in settings.</string>
   <string name="error_rate_limited">Service rate limit reached. Try again shortly.</string>
@@ -278,6 +370,7 @@
   <string name="error_timeout">The service did not answer in time.</string>
   <string name="error_decode">This audio could not be read. Try the personal server, which accepts more formats.</string>
   <string name="error_parse">The service returned something we could not read.</string>
+  <string name="error_no_speech">The service found no words in this recording: maybe silence, or noise.</string>
   <string name="error_unknown_model">The chosen model no longer exists on the service.</string>
   <string name="error_generic">Something went wrong.</string>
   <string name="error_provider_not_configured">Service not configured: the key or the address is missing.</string>
@@ -302,9 +395,15 @@
   <string name="settings_ok">OK</string>
   <string name="settings_endpoint">Personal server</string>
   <string name="settings_endpoint_detail">Your computer with WhisperX: no size limit, and the files never leave the house.</string>
-  <string name="settings_endpoint_url">Address</string>
+  <string name="settings_endpoint_url">Address at home</string>
   <string name="settings_endpoint_token">Token</string>
   <string name="settings_endpoint_token_hint">Only if the server asks for one</string>
+  <string name="settings_endpoint_remote_url">Address away from home</string>
+  <string name="settings_endpoint_remote_hint">The Tailscale one. Leave empty if you don\'t use it.</string>
+  <string name="settings_endpoint_ok_lan">Reached at home, in %1$d ms</string>
+  <string name="settings_endpoint_ok_remote">Reached from outside, in %1$d ms</string>
+  <string name="settings_endpoint_linked_title">Personal server linked</string>
+  <string name="settings_endpoint_linked">%1$s. From now on, transcriptions go through your computer.</string>
   <string name="settings_test_connection">Test the connection</string>
   <string name="settings_endpoint_ok">Reached in %1$d ms</string>
   <plurals name="settings_endpoint_models">
@@ -314,6 +413,8 @@
   <string name="provider_groq">Groq</string>
   <string name="provider_custom">Personal server</string>
 
+  <string name="settings_custom_only">Home computer only</string>
+  <string name="settings_custom_only_detail">Never Groq, not even automatically: whatever comes in waits for the computer to answer</string>
   <string name="settings_auto_transcribe">Transcribe on import</string>
   <string name="settings_auto_transcribe_detail">Without asking every time</string>
   <string name="settings_chunk_minutes">Chunk length</string>
@@ -331,6 +432,9 @@
   <string name="session_rename">Title and date</string>
   <string name="session_merge">Merge into the previous one</string>
   <string name="session_delete">Delete the session</string>
+  <string name="session_retranscribe">Transcribe again</string>
+  <string name="session_retranscribe_title">Transcribe again?</string>
+  <string name="session_retranscribe_message">The current transcript and its cleaned-up versions will be replaced by the new one. The recordings stay as they are.</string>
   <string name="session_delete_title">Delete this session?</string>
   <plurals name="session_delete_message">
     <item quantity="one">It goes, and takes its recording and its transcript with it.</item>
@@ -414,6 +518,14 @@
   <string name="export_timestamps">Times before each paragraph</string>
   <string name="export_timestamps_detail">The [mm:ss] marks let you cite a moment and listen back</string>
   <string name="export_skill">Rules for the assistant</string>
+  <plurals name="export_skipped_sources">
+    <item quantity="one">One original is not in the bundle: it is not on this device.</item>
+    <item quantity="other">%d originals are not in the bundle: they are not on this device.</item>
+  </plurals>
+  <plurals name="export_skipped_audio">
+    <item quantity="one">One recording is not in the bundle: it is not on this device.</item>
+    <item quantity="other">%d recordings are not in the bundle: they are not on this device.</item>
+  </plurals>
   <string name="export_skill_detail">SKILL.md for Claude, instructions.md for ChatGPT and Gemini</string>
   <string name="export_sources">Original documents</string>
   <string name="export_sources_detail">The PDFs and files the notes were imported from</string>
@@ -481,7 +593,24 @@
     <item quantity="other">%d recordings</item>
   </plurals>
   <string name="import_done_recording">Recording, in its session</string>
+  <string name="import_group_header">How to split them</string>
+  <string name="import_group_detail">A recording that was paused and resumed is the same lesson. Another day is another one.</string>
+  <string name="import_group_all">All together</string>
+  <string name="import_group_each">One each</string>
+  <string name="import_group_as_notes">Separate notes</string>
+  <string name="import_group_as_sessions">One note, several lessons</string>
+  <string name="import_group_note_n">Note %1$d</string>
+  <string name="import_group_session_n">Lesson %1$d</string>
+  <string name="import_group_switch_note">The switch detaches the recording from the one above: a new one starts there.</string>
+  <string name="import_group_titles">Titles</string>
+  <string name="import_done_notes">Notes created</string>
   <string name="import_samsung_duplicate">You already imported this into “%1$s”. Importing it again creates a second note and leaves that one alone.</string>
+  <string name="import_samsung_update_header">This note already exists</string>
+  <string name="import_samsung_update">Update “%1$s”</string>
+  <string name="import_samsung_update_detail">The text is replaced with the new one; recordings that were already there keep their transcripts, new ones are added; the old file leaves the archive.</string>
+  <string name="import_samsung_new">Create a new note</string>
+  <string name="import_samsung_new_detail">A second note with the same title; the existing one is left alone.</string>
+  <string name="action_update">Update</string>
   <string name="sidebar_subjects">Subjects</string>
   <string name="sidebar_all_folders">All folders</string>
   <string name="detail_empty_title">Nothing open</string>
@@ -491,6 +620,76 @@
   <string name="settings_section_refinement_detail">How much to clean up, and with which model</string>
   <string name="settings_section_appearance_detail">Theme, colours, haptics</string>
   <string name="settings_section_about_detail">App and engine version</string>
+  <string name="settings_section_sync">Sync</string>
+  <string name="settings_section_sync_detail">Your notes on your other devices, through the cloud</string>
+  <string name="settings_section_shares">Shares</string>
+  <string name="settings_section_shares_detail">The links you handed out, and revoking them</string>
+  <string name="settings_section_guests">Computer guests</string>
+  <string name="settings_section_guests_detail">Who can transcribe with your PC besides you</string>
+  <string name="guests_intro">A friend can transcribe their lectures with your computer: they get their own code, which you can revoke, and here you see how much they use it. You always go first in the queue; their recordings never touch your archive.</string>
+  <string name="guests_needs_sync">Guests live in the sync service: set it up in Settings → Sync.</string>
+  <string name="guests_no_computer_title">No computer to lend</string>
+  <string name="guests_no_computer_detail">Set up the personal server in Settings → Services: that is what the guest will use.</string>
+  <string name="guests_new_header">New guest</string>
+  <string name="guests_new_name">Name</string>
+  <string name="guests_new_name_hint">Marco, Giulia…</string>
+  <string name="guests_new_create">Create the invite</string>
+  <string name="guests_invite_title">Invite for %1$s</string>
+  <string name="guests_invite_text">You can transcribe your lectures with %1$s\u2019s computer.\n\n1) Install Tailscale and accept the invite to their network.\n2) Install Pampa Notes.\n3) Open Settings → Services → Personal server and enter:\n   address: %2$s\n   code: %3$s\n\nOr paste this link in the browser address bar: %4$s</string>
+  <string name="guests_invite_owner_fallback">a friend</string>
+  <string name="guests_invite_send">Send the invite</string>
+  <string name="guests_invite_once">The code is shown only now: if they lose it, revoke the guest and create a new one.</string>
+  <string name="guests_list_header">Guests</string>
+  <string name="guests_empty_title">No guests</string>
+  <string name="guests_empty_detail">The computer is yours alone.</string>
+  <string name="guests_list_footnote">Long-press a guest to revoke them: their code stops working within ten minutes.</string>
+  <string name="guests_never_used">Never used</string>
+  <plurals name="guests_jobs">
+    <item quantity="one">One transcription</item>
+    <item quantity="other">%d transcriptions</item>
+  </plurals>
+  <string name="guests_last_used">last %1$s</string>
+  <string name="guests_revoke">Revoke the guest</string>
+  <string name="guests_companion_header">On the computer</string>
+  <string name="guests_companion_detail">For the companion to recognise guests, its config.json needs these two lines:</string>
+  <string name="guests_tailscale_footnote">The guest must join your Tailscale network: in the Tailscale admin panel, “Users → Invite”, or share the computer with their network.</string>
+  <string name="sync_intro">Only text goes through the cloud: notes, folders, transcripts. Recordings and originals go from device to computer, nowhere else.</string>
+  <string name="sync_server_url">Service address</string>
+  <string name="sync_server_hint">The Worker on Cloudflare, or the local one while testing</string>
+  <string name="sync_token">Access code</string>
+  <string name="sync_token_hint">The one from the service</string>
+  <string name="sync_token_present">Already saved: type here only to change it</string>
+  <string name="sync_google_title">Sign in with Google</string>
+  <string name="sync_google_hint">Only needed once: from then on this device has its own session, which you can revoke.</string>
+  <string name="sync_google_account">Signed in as %1$s</string>
+  <string name="sync_google_signin">Sign in with Google</string>
+  <string name="sync_google_signout">Sign out</string>
+  <string name="sync_google_failed">Sign-in failed</string>
+  <string name="sync_device_name">Name of this device</string>
+  <string name="sync_device_name_hint">How the others will see it: “phone”, “tablet”</string>
+  <string name="sync_enable">Sync</string>
+  <string name="sync_enable_detail">On launch, after every import and every six hours</string>
+  <string name="sync_not_configured">Needs the address and the code, then Save.</string>
+  <string name="sync_not_signed_in">Needs the address, then “Sign in with Google”.</string>
+  <string name="sync_status_header">Where things stand</string>
+  <string name="sync_pending_title">To send</string>
+  <plurals name="sync_pending">
+    <item quantity="one">%d change waiting</item>
+    <item quantity="other">%d changes waiting</item>
+  </plurals>
+  <string name="sync_last_title">Last run</string>
+  <string name="sync_never">Never</string>
+  <string name="sync_now">Sync now</string>
+  <string name="sync_running">Syncing…</string>
+  <string name="sync_error_title">It did not go through</string>
+  <string name="sync_report">%1$d sent, %2$d received, %3$d deleted.</string>
+  <plurals name="sync_forked">
+    <item quantity="one">One note had changed on both sides: your version is in a “(conflict)” note.</item>
+    <item quantity="other">%d notes had changed on both sides: your versions are in “(conflict)” notes.</item>
+  </plurals>
+  <string name="sync_footnote">If the same text changes on two devices before they talk, the newer one wins and the other lands in a “(conflict)” note: nothing typed by hand is lost.</string>
+  <string name="sync_linked_title">Sync linked</string>
+  <string name="sync_linked">%1$s. Turn it on whenever you like.</string>
   <string name="settings_model_auto">Automatic</string>
   <string name="settings_model_auto_detail">The best of what Groq lists: %1$s</string>
   <string name="settings_model_chosen">Chosen</string>
@@ -498,6 +697,16 @@
   <string name="settings_subject_accent_detail">With the brand colours, the app takes the colour of the subject you are in. With Material You or a chosen tint, that one stays.</string>
   <string name="note_sources_hint">The files the text came from. Tap a row to reopen the original.</string>
   <string name="session_words_estimated">Per-word timings are estimated: Groq gives per-sentence times, not per-word. With the personal server they are truly aligned.</string>
+  <string name="session_remote_title">The recordings are on your home computer</string>
+  <plurals name="session_remote_detail">
+    <item quantity="one">One file, %2$s. Away from home it comes through Tailscale.</item>
+    <item quantity="other">%1$d files, %2$s. Away from home they come through Tailscale.</item>
+  </plurals>
+  <string name="session_remote_fetch">Download to this device</string>
+  <string name="session_remote_fetching">Downloading %1$d of %2$d…</string>
+  <string name="session_remote_error">It did not go through: %1$s</string>
+  <string name="session_remote_unavailable_title">Recorded on another device</string>
+  <string name="session_remote_unavailable_detail">They have not reached your home computer yet. Once the other device has archived them, you can download them from here.</string>
   <!-- Backup -->
   <string name="backup_explain">A backup is the whole archive in one file: notes, transcripts with their timings and, if you want, the recordings. It is written to the folder you choose, Drive included.</string>
   <string name="backup_folder">Folder</string>
@@ -543,6 +752,48 @@
   <string name="storage_sweep">Remove left-behind files</string>
   <string name="storage_clear_exports">Empty the exported bundles</string>
   <string name="storage_footnote">Left-behind files are the ones no row mentions any more: it happens when a note is deleted while a job was still queued.</string>
+  <string name="storage_archive_header">Archive on your home computer</string>
+  <string name="storage_archive_detail">Recordings and originals go up to your personal server, at home or over Tailscale, and stay there. Nothing is deleted here.</string>
+  <string name="storage_archive_enable">Archive on the computer</string>
+  <string name="storage_archive_enable_detail">After every import and every six hours, when it can reach it</string>
+  <string name="storage_archive_unmetered">Wi-Fi only</string>
+  <string name="storage_archive_unmetered_detail">Never over mobile data: an original can weigh half a gigabyte</string>
+  <string name="storage_archived">Already on the computer</string>
+  <string name="storage_pending_archive">To archive</string>
+  <string name="storage_archive_now">Archive now</string>
+  <string name="storage_archive_running">%1$d of %2$d · %3$s</string>
+  <string name="storage_archive_no_endpoint">Needs the personal server: set it up under Services.</string>
+  <string name="storage_archive_last">Last run: %1$s</string>
+  <string name="storage_archive_result">%1$d uploaded, %2$d already there, %3$d failed</string>
+  <string name="storage_archive_result_error">Last error: %1$s</string>
+  <string name="storage_remote">On the computer, not here</string>
+  <string name="storage_remote_detail">From your other devices: downloaded when needed</string>
+  <string name="storage_evict_header">Here and on the computer too</string>
+  <string name="storage_evict_detail">What your home computer already has can be removed from here: it stays in the index, downloads again when needed, and shows as “on the home computer” while the computer is out of reach.</string>
+  <string name="storage_evict_sources">Originals (PDF, Word, Samsung Notes)</string>
+  <string name="storage_evict_audio">Recordings</string>
+  <string name="storage_evict_sources_button">Remove originals from this device</string>
+  <string name="storage_evict_audio_button">Remove recordings from this device</string>
+  <string name="storage_evict_confirm_title">Remove from this device?</string>
+  <string name="storage_evict_confirm_sources">%1$s in %2$d files. They stay on your home computer and in the index: opening or exporting them will need the computer reachable.</string>
+  <string name="storage_evict_confirm_audio">%1$s in %2$d recordings. Listening will need a download from the computer; transcripts stay here.</string>
+  <string name="storage_evict_action">Remove</string>
+  <string name="storage_evict_nothing">Nothing to remove: what is here is not on the computer yet.</string>
+  <plurals name="storage_evicted">
+    <item quantity="one">One file removed, %2$s freed.</item>
+    <item quantity="other">%1$d files removed, %2$s freed.</item>
+  </plurals>
+  <string name="notification_archiving">Archiving to the computer</string>
+  <string name="notification_fetching">Downloading from the computer</string>
+  <string name="storage_mirror">Keep everything here too</string>
+  <string name="storage_mirror_detail">Recordings and originals from your other devices download as soon as the index brings them, so they are here without the computer. Follows “Wi-Fi only”.</string>
+  <string name="storage_fetch_now">Download now</string>
+  <string name="storage_fetch_result">%1$d downloaded, %2$d failed, %3$s</string>
+  <string name="storage_fetch_nothing">Nothing to download: everything is already here.</string>
+  <plurals name="storage_archive_files">
+    <item quantity="one">%d file</item>
+    <item quantity="other">%d files</item>
+  </plurals>
   <plurals name="storage_swept">
     <item quantity="one">Removed %d file</item>
     <item quantity="other">Removed %d files</item>

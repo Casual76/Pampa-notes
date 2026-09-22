@@ -76,5 +76,8 @@ class JobsViewModel @Inject constructor(
 
   fun delete(jobId: String) = viewModelScope.launch { repository.delete(jobId) }
 
+  /** Tutti i falliti in fila, e le loro code sveglie: e' quello che serve quando il computer torna. */
+  fun retryAllFailed() = viewModelScope.launch { repository.retryAllFailed().forEach { scheduler.kick(it) } }
+
   fun clearFinished() = viewModelScope.launch { repository.clearFinished() }
 }

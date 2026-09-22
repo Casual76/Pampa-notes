@@ -69,6 +69,7 @@ fun OnboardingRoute(
 
   var groqKey by remember { mutableStateOf("") }
   var endpointUrl by remember(settings.endpointUrl) { mutableStateOf(settings.endpointUrl) }
+  var endpointRemoteUrl by remember(settings.endpointRemoteUrl) { mutableStateOf(settings.endpointRemoteUrl) }
   var endpointToken by remember { mutableStateOf("") }
 
   val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -105,12 +106,15 @@ fun OnboardingRoute(
         },
         endpointUrl = endpointUrl,
         onEndpointUrlChange = { endpointUrl = it },
+        endpointRemoteUrl = endpointRemoteUrl,
+        onEndpointRemoteUrlChange = { endpointRemoteUrl = it },
         endpointToken = endpointToken,
         onEndpointTokenChange = { endpointToken = it },
         onTestEndpoint = {
           viewModel.setEndpoint(endpointUrl, settings.endpointModel)
+          viewModel.setEndpointRemoteUrl(endpointRemoteUrl)
           if (endpointToken.isNotBlank()) viewModel.setEndpointToken(endpointToken)
-          viewModel.testEndpoint(endpointUrl)
+          viewModel.testEndpoint(endpointUrl, endpointRemoteUrl)
         },
       )
 
@@ -218,6 +222,8 @@ private fun LazyListScope.providerStep(
   onVerifyGroq: () -> Unit,
   endpointUrl: String,
   onEndpointUrlChange: (String) -> Unit,
+  endpointRemoteUrl: String,
+  onEndpointRemoteUrlChange: (String) -> Unit,
   endpointToken: String,
   onEndpointTokenChange: (String) -> Unit,
   onTestEndpoint: () -> Unit,
@@ -292,6 +298,17 @@ private fun LazyListScope.providerStep(
     }
     item {
       FluidTextField(
+        value = endpointRemoteUrl,
+        onValueChange = onEndpointRemoteUrlChange,
+        label = stringResource(R.string.settings_endpoint_remote_url),
+        placeholder = "100.x.y.z:8765",
+        supportingText = stringResource(R.string.settings_endpoint_remote_hint),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+        modifier = Modifier.fillMaxWidth(),
+      )
+    }
+    item {
+      FluidTextField(
         value = endpointToken,
         onValueChange = onEndpointTokenChange,
         label = stringResource(R.string.settings_endpoint_token),
@@ -304,7 +321,7 @@ private fun LazyListScope.providerStep(
       FluidButton(
         text = stringResource(R.string.settings_test_connection),
         onClick = onTestEndpoint,
-        enabled = endpointUrl.isNotBlank() && services.endpointCheck !is CheckState.Running,
+        enabled = (endpointUrl.isNotBlank() || endpointRemoteUrl.isNotBlank()) && services.endpointCheck !is CheckState.Running,
         loading = services.endpointCheck is CheckState.Running,
         style = FluidButtonStyle.Tinted,
         fillWidth = true,
@@ -314,7 +331,7 @@ private fun LazyListScope.providerStep(
     (services.endpointCheck as? CheckState.Ok)?.let { ok ->
       item {
         FluidInlineMessage(
-          message = stringResource(R.string.settings_endpoint_ok, ok.latencyMs),
+          message = stringResource(if (ok.detail == SettingsViewModel.ENDPOINT_VIA_REMOTE) R.string.settings_endpoint_ok_remote else R.string.settings_endpoint_ok_lan, ok.latencyMs),
           title = stringResource(R.string.settings_endpoint),
           tone = FluidTone.Success,
         )

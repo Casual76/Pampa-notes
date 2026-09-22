@@ -21,6 +21,7 @@ import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
 import dev.pampa.pampanotes.core.transcription.GroqWhisperProvider
+import dev.pampa.pampanotes.core.transcription.EndpointResolver
 import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
 import dev.pampa.pampanotes.core.transcription.SessionTranscript
 import dev.pampa.pampanotes.core.transcription.TranscribeRequest
@@ -49,6 +50,7 @@ class TranscriptionRepository @Inject constructor(
   private val settingsStore: PampaSettingsStore,
   private val keys: AiKeyStore,
   private val http: TranscriptionHttp,
+  private val resolver: EndpointResolver,
 ) {
 
   fun observeAll(): Flow<List<JobEntity>> = jobs.observeAll()
@@ -113,6 +115,56 @@ class TranscriptionRepository @Inject constructor(
   }
 
   suspend fun nextQueued(providerId: String): JobEntity? = jobs.nextQueued(providerId)
+
+  suspend fun queuedCount(providerId: String): Int = jobs.queuedCount(providerId)
+
+  /** Tutti i falliti tornano in fila, e si dice quali code svegliare. */
+  suspend fun retryAllFailed(): Set<String> {
+    val failed = jobs.failed()
+    failed.forEach { retry(it.id) }
+    return failed.mapTo(mutableSetOf()) { it.provider }
+  }
+
+  /**
+   * I lavori in fila del computer di casa dicono che lo stanno aspettando, o smettono di dirlo.
+   * E' una fase come le altre (`JobEntity.phase`): la riga del lavoro la legge e la scrive.
+   */
+  suspend fun markWaitingForEndpoint(waiting: Boolean) =
+    jobs.setQueuedPhase(OpenAiCompatProvider.ID, if (waiting) PHASE_WAITING_ENDPOINT else null, System.currentTimeMillis())
+
+  /**
+   * Il computer di casa: mai configurato, configurato ma muto, o pronto.
+   *
+   * Il resolver sceglie la **strada** (casa o Tailscale) e con due indirizzi ne restituisce sempre
+   * una, anche se nessuna delle due risponde: e' fatto per un errore di rete chiaro, non per dire
+   * se il computer c'e'. Qui serve l'altra domanda, e la si fa battendo `/health` sull'indirizzo
+   * scelto: due secondi, senza token.
+   */
+  suspend fun endpointState(): EndpointState {
+    val settings = settingsStore.current()
+    if (!settings.hasEndpoint) return EndpointState.UNCONFIGURED
+    val endpoint = resolver.resolve(settings.endpointUrl, settings.endpointRemoteUrl) ?: return EndpointState.UNCONFIGURED
+    return if (EndpointResolver.reachable(endpoint.url)) EndpointState.REACHABLE else EndpointState.UNREACHABLE
+  }
+
+  /**
+   * Il lavoro torna in fila ad aspettare il computer, invece di fallire: e' quello che succede a
+   * un lavoro del computer di casa caduto su un errore di rete mentre il computer non risponde.
+   */
+  suspend fun requeueForEndpoint(jobId: String) {
+    val job = jobs.get(jobId) ?: return
+    jobs.update(
+      job.copy(
+        state = JobState.QUEUED,
+        phase = PHASE_WAITING_ENDPOINT,
+        progress = 0f,
+        errorCode = null,
+        errorMessage = null,
+        updatedAt = System.currentTimeMillis(),
+        finishedAt = null,
+      ),
+    )
+  }
 
   suspend fun update(job: JobEntity) = jobs.update(job.copy(updatedAt = System.currentTimeMillis()))
 
@@ -189,6 +241,8 @@ class TranscriptionRepository @Inject constructor(
    * Null quando manca quello che serve — la chiave di Groq, o l'indirizzo del server — e in quel
    * caso il lavoro fallisce con un errore che lo dice invece di provarci e prendere un 401.
    */
+  enum class EndpointState { UNCONFIGURED, UNREACHABLE, REACHABLE }
+
   suspend fun providerFor(providerId: String): TranscriptionProvider? {
     val settings = settingsStore.current()
     return when (providerId) {
@@ -202,10 +256,11 @@ class TranscriptionRepository @Inject constructor(
       }
 
       OpenAiCompatProvider.ID -> {
-        val url = settings.endpointUrl.takeIf { it.isNotBlank() } ?: return null
+        // Casa o Tailscale: lo decide la sonda, adesso, per questo lavoro. Vedi [EndpointResolver].
+        val endpoint = resolver.resolve(settings.endpointUrl, settings.endpointRemoteUrl) ?: return null
         OpenAiCompatProvider(
           http = http,
-          baseUrl = url,
+          baseUrl = endpoint.url,
           token = settingsStore.endpointToken(),
           // Zero vuol dire "aspetta": il limite vero lo mette il worker con un withTimeout, che si
           // puo' annullare, invece della socket, che non si annulla.
@@ -325,6 +380,8 @@ class TranscriptionRepository @Inject constructor(
   suspend fun rawFor(sessionId: String): TranscriptEntity? = transcripts.rawForSession(sessionId)
 
   companion object {
+    /** La fase di un lavoro in fila che aspetta il computer di casa. */
+    const val PHASE_WAITING_ENDPOINT = "endpoint"
     /** Quello che WhisperX usa quando nessuno dice altro. */
     const val DEFAULT_LOCAL_MODEL = "large-v3"
   }

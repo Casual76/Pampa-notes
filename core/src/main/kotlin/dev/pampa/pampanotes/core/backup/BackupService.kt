@@ -224,6 +224,7 @@ class BackupService @Inject constructor(
     settings.setChunkMinutes(saved.chunkMinutes)
     settings.setGroqMaxUploadMb(saved.groqMaxUploadMb)
     settings.setPreferredProvider(saved.providerId())
+    settings.setCustomOnly(saved.customOnly)
     settings.setAutoTranscribeOnImport(saved.autoTranscribeOnImport)
     settings.setEndpoint(saved.endpointUrl, saved.endpointName, saved.endpointModel)
     settings.setEndpointTimeoutMinutes(saved.endpointTimeoutMinutes)

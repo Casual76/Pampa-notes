@@ -37,7 +37,8 @@ object VerboseJson {
       .orEmpty()
 
     if (text.isEmpty() && segments.isEmpty()) {
-      throw TranscriptionError.Parse("la risposta non contiene testo")
+      // Il JSON e' a posto, e' l'audio che non aveva niente da dire: lo si dice cosi'.
+      throw TranscriptionError.NoSpeech("il servizio non ha riconosciuto parole")
     }
 
     return TranscriptResult(

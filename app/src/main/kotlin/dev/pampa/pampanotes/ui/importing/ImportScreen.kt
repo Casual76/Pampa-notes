@@ -24,6 +24,7 @@ import dev.antigravity.fluidengine.ui.fluid.FluidProgressBar
 import dev.antigravity.fluidengine.ui.fluid.FluidScreen
 import dev.antigravity.fluidengine.ui.fluid.FluidSectionFootnote
 import dev.antigravity.fluidengine.ui.fluid.FluidSectionHeader
+import dev.antigravity.fluidengine.ui.fluid.FluidSegmentedControl
 import dev.antigravity.fluidengine.ui.fluid.FluidSpinner
 import dev.antigravity.fluidengine.ui.fluid.FluidSwitch
 import dev.antigravity.fluidengine.ui.fluid.FluidTextField
@@ -62,8 +63,14 @@ fun ImportRoute(
     onSelectFolder = viewModel::selectFolder,
     onSelectNote = viewModel::selectNote,
     onTitleChange = viewModel::setNewNoteTitle,
+    onUpdateExisting = viewModel::setUpdateExisting,
     onCreateFolder = viewModel::createFolder,
     onSelectSession = viewModel::setAppendToSession,
+    onToggleGroupStart = viewModel::toggleGroupStart,
+    onSplitAll = viewModel::splitAllGroups,
+    onJoinAll = viewModel::joinAllGroups,
+    onGroupTitle = viewModel::setGroupTitle,
+    onGroupsAsNotes = viewModel::setGroupsAsNotes,
     onNext = viewModel::next,
     onBack = viewModel::back,
   )
@@ -78,8 +85,14 @@ private fun ImportScreen(
   onSelectFolder: (String) -> Unit,
   onSelectNote: (String?) -> Unit,
   onTitleChange: (String) -> Unit,
+  onUpdateExisting: (Boolean) -> Unit,
   onCreateFolder: (String) -> Unit,
   onSelectSession: (String?) -> Unit,
+  onToggleGroupStart: (String) -> Unit,
+  onSplitAll: () -> Unit,
+  onJoinAll: () -> Unit,
+  onGroupTitle: (String, String) -> Unit,
+  onGroupsAsNotes: (Boolean) -> Unit,
   onNext: () -> Unit,
   onBack: () -> Unit,
 ) {
@@ -108,13 +121,13 @@ private fun ImportScreen(
       ImportStep.REVIEW -> {
         val samsung = state.samsungNote
         if (samsung != null) {
-          samsungStep(state, samsung, onSelectFolder, onTitleChange, onNext, { creatingFolder = true })
+          samsungStep(state, samsung, onSelectFolder, onTitleChange, onUpdateExisting, onNext, { creatingFolder = true })
         } else {
           reviewStep(state, onToggle, onNext, onClose)
         }
       }
       ImportStep.DESTINATION -> destinationStep(state, onSelectFolder, onSelectNote, onTitleChange, onNext, { creatingFolder = true })
-      ImportStep.AUDIO -> audioStep(state, onSelectSession, onNext)
+      ImportStep.AUDIO -> audioStep(state, onSelectSession, onToggleGroupStart, onSplitAll, onJoinAll, onGroupTitle, onGroupsAsNotes, onNext)
       ImportStep.RUNNING -> runningStep(state)
       ImportStep.DONE -> doneStep(state, onClose, onOpenNote)
     }
@@ -214,10 +227,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.samsungStep(
   candidate: ImportCandidate,
   onSelectFolder: (String) -> Unit,
   onTitleChange: (String) -> Unit,
+  onUpdateExisting: (Boolean) -> Unit,
   onNext: () -> Unit,
   onCreateFolder: () -> Unit,
 ) {
   val doc = candidate.sdocx ?: return
+  val updating = candidate.canUpdate && state.updateExisting
 
   item {
     FluidListGroup {
@@ -239,7 +254,38 @@ private fun androidx.compose.foundation.lazy.LazyListScope.samsungStep(
     }
   }
 
-  item {
+  if (candidate.canUpdate) {
+    // La stessa nota, una versione dopo: e' il caso normale di chi prende appunti in Samsung Notes.
+    // Aggiornare e' la prima scelta; una seconda nota con lo stesso titolo si sceglie apposta.
+    item { FluidSectionHeader(title = stringResource(R.string.import_samsung_update_header)) }
+    item {
+      FluidListGroup {
+        FluidListRow(
+          title = stringResource(R.string.import_samsung_update, candidate.updateOfNoteTitle.orEmpty()),
+          subtitle = stringResource(R.string.import_samsung_update_detail),
+          onClick = { onUpdateExisting(true) },
+          badge = if (state.updateExisting) {
+            { FluidStatusBadge(label = stringResource(R.string.import_chosen), tone = FluidTone.Primary) }
+          } else {
+            null
+          },
+        )
+        FluidListDivider()
+        FluidListRow(
+          title = stringResource(R.string.import_samsung_new),
+          subtitle = stringResource(R.string.import_samsung_new_detail),
+          onClick = { onUpdateExisting(false) },
+          badge = if (!state.updateExisting) {
+            { FluidStatusBadge(label = stringResource(R.string.import_chosen), tone = FluidTone.Primary) }
+          } else {
+            null
+          },
+        )
+      }
+    }
+  }
+
+  if (!updating) item {
     FluidTextField(
       value = state.newNoteTitle,
       onValueChange = onTitleChange,
@@ -248,8 +294,10 @@ private fun androidx.compose.foundation.lazy.LazyListScope.samsungStep(
     )
   }
 
-  item { FluidSectionHeader(title = stringResource(R.string.import_samsung_folder)) }
-  if (state.folders.isEmpty()) {
+  if (!updating) item { FluidSectionHeader(title = stringResource(R.string.import_samsung_folder)) }
+  if (updating) {
+    // Niente da scegliere: la nota e la sua cartella ci sono gia'.
+  } else if (state.folders.isEmpty()) {
     item {
       FluidEmptyState(
         title = stringResource(R.string.home_empty_title),
@@ -275,7 +323,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.samsungStep(
       }
     }
   }
-  item {
+  if (!updating) item {
     FluidButton(
       text = stringResource(R.string.home_new_folder),
       onClick = onCreateFolder,
@@ -287,9 +335,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.samsungStep(
 
   item {
     FluidButton(
-      text = stringResource(R.string.action_import),
+      text = stringResource(if (updating) R.string.action_update else R.string.action_import),
       onClick = onNext,
-      enabled = state.selectedFolderId != null && state.newNoteTitle.isNotBlank(),
+      enabled = updating || (state.selectedFolderId != null && state.newNoteTitle.isNotBlank()),
       fillWidth = true,
       modifier = Modifier.fillMaxWidth(),
     )
@@ -413,38 +461,49 @@ private fun androidx.compose.foundation.lazy.LazyListScope.destinationStep(
 private fun androidx.compose.foundation.lazy.LazyListScope.audioStep(
   state: ImportUiState,
   onSelectSession: (String?) -> Unit,
+  onToggleGroupStart: (String) -> Unit,
+  onSplitAll: () -> Unit,
+  onJoinAll: () -> Unit,
+  onGroupTitle: (String, String) -> Unit,
+  onGroupsAsNotes: (Boolean) -> Unit,
   onNext: () -> Unit,
 ) {
-  item { FluidSectionHeader(title = stringResource(R.string.import_audio_where), detail = stringResource(R.string.import_audio_where_detail)) }
+  // La domanda «in coda a quale sessione» ha senso solo se una sessione c'e'. In una nota nuova
+  // l'unica risposta sarebbe «una nuova», e una domanda con una risposta sola non e' una domanda.
+  if (state.existingSessions.isNotEmpty()) {
+    item { FluidSectionHeader(title = stringResource(R.string.import_audio_where), detail = stringResource(R.string.import_audio_where_detail)) }
 
-  item {
-    FluidListGroup {
-      FluidListRow(
-        title = stringResource(R.string.import_new_session),
-        subtitle = stringResource(R.string.import_new_session_detail),
-        onClick = { onSelectSession(null) },
-        badge = if (state.appendToSessionId == null) {
-          { FluidStatusBadge(label = stringResource(R.string.import_chosen), tone = FluidTone.Primary) }
-        } else {
-          null
-        },
-      )
-      state.existingSessions.forEachIndexed { index, session ->
-        FluidListDivider()
-        val prettyDate = Dates.parseOrNull(session.date)?.let { Formats.relativeDate(it) } ?: session.date
+    item {
+      FluidListGroup {
         FluidListRow(
-          title = stringResource(R.string.import_append_session, index + 1),
-          subtitle = if (session.title.isBlank()) prettyDate else "$prettyDate · ${session.title}",
-          onClick = { onSelectSession(session.id) },
-          badge = if (state.appendToSessionId == session.id) {
+          title = stringResource(R.string.import_new_session),
+          subtitle = stringResource(R.string.import_new_session_detail),
+          onClick = { onSelectSession(null) },
+          badge = if (state.appendToSessionId == null) {
             { FluidStatusBadge(label = stringResource(R.string.import_chosen), tone = FluidTone.Primary) }
           } else {
             null
           },
         )
+        state.existingSessions.forEachIndexed { index, session ->
+          FluidListDivider()
+          val prettyDate = Dates.parseOrNull(session.date)?.let { Formats.relativeDate(it) } ?: session.date
+          FluidListRow(
+            title = stringResource(R.string.import_append_session, index + 1),
+            subtitle = if (session.title.isBlank()) prettyDate else "$prettyDate · ${session.title}",
+            onClick = { onSelectSession(session.id) },
+            badge = if (state.appendToSessionId == session.id) {
+              { FluidStatusBadge(label = stringResource(R.string.import_chosen), tone = FluidTone.Primary) }
+            } else {
+              null
+            },
+          )
+        }
       }
     }
   }
+
+  if (state.canGroup) groupingSection(state, onToggleGroupStart, onSplitAll, onJoinAll, onGroupTitle, onGroupsAsNotes)
 
   item {
     FluidButton(
@@ -453,6 +512,100 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioStep(
       fillWidth = true,
       modifier = Modifier.fillMaxWidth(),
     )
+  }
+}
+
+/**
+ * Dove staccare, fra piu' registrazioni importate insieme.
+ *
+ * Un interruttore per registrazione, dalla seconda in poi: acceso, da li' comincia una nota (o una
+ * lezione) nuova. L'etichetta sopra ogni riga dice a colpo d'occhio in quale gruppo e' finita, che
+ * e' l'unica cosa da controllare prima di premere Importa. Le due scorciatoie in cima coprono i
+ * casi che non si vogliono fare a mano: dieci lezioni distinte, o dieci pezzi della stessa.
+ */
+private fun androidx.compose.foundation.lazy.LazyListScope.groupingSection(
+  state: ImportUiState,
+  onToggleGroupStart: (String) -> Unit,
+  onSplitAll: () -> Unit,
+  onJoinAll: () -> Unit,
+  onGroupTitle: (String, String) -> Unit,
+  onGroupsAsNotes: (Boolean) -> Unit,
+) {
+  val grouping = state.grouping ?: return
+  val groups = state.groupsView
+  val asNotes = state.selectedNoteId == null && grouping.asNotes
+
+  item { FluidSectionHeader(title = stringResource(R.string.import_group_header), detail = stringResource(R.string.import_group_detail)) }
+
+  item {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+      FluidButton(
+        text = stringResource(R.string.import_group_all),
+        onClick = onJoinAll,
+        style = if (grouping.isSplit) FluidButtonStyle.Tinted else FluidButtonStyle.Plain,
+        enabled = grouping.isSplit,
+        modifier = Modifier.weight(1f),
+      )
+      FluidButton(
+        text = stringResource(R.string.import_group_each),
+        onClick = onSplitAll,
+        style = if (groups.size < state.audioInOrder.size) FluidButtonStyle.Tinted else FluidButtonStyle.Plain,
+        enabled = groups.size < state.audioInOrder.size,
+        modifier = Modifier.weight(1f),
+      )
+    }
+  }
+
+  // Note separate o lezioni della stessa nota: solo per una nota nuova, e solo se si e' diviso
+  // qualcosa. Dentro una nota che c'e' gia' non si creano note, quindi non c'e' niente da scegliere.
+  if (state.selectedNoteId == null && grouping.isSplit) {
+    item {
+      val labels = mapOf(
+        true to stringResource(R.string.import_group_as_notes),
+        false to stringResource(R.string.import_group_as_sessions),
+      )
+      FluidSegmentedControl(
+        options = listOf(true, false),
+        selected = grouping.asNotes,
+        onSelect = onGroupsAsNotes,
+        label = { labels.getValue(it) },
+      )
+    }
+  }
+
+  item {
+    FluidListGroup {
+      state.audioInOrder.forEachIndexed { index, candidate ->
+        if (index > 0) FluidListDivider()
+        val group = grouping.groupOf(candidate.id) + 1
+        val startsNew = candidate.id in grouping.startsNew
+        FluidListRow(
+          title = candidate.displayName,
+          subtitle = candidateSubtitle(candidate),
+          eyebrow = stringResource(if (asNotes) R.string.import_group_note_n else R.string.import_group_session_n, group),
+          tone = if (index == 0 || startsNew) FluidTone.Primary else FluidTone.Neutral,
+          badge = if (index == 0) null else {
+            { FluidSwitch(checked = startsNew, onCheckedChange = { onToggleGroupStart(candidate.id) }) }
+          },
+        )
+      }
+    }
+  }
+  item { FluidSectionFootnote(text = stringResource(R.string.import_group_switch_note)) }
+
+  if (grouping.isSplit) {
+    item { FluidSectionHeader(title = stringResource(R.string.import_group_titles)) }
+    groups.forEach { group ->
+      item(key = "title-${group.firstId}") {
+        FluidTextField(
+          value = group.title,
+          onValueChange = { onGroupTitle(group.firstId, it) },
+          label = stringResource(if (asNotes) R.string.import_group_note_n else R.string.import_group_session_n, group.index + 1),
+          placeholder = group.defaultTitle.ifBlank { null },
+          modifier = Modifier.fillMaxWidth(),
+        )
+      }
+    }
   }
 }
 
@@ -479,6 +632,25 @@ private fun androidx.compose.foundation.lazy.LazyListScope.doneStep(
       )
     }
   } else {
+    // Piu' note create: si elencano, e ognuna si apre da qui. Un solo tasto «Apri la nota» non
+    // saprebbe quale.
+    val manyNotes = state.createdNotes.size > 1
+    if (manyNotes) {
+      item { FluidSectionHeader(title = stringResource(R.string.import_done_notes)) }
+      item {
+        FluidListGroup {
+          state.createdNotes.forEachIndexed { index, note ->
+            if (index > 0) FluidListDivider()
+            FluidListRow(
+              title = note.title,
+              subtitle = pluralStringResource(R.plurals.import_samsung_recordings, note.recordings, note.recordings),
+              tone = FluidTone.Primary,
+              onClick = { onOpenNote(note.id) },
+            )
+          }
+        }
+      }
+    }
     item {
       FluidListGroup {
         outcome.imported.forEachIndexed { index, item ->
@@ -495,13 +667,15 @@ private fun androidx.compose.foundation.lazy.LazyListScope.doneStep(
         }
       }
     }
-    item {
-      FluidButton(
-        text = stringResource(R.string.import_open_note),
-        onClick = { onOpenNote(outcome.noteId) },
-        fillWidth = true,
-        modifier = Modifier.fillMaxWidth(),
-      )
+    if (!manyNotes) {
+      item {
+        FluidButton(
+          text = stringResource(R.string.import_open_note),
+          onClick = { onOpenNote(outcome.noteId) },
+          fillWidth = true,
+          modifier = Modifier.fillMaxWidth(),
+        )
+      }
     }
   }
   item {

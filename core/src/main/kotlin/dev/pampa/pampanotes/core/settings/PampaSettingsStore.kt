@@ -44,14 +44,45 @@ data class PampaSettings(
   /** Il tetto di upload di Groq: 25 MB sul piano gratuito, 100 sul dev tier. */
   val groqMaxUploadMb: Int = 25,
   val preferredProvider: TranscriptionProviderId = TranscriptionProviderId.GROQ,
+  /**
+   * Mai con Groq: ogni trascrizione, anche quella automatica all'import, va al computer di casa e
+   * lo aspetta se non risponde. E' la garanzia che serve per tenere accesa la trascrizione
+   * automatica senza il rischio che una lezione finisca nel cloud per sbaglio.
+   */
+  val customOnly: Boolean = false,
   /** Trascrivi subito quando importi un audio, senza chiederlo. */
   val autoTranscribeOnImport: Boolean = true,
+  /** L'indirizzo di casa, sulla rete locale. */
   val endpointUrl: String = "",
+  /** L'indirizzo che vale anche da fuori (Tailscale). Vuoto se non lo si usa. */
+  val endpointRemoteUrl: String = "",
   val endpointName: String = "",
   val endpointModel: String = "",
   val endpointHasToken: Boolean = false,
   /** Quanto aspettare una risposta del server personale prima di arrendersi. */
   val endpointTimeoutMinutes: Int = 180,
+  /** Caricare registrazioni e originali sul computer di casa, quando lo si raggiunge. */
+  val archiveEnabled: Boolean = false,
+  /** Solo su Wi-Fi: un `.sdocx` da mezzo giga sulla rete dati e' un errore che si paga in bolletta. */
+  val archiveOnlyUnmetered: Boolean = true,
+  val lastArchiveAt: Long = 0L,
+  /**
+   * Tieni tutto anche qui: i file registrati o importati su un altro dispositivo si scaricano dal
+   * computer di casa appena l'indice li porta, non solo quando servono. Segue «solo su Wi-Fi»
+   * dell'archivio: e' lo stesso volume nel verso opposto.
+   */
+  val mirrorEnabled: Boolean = false,
+  /** L'indice in cloud: acceso, dove sta, e come si e' andati l'ultima volta. */
+  val syncEnabled: Boolean = false,
+  val syncServerUrl: String = "",
+  val syncHasToken: Boolean = false,
+  /** Un id per questo dispositivo, nato qui e mai nel backup: e' come il server ci distingue dal tablet. */
+  val syncDeviceId: String = "",
+  val syncDeviceName: String = "",
+  /** L'account Google con cui si e' aperta la sessione, per dirlo in pagina. Vuoto con un codice. */
+  val syncAccount: String = "",
+  val lastSyncAt: Long = 0L,
+  val lastSyncError: String = "",
   val refinementEnabled: Boolean = false,
   val refinementModel: String = "",
   val refinementPreset: RefinementPreset = RefinementPreset.CLEAN,
@@ -72,13 +103,19 @@ data class PampaSettings(
   /** Il provider finto, solo nelle build di debug: la UI si prova senza spendere quota. */
   val fakeProviderEnabled: Boolean = false,
 ) {
-  val hasEndpoint: Boolean get() = endpointUrl.isNotBlank()
+  val hasEndpoint: Boolean get() = endpointUrl.isNotBlank() || endpointRemoteUrl.isNotBlank()
+
+  /** Chi trascrive davvero: con «solo il computer di casa» la preferenza non conta piu'. */
+  val transcriptionProvider: TranscriptionProviderId
+    get() = if (customOnly) TranscriptionProviderId.CUSTOM else preferredProvider
   val languageOrNull: String? get() = language.takeIf { it != "auto" && it.isNotBlank() }
 }
 
 class PampaSettingsStore(
   private val store: DataStore<Preferences>,
   private val cipher: SecretCipher,
+  /** Un alias suo per il token del cloud: una chiave del Keystore per segreto, come per l'endpoint. */
+  private val syncCipher: SecretCipher = KeystoreCipher(alias = SYNC_ALIAS),
 ) {
   constructor(context: Context) : this(context.pampaSettingsStore, KeystoreCipher(alias = ENDPOINT_ALIAS))
 
@@ -92,12 +129,58 @@ class PampaSettingsStore(
   suspend fun setChunkMinutes(minutes: Int) = edit { it[ChunkMinutes] = minutes.coerceIn(3, 20) }
   suspend fun setGroqMaxUploadMb(mb: Int) = edit { it[GroqMaxUploadMb] = mb.coerceIn(5, 100) }
   suspend fun setPreferredProvider(provider: TranscriptionProviderId) = edit { it[PreferredProvider] = provider.id }
+  suspend fun setCustomOnly(only: Boolean) = edit { it[CustomOnly] = only }
+  suspend fun setMirrorEnabled(enabled: Boolean) = edit { it[MirrorEnabled] = enabled }
   suspend fun setAutoTranscribeOnImport(enabled: Boolean) = edit { it[AutoTranscribe] = enabled }
   suspend fun setEndpoint(url: String, name: String, model: String) = edit {
     it[EndpointUrl] = url.trim().trimEnd('/')
     it[EndpointName] = name.trim()
     it[EndpointModel] = model.trim()
   }
+  suspend fun setEndpointRemoteUrl(url: String) = edit { it[EndpointRemoteUrl] = url.trim().trimEnd('/') }
+  suspend fun setSyncEnabled(enabled: Boolean) = edit { it[SyncEnabled] = enabled }
+  /**
+   * Cambiare servizio vuol dire ricominciare: un altro server non ha le nostre righe e non sa
+   * niente della sequenza a cui eravamo. Si buttano l'id del dispositivo, il token e l'account, e
+   * `SyncRepository.ensureIdentity` al primo giro riparte da zero — impronte azzerate e tutto
+   * l'archivio nell'outbox. Chi passa dal Worker di prova a quello vero ci arriva con tutto.
+   */
+  suspend fun setSyncServerUrl(url: String) = edit { prefs ->
+    val next = url.trim().trimEnd('/')
+    val current = prefs[SyncServerUrl] ?: ""
+    if (current.isNotEmpty() && next != current) {
+      prefs.remove(SyncDeviceId)
+      prefs.remove(SyncTokenBlob)
+      prefs.remove(SyncAccount)
+    }
+    prefs[SyncServerUrl] = next
+  }
+  suspend fun setSyncDeviceName(name: String) = edit { it[SyncDeviceName] = name.trim() }
+  suspend fun setSyncAccount(account: String) = edit { it[SyncAccount] = account.trim() }
+  suspend fun setLastSync(at: Long, error: String) = edit { it[LastSyncAt] = at; it[LastSyncError] = error }
+
+  /** L'id di questo dispositivo, creato la prima volta che serve. Vive qui e non nel database: un backup ripristinato altrove non deve portarselo dietro. */
+  suspend fun syncDeviceId(): String {
+    val existing = store.data.first()[SyncDeviceId]
+    if (!existing.isNullOrBlank()) return existing
+    val fresh = java.util.UUID.randomUUID().toString()
+    edit { it[SyncDeviceId] = fresh }
+    return fresh
+  }
+
+  suspend fun syncToken(): String? {
+    val blob = store.data.first()[SyncTokenBlob] ?: return null
+    return runCatching { syncCipher.decrypt(blob) }.getOrNull()
+  }
+
+  suspend fun setSyncToken(token: String?) = edit { prefs ->
+    val trimmed = token?.trim()
+    if (trimmed.isNullOrEmpty()) prefs.remove(SyncTokenBlob) else prefs[SyncTokenBlob] = syncCipher.encrypt(trimmed)
+  }
+
+  suspend fun setArchiveEnabled(enabled: Boolean) = edit { it[ArchiveEnabled] = enabled }
+  suspend fun setArchiveOnlyUnmetered(only: Boolean) = edit { it[ArchiveOnlyUnmetered] = only }
+  suspend fun setLastArchiveAt(at: Long) = edit { it[LastArchiveAt] = at }
   suspend fun setEndpointTimeoutMinutes(minutes: Int) = edit { it[EndpointTimeout] = minutes.coerceIn(5, 720) }
   suspend fun setRefinementEnabled(enabled: Boolean) = edit { it[RefinementEnabled] = enabled }
   suspend fun setRefinementModel(model: String) = edit { it[RefinementModel] = model }
@@ -136,12 +219,26 @@ class PampaSettingsStore(
     chunkMinutes = this[ChunkMinutes] ?: 10,
     groqMaxUploadMb = this[GroqMaxUploadMb] ?: 25,
     preferredProvider = TranscriptionProviderId.fromId(this[PreferredProvider]),
+    customOnly = this[CustomOnly] ?: false,
     autoTranscribeOnImport = this[AutoTranscribe] ?: true,
     endpointUrl = this[EndpointUrl] ?: "",
+    endpointRemoteUrl = this[EndpointRemoteUrl] ?: "",
     endpointName = this[EndpointName] ?: "",
     endpointModel = this[EndpointModel] ?: "",
     endpointHasToken = this[EndpointTokenBlob] != null,
     endpointTimeoutMinutes = this[EndpointTimeout] ?: 180,
+    archiveEnabled = this[ArchiveEnabled] ?: false,
+    archiveOnlyUnmetered = this[ArchiveOnlyUnmetered] ?: true,
+    lastArchiveAt = this[LastArchiveAt] ?: 0L,
+    mirrorEnabled = this[MirrorEnabled] ?: false,
+    syncEnabled = this[SyncEnabled] ?: false,
+    syncServerUrl = this[SyncServerUrl] ?: "",
+    syncHasToken = this[SyncTokenBlob] != null,
+    syncDeviceId = this[SyncDeviceId] ?: "",
+    syncDeviceName = this[SyncDeviceName] ?: "",
+    syncAccount = this[SyncAccount] ?: "",
+    lastSyncAt = this[LastSyncAt] ?: 0L,
+    lastSyncError = this[LastSyncError] ?: "",
     refinementEnabled = this[RefinementEnabled] ?: false,
     refinementModel = this[RefinementModel] ?: "",
     refinementPreset = this[RefinementPresetKey]?.let { runCatching { RefinementPreset.valueOf(it) }.getOrNull() } ?: RefinementPreset.CLEAN,
@@ -156,6 +253,7 @@ class PampaSettingsStore(
 
   private companion object {
     const val ENDPOINT_ALIAS = "dev.pampa.pampanotes.endpoint"
+    const val SYNC_ALIAS = "dev.pampa.pampanotes.sync"
 
     val OnboardingDone = booleanPreferencesKey("onboarding_done")
     val Language = stringPreferencesKey("language")
@@ -163,12 +261,26 @@ class PampaSettingsStore(
     val ChunkMinutes = intPreferencesKey("chunk_minutes")
     val GroqMaxUploadMb = intPreferencesKey("groq_max_upload_mb")
     val PreferredProvider = stringPreferencesKey("preferred_provider")
+    val CustomOnly = booleanPreferencesKey("custom_only")
+    val MirrorEnabled = booleanPreferencesKey("mirror_enabled")
     val AutoTranscribe = booleanPreferencesKey("auto_transcribe")
     val EndpointUrl = stringPreferencesKey("endpoint_url")
+    val EndpointRemoteUrl = stringPreferencesKey("endpoint_remote_url")
     val EndpointName = stringPreferencesKey("endpoint_name")
     val EndpointModel = stringPreferencesKey("endpoint_model")
     val EndpointTokenBlob = stringPreferencesKey("endpoint_token")
     val EndpointTimeout = intPreferencesKey("endpoint_timeout_minutes")
+    val ArchiveEnabled = booleanPreferencesKey("archive_enabled")
+    val ArchiveOnlyUnmetered = booleanPreferencesKey("archive_only_unmetered")
+    val LastArchiveAt = longPreferencesKey("last_archive_at")
+    val SyncEnabled = booleanPreferencesKey("sync_enabled")
+    val SyncServerUrl = stringPreferencesKey("sync_server_url")
+    val SyncTokenBlob = stringPreferencesKey("sync_token")
+    val SyncDeviceId = stringPreferencesKey("sync_device_id")
+    val SyncDeviceName = stringPreferencesKey("sync_device_name")
+    val SyncAccount = stringPreferencesKey("sync_account")
+    val LastSyncAt = longPreferencesKey("last_sync_at")
+    val LastSyncError = stringPreferencesKey("last_sync_error")
     val RefinementEnabled = booleanPreferencesKey("refinement_enabled")
     val RefinementModel = stringPreferencesKey("refinement_model")
     val RefinementPresetKey = stringPreferencesKey("refinement_preset")

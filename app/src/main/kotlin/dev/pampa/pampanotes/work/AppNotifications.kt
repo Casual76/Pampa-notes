@@ -20,6 +20,8 @@ object AppNotifications {
 
   const val ID_TRANSCRIPTION_FOREGROUND = 1001
   const val ID_REFINEMENT_FOREGROUND = 1002
+  const val ID_ARCHIVE_FOREGROUND = 1003
+  const val ID_FETCH_FOREGROUND = 1004
   private const val ID_RESULT_BASE = 2000
 
   fun createChannels(context: Context) {

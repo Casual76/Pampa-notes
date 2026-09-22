@@ -25,6 +25,16 @@ captures/
 # Companion server
 companion/.venv/
 companion/__pycache__/
+# Del companion: il registro e' roba di runtime, e config.json puo' contenere il token del server.
+companion/logs/
+companion/config.json
+
 companion/models/
 
 # Room schema exports are versioned on purpose (core/schemas)
+
+# Il Worker dell'indice: dipendenze e il D1 locale di wrangler
+worker/node_modules/
+worker/.wrangler/
+worker/logs/
+worker/.dev.vars

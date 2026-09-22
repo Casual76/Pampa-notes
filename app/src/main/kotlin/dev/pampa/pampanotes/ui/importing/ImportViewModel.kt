@@ -8,6 +8,7 @@ import dev.pampa.pampanotes.core.db.FolderEntity
 import dev.pampa.pampanotes.core.db.NoteEntity
 import dev.pampa.pampanotes.core.db.SessionDao
 import dev.pampa.pampanotes.core.db.SessionEntity
+import dev.pampa.pampanotes.core.importing.AudioGrouping
 import dev.pampa.pampanotes.core.importing.AudioPlacement
 import dev.pampa.pampanotes.core.importing.ImportCandidate
 import dev.pampa.pampanotes.core.importing.ImportCoordinator
@@ -37,22 +38,75 @@ data class ImportUiState(
   val selectedFolderId: String? = null,
   val selectedNoteId: String? = null,
   val newNoteTitle: String = "",
+  /** Nel percorso corto di Samsung Notes: aggiornare la nota che c'e' gia', invece di crearne una nuova. */
+  val updateExisting: Boolean = true,
   val existingSessions: List<SessionEntity> = emptyList(),
   val appendToSessionId: String? = null,
   val sessionDate: String = Dates.today(),
   val progressLabel: String = "",
   val progress: Float = 0f,
   val outcome: ImportOutcome? = null,
+  /** Le note toccate dall'import, nell'ordine: piu' di una quando le registrazioni sono state divise. */
+  val createdNotes: List<CreatedNote> = emptyList(),
   val error: String? = null,
+  /** Come dividere le registrazioni. Nasce entrando nel passo audio, e segue le esclusioni. */
+  val grouping: AudioGrouping? = null,
 ) {
   val included: List<ImportCandidate> get() = candidates.filterNot { it.id in excluded }
   val hasAudio: Boolean get() = included.any { it.isAudio || (it.sdocx?.recordings?.isNotEmpty() == true) }
+
+  /** Le registrazioni nell'ordine in cui [AudioImporter] le importa: per nome, come le numera un registratore. */
+  val audioInOrder: List<ImportCandidate> get() = included.filter { it.isAudio }.sortedBy { it.displayName.lowercase() }
+
+  /** Dividere ha senso solo con almeno due registrazioni, e non quando vanno in coda a una sessione che c'e' gia'. */
+  val canGroup: Boolean get() = appendToSessionId == null && audioInOrder.size >= 2
+
+  /** I gruppi come li vede la schermata: le registrazioni di ciascuno e il titolo, scelto o proposto. */
+  val groupsView: List<AudioGroupView>
+    get() {
+      val grouping = grouping ?: return emptyList()
+      val byId = audioInOrder.associateBy { it.id }
+      return grouping.groups.mapIndexed { index, ids ->
+        val items = ids.mapNotNull { byId[it] }
+        AudioGroupView(
+          index = index,
+          firstId = ids.first(),
+          items = items,
+          title = grouping.title(ids).orEmpty(),
+          defaultTitle = defaultGroupTitle(index, items, grouping.asNotes),
+        )
+      }
+    }
+
+  /**
+   * Il titolo che un gruppo avrebbe se non gliene si da' uno. Per le note: il primo gruppo eredita
+   * il titolo gia' scritto nel passo prima, gli altri prendono il nome del loro primo file. Per le
+   * lezioni della stessa nota il titolo e' facoltativo, come lo e' per ogni sessione.
+   */
+  private fun defaultGroupTitle(index: Int, items: List<ImportCandidate>, asNotes: Boolean): String = when {
+    !asNotes -> ""
+    index == 0 && newNoteTitle.isNotBlank() -> newNoteTitle
+    else -> items.firstOrNull()?.displayName?.substringBeforeLast('.').orEmpty()
+  }
   /** Una nota di Samsung Notes da sola: il caso di tutti i giorni, e quello con il percorso corto. */
   val samsungNote: ImportCandidate? get() = candidates.singleOrNull()?.takeIf { it.isSamsungNote }
   val hasDocuments: Boolean get() = included.any { !it.isAudio }
   /** Quando la nota e' gia' decisa (import da dentro una nota) il passo destinazione non serve. */
   val targetIsFixed: Boolean get() = selectedNoteId != null && selectedFolderId == null
 }
+
+/** Un gruppo di registrazioni nel passo audio: quello che diventera' una nota o una lezione. */
+data class AudioGroupView(
+  val index: Int,
+  val firstId: String,
+  val items: List<ImportCandidate>,
+  val title: String,
+  val defaultTitle: String,
+) {
+  val effectiveTitle: String get() = title.ifBlank { defaultTitle }
+}
+
+data class CreatedNote(val id: String, val title: String, val recordings: Int)
 
 @HiltViewModel
 class ImportViewModel @Inject constructor(
@@ -155,9 +209,21 @@ class ImportViewModel @Inject constructor(
 
   fun setNewNoteTitle(title: String) = _uiState.update { it.copy(newNoteTitle = title) }
 
+  fun setUpdateExisting(update: Boolean) = _uiState.update { it.copy(updateExisting = update) }
+
   fun setAppendToSession(sessionId: String?) = _uiState.update { it.copy(appendToSessionId = sessionId) }
 
   fun setSessionDate(date: String) = _uiState.update { it.copy(sessionDate = date) }
+
+  fun toggleGroupStart(candidateId: String) = updateGrouping { it.toggle(candidateId) }
+  fun splitAllGroups() = updateGrouping { it.splitAll() }
+  fun joinAllGroups() = updateGrouping { it.joinAll() }
+  fun setGroupTitle(firstId: String, title: String) = updateGrouping { it.withTitle(firstId, title) }
+  fun setGroupsAsNotes(asNotes: Boolean) = updateGrouping { it.copy(asNotes = asNotes) }
+
+  private fun updateGrouping(transform: (AudioGrouping) -> AudioGrouping) = _uiState.update { state ->
+    state.copy(grouping = transform(state.grouping ?: AudioGrouping(state.audioInOrder.map { it.id })))
+  }
 
   fun createFolder(name: String) {
     viewModelScope.launch {
@@ -176,6 +242,8 @@ class ImportViewModel @Inject constructor(
         it.copy(
           step = when {
             it.targetIsFixed -> if (it.hasAudio) ImportStep.AUDIO else ImportStep.RUNNING
+            // La versione nuova di una nota che c'e' gia': non c'e' niente da chiedere.
+            it.samsungNote?.canUpdate == true && it.updateExisting -> ImportStep.RUNNING
             // Il percorso corto: la nota Samsung ha gia' scelto titolo e cartella nella prima
             // schermata, e le sue registrazioni vanno in una sessione loro. Non c'e' altro da chiedere.
             it.samsungNote != null && it.selectedFolderId != null -> ImportStep.RUNNING
@@ -188,6 +256,14 @@ class ImportViewModel @Inject constructor(
       }
       ImportStep.AUDIO -> _uiState.update { it.copy(step = ImportStep.RUNNING) }
       else -> Unit
+    }
+    if (_uiState.value.step == ImportStep.AUDIO) {
+      // La divisione segue l'elenco: chi torna al primo passo e spegne un file non perde gli
+      // stacchi messi davanti agli altri.
+      _uiState.update { state ->
+        val order = state.audioInOrder.map { it.id }
+        state.copy(grouping = state.grouping?.withOrder(order) ?: AudioGrouping(order))
+      }
     }
     if (_uiState.value.step == ImportStep.RUNNING) run()
   }
@@ -224,7 +300,9 @@ class ImportViewModel @Inject constructor(
       _uiState.update { it.copy(step = ImportStep.DONE) }
       return
     }
+    val updating = state.samsungNote?.takeIf { it.canUpdate && state.updateExisting }
     val target = when {
+      updating != null -> ImportTarget.UpdateNote(updating.updateOfNoteId!!)
       state.selectedNoteId != null -> ImportTarget.ExistingNote(state.selectedNoteId)
       state.selectedFolderId != null -> ImportTarget.NewNote(state.selectedFolderId, state.newNoteTitle)
       else -> null
@@ -237,18 +315,90 @@ class ImportViewModel @Inject constructor(
       ?.let { AudioPlacement.Append(it) }
       ?: AudioPlacement.NewSession(date = state.sessionDate)
 
+    val groups = state.groupsView.takeIf { state.canGroup && it.size > 1 }
+
     viewModelScope.launch {
       runCatching {
-        coordinator.importAll(items, target, placement) { done, total, label ->
-          _uiState.update { it.copy(progress = if (total == 0) 0f else done.toFloat() / total, progressLabel = label) }
+        if (groups == null) {
+          val outcome = coordinator.importAll(items, target, placement) { done, total, label -> publish(done, total, label) }
+          listOf(outcome to CreatedNote(outcome.noteId, updating?.updateOfNoteTitle ?: state.newNoteTitle, state.audioInOrder.size))
+        } else {
+          runGrouped(groups, target, state)
         }
-      }.onSuccess { outcome ->
-        _uiState.update { it.copy(step = ImportStep.DONE, outcome = outcome, progress = 1f) }
-        transcribeIfAsked(outcome.noteId)
+      }.onSuccess { results ->
+        val outcomes = results.map { it.first }
+        _uiState.update {
+          it.copy(
+            step = ImportStep.DONE,
+            // Un esito solo, con dentro tutto: la schermata finale elenca i file, non le note.
+            outcome = ImportOutcome(noteId = outcomes.first().noteId, imported = outcomes.flatMap { o -> o.imported }),
+            createdNotes = results.map { r -> r.second }.distinctBy { n -> n.id },
+            progress = 1f,
+          )
+        }
+        outcomes.map { it.noteId }.distinct().forEach { transcribeIfAsked(it) }
       }.onFailure { error ->
         _uiState.update { it.copy(step = ImportStep.DONE, error = error.message ?: "Import non riuscito") }
       }
     }
+  }
+
+  /**
+   * Un import per gruppo, in fila.
+   *
+   * Tre forme, decise da dove si e' scelto di andare. In una nota che c'e' gia', ogni gruppo e'
+   * una lezione nuova di quella nota. In una nota nuova, o ogni gruppo e' una nota per conto suo
+   * (il caso «cinque lezioni, cinque note»), oppure la prima crea la nota e le altre ci entrano
+   * come lezioni. I documenti, se ce ne sono, vanno con il primo gruppo: sono l'eccezione, e
+   * un'eccezione non merita una domanda in piu'.
+   */
+  private suspend fun runGrouped(
+    groups: List<AudioGroupView>,
+    target: ImportTarget,
+    state: ImportUiState,
+  ): List<Pair<ImportOutcome, CreatedNote>> {
+    val documents = state.included.filterNot { it.isAudio }
+    val total = state.included.size
+    var done = 0
+    val results = mutableListOf<Pair<ImportOutcome, CreatedNote>>()
+    var sharedNoteId: String? = (target as? ImportTarget.ExistingNote)?.noteId
+    val asNotes = target is ImportTarget.NewNote && state.grouping?.asNotes != false
+
+    groups.forEach { group ->
+      val items = if (group.index == 0) group.items + documents else group.items
+      val groupTarget: ImportTarget
+      val placement: AudioPlacement
+      val noteTitle: String
+      when {
+        asNotes -> {
+          groupTarget = ImportTarget.NewNote((target as ImportTarget.NewNote).folderId, group.effectiveTitle)
+          placement = AudioPlacement.NewSession(date = state.sessionDate)
+          noteTitle = group.effectiveTitle
+        }
+        sharedNoteId == null -> {
+          groupTarget = ImportTarget.NewNote((target as ImportTarget.NewNote).folderId, state.newNoteTitle)
+          placement = AudioPlacement.NewSession(date = state.sessionDate, title = group.effectiveTitle)
+          noteTitle = state.newNoteTitle
+        }
+        else -> {
+          groupTarget = ImportTarget.ExistingNote(sharedNoteId)
+          placement = AudioPlacement.NewSession(date = state.sessionDate, title = group.effectiveTitle)
+          noteTitle = state.newNoteTitle
+        }
+      }
+      val offset = done
+      val outcome = coordinator.importAll(items, groupTarget, placement) { groupDone, _, label ->
+        publish(offset + groupDone, total, label)
+      }
+      done += items.size
+      if (!asNotes) sharedNoteId = outcome.noteId
+      results += outcome to CreatedNote(outcome.noteId, noteTitle, group.items.size)
+    }
+    return results
+  }
+
+  private fun publish(done: Int, total: Int, label: String) {
+    _uiState.update { it.copy(progress = if (total == 0) 0f else done.toFloat() / total, progressLabel = label) }
   }
 
   /**
@@ -260,11 +410,14 @@ class ImportViewModel @Inject constructor(
    */
   private suspend fun transcribeIfAsked(noteId: String) {
     val settings = settingsStore.current()
+    // Quello che e' appena entrato e' anche quello che vale di piu' avere fuori dal dispositivo.
+    if (settings.archiveEnabled) scheduler.archiveNow(settings.archiveOnlyUnmetered)
+    if (settings.syncEnabled) scheduler.syncNow()
     if (!settings.autoTranscribeOnImport) return
     val pending = sessions.byNote(noteId).filter { it.parts.isNotEmpty() && it.session.activeTranscriptId == null }
     if (pending.isEmpty()) return
-    pending.forEach { transcription.enqueue(it.session.id, settings.preferredProvider) }
-    scheduler.kick(settings.preferredProvider.id)
+    pending.forEach { transcription.enqueue(it.session.id, settings.transcriptionProvider) }
+    scheduler.kick(settings.transcriptionProvider.id)
   }
 
   /**

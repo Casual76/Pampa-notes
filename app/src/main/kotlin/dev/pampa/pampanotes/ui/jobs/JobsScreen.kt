@@ -95,6 +95,17 @@ fun JobsRoute(
           }
         }
       }
+      if (state.finished.count { it.job.state == JobState.FAILED } > 1) {
+        item {
+          FluidButton(
+            text = stringResource(R.string.jobs_retry_failed),
+            onClick = viewModel::retryAllFailed,
+            style = FluidButtonStyle.Tinted,
+            fillWidth = true,
+            modifier = Modifier.fillMaxWidth(),
+          )
+        }
+      }
       item {
         FluidButton(
           text = stringResource(R.string.jobs_clear_finished),

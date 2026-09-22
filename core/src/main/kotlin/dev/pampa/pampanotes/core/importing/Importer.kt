@@ -36,8 +36,18 @@ data class ImportCandidate(
    * paragrafi, due registrazioni» e proporre titolo e cartella, invece di mostrare un nome di file.
    */
   val sdocx: SdocxDocument? = null,
+  /**
+   * La nota gia' importata da Samsung Notes con lo stesso titolo, se c'e': una versione nuova
+   * dello stesso file. Con lo stesso contenuto e' un doppione ([duplicateOfNoteId]); con un
+   * contenuto diverso e' un aggiornamento, e il wizard lo propone per primo.
+   */
+  val updateOfNoteId: String? = null,
+  val updateOfNoteTitle: String? = null,
 ) {
   val isAudio: Boolean get() = kind == SourceKind.AUDIO
+
+  /** Si puo' aggiornare una nota che c'e' gia', invece di crearne una seconda. */
+  val canUpdate: Boolean get() = updateOfNoteId != null && !isDuplicate
 
   /** Una nota di Samsung Notes letta bene: ha qualcosa dentro e sappiamo cos'e'. */
   val isSamsungNote: Boolean get() = sdocx != null && !sdocx.isEmpty

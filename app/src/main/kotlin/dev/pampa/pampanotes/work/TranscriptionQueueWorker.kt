@@ -15,6 +15,7 @@ import dev.pampa.pampanotes.core.refinement.RefinementError
 import dev.pampa.pampanotes.core.repo.RefinementRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
+import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
 import dev.pampa.pampanotes.core.transcription.TranscriptionError
 import dev.pampa.pampanotes.core.transcription.TranscriptionProgress
 import dev.pampa.pampanotes.core.transcription.TranscriptionRunner
@@ -47,7 +48,11 @@ class TranscriptionQueueWorker @AssistedInject constructor(
   private val runner: TranscriptionRunner,
   private val refinement: RefinementRepository,
   private val settingsStore: PampaSettingsStore,
+  private val scheduler: WorkScheduler,
 ) : CoroutineWorker(context, params) {
+
+  /** Cosa fare dopo un lavoro: il prossimo, oppure fermarsi e aspettare il computer di casa. */
+  private enum class Step { NEXT, WAIT }
 
   override suspend fun getForegroundInfo(): ForegroundInfo = foregroundInfo(
     title = applicationContext.getString(dev.pampa.pampanotes.R.string.notification_transcribing),
@@ -57,50 +62,98 @@ class TranscriptionQueueWorker @AssistedInject constructor(
 
   override suspend fun doWork(): Result {
     val providerId = inputData.getString(KEY_PROVIDER) ?: return Result.failure()
+    // Il computer di casa e' configurato ma non risponde: non si va nemmeno in primo piano. I
+    // lavori restano in fila e lo dicono, e si riprova (vedi [waitForEndpoint]).
+    if (providerId == OpenAiCompatProvider.ID && repository.nextQueued(providerId) != null &&
+      repository.endpointState() == TranscriptionRepository.EndpointState.UNREACHABLE
+    ) {
+      return waitForEndpoint()
+    }
     setForeground(getForegroundInfo())
 
     while (true) {
       if (isStopped) return Result.retry()
       val job = repository.nextQueued(providerId) ?: break
-      runCatching { process(job) }
-        .onFailure { error ->
+      // Prima di ogni lavoro, non solo del primo: il computer puo' spegnersi fra una lezione e la
+      // successiva, e la seconda deve aspettare, non fallire.
+      if (job.provider == OpenAiCompatProvider.ID && job.type == JobType.TRANSCRIBE &&
+        repository.endpointState() == TranscriptionRepository.EndpointState.UNREACHABLE
+      ) {
+        return waitForEndpoint()
+      }
+      val step = runCatching { process(job) }
+        .getOrElse { error ->
           // Un guasto imprevisto non deve fermare la coda: il lavoro si segna fallito e si passa
           // al successivo, altrimenti un file rotto blocca tutti quelli dietro di lui.
           if (error is CancellationException && !isStopped) throw error
-          fail(job, TranscriptionError.from(error))
+          val translated = TranscriptionError.from(error)
+          // Un errore di rete verso il computer di casa, e il computer non risponde: non e' il
+          // lavoro che e' andato male, e' il computer che se n'e' andato a meta'. Si torna in fila.
+          val vanished = job.provider == OpenAiCompatProvider.ID &&
+            (translated is TranscriptionError.Network || translated is TranscriptionError.Timeout) &&
+            repository.endpointState() == TranscriptionRepository.EndpointState.UNREACHABLE
+          if (vanished) {
+            repository.requeueForEndpoint(job.id)
+            Step.WAIT
+          } else {
+            fail(job, translated)
+            Step.NEXT
+          }
         }
+      if (step == Step.WAIT) return waitForEndpoint()
     }
+    if (providerId == OpenAiCompatProvider.ID) repository.markWaitingForEndpoint(false)
     return Result.success()
   }
 
-  private suspend fun process(job: JobEntity) {
-    // Due lavori, una coda sola: il limite di richieste al minuto di Groq e' uno, e due code
-    // parallele se lo prenderebbero a vicenda mostrando due barre invece di una.
-    if (job.type == JobType.REFINE) return refine(job)
-    transcribe(job)
+  /**
+   * Il computer di casa non risponde: i lavori restano in coda, non falliscono.
+   *
+   * E' quello che rende possibile «solo il computer di casa» con la trascrizione automatica accesa:
+   * una lezione importata a scuola aspetta di essere a casa, invece di fallire con un errore da
+   * ritentare a mano — o, peggio, di finire su Groq. Si riprova con l'attesa che cresce, e una
+   * sonda ogni quarto d'ora ([EndpointWatchWorker]) mette un tetto all'attesa; chi il computer lo
+   * vede rispondere — l'archivio, l'apertura dell'app — sveglia la coda prima.
+   */
+  private suspend fun waitForEndpoint(): Result {
+    repository.markWaitingForEndpoint(true)
+    scheduler.watchEndpoint(true)
+    return Result.retry()
   }
 
-  private suspend fun transcribe(job: JobEntity) {
+  private suspend fun process(job: JobEntity): Step {
+    // Due lavori, una coda sola: il limite di richieste al minuto di Groq e' uno, e due code
+    // parallele se lo prenderebbero a vicenda mostrando due barre invece di una.
+    if (job.type == JobType.REFINE) {
+      refine(job)
+      return Step.NEXT
+    }
+    return transcribe(job)
+  }
+
+  private suspend fun transcribe(job: JobEntity): Step {
     val settings = settingsStore.current()
     val provider = repository.providerFor(job.provider) ?: run {
+      // Configurato ma muto: si aspetta. Mai configurato: e' un errore, e lo si dice.
+      if (job.provider == OpenAiCompatProvider.ID && settings.hasEndpoint) return Step.WAIT
       fail(
         job,
         TranscriptionError.Unauthorized(
           applicationContext.getString(dev.pampa.pampanotes.R.string.error_provider_not_configured),
         ),
       )
-      return
+      return Step.NEXT
     }
 
     val parts = repository.partsOf(job.sessionId)
     if (parts.isEmpty()) {
       fail(job, TranscriptionError.Decode(applicationContext.getString(dev.pampa.pampanotes.R.string.error_no_audio)))
-      return
+      return Step.NEXT
     }
 
     val model = repository.resolveModel(provider, settings)
     val request = repository.requestFor(job.sessionId, model, settings)
-    repository.update(job.copy(state = JobState.PREPARING, model = model, attempts = job.attempts + 1, errorCode = null, errorMessage = null))
+    repository.update(job.copy(state = JobState.PREPARING, model = model, attempts = job.attempts + 1, phase = null, errorCode = null, errorMessage = null))
 
     // Lo stato piu' recente, aggiornato dal motore; a scriverlo ci pensa un'altra coroutine.
     //
@@ -138,7 +191,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
 
       if (repository.get(job.id)?.state == JobState.CANCEL_REQUESTED) {
         cancel(job)
-        return
+        return Step.NEXT
       }
 
       repository.update(latest.value.copy(state = JobState.STITCHING, progress = 0.98f, phase = null))
@@ -156,11 +209,16 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       runner.cleanUp(job.id)
       AppNotifications.notifyDone(applicationContext, job.id, transcript.wordCount)
     } catch (timeout: TimeoutCancellationException) {
+      if (job.provider == OpenAiCompatProvider.ID && repository.endpointState() == TranscriptionRepository.EndpointState.UNREACHABLE) {
+        repository.requeueForEndpoint(job.id)
+        return Step.WAIT
+      }
       fail(job, TranscriptionError.Timeout(applicationContext.getString(dev.pampa.pampanotes.R.string.error_timeout)))
     } catch (cancellation: CancellationException) {
       // Annullato dall'utente: il lavoro si chiude, i pezzi gia' fatti restano per una ripresa.
       if (repository.get(job.id)?.state == JobState.CANCEL_REQUESTED) cancel(job) else throw cancellation
     }
+    return Step.NEXT
   }
 
   /**

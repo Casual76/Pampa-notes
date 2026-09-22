@@ -49,6 +49,10 @@ data class ExportResult(
    * un'altra app, ci vuole un URI del FileProvider, e per costruirlo ci vuole il File.
    */
   val file: File? = null,
+  /** Registrazioni chieste e non entrate: il file sta su un altro dispositivo. Si dice, non si tace. */
+  val skippedAudio: Int = 0,
+  /** Originali chiesti e non entrati, per lo stesso motivo. */
+  val skippedSources: Int = 0,
 )
 
 class ExportFailure(message: String, cause: Throwable? = null) : IOException(message, cause)
@@ -105,6 +109,8 @@ class ExportService @Inject constructor(
         listOf(note) to note.title
       }
 
+      is ExportScope.Notes -> notes.getAll(scope.ids) to scope.label
+
       is ExportScope.Folder -> {
         // La cartella e tutte quelle che contiene: esportare "Storia" e non prendere "Storia /
         // Novecento" sarebbe una sorpresa, non una scelta.
@@ -138,6 +144,18 @@ class ExportService @Inject constructor(
     val single = options.format == ExportFormat.SINGLE
     val name = fileName(set, single)
     val mime = if (single) "text/markdown" else "application/zip"
+    // Con l'indice in cloud una nota puo' avere le righe delle registrazioni e non i file: il
+    // pacchetto esce lo stesso, ma chi lo riceve deve sapere che e' piu' leggero di quello chiesto.
+    val skipped = if (!single && options.includeAudio) {
+      set.notes.sumOf { note -> note.sessions.sumOf { session -> session.parts.count { !File(files.audio, it.fileName).exists() } } }
+    } else {
+      0
+    }
+    val skippedSources = if (!single && options.includeSources) {
+      set.notes.sumOf { note -> note.sources.count { source -> source.storedFileName != null && !File(files.sources, source.storedFileName).exists() } }
+    } else {
+      0
+    }
 
     when (destination) {
       is ExportDestination.Share -> {
@@ -151,7 +169,7 @@ class ExportService @Inject constructor(
           target.delete()
           throw ExportFailure("non sono riuscito a scrivere il file", it)
         }
-        ExportResult(Uri.fromFile(target), name, target.length(), mime, set.notes.size, target)
+        ExportResult(Uri.fromFile(target), name, target.length(), mime, set.notes.size, target, skippedAudio = skipped, skippedSources = skippedSources)
       }
 
       is ExportDestination.Folder -> {
@@ -177,7 +195,7 @@ class ExportService @Inject constructor(
           document.delete()
           throw if (it is ExportFailure) it else ExportFailure("la scrittura si e' interrotta", it)
         }
-        ExportResult(document.uri, name, document.length(), mime, set.notes.size)
+        ExportResult(document.uri, name, document.length(), mime, set.notes.size, skippedAudio = skipped, skippedSources = skippedSources)
       }
     }
   }

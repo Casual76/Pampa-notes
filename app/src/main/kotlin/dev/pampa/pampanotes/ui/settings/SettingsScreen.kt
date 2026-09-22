@@ -60,6 +60,9 @@ private val settingsSections = listOf(
   SettingsSection.EXPORT,
   SettingsSection.BACKUP,
   SettingsSection.STORAGE,
+  SettingsSection.SYNC,
+  SettingsSection.SHARES,
+  SettingsSection.GUESTS,
   SettingsSection.APPEARANCE,
   SettingsSection.ABOUT,
 )
@@ -106,6 +109,9 @@ fun SettingsSection.label(): String = stringResource(
     SettingsSection.BACKUP -> R.string.settings_section_backup
     SettingsSection.APPEARANCE -> R.string.settings_section_appearance
     SettingsSection.STORAGE -> R.string.settings_section_storage
+    SettingsSection.SYNC -> R.string.settings_section_sync
+    SettingsSection.SHARES -> R.string.settings_section_shares
+    SettingsSection.GUESTS -> R.string.settings_section_guests
     SettingsSection.ABOUT -> R.string.settings_section_about
   },
 )
@@ -121,6 +127,9 @@ private fun SettingsSection.detail(): String = stringResource(
     SettingsSection.EXPORT -> R.string.settings_section_export_detail
     SettingsSection.BACKUP -> R.string.settings_section_backup_detail
     SettingsSection.STORAGE -> R.string.settings_section_storage_detail
+    SettingsSection.SYNC -> R.string.settings_section_sync_detail
+    SettingsSection.SHARES -> R.string.settings_section_shares_detail
+    SettingsSection.GUESTS -> R.string.settings_section_guests_detail
   },
 )
 
@@ -139,6 +148,9 @@ fun SettingsSectionRoute(
   when (section) {
     SettingsSection.BACKUP -> BackupSectionRoute(onBack = onBack)
     SettingsSection.STORAGE -> StorageSectionRoute(onBack = onBack)
+    SettingsSection.SYNC -> SyncSectionRoute(onBack = onBack)
+    SettingsSection.SHARES -> SharesSectionRoute(onBack = onBack)
+    SettingsSection.GUESTS -> GuestsSectionRoute(onBack = onBack)
     else -> PreferencesSectionRoute(section = section, onBack = onBack)
   }
 }
@@ -156,6 +168,7 @@ private fun PreferencesSectionRoute(
 
   var groqKey by remember { mutableStateOf("") }
   var endpointUrl by remember(settings.endpointUrl) { mutableStateOf(settings.endpointUrl) }
+  var endpointRemoteUrl by remember(settings.endpointRemoteUrl) { mutableStateOf(settings.endpointRemoteUrl) }
   var endpointToken by remember { mutableStateOf("") }
 
   if (section == SettingsSection.REFINEMENT) {
@@ -178,12 +191,15 @@ private fun PreferencesSectionRoute(
         },
         endpointUrl = endpointUrl,
         onEndpointUrlChange = { endpointUrl = it },
+        endpointRemoteUrl = endpointRemoteUrl,
+        onEndpointRemoteUrlChange = { endpointRemoteUrl = it },
         endpointToken = endpointToken,
         onEndpointTokenChange = { endpointToken = it },
         onTestEndpoint = {
           viewModel.setEndpoint(endpointUrl, settings.endpointModel)
+          viewModel.setEndpointRemoteUrl(endpointRemoteUrl)
           if (endpointToken.isNotBlank()) viewModel.setEndpointToken(endpointToken)
-          viewModel.testEndpoint(endpointUrl)
+          viewModel.testEndpoint(endpointUrl, endpointRemoteUrl)
         },
       )
 
@@ -193,7 +209,7 @@ private fun PreferencesSectionRoute(
       SettingsSection.ABOUT -> aboutSection()
       SettingsSection.EXPORT -> exportSection(defaults = exportDefaults, viewModel = viewModel)
       // Hanno una pagina loro, e qui non ci si arriva mai.
-      SettingsSection.BACKUP, SettingsSection.STORAGE -> Unit
+      SettingsSection.BACKUP, SettingsSection.STORAGE, SettingsSection.SYNC, SettingsSection.SHARES, SettingsSection.GUESTS -> Unit
     }
   }
 }
@@ -209,6 +225,8 @@ private fun LazyListScope.servicesSection(
   onVerifyGroq: () -> Unit,
   endpointUrl: String,
   onEndpointUrlChange: (String) -> Unit,
+  endpointRemoteUrl: String,
+  onEndpointRemoteUrlChange: (String) -> Unit,
   endpointToken: String,
   onEndpointTokenChange: (String) -> Unit,
   onTestEndpoint: () -> Unit,
@@ -293,6 +311,17 @@ private fun LazyListScope.servicesSection(
   }
   item {
     FluidTextField(
+      value = endpointRemoteUrl,
+      onValueChange = onEndpointRemoteUrlChange,
+      label = stringResource(R.string.settings_endpoint_remote_url),
+      placeholder = "100.x.y.z:8765",
+      supportingText = stringResource(R.string.settings_endpoint_remote_hint),
+      keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+      modifier = Modifier.fillMaxWidth(),
+    )
+  }
+  item {
+    FluidTextField(
       value = endpointToken,
       onValueChange = onEndpointTokenChange,
       label = stringResource(R.string.settings_endpoint_token),
@@ -305,7 +334,7 @@ private fun LazyListScope.servicesSection(
     FluidButton(
       text = stringResource(R.string.settings_test_connection),
       onClick = onTestEndpoint,
-      enabled = endpointUrl.isNotBlank() && services.endpointCheck !is CheckState.Running,
+      enabled = (endpointUrl.isNotBlank() || endpointRemoteUrl.isNotBlank()) && services.endpointCheck !is CheckState.Running,
       loading = services.endpointCheck is CheckState.Running,
       style = FluidButtonStyle.Tinted,
       fillWidth = true,
@@ -315,7 +344,7 @@ private fun LazyListScope.servicesSection(
   (services.endpointCheck as? CheckState.Ok)?.let { ok ->
     item {
       FluidInlineMessage(
-        message = stringResource(R.string.settings_endpoint_ok, ok.latencyMs) + " · " +
+        message = stringResource(if (ok.detail == SettingsViewModel.ENDPOINT_VIA_REMOTE) R.string.settings_endpoint_ok_remote else R.string.settings_endpoint_ok_lan, ok.latencyMs) + " · " +
           pluralStringResource(R.plurals.settings_endpoint_models, ok.modelCount, ok.modelCount),
         title = stringResource(R.string.settings_endpoint),
         tone = FluidTone.Success,
@@ -338,21 +367,33 @@ private fun LazyListScope.servicesSection(
 // -------------------------------------------------------------------------------------------------
 
 private fun LazyListScope.transcriptionSection(settings: PampaSettings, viewModel: SettingsViewModel) {
-  item {
-    val providerLabels = mapOf(
-      TranscriptionProviderId.GROQ to stringResource(R.string.provider_groq),
-      TranscriptionProviderId.CUSTOM to stringResource(R.string.provider_custom),
-    )
-    FluidSegmentedControl(
-      options = TranscriptionProviderId.entries.toList(),
-      selected = settings.preferredProvider,
-      onSelect = viewModel::setPreferredProvider,
-      label = { providerLabels.getValue(it) },
-    )
+  // Con «solo il computer di casa» la scelta non esiste piu': il selettore sparisce invece di
+  // restare li' a proporre Groq come se contasse.
+  if (!settings.customOnly) {
+    item {
+      val providerLabels = mapOf(
+        TranscriptionProviderId.GROQ to stringResource(R.string.provider_groq),
+        TranscriptionProviderId.CUSTOM to stringResource(R.string.provider_custom),
+      )
+      FluidSegmentedControl(
+        options = TranscriptionProviderId.entries.toList(),
+        selected = settings.preferredProvider,
+        onSelect = viewModel::setPreferredProvider,
+        label = { providerLabels.getValue(it) },
+      )
+    }
   }
 
   item {
     FluidListGroup {
+      FluidListRow(
+        title = stringResource(R.string.settings_custom_only),
+        subtitle = stringResource(if (settings.hasEndpoint || settings.customOnly) R.string.settings_custom_only_detail else R.string.storage_archive_no_endpoint),
+        badge = {
+          FluidSwitch(checked = settings.customOnly, onCheckedChange = viewModel::setCustomOnly, enabled = settings.hasEndpoint || settings.customOnly)
+        },
+      )
+      FluidListDivider()
       FluidListRow(
         title = stringResource(R.string.settings_auto_transcribe),
         subtitle = stringResource(R.string.settings_auto_transcribe_detail),

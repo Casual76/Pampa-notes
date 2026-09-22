@@ -121,6 +121,8 @@ data class AudioPartEntity(
   val durationMs: Long,
   val sha256: String,
   val createdAt: Long,
+  /** Quando il computer di casa ha ricevuto questo file. Zero: non ancora, o mai. */
+  @ColumnInfo(defaultValue = "0") val archivedAt: Long = 0,
 )
 
 enum class TranscriptKind { RAW, REFINED }
@@ -222,6 +224,8 @@ data class SourceEntity(
   /** Una riga per l'utente: "3 pagine saltate", "testo non trovato nell'archivio". */
   val detail: String? = null,
   val importedAt: Long,
+  /** Quando il computer di casa ha ricevuto il file originale. Zero: non ancora, o niente da mandare. */
+  @ColumnInfo(defaultValue = "0") val archivedAt: Long = 0,
 )
 
 enum class JobType { TRANSCRIBE, REFINE }

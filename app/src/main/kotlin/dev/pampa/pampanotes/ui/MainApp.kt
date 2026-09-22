@@ -48,7 +48,11 @@ import dev.antigravity.fluidengine.ui.fluid.FluidFoldingTabBarDefaults
 import dev.antigravity.fluidengine.ui.fluid.FluidGlassModalHost
 import dev.antigravity.fluidengine.ui.fluid.FluidMotion
 import dev.antigravity.fluidengine.ui.fluid.FluidMotionPolicyProvider
+import dev.antigravity.fluidengine.ui.fluid.FluidNotification
 import dev.antigravity.fluidengine.ui.fluid.FluidNotificationHost
+import dev.antigravity.fluidengine.ui.fluid.FluidNotificationTone
+import dev.pampa.pampanotes.ui.nav.SettingsSection
+import kotlinx.coroutines.launch
 import dev.antigravity.fluidengine.ui.fluid.FluidPaneScaffold
 import dev.antigravity.fluidengine.ui.fluid.FluidScrollToTopBus
 import dev.antigravity.fluidengine.ui.fluid.FluidTabBarDefaults
@@ -164,7 +168,7 @@ fun MainApp(
 private fun AppShell(
   chromeController: FluidChromeController,
   incomingIntents: Flow<Intent>,
-  onIntent: (Intent) -> Boolean,
+  onIntent: (Intent) -> IntentOutcome,
   onPickFiles: (List<android.net.Uri>, String?) -> Unit,
 ) {
   val listNav = rememberNavController()
@@ -212,10 +216,46 @@ private fun AppShell(
 
     LaunchedEffect(layout.splits) { syncPanes(listNav, detailNav, layout.splits) }
 
+    val notifications = LocalFluidNotificationHostState.current
+    val linkedTitle = stringResource(R.string.settings_endpoint_linked_title)
+    val linkedMessage = stringResource(R.string.settings_endpoint_linked)
+    val syncLinkedTitle = stringResource(R.string.sync_linked_title)
+    val syncLinkedMessage = stringResource(R.string.sync_linked)
     LaunchedEffect(listNav, incomingIntents) {
       incomingIntents.collect { intent ->
         // Prima la condivisione, poi i deep link: un intent di SEND non e' un link e non ha una rotta.
-        if (onIntent(intent)) actions.openImport() else listNav.handleDeepLink(intent)
+        when (val outcome = onIntent(intent)) {
+          IntentOutcome.Import -> actions.openImport()
+          is IntentOutcome.EndpointLinked -> {
+            // La pagina dei servizi, cosi' si vede cosa e' stato scritto e si prova la connessione subito.
+            actions.openSettingsSection(SettingsSection.SERVICES)
+            // In un ramo suo: `show` torna solo a scheda mostrata, e intanto non si bloccano gli intent.
+            launch {
+              notifications?.show(
+                FluidNotification(
+                  id = "endpoint-linked",
+                  title = linkedTitle,
+                  message = linkedMessage.format(outcome.url),
+                  tone = FluidNotificationTone.Success,
+                ),
+              )
+            }
+          }
+          is IntentOutcome.SyncLinked -> {
+            actions.openSettingsSection(SettingsSection.SYNC)
+            launch {
+              notifications?.show(
+                FluidNotification(
+                  id = "sync-linked",
+                  title = syncLinkedTitle,
+                  message = syncLinkedMessage.format(outcome.url),
+                  tone = FluidNotificationTone.Success,
+                ),
+              )
+            }
+          }
+          IntentOutcome.None -> listNav.handleDeepLink(intent)
+        }
       }
     }
 

@@ -25,6 +25,8 @@ androidxTestExt = "1.2.1"
 androidxTestRunner = "1.7.0"
 espresso = "3.6.1"
 mockk = "1.13.12"
+credentials = "1.5.0"
+googleid = "1.1.1"
 turbine = "1.2.0"
 
 [libraries]
@@ -55,6 +57,9 @@ room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 room-testing = { module = "androidx.room:room-testing", version.ref = "room" }
 datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
 work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
+androidx-credentials = { module = "androidx.credentials:credentials", version.ref = "credentials" }
+androidx-credentials-play = { module = "androidx.credentials:credentials-play-services-auth", version.ref = "credentials" }
+googleid = { module = "com.google.android.libraries.identity.googleid:googleid", version.ref = "googleid" }
 work-testing = { module = "androidx.work:work-testing", version.ref = "work" }
 media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
 androidx-documentfile = { module = "androidx.documentfile:documentfile", version.ref = "documentfile" }

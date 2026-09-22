@@ -100,7 +100,7 @@ fun HomeRoute(
         eyebrow = stringResource(R.string.home_hero_eyebrow),
         value = state.noteCount.toString(),
         title = pluralStringResource(R.plurals.home_hero_notes, state.noteCount, state.noteCount),
-        description = stringResource(R.string.home_hero_description),
+        description = funDescription(state.stats),
         icon = Icons.Rounded.AutoAwesome,
         metrics = buildList {
           add(
@@ -109,8 +109,11 @@ fun HomeRoute(
               value = state.folderCount.toString(),
             ),
           )
-          if (state.audioMinutes > 0) {
-            add(FluidHeroMetric(label = stringResource(R.string.home_metric_audio), value = "${state.audioMinutes}′"))
+          if (state.stats.audioMs >= 60_000) {
+            add(FluidHeroMetric(label = stringResource(R.string.home_metric_hours), value = Formats.durationShort(state.stats.audioMs)))
+          }
+          if (state.stats.words > 0) {
+            add(FluidHeroMetric(label = stringResource(R.string.home_metric_words), value = Formats.compact(state.stats.words)))
           }
           if (state.activeJobs > 0) {
             add(
@@ -273,4 +276,33 @@ private fun RecentNoteCard(
       }
     }
   }
+}
+
+
+/**
+ * La frase sotto il numero grande: due cose vere e un po' divertenti sull'archivio.
+ *
+ * Le parole trascritte confrontate con qualcosa che si sa quanto e' — un romanzo sono novantamila
+ * parole, una pagina trecento — e la materia piu' ascoltata. Al massimo due frasi: la terza e' un
+ * bollettino. Quando non c'e' ancora niente da dire, resta la frase di sempre.
+ */
+@Composable
+private fun funDescription(stats: HomeStats): String {
+  val sentences = buildList {
+    if (stats.words >= 3_000) {
+      val comparison = if (stats.words >= 90_000) {
+        val novels = (stats.words / 90_000).toInt()
+        pluralStringResource(R.plurals.home_fun_novels, novels, novels)
+      } else {
+        val pages = (stats.words / 300).toInt()
+        pluralStringResource(R.plurals.home_fun_pages, pages, pages)
+      }
+      add(stringResource(R.string.home_fun_words, Formats.spoken(stats.words), comparison))
+    }
+    stats.topSubject?.takeIf { it.durationMs >= 60_000 }?.let { top ->
+      add(stringResource(R.string.home_fun_subject, top.name, Formats.durationShort(top.durationMs)))
+    }
+    if (size < 2 && stats.lessonDays >= 2) add(stringResource(R.string.home_fun_days, stats.lessonDays))
+  }
+  return sentences.take(2).joinToString(" ").ifEmpty { stringResource(R.string.home_hero_description) }
 }

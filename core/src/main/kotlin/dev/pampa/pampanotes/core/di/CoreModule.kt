@@ -58,6 +58,27 @@ object CoreModule {
 
   @Provides
   @Singleton
+  fun syncApi(@ApplicationContext context: Context): dev.pampa.pampanotes.core.sync.SyncApi {
+    val version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
+    return dev.pampa.pampanotes.core.sync.SyncApi(userAgent = "PampaNotes/$version")
+  }
+
+  @Provides
+  @Singleton
+  fun shareApi(@ApplicationContext context: Context): dev.pampa.pampanotes.core.share.ShareApi {
+    val version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
+    return dev.pampa.pampanotes.core.share.ShareApi(userAgent = "PampaNotes/$version")
+  }
+
+  @Provides
+  @Singleton
+  fun archiveHttp(@ApplicationContext context: Context): dev.pampa.pampanotes.core.archive.ArchiveHttp {
+    val version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
+    return dev.pampa.pampanotes.core.archive.ArchiveHttp(userAgent = "PampaNotes/$version")
+  }
+
+  @Provides
+  @Singleton
   fun aiKeyStore(@ApplicationContext context: Context): AiKeyStore = AiKeyStore(context)
 
   @Provides

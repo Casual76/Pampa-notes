@@ -9,6 +9,10 @@ import dev.pampa.pampanotes.core.db.FolderRow
 import dev.pampa.pampanotes.core.db.NoteRow
 import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.repo.NoteRepository
+import dev.pampa.pampanotes.core.repo.SessionRepository
+import dev.pampa.pampanotes.core.repo.TranscriptionRepository
+import dev.pampa.pampanotes.core.settings.PampaSettingsStore
+import dev.pampa.pampanotes.work.WorkScheduler
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -23,6 +27,8 @@ data class FolderUiState(
   val subfolders: List<FolderRow> = emptyList(),
   val notes: List<NoteRow> = emptyList(),
   val query: String = "",
+  /** Tutte le cartelle: dove una nota selezionata puo' andare. */
+  val allFolders: List<FolderEntity> = emptyList(),
   val loading: Boolean = true,
 ) {
   val visibleNotes: List<NoteRow>
@@ -36,6 +42,10 @@ class FolderViewModel @Inject constructor(
   savedStateHandle: SavedStateHandle,
   private val folders: FolderRepository,
   private val notes: NoteRepository,
+  private val sessions: SessionRepository,
+  private val transcription: TranscriptionRepository,
+  private val settingsStore: PampaSettingsStore,
+  private val scheduler: WorkScheduler,
 ) : ViewModel() {
 
   private val folderId: String = savedStateHandle.get<String>("folderId").orEmpty()
@@ -52,13 +62,16 @@ class FolderViewModel @Inject constructor(
     notes.observeRows(folderId),
     query,
     path,
-  ) { folder, subfolders, noteRows, currentQuery, currentPath ->
+    folders.observeAll(),
+  ) { values ->
+    @Suppress("UNCHECKED_CAST")
     FolderUiState(
-      folder = folder,
-      path = currentPath,
-      subfolders = subfolders,
-      notes = noteRows,
-      query = currentQuery,
+      folder = values[0] as FolderEntity?,
+      path = values[4] as List<FolderEntity>,
+      subfolders = values[1] as List<FolderRow>,
+      notes = values[2] as List<NoteRow>,
+      query = values[3] as String,
+      allFolders = values[5] as List<FolderEntity>,
       loading = false,
     )
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FolderUiState())
@@ -92,5 +105,29 @@ class FolderViewModel @Inject constructor(
 
   fun togglePinned(id: String, pinned: Boolean) {
     viewModelScope.launch { notes.setPinned(id, pinned) }
+  }
+
+  // --- la selezione ---
+
+  fun deleteNotes(ids: Collection<String>) {
+    viewModelScope.launch { ids.forEach { notes.delete(it) } }
+  }
+
+  fun moveNotes(ids: Collection<String>, targetFolderId: String) {
+    viewModelScope.launch { ids.forEach { notes.move(it, targetFolderId) } }
+  }
+
+  /** Le sessioni senza trascrizione delle note scelte vanno in coda, col provider delle impostazioni. */
+  fun transcribePending(ids: Collection<String>) {
+    viewModelScope.launch {
+      val provider = settingsStore.current().transcriptionProvider
+      var any = false
+      ids.forEach { noteId ->
+        sessions.byNote(noteId)
+          .filter { it.parts.isNotEmpty() && it.session.activeTranscriptId == null }
+          .forEach { transcription.enqueue(it.session.id, provider); any = true }
+      }
+      if (any) scheduler.kick(provider.id)
+    }
   }
 }

@@ -28,6 +28,27 @@ object Formats {
     else String.format(Locale.getDefault(), "%d:%02d", minutes, seconds)
   }
 
+  /**
+   * "128k" per un contatore che deve stare in una tessera: sotto i mille il numero intero, poi le
+   * migliaia con una cifra decimale finche' serve ("12,4k"), poi tonde ("128k").
+   */
+  fun compact(value: Long): String = when {
+    value < 1_000 -> value.toString()
+    value < 10_000 -> String.format(Locale.getDefault(), "%.1fk", value / 1_000.0).replace(".0k", "k").replace(",0k", "k")
+    value < 1_000_000 -> "${value / 1_000}k"
+    else -> String.format(Locale.getDefault(), "%.1fM", value / 1_000_000.0)
+  }
+
+  /** "128 mila" / "1,2 milioni" per una frase, dove "128k" suonerebbe da tastiera. In inglese, "thousand". */
+  fun spoken(value: Long): String {
+    val italian = Locale.getDefault().language == "it"
+    return when {
+      value < 1_000 -> value.toString()
+      value < 1_000_000 -> "${value / 1_000} " + if (italian) "mila" else "thousand"
+      else -> String.format(Locale.getDefault(), "%.1f ", value / 1_000_000.0) + if (italian) "milioni" else "million"
+    }
+  }
+
   /** "42 min" oppure "1 h 18": quello che sta in un meta di riga. */
   fun durationShort(millis: Long): String {
     val totalMinutes = (millis / 60_000).coerceAtLeast(0)

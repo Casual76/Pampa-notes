@@ -110,6 +110,7 @@
         <category android:name="android.intent.category.DEFAULT" />
         <category android:name="android.intent.category.BROWSABLE" />
         <data android:scheme="pampanotes" android:host="endpoint" />
+        <data android:scheme="pampanotes" android:host="sync" />
       </intent-filter>
     </activity>
 

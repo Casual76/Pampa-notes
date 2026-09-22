@@ -1,8 +1,15 @@
 package dev.pampa.pampanotes.ui.folder
 
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.DriveFileMove
+import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.Upload
+import dev.pampa.pampanotes.ui.common.FolderPickerSheet
+import dev.pampa.pampanotes.ui.common.SelectionMark
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -66,6 +73,9 @@ fun FolderRoute(
     onDeleteFolder = viewModel::deleteFolder,
     onDeleteNote = viewModel::deleteNote,
     onTogglePinned = viewModel::togglePinned,
+    onDeleteNotes = viewModel::deleteNotes,
+    onMoveNotes = viewModel::moveNotes,
+    onTranscribePending = viewModel::transcribePending,
   )
 }
 
@@ -83,8 +93,23 @@ private fun FolderScreen(
   onDeleteFolder: (String) -> Unit,
   onDeleteNote: (String) -> Unit,
   onTogglePinned: (String, Boolean) -> Unit,
+  onDeleteNotes: (Collection<String>) -> Unit,
+  onMoveNotes: (Collection<String>, String) -> Unit,
+  onTranscribePending: (Collection<String>) -> Unit,
 ) {
   var creatingFolder by remember { mutableStateOf(false) }
+  // La selezione delle note: la barra in alto diventa quella della selezione, le sottocartelle e
+  // la ricerca spariscono, ogni nota e' una riga con il suo segno. Indietro la chiude.
+  var selecting by remember { mutableStateOf(false) }
+  var selected by remember { mutableStateOf(emptySet<String>()) }
+  var confirmingDeleteMany by remember { mutableStateOf(false) }
+  var movingMany by remember { mutableStateOf(false) }
+  var exportingMany by remember { mutableStateOf(false) }
+  val exitSelection = {
+    selecting = false
+    selected = emptySet()
+  }
+  BackHandler(enabled = selecting) { exitSelection() }
   var creatingNote by remember { mutableStateOf(false) }
   var renaming by remember { mutableStateOf<FolderRow?>(null) }
   var pendingFolderDelete by remember { mutableStateOf<FolderRow?>(null) }
@@ -102,35 +127,72 @@ private fun FolderScreen(
   val newSubfolderLabel = stringResource(R.string.folder_new_subfolder)
   val importLabel = stringResource(R.string.action_import)
   val exportLabel = stringResource(R.string.action_export)
+  val selectLabel = stringResource(R.string.action_select)
+  val moveLabel = stringResource(R.string.selection_move)
+  val transcribeLabel = stringResource(R.string.selection_transcribe)
 
   val folderTone = toneFromName(state.folder?.tone)
   val folderIcon = FolderIcon.fromKey(state.folder?.icon)
   // Entrando in Storia l'app diventa del colore di Storia.
   ReportSubject(state.folder?.asSubject())
 
+  val selectedRows = state.notes.filter { it.note.id in selected }
+  val anyPending = selectedRows.any { it.untranscribedSessions > 0 }
+
   FluidScreen(
-    title = state.folder?.name ?: stringResource(R.string.folder_loading),
-    subtitle = state.path.dropLast(1).joinToString(" / ") { it.name }.takeIf { it.isNotEmpty() },
-    onBack = onBack,
+    title = if (selecting) pluralStringResource(R.plurals.selection_count, selected.size, selected.size) else state.folder?.name ?: stringResource(R.string.folder_loading),
+    subtitle = if (selecting) null else state.path.dropLast(1).joinToString(" / ") { it.name }.takeIf { it.isNotEmpty() },
+    onBack = if (selecting) exitSelection else onBack,
     // Il fondale prende il colore della cartella: la pagina e la sua tessera si somigliano.
     ambient = FluidAmbient(tone = ambientToneOf(folderTone), motif = ambientMotifOf(folderIcon)),
     actions = {
-      FluidBarAction(
-        icon = Icons.Rounded.Add,
-        contentDescription = newNoteLabel,
-        onClick = { creatingNote = true },
-        // Tenuto: il tasto si apre nel proprio menu, dove c'e' anche la sottocartella.
-        actions = {
-          listOf(
-            FluidContextAction(label = newNoteLabel) { creatingNote = true },
-            FluidContextAction(label = importLabel) { onImport() },
-            FluidContextAction(label = newSubfolderLabel) { creatingFolder = true },
-            FluidContextAction(label = exportLabel) { exporting = true },
-          )
-        },
-      )
+      if (selecting) {
+        if (anyPending) {
+          FluidBarAction(icon = Icons.Rounded.Mic, contentDescription = transcribeLabel, onClick = { onTranscribePending(selected); exitSelection() })
+        }
+        FluidBarAction(icon = Icons.Rounded.DriveFileMove, contentDescription = moveLabel, enabled = selected.isNotEmpty(), onClick = { movingMany = true })
+        FluidBarAction(icon = Icons.Rounded.Upload, contentDescription = exportLabel, enabled = selected.isNotEmpty(), onClick = { exportingMany = true })
+        FluidBarAction(icon = Icons.Rounded.Delete, contentDescription = deleteLabel, enabled = selected.isNotEmpty(), onClick = { confirmingDeleteMany = true })
+      } else {
+        FluidBarAction(
+          icon = Icons.Rounded.Add,
+          contentDescription = newNoteLabel,
+          onClick = { creatingNote = true },
+          // Tenuto: il tasto si apre nel proprio menu, dove c'e' anche la sottocartella.
+          actions = {
+            buildList {
+              add(FluidContextAction(label = newNoteLabel) { creatingNote = true })
+              add(FluidContextAction(label = importLabel) { onImport() })
+              add(FluidContextAction(label = newSubfolderLabel) { creatingFolder = true })
+              if (state.notes.isNotEmpty()) add(FluidContextAction(label = selectLabel) { selecting = true })
+              add(FluidContextAction(label = exportLabel) { exporting = true })
+            }
+          },
+        )
+      }
     },
   ) {
+    if (selecting) {
+      item {
+        FluidListGroup {
+          state.visibleNotes.forEachIndexed { index, row ->
+            if (index > 0) FluidListDivider()
+            val checked = row.note.id in selected
+            FluidListRow(
+              title = row.note.title,
+              subtitle = noteSubtitle(row),
+              meta = Formats.relativeDate(row.note.updatedAt),
+              badge = noteBadge(row),
+              tone = if (checked) FluidTone.Primary else FluidTone.Neutral,
+              leading = { SelectionMark(checked) },
+              onClick = { selected = if (checked) selected - row.note.id else selected + row.note.id },
+            )
+          }
+        }
+      }
+      return@FluidScreen
+    }
+
     if (state.notes.size >= SEARCH_THRESHOLD) {
       item {
         FluidTextField(
@@ -252,6 +314,49 @@ private fun FolderScreen(
   state.folder?.let { folder ->
     if (exporting) ExportSheet(scope = ExportScope.Folder(folder.id), onDismiss = { exporting = false })
     exportingScope?.let { ExportSheet(scope = it, onDismiss = { exportingScope = null }) }
+    if (exportingMany) {
+      ExportSheet(
+        scope = ExportScope.Notes(selected.toList(), folder.name),
+        onDismiss = {
+          exportingMany = false
+          exitSelection()
+        },
+      )
+    }
+  }
+
+  if (movingMany) {
+    FolderPickerSheet(
+      title = moveLabel,
+      folders = state.allFolders,
+      excludeId = state.folder?.id,
+      onDismiss = { movingMany = false },
+      onPick = { target ->
+        movingMany = false
+        onMoveNotes(selected, target)
+        exitSelection()
+      },
+    )
+  }
+
+  if (confirmingDeleteMany) {
+    FluidAlert(
+      onDismissRequest = { confirmingDeleteMany = false },
+      title = stringResource(R.string.selection_delete_title),
+      message = pluralStringResource(R.plurals.selection_delete_notes_message, selected.size, selected.size),
+      actions = listOf(
+        FluidAlertAction(
+          label = deleteLabel,
+          emphasis = FluidAlertAction.Emphasis.Destructive,
+          onClick = {
+            confirmingDeleteMany = false
+            onDeleteNotes(selected)
+            exitSelection()
+          },
+        ),
+        FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = { confirmingDeleteMany = false }),
+      ),
+    )
   }
 
   renaming?.let { row ->

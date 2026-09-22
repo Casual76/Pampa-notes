@@ -3,6 +3,21 @@
 Pampa Notes può mandare le registrazioni a Groq, oppure al tuo computer. Questa cartella contiene
 il secondo: WhisperX dietro le tre chiamate dell'API di OpenAI che l'app conosce.
 
+## Gli ospiti
+
+Un amico può trascrivere con questo computer senza avere il tuo token. Nell'app, *Impostazioni →
+Ospiti del computer* crea un invito con un codice `pg_…`; il companion lo verifica chiedendo al
+Worker dell'indice, e per questo in `config.json` servono due righe:
+
+```json
+{ "index_url": "https://pampa-notes-sync.<tuo>.workers.dev", "owner": "tu@gmail.com" }
+```
+
+`owner` è l'account Google con cui fai la sincronizzazione (lo stesso che vedi in *Sincronizzazione*).
+Senza queste due righe gli ospiti non esistono e vale solo il token. Tu passi sempre davanti agli
+ospiti nella fila; l'archivio dei file e lo scarico del modello restano solo tuoi. L'ospite deve
+entrare nella tua rete Tailscale (pannello di Tailscale → *Users → Invite*, o condividi il nodo).
+
 ## Perché, se Groq funziona già
 
 | | Groq | Questo |
@@ -16,14 +31,15 @@ il secondo: WhisperX dietro le tre chiamate dell'API di OpenAI che l'app conosce
 Una cucitura che non si fa è una cucitura che non può sbagliare: sul computer il file non viene mai
 diviso, quindi non c'è un confine in cui una frase possa perdersi.
 
-## Due doppi clic
+## Tre doppi clic
 
-Nella cartella ci sono due file da aprire com'è, senza terminale:
+Nella cartella ci sono tre file da aprire com'è, senza terminale:
 
 | | |
 |---|---|
 | `installa.cmd` | Una volta sola. Crea un ambiente Python a sé in `.venv`, ci installa WhisperX, e poi rimette torch nella versione per la tua scheda. |
-| `avvia.cmd` | Tutti i giorni. Parte il server, e la finestra resta aperta: se qualcosa va storto, l'errore si legge. |
+| `avvia-in-background.cmd` | Una volta sola, poi dal menu accendi l'avvio automatico. Il server va accanto all'orologio, senza finestra. Vedi [L'icona accanto all'orologio](#licona-accanto-allorologio). |
+| `avvia.cmd` | Quando qualcosa non va. Stesso server, ma con la finestra aperta: l'errore si legge lì. |
 
 L'ordine dentro `installa.cmd` non è casuale, ed è l'inciampo che ha tenuto fermo questo server per
 un giorno: WhisperX si porta dietro un torch senza CUDA che scavalca quello che c'era, quindi la
@@ -73,9 +89,79 @@ Poi nell'app: **Altro → Impostazioni → Server personale**, incolli l'indiriz
 connessione». Se risponde, in Trascrizione scegli «Server personale» e da lì in poi le lezioni
 passano di qui.
 
+## L'icona accanto all'orologio
+
+`avvia-in-background.cmd` lancia `tray.py`: lo stesso server, ma senza una finestra da tenere aperta
+e da ricordarsi di aprire. Col tasto destro sull'icona:
+
+- **lo stato** — se il modello è in memoria, quanta scheda video sta occupando, fra quanto se ne va;
+- **«Scarica il modello dalla scheda video»** — per quando stai per aprire un gioco e la rivuoi
+  adesso, senza aspettare i dieci minuti. Se c'è una trascrizione in corso te lo dice e non lo fa;
+- **«Mostra il QR per i dispositivi»** (anche con un clic sull'icona) — si inquadra con la
+  fotocamera del telefono: apre una pagina del server con il bottone «Apri Pampa Notes», e l'app si
+  configura da sola con indirizzi e token. Il QR vale dieci minuti; il link è anche nel registro,
+  per chi preferisce copiarlo. Non contiene direttamente il link `pampanotes://` perché la
+  fotocamera riconosce come link solo `http` — il resto lo mostra come testo;
+- **«Avvio automatico»** — un collegamento nella cartella Esecuzione automatica dell'utente, che si
+  vede e si spegne anche da Impostazioni → App → Avvio. Non un'attività pianificata, che vorrebbe
+  i privilegi di amministratore; non un servizio di Windows, che non può disegnare un'icona;
+- **«Apri le impostazioni»** e **«Apri i log»**.
+
+Il colore dell'icona dice la stessa cosa a colpo d'occhio: grigia in ascolto a scheda libera, verde
+con il modello in memoria, arancione mentre trascrive.
+
+Senza una console, gli errori finiscono in `logs\companion.log`. Un secondo doppio clic non apre un
+secondo server: se la porta è già occupata, se ne accorge e si chiude.
+
+Lo scarico manuale esiste anche come chiamata, per l'app o per chi automatizza:
+
+```
+POST /v1/admin/unload        (con il token, se c'è)
+```
+
+## L'archivio dei file
+
+Le registrazioni pesano sessanta megabyte l'ora e una nota di Samsung Notes arriva a mezzo giga:
+dopo un semestre stanno solo sul dispositivo che le ha fatte. Da qui in poi il server le **tiene
+anche lui**: l'app, dopo ogni import e ogni sei ore, manda al computer quello che ancora non ha —
+da casa o da Tailscale, e di default solo su Wi-Fi. Si accende in *Impostazioni → Archiviazione*.
+
+Sul computer i file stanno in `%LOCALAPPDATA%\PampaNotes\archivio` (dal menu dell'icona: «Apri la
+cartella dell'archivio»; la riga sopra dice quanti sono e quanto pesano). Il percorso si cambia in
+`config.json`, chiave `archive_root` — per esempio su un disco esterno o sul NAS montato come
+unità. Di proposito **non** sta dentro la cartella del progetto, che Google Drive sincronizza:
+gigabyte di audio dentro Drive sono esattamente quello che l'archivio esiste per evitare.
+
+I file si chiamano con il loro hash (`blobs/39/39d2a3….m4a`): lo stesso file mandato dal tablet e
+poi dal telefono occupa una volta sola, e un caricamento interrotto non lascia un file a metà con
+il nome di quello buono. L'indice `archive.db` accanto ricorda il nome originale e il tipo.
+
+Sull'app niente cambia: i file **restano anche sul dispositivo**. Questo è un archivio, non uno
+sfratto — si è deciso così, e se un giorno il telefono sarà pieno il pezzo da aggiungere sarà lo
+sfratto dei file già archiviati, che a quel punto è sicuro perché una copia qui c'è.
+
 ## Opzioni
 
-Valgono per tutti e due, con il trattino singolo per `run.ps1` e doppio per `avvia.cmd`:
+Stanno in **`config.json`**, accanto agli script — il menu dell'icona lo apre, e se non c'è lo crea
+dai valori di partenza. È l'unico posto che vale quando il server parte da solo all'accesso, perché
+lì non c'è nessuna riga di comando.
+
+```json
+{
+  "model": "large-v3",
+  "device": "auto",
+  "compute_type": "",
+  "batch_size": 16,
+  "port": 8765,
+  "token": "",
+  "idle_minutes": 10,
+  "preload": false,
+  "archive_root": "C:\\Users\\<tu>\\AppData\\Local\\PampaNotes\\archivio"
+}
+```
+
+Quello che si passa a `run.ps1` o ad `avvia.cmd` vale sopra al file, per quella volta sola. Il
+trattino è singolo per `run.ps1` e doppio per `avvia.cmd`:
 
 ```powershell
 .\run.ps1 -Model medium        # più veloce, un po' meno preciso
@@ -104,9 +190,29 @@ eseguito bene e il tablet continuava a non vedere niente. Adesso la regola vale 
 e `run.ps1` controlla la porta invece del nome della regola, così una regola sbagliata non si
 scambia per una buona.
 
-Il resto: che tablet e computer siano sulla stessa rete. Se vuoi usarlo anche da fuori casa,
-Tailscale è la strada più semplice — il computer prende un indirizzo che funziona ovunque — e in
-quel caso metti anche un token.
+Il resto: che tablet e computer siano sulla stessa rete. Da fuori casa, vedi sotto.
+
+## Da fuori casa, con Tailscale
+
+Il computer non si espone a internet: né porte aperte, né dominio, né indirizzo pubblico. Si mette
+lui, il telefono e il tablet dentro una rete privata — [Tailscale](https://tailscale.com) — e da
+lì si vedono ovunque, come se fossero in casa. È gratis per uso personale e non devia il resto del
+traffico: instrada solo gli indirizzi della tua rete privata.
+
+1. Installa Tailscale sul computer, sul telefono e sul tablet, ed entra con lo stesso account su
+   tutti e tre.
+2. Il computer prende un indirizzo che comincia per `100.` — il server lo trova da solo e lo mette
+   nel QR e nella console (*«E da fuori casa, con Tailscale»*). Nel menu dell'icona è la riga
+   *«Da fuori»*.
+3. Nell'app, il campo **Indirizzo fuori casa** (o il QR, che riempie tutti e due i campi).
+
+Da quel momento l'app **prova prima l'indirizzo di casa, per due secondi**: se il computer risponde
+sulla rete locale si va diretti, altrimenti si passa da Tailscale. Non c'è niente da cambiare
+uscendo o rientrando. «Prova la connessione» dice quale dei due ha risposto, così l'indirizzo di
+fuori si può verificare stando a casa.
+
+Con Tailscale la porta resta dentro una rete privata, ma un token è comunque una buona idea: costa
+una riga in `config.json` e si porta dietro col QR.
 
 ## Non è per forza questo
 

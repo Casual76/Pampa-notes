@@ -42,6 +42,12 @@ data class TranscriptHit(
   val snippet: String,
 )
 
+/** Una materia e quanto audio ha in tutto: la piu' ascoltata sta in cima alla home. */
+data class SubjectMinutes(
+  val name: String,
+  val durationMs: Long,
+)
+
 /** Il totale di una categoria di file, per la pagina Archiviazione. */
 data class SizeTotal(
   val count: Int,

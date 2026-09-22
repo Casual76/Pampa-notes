@@ -103,6 +103,7 @@ private data class StoredWord(val startMs: Long, val endMs: Long, val text: Stri
 @Singleton
 class TranscriptionRunner @Inject constructor(
   private val files: AppFiles,
+  private val fetcher: dev.pampa.pampanotes.core.archive.ArchiveFetcher,
 ) {
 
   private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -153,7 +154,16 @@ class TranscriptionRunner @Inject constructor(
     onProgress: (TranscriptionProgress) -> Unit,
   ): PartTranscript {
     val source = files.audioFile(part.fileName)
-    if (!source.exists()) throw TranscriptionError.Decode("il file ${part.originalName} non c'e' piu'")
+    if (!source.exists()) {
+      // Registrata su un altro dispositivo: se il computer di casa ce l'ha, si prende da li' e la
+      // coda va avanti da sola. Altrimenti e' rimasta dov'e' nata, e qui non c'e' niente da trascrivere.
+      if (part.archivedAt <= 0) throw TranscriptionError.Decode("«${part.originalName}» non e' su questo dispositivo")
+      onProgress(TranscriptionProgress.Preparing(partIndex, partCount, 0f))
+      runCatching { fetcher.fetchPart(part) }.getOrElse {
+        if (it is kotlinx.coroutines.CancellationException) throw it
+        throw TranscriptionError.Decode("«${part.originalName}» sta sul computer di casa e non sono riuscito a prenderlo: ${it.message}")
+      }
+    }
 
     val limit = provider.capabilities.maxUploadBytes
     val targetMs = chunkMinutes * 60_000L

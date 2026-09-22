@@ -1,0 +1,36 @@
+# Il Worker dell'indice. Un solo file di configurazione, e un solo segreto fuori da qui.
+#
+# In locale (`npm run dev`) tutto gira su Miniflare con un D1 su disco in .wrangler/: niente
+# account, niente rete. Per il deploy vero: `wrangler login`, poi `wrangler d1 create pampa-notes`
+# e incollare qui sotto il database_id che stampa; `npm run schema:remote`; `npm run deploy`.
+#
+# I token di sviluppo (AUTH_DEV_TOKENS) non vanno in produzione: la' l'accesso e' l'ID token di
+# Google, verificato contro le sue chiavi pubbliche, con GOOGLE_CLIENT_ID come pubblico atteso.
+
+name = "pampa-notes-sync"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "pampa-notes"
+database_id = "9ef936de-c141-45e3-87e0-18389b7b2d3e"
+
+# L'audio delle sole note condivise. In locale e' una cartella in .wrangler/; per il deploy vero:
+# `npx wrangler r2 bucket create pampa-notes-audio` una volta sola.
+[[r2_buckets]]
+binding = "AUDIO"
+bucket_name = "pampa-notes-audio"
+
+[vars]
+# "token:ownerId,token2:ownerId2". Solo per lo sviluppo locale; in produzione lasciare vuoto.
+AUTH_DEV_TOKENS = ""
+# Il client ID OAuth (Web) del progetto Google: e' l'`aud` che un ID token deve avere per valere.
+# Lo stesso valore va in local.properties dell'app (pampa.googleClientId).
+GOOGLE_CLIENT_ID = "83766967898-h9qu5ko3b9g02eahq31ghdt04o25djsp.apps.googleusercontent.com"
+# Quanto tenere i tombstone prima di potarli. Un dispositivo fermo piu' a lungo rifa' tutto da zero.
+TOMBSTONE_RETENTION_DAYS = "90"
+PROTOCOL_VERSION = "1"
+# I link condivisi usano l'origine della richiesta; con un dominio davanti al Worker si scrive qui.
+PUBLIC_ORIGIN = ""

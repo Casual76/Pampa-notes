@@ -3,9 +3,14 @@ package dev.pampa.pampanotes.ui.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.pampa.pampanotes.core.db.AudioPartDao
+import dev.pampa.pampanotes.core.db.FolderDao
 import dev.pampa.pampanotes.core.db.FolderEntity
 import dev.pampa.pampanotes.core.db.JobDao
 import dev.pampa.pampanotes.core.db.NoteRow
+import dev.pampa.pampanotes.core.db.SessionDao
+import dev.pampa.pampanotes.core.db.SubjectMinutes
+import dev.pampa.pampanotes.core.db.TranscriptDao
 import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.repo.NoteRepository
 import javax.inject.Inject
@@ -21,11 +26,27 @@ data class RecentNote(
   val folder: FolderEntity?,
 )
 
+/**
+ * I numeri della scheda in cima alla home, contati su **tutto** l'archivio.
+ *
+ * Prima l'audio si sommava sulle dodici note recenti e diceva «63′» a chi aveva quattordici ore di
+ * lezione: un numero che mente e' peggio di nessun numero. Questi vengono dal database con una
+ * query ciascuno, e si aggiornano da soli.
+ */
+data class HomeStats(
+  val audioMs: Long = 0,
+  /** Le parole trascritte, solo delle grezze: una raffinata e' la stessa lezione detta di nuovo. */
+  val words: Long = 0,
+  /** In quanti giorni distinti si e' stati a lezione. */
+  val lessonDays: Int = 0,
+  val topSubject: SubjectMinutes? = null,
+)
+
 data class HomeUiState(
   val recent: List<RecentNote> = emptyList(),
   val noteCount: Int = 0,
   val folderCount: Int = 0,
-  val audioMinutes: Int = 0,
+  val stats: HomeStats = HomeStats(),
   val activeJobs: Int = 0,
   val loading: Boolean = true,
 ) {
@@ -37,20 +58,32 @@ class HomeViewModel @Inject constructor(
   private val notes: NoteRepository,
   private val folders: FolderRepository,
   jobs: JobDao,
+  audioParts: AudioPartDao,
+  transcripts: TranscriptDao,
+  sessions: SessionDao,
+  folderDao: FolderDao,
 ) : ViewModel() {
+
+  private val stats = combine(
+    audioParts.observeTotalDuration(),
+    transcripts.observeWordTotal(),
+    sessions.observeLessonDays(),
+    folderDao.observeTopSubject(),
+  ) { audioMs, words, days, top -> HomeStats(audioMs = audioMs, words = words, lessonDays = days, topSubject = top) }
 
   val uiState: StateFlow<HomeUiState> = combine(
     notes.observeRecent(12),
     notes.observeCount(),
     folders.observeAll(),
     jobs.observeActiveCount(),
-  ) { recent, noteCount, allFolders, activeJobs ->
+    stats,
+  ) { recent, noteCount, allFolders, activeJobs, stats ->
     val byId = allFolders.associateBy { it.id }
     HomeUiState(
       recent = recent.map { RecentNote(it, byId[it.note.folderId]) },
       noteCount = noteCount,
       folderCount = allFolders.size,
-      audioMinutes = (recent.sumOf { it.audioDurationMs } / 60_000).toInt(),
+      stats = stats,
       activeJobs = activeJobs,
       loading = false,
     )

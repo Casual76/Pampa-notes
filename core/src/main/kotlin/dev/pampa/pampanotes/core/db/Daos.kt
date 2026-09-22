@@ -53,6 +53,19 @@ interface FolderDao {
   @Query("SELECT COUNT(*) FROM folders")
   fun observeCount(): Flow<Int>
 
+  /** La cartella con piu' audio dentro. Null finche' non c'e' una registrazione. */
+  @Query(
+    """
+    SELECT f.name AS name, COALESCE(SUM(p.durationMs), 0) AS durationMs
+    FROM folders f
+      JOIN notes n ON n.folderId = f.id
+      JOIN sessions s ON s.noteId = n.id
+      JOIN audio_parts p ON p.sessionId = s.id
+    GROUP BY f.id ORDER BY durationMs DESC LIMIT 1
+    """,
+  )
+  fun observeTopSubject(): Flow<SubjectMinutes?>
+
   @Query("SELECT COUNT(*) FROM folders WHERE parentId IS :parentId AND name = :name COLLATE NOCASE AND id != :excludeId")
   suspend fun countSiblingsNamed(parentId: String?, name: String, excludeId: String): Int
 }
@@ -221,6 +234,9 @@ interface SessionDao {
   @Query("DELETE FROM sessions WHERE id = :id")
   suspend fun delete(id: String)
 
+  @Query("SELECT COUNT(DISTINCT date) FROM sessions")
+  fun observeLessonDays(): Flow<Int>
+
   @Query("SELECT COUNT(*) FROM sessions")
   suspend fun count(): Int
 }
@@ -263,14 +279,34 @@ interface AudioPartDao {
   @Query("SELECT COUNT(*) AS count, COALESCE(SUM(sizeBytes), 0) AS bytes FROM audio_parts")
   fun observeTotal(): Flow<SizeTotal>
 
+  @Query("SELECT COALESCE(SUM(durationMs), 0) FROM audio_parts")
+  fun observeTotalDuration(): Flow<Long>
+
   @Query("SELECT fileName FROM audio_parts")
   suspend fun fileNames(): List<String>
+
+  @Query("SELECT * FROM audio_parts WHERE archivedAt = 0 ORDER BY createdAt")
+  suspend fun notArchived(): List<AudioPartEntity>
+
+  @Query("UPDATE audio_parts SET archivedAt = :at WHERE id = :id")
+  suspend fun markArchived(id: String, at: Long)
+
+  @Query("SELECT COUNT(*) AS count, COALESCE(SUM(sizeBytes), 0) AS bytes FROM audio_parts WHERE archivedAt > 0")
+  suspend fun archivedTotal(): SizeTotal
+
+  /** Quelle che il computer di casa ha: fra queste stanno i file che qui possono mancare. */
+  @Query("SELECT * FROM audio_parts WHERE archivedAt > 0 ORDER BY createdAt DESC")
+  suspend fun archived(): List<AudioPartEntity>
 }
 
 @Dao
 interface TranscriptDao {
   @Query("SELECT * FROM transcripts WHERE sessionId = :sessionId ORDER BY createdAt")
   fun observeBySession(sessionId: String): Flow<List<TranscriptEntity>>
+
+  /** Le parole trascritte in tutto. Solo le grezze: una raffinata e' la stessa lezione detta di nuovo. */
+  @Query("SELECT COALESCE(SUM(wordCount), 0) FROM transcripts WHERE kind = 'RAW'")
+  fun observeWordTotal(): Flow<Long>
 
   @Query("SELECT * FROM transcripts WHERE sessionId = :sessionId ORDER BY createdAt")
   suspend fun bySession(sessionId: String): List<TranscriptEntity>
@@ -377,6 +413,18 @@ interface SourceDao {
 
   @Query("SELECT storedFileName FROM sources WHERE storedFileName IS NOT NULL")
   suspend fun storedFileNames(): List<String>
+
+  @Query("SELECT * FROM sources WHERE archivedAt = 0 AND storedFileName IS NOT NULL ORDER BY importedAt")
+  suspend fun notArchived(): List<SourceEntity>
+
+  @Query("UPDATE sources SET archivedAt = :at WHERE id = :id")
+  suspend fun markArchived(id: String, at: Long)
+
+  @Query("SELECT COUNT(*) AS count, COALESCE(SUM(sizeBytes), 0) AS bytes FROM sources WHERE archivedAt > 0")
+  suspend fun archivedTotal(): SizeTotal
+
+  @Query("SELECT * FROM sources WHERE archivedAt > 0 AND storedFileName IS NOT NULL ORDER BY importedAt DESC")
+  suspend fun archived(): List<SourceEntity>
 }
 
 @Dao
@@ -407,6 +455,13 @@ interface JobDao {
 
   @Query("SELECT COUNT(*) FROM jobs WHERE provider = :provider AND state = 'QUEUED'")
   suspend fun queuedCount(provider: String): Int
+
+  /** Una riga per tutti quelli in fila: «in attesa del computer di casa», finche' non risponde. */
+  @Query("UPDATE jobs SET phase = :phase, updatedAt = :now WHERE provider = :provider AND state = 'QUEUED'")
+  suspend fun setQueuedPhase(provider: String, phase: String?, now: Long)
+
+  @Query("SELECT * FROM jobs WHERE state = 'FAILED'")
+  suspend fun failed(): List<JobEntity>
 
   @Upsert
   suspend fun upsert(job: JobEntity)

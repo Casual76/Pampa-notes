@@ -6,8 +6,11 @@ import androidx.lifecycle.ViewModel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.antigravity.fluidengine.foundation.EngineSettings
 import dev.antigravity.fluidengine.storage.EngineSettingsStore
+import dev.pampa.pampanotes.core.settings.EndpointLink
 import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
+import dev.pampa.pampanotes.core.settings.SyncLink
+import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
 import dev.pampa.pampanotes.ui.importing.ImportRequest
 import dev.pampa.pampanotes.ui.importing.ImportRequestHolder
 import javax.inject.Inject
@@ -47,12 +50,39 @@ class MainViewModel @Inject constructor(
   }
 
   /**
-   * @return vero quando l'intent portava roba da importare, e la navigazione deve aprire il wizard.
+   * Cosa portava un intent arrivato da fuori, e cosa deve fare la navigazione di conseguenza.
+   *
+   * Prima la condivisione, poi il QR del server: un intent di SEND non e' un link, e un link
+   * `pampanotes://endpoint` non e' un file. [ImportRequest.fromIntent] sa gia' distinguere.
    */
-  fun onIntent(intent: Intent): Boolean {
-    val request = ImportRequest.fromIntent(intent) ?: return false
-    importRequests.offer(request)
-    return true
+  fun onIntent(intent: Intent): IntentOutcome {
+    ImportRequest.fromIntent(intent)?.let { request ->
+      importRequests.offer(request)
+      return IntentOutcome.Import
+    }
+    SyncLink.parse(intent.dataString)?.let { link ->
+      intent.data = null
+      viewModelScope.launch {
+        settingsStore.setSyncServerUrl(link.url)
+        link.token?.let { settingsStore.setSyncToken(it) }
+        link.name?.let { settingsStore.setSyncDeviceName(it) }
+      }
+      return IntentOutcome.SyncLinked(link.url)
+    }
+    val link = EndpointLink.parse(intent.dataString) ?: return IntentOutcome.None
+    // Il link vale una volta. Una rotazione ricrea l'Activity con lo stesso intent, e senza questo
+    // ogni giro risalverebbe le stesse impostazioni sopra quelle che nel frattempo si sono cambiate.
+    intent.data = null
+    viewModelScope.launch {
+      // Il modello resta quello che c'era: il QR dice dove sta il server, non quale modello usare.
+      settingsStore.setEndpoint(link.url, name = "", model = settings.value.endpointModel)
+      settingsStore.setEndpointRemoteUrl(link.remoteUrl.orEmpty())
+      // Anche quando e' nullo: il QR e' la verita' su quel server, e un token vecchio rimasto
+      // dentro farebbe rispondere 401 a un server che non ne vuole.
+      settingsStore.setEndpointToken(link.token)
+      settingsStore.setPreferredProvider(TranscriptionProviderId.CUSTOM)
+    }
+    return IntentOutcome.EndpointLinked(link.url)
   }
 
   /** Dal selettore file, o da "importa in questa nota" (dove gli URI arrivano subito dopo). */
@@ -67,4 +97,19 @@ class MainViewModel @Inject constructor(
   }
 
   private var pendingNoteId: String? = null
+}
+
+/** Cosa ha trovato [MainViewModel.onIntent], e quindi dove deve andare la navigazione. */
+sealed interface IntentOutcome {
+  /** Roba da importare: si apre il wizard. */
+  data object Import : IntentOutcome
+
+  /** Il QR del server companion. Le impostazioni sono gia' salvate: si apre la pagina dei servizi. */
+  data class EndpointLinked(val url: String) : IntentOutcome
+
+  /** Il link dell'indice in cloud: indirizzo e codice salvati, si apre la pagina Sincronizzazione. */
+  data class SyncLinked(val url: String) : IntentOutcome
+
+  /** Niente di nostro: si lascia alla navigazione, che magari ci riconosce una rotta. */
+  data object None : IntentOutcome
 }

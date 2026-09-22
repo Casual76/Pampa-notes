@@ -1,5 +1,9 @@
 package dev.pampa.pampanotes.ui.session
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import dev.pampa.pampanotes.core.archive.ArchiveFetcher
 import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -49,6 +53,15 @@ data class RefineDefaults(
   val hasKey: Boolean = false,
 )
 
+/** Un prelievo dal computer di casa in corso, o finito male. */
+data class FetchState(
+  val done: Int,
+  val total: Int,
+  val label: String,
+  val fraction: Float,
+  val error: String? = null,
+)
+
 data class SessionUiState(
   val session: SessionEntity? = null,
   val note: NoteEntity? = null,
@@ -62,9 +75,21 @@ data class SessionUiState(
   val job: JobEntity? = null,
   /** Le altre sessioni della stessa nota: dove una parte puo' andare. */
   val siblings: List<SessionEntity> = emptyList(),
+  /**
+   * Le parti il cui file non e' su questo dispositivo: righe arrivate dall'indice in cloud. Null
+   * finche' non si e' guardato su disco — il lettore non parte su una lista che non si conosce.
+   */
+  val missing: List<AudioPartEntity>? = null,
+  val fetch: FetchState? = null,
   val loading: Boolean = true,
 ) {
   val durationMs: Long get() = parts.sumOf { it.durationMs }
+
+  /** Tutti i file ci sono: il lettore ha qualcosa da suonare. */
+  val playable: Boolean get() = parts.isNotEmpty() && missing?.isEmpty() == true
+
+  /** Quello che manca sta sul computer di casa, tutto: si puo' scaricare. */
+  val fetchable: Boolean get() = !missing.isNullOrEmpty() && missing.all { it.archivedAt > 0 }
   val raw: TranscriptEntity? get() = transcripts.firstOrNull { it.kind == TranscriptKind.RAW }
 
   /** Le parti di cui la trascrizione non dice niente: importate dopo, o arrivate da un'altra sessione. */
@@ -91,6 +116,7 @@ class SessionViewModel @Inject constructor(
   private val settingsStore: PampaSettingsStore,
   private val scheduler: WorkScheduler,
   private val files: AppFiles,
+  private val fetcher: ArchiveFetcher,
 ) : ViewModel() {
 
   private val sessionId: String = savedStateHandle.get<String>("sessionId").orEmpty()
@@ -106,6 +132,10 @@ class SessionViewModel @Inject constructor(
   /** Quello che il pannello di raffinamento deve sapere prima di aprirsi. */
   private val _refineDefaults = MutableStateFlow(RefineDefaults())
   val refineDefaults: StateFlow<RefineDefaults> = _refineDefaults
+
+  /** Le parti senza file qui; null finche' il disco non e' stato guardato. */
+  private val _missing = MutableStateFlow<List<AudioPartEntity>?>(null)
+  private val _fetch = MutableStateFlow<FetchState?>(null)
 
   private val sessionFlow: Flow<SessionWithParts?> = repository.observe(sessionId)
 
@@ -149,6 +179,8 @@ class SessionViewModel @Inject constructor(
     transcription.observeBySession(sessionId),
     siblingsFlow,
     folderFlow,
+    _missing,
+    _fetch,
   ) { values ->
     @Suppress("UNCHECKED_CAST")
     val withParts = values[0] as SessionWithParts?
@@ -165,20 +197,51 @@ class SessionViewModel @Inject constructor(
       segments = values[3] as List<SegmentEntity>,
       job = (values[4] as List<JobEntity>).firstOrNull { it.state.isActive },
       siblings = values[5] as List<SessionEntity>,
+      missing = values[7] as List<AudioPartEntity>?,
+      fetch = values[8] as FetchState?,
       loading = false,
     )
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SessionUiState())
 
   init {
     viewModelScope.launch {
+      // Quali file ci sono davvero: si guarda su disco ogni volta che le parti cambiano, e finche'
+      // non si e' guardato il lettore aspetta — caricare un file che non c'e' e' un errore a schermo.
+      // Si riguarda anche quando i lavori cambiano: la coda di trascrizione scarica da sola il file
+      // che le manca, e la scheda «sta sul computer» deve sparire senza riaprire la pagina.
+      combine(sessionFlow.map { it?.partsSorted.orEmpty() }, transcription.observeBySession(sessionId)) { parts, _ -> parts }
+        .collect { parts -> refreshMissing(parts) }
+    }
+    viewModelScope.launch {
       // La playlist segue le parti: riordinarle mentre si ascolta non ferma l'ascolto.
       uiState.collect { state ->
-        if (state.parts.isEmpty()) return@collect
+        if (!state.playable) return@collect
         player.load(
           state.parts.map { PlayablePart(id = it.id, file = files.audioFile(it.fileName), durationMs = it.durationMs) },
         )
       }
     }
+  }
+
+  private suspend fun refreshMissing(parts: List<AudioPartEntity>) {
+    _missing.value = withContext(Dispatchers.IO) { fetcher.missing(parts) }
+  }
+
+  /** Prende dal computer di casa le parti che qui non ci sono; alla fine il lettore parte da solo. */
+  fun fetchMissing() = viewModelScope.launch {
+    val wanted = uiState.value.missing.orEmpty().filter { it.archivedAt > 0 }
+    val current = _fetch.value
+    if (wanted.isEmpty() || (current != null && current.error == null)) return@launch
+    _fetch.value = FetchState(0, wanted.size, wanted.first().originalName, 0f)
+    try {
+      fetcher.fetchParts(wanted) { p -> _fetch.value = FetchState(p.done, p.total, p.label, p.fraction) }
+      _fetch.value = null
+    } catch (cancelled: CancellationException) {
+      throw cancelled
+    } catch (error: Exception) {
+      _fetch.value = FetchState(0, wanted.size, "", 0f, error = error.message ?: error::class.java.simpleName)
+    }
+    refreshMissing(uiState.value.parts)
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -214,7 +277,7 @@ class SessionViewModel @Inject constructor(
   fun showTranscript(transcriptId: String) = viewModelScope.launch { repository.setActiveTranscript(sessionId, transcriptId) }
 
   fun transcribe() = viewModelScope.launch {
-    val provider = settingsStore.current().preferredProvider
+    val provider = settingsStore.current().transcriptionProvider
     transcription.enqueue(sessionId, provider)
     scheduler.kick(provider.id)
   }

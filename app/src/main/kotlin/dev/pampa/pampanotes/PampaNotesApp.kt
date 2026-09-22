@@ -6,7 +6,11 @@ import androidx.work.Configuration
 import dagger.hilt.android.HiltAndroidApp
 import dev.antigravity.fluidengine.config.EngineRemoteConfig
 import dev.antigravity.fluidengine.foundation.EngineFlag
+import dev.pampa.pampanotes.core.repo.TranscriptionRepository
+import dev.pampa.pampanotes.core.settings.PampaSettingsStore
+import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
 import dev.pampa.pampanotes.work.AppNotifications
+import dev.pampa.pampanotes.work.WorkScheduler
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,6 +27,9 @@ object Flags {
 class PampaNotesApp : Application(), Configuration.Provider {
   @Inject lateinit var workerFactory: HiltWorkerFactory
   @Inject lateinit var remoteConfig: EngineRemoteConfig
+  @Inject lateinit var settingsStore: PampaSettingsStore
+  @Inject lateinit var scheduler: WorkScheduler
+  @Inject lateinit var transcription: TranscriptionRepository
 
   /** Vive quanto il processo: niente di quello che parte qui ha qualcosa da cui essere cancellato. */
   private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -33,6 +40,20 @@ class PampaNotesApp : Application(), Configuration.Provider {
     // Il file di controllo, se la copia in cache e' vecchia. Non blocca niente: finche' non arriva,
     // l'app usa l'ultima risposta valida (o i default compilati).
     applicationScope.launch { runCatching { remoteConfig.refreshIfStale() } }
+    // Il giro periodico dell'archivio segue l'impostazione: dirlo a ogni avvio e' idempotente, ed
+    // e' l'unico modo per cui un'app aggiornata con l'archivio gia' acceso lo ritrovi in coda.
+    applicationScope.launch {
+      runCatching {
+        val settings = settingsStore.current()
+        scheduler.setPeriodicArchive(settings.archiveEnabled, settings.archiveOnlyUnmetered)
+        scheduler.setPeriodicSync(settings.syncEnabled)
+        // Un giro all'apertura: e' il momento in cui si vuole vedere quello che si e' scritto altrove.
+        if (settings.syncEnabled) scheduler.syncNow()
+        // Una fila che aspetta il computer di casa: aprire l'app e' un buon momento per riprovare,
+        // prima del tentativo rimandato. Il worker guarda se risponde, e se no torna ad aspettare.
+        if (transcription.queuedCount(OpenAiCompatProvider.ID) > 0) scheduler.wake(OpenAiCompatProvider.ID)
+      }
+    }
   }
 
   override val workManagerConfiguration: Configuration

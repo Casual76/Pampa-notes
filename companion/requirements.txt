@@ -5,3 +5,10 @@ whisperx>=3.3.0
 fastapi>=0.115.0
 uvicorn>=0.32.0
 python-multipart>=0.0.12
+
+# L'icona accanto all'orologio (tray.py). Pillow disegna l'icona e legge il QR; qrcode lo genera.
+# Sono tre pacchetti piccoli e senza dipendenze pesanti: chi non usa tray.py se li ritrova
+# installati e non se ne accorge, ed e' meglio di un secondo file di requirements da ricordare.
+pystray>=0.19.5
+Pillow>=10.0.0
+qrcode>=7.4

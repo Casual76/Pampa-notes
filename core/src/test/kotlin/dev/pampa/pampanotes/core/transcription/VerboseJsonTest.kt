@@ -88,8 +88,8 @@ class VerboseJsonTest {
   }
 
   @Test
-  fun `una risposta senza testo ne segmenti e' un errore, non un risultato vuoto`() {
-    assertThrows(TranscriptionError.Parse::class.java) { parse("""{"task":"transcribe"}""") }
+  fun `una risposta senza testo ne segmenti e' «nessun parlato», non un errore di formato`() {
+    assertThrows(TranscriptionError.NoSpeech::class.java) { parse("""{"task":"transcribe"}""") }
   }
 
   @Test

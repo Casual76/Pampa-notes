@@ -1,5 +1,11 @@
 package dev.pampa.pampanotes.ui.note
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import dev.pampa.pampanotes.core.archive.ArchiveFetcher
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -13,6 +19,7 @@ import dev.pampa.pampanotes.core.db.JobEntity
 import dev.pampa.pampanotes.core.db.TranscriptDao
 import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.repo.FolderRepository
+import dev.pampa.pampanotes.core.repo.SessionRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.work.WorkScheduler
@@ -47,6 +54,8 @@ data class NoteUiState(
   val activeJobs: Map<String, JobEntity> = emptyMap(),
   /** La trascrizione mostrata di ogni sessione. */
   val transcripts: Map<String, TranscriptEntity> = emptyMap(),
+  /** Le fonti con un file conservato che pero' non e' su questo dispositivo, per id. */
+  val missingSources: Set<String> = emptySet(),
   val loading: Boolean = true,
 ) {
   val audioDurationMs: Long get() = sessions.sumOf { it.durationMs }
@@ -59,16 +68,19 @@ class NoteViewModel @Inject constructor(
   private val notes: NoteRepository,
   private val folders: FolderRepository,
   private val sessionDao: SessionDao,
+  private val sessionRepository: SessionRepository,
   sources: SourceDao,
   private val transcriptDao: TranscriptDao,
   private val transcription: TranscriptionRepository,
   private val settingsStore: PampaSettingsStore,
   private val scheduler: WorkScheduler,
   private val files: AppFiles,
+  private val fetcher: ArchiveFetcher,
 ) : ViewModel() {
 
   private val noteId: String = savedStateHandle.get<String>("noteId").orEmpty()
   private val folderPath = MutableStateFlow("")
+  private val missingSources = MutableStateFlow<Set<String>>(emptySet())
 
   @OptIn(ExperimentalCoroutinesApi::class)
   private val folderFlow: Flow<FolderEntity?> = notes.observe(noteId).flatMapLatest { note ->
@@ -99,6 +111,7 @@ class NoteViewModel @Inject constructor(
     transcription.observeActive(),
     transcriptTexts,
     folderFlow,
+    missingSources,
   ) { values ->
     @Suppress("UNCHECKED_CAST")
     NoteUiState(
@@ -110,12 +123,19 @@ class NoteViewModel @Inject constructor(
       folderPath = values[4] as String,
       activeJobs = (values[5] as List<JobEntity>).associateBy { it.sessionId },
       transcripts = values[6] as Map<String, TranscriptEntity>,
+      missingSources = values[8] as Set<String>,
       loading = false,
     )
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NoteUiState())
 
 
   init {
+    viewModelScope.launch {
+      // Quali originali ci sono davvero: con l'indice in cloud una fonte puo' avere la riga e non il file.
+      sources.observeByNote(noteId).distinctUntilChanged().collect { list ->
+        missingSources.value = withContext(Dispatchers.IO) { list.filter { fetcher.isMissing(it) }.map { it.id }.toSet() }
+      }
+    }
     viewModelScope.launch {
       notes.get(noteId)?.let { folderPath.value = folders.pathString(it.folderId) }
     }
@@ -142,13 +162,51 @@ class NoteViewModel @Inject constructor(
    * la risposta e' sempre la stessa.
    */
   fun transcribe(sessionId: String) = viewModelScope.launch {
-    val provider = settingsStore.current().preferredProvider
+    val provider = settingsStore.current().transcriptionProvider
     transcription.enqueue(sessionId, provider)
     scheduler.kick(provider.id)
   }
 
   fun cancelJob(jobId: String) = viewModelScope.launch { transcription.requestCancel(jobId) }
 
-  /** L'originale conservato di una fonte, da riaprire; null per il testo incollato, che un file non l'ha. */
-  fun sourceFile(source: SourceEntity): File? = source.storedFileName?.let(files::sourceFile)
+  /**
+   * Rifa' da capo le trascrizioni di piu' sessioni. Ognuna sostituira' la sua grezza e le raffinate
+   * che ne venivano ([TranscriptionRepository.saveTranscript]); una che ha gia' un lavoro in corso
+   * non ne prende un secondo.
+   */
+  fun retranscribe(sessionIds: Collection<String>) = viewModelScope.launch {
+    val provider = settingsStore.current().transcriptionProvider
+    sessionIds.forEach { transcription.enqueue(it, provider) }
+    scheduler.kick(provider.id)
+  }
+
+  fun deleteSessions(sessionIds: Collection<String>) = viewModelScope.launch {
+    sessionIds.forEach { sessionRepository.deleteSession(it) }
+  }
+
+  /**
+   * L'originale conservato di una fonte, da riaprire; niente per il testo incollato, che un file
+   * non l'ha. Se il file sta sul computer di casa e non qui, prima si scarica: [onReady] arriva
+   * dopo, e [onError] se non si e' riusciti. Un originale che non e' mai stato archiviato non si
+   * puo' chiedere a nessuno, e la riga non e' cliccabile.
+   */
+  fun openSource(source: SourceEntity, onReady: (File) -> Unit, onError: (String) -> Unit) {
+    val file = source.storedFileName?.let(files::sourceFile) ?: return
+    if (file.exists()) {
+      onReady(file)
+      return
+    }
+    if (source.archivedAt <= 0) return
+    viewModelScope.launch {
+      try {
+        val got = fetcher.fetchSource(source)
+        missingSources.update { it - source.id }
+        onReady(got)
+      } catch (cancelled: CancellationException) {
+        throw cancelled
+      } catch (error: Exception) {
+        onError(error.message ?: error::class.java.simpleName)
+      }
+    }
+  }
 }

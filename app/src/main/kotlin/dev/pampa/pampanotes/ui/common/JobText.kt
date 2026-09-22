@@ -68,6 +68,7 @@ fun jobPhaseText(job: JobEntity): String {
     }
 
     "waiting" -> stringResource(R.string.job_phase_waiting, parts.getOrNull(1)?.toIntOrNull() ?: 0)
+    "endpoint" -> stringResource(R.string.job_phase_endpoint)
     "stitching" -> stringResource(R.string.job_state_stitching)
     else -> jobStateLabel(job.state)
   }
@@ -90,6 +91,7 @@ fun jobErrorText(code: String, rawMessage: String?): String = stringResource(
     "timeout" -> R.string.error_timeout
     "decode" -> R.string.error_decode
     "parse" -> R.string.error_parse
+    "no_speech" -> R.string.error_no_speech
     "unknown_model" -> R.string.error_unknown_model
     "cancelled" -> R.string.job_state_cancelled
     else -> R.string.error_generic

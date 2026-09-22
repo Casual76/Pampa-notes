@@ -71,6 +71,9 @@ enum class SettingsSection(val route: String) {
   BACKUP("backup"),
   APPEARANCE("appearance"),
   STORAGE("storage"),
+  SYNC("sync"),
+  SHARES("shares"),
+  GUESTS("guests"),
   ABOUT("about");
 
   companion object {

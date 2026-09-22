@@ -44,6 +44,8 @@ class SessionRepository @Inject constructor(
 
   fun observeByNote(noteId: String): Flow<List<SessionWithParts>> = sessions.observeByNote(noteId)
 
+  suspend fun byNote(noteId: String): List<SessionWithParts> = sessions.byNote(noteId)
+
   suspend fun get(sessionId: String): SessionEntity? = sessions.get(sessionId)
 
   suspend fun withParts(sessionId: String): SessionWithParts? = sessions.getWithParts(sessionId)

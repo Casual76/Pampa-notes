@@ -1,11 +1,17 @@
 package dev.pampa.pampanotes.ui.note
 
+import dev.pampa.pampanotes.ui.share.ShareSheet
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.activity.compose.BackHandler
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Refresh
+import dev.pampa.pampanotes.ui.common.SelectionMark
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -75,9 +81,17 @@ fun NoteRoute(
     onTogglePinned = viewModel::togglePinned,
     onDelete = { viewModel.delete(onBack) },
     onTranscribe = viewModel::transcribe,
+    onRetranscribe = viewModel::retranscribe,
+    onDeleteSessions = viewModel::deleteSessions,
     onCancelJob = viewModel::cancelJob,
     onOpenSession = onOpenSession,
-    onOpenSource = { source -> viewModel.sourceFile(source)?.let { openWithSystem(context, it, source.mime) } },
+    onOpenSource = { source ->
+      viewModel.openSource(
+        source,
+        onReady = { openWithSystem(context, it, source.mime) },
+        onError = { Toast.makeText(context, context.getString(R.string.note_source_fetch_failed, it), Toast.LENGTH_LONG).show() },
+      )
+    },
   )
 }
 
@@ -97,6 +111,8 @@ private fun NoteScreen(
   onTogglePinned: () -> Unit,
   onDelete: () -> Unit,
   onTranscribe: (String) -> Unit,
+  onRetranscribe: (Collection<String>) -> Unit,
+  onDeleteSessions: (Collection<String>) -> Unit,
   onCancelJob: (String) -> Unit,
   onOpenSession: (String) -> Unit,
   onOpenSource: (SourceEntity) -> Unit,
@@ -104,6 +120,18 @@ private fun NoteScreen(
   var tab by rememberSaveable { mutableStateOf(initialTab) }
   var confirmingDelete by remember { mutableStateOf(false) }
   var exporting by remember { mutableStateOf(false) }
+  var sharing by remember { mutableStateOf(false) }
+  // La selezione delle sessioni: la barra in alto diventa quella della selezione, le schede
+  // spariscono e ogni sessione e' una riga con il suo segno. Indietro la chiude.
+  var selecting by remember { mutableStateOf(false) }
+  var selected by remember { mutableStateOf(emptySet<String>()) }
+  var confirmingRetranscribe by remember { mutableStateOf(false) }
+  var confirmingDeleteSessions by remember { mutableStateOf(false) }
+  val exitSelection = {
+    selecting = false
+    selected = emptySet()
+  }
+  BackHandler(enabled = selecting) { exitSelection() }
   // La nota e' della sua materia: l'app prende quel colore.
   ReportSubject(state.folder?.asSubject())
 
@@ -116,6 +144,9 @@ private fun NoteScreen(
   val importLabel = stringResource(R.string.action_import)
   val exportLabel = stringResource(R.string.action_export)
   val editLabel = stringResource(R.string.note_edit)
+  val shareLabel = stringResource(R.string.note_share)
+  val selectLabel = stringResource(R.string.action_select)
+  val retranscribeLabel = stringResource(R.string.session_retranscribe)
 
   val tabLabels = listOf(tabText, tabAudio, tabSources)
   val selectedLabel = when (tab) {
@@ -125,32 +156,54 @@ private fun NoteScreen(
   }
 
   FluidScreen(
-    title = state.note?.title ?: stringResource(R.string.note_loading),
-    subtitle = state.folderPath.takeIf { it.isNotBlank() },
-    onBack = onBack,
+    title = if (selecting) pluralStringResource(R.plurals.selection_count, selected.size, selected.size) else state.note?.title ?: stringResource(R.string.note_loading),
+    subtitle = if (selecting) null else state.folderPath.takeIf { it.isNotBlank() },
+    onBack = if (selecting) exitSelection else onBack,
     // Primary, cioe' la materia: il fondale della nota e' dello stesso colore della sua tessera.
     ambient = FluidAmbient(tone = FluidHeroTone.Primary, motif = FluidHeroMotif.Cards),
-    titleFacets = buildList {
+    titleFacets = if (selecting) emptyList() else buildList {
       if (state.partCount > 0) add(Formats.durationShort(state.audioDurationMs))
       if (state.sources.isNotEmpty()) add("${state.sources.size}")
     },
     actions = {
-      FluidBarAction(
-        icon = Icons.Rounded.Edit,
-        contentDescription = editLabel,
-        onClick = onEdit,
-        actions = {
-          listOf(
-            FluidContextAction(label = editLabel) { onEdit() },
-            FluidContextAction(label = importLabel) { onImport() },
-            FluidContextAction(label = exportLabel) { exporting = true },
-            FluidContextAction(label = if (state.note?.pinned == true) unpinLabel else pinLabel) { onTogglePinned() },
-            FluidContextAction(label = deleteLabel, destructive = true) { confirmingDelete = true },
-          )
-        },
-      )
+      if (selecting) {
+        FluidBarAction(
+          icon = Icons.Rounded.Refresh,
+          contentDescription = retranscribeLabel,
+          enabled = selected.isNotEmpty(),
+          onClick = { confirmingRetranscribe = true },
+        )
+        FluidBarAction(
+          icon = Icons.Rounded.Delete,
+          contentDescription = deleteLabel,
+          enabled = selected.isNotEmpty(),
+          onClick = { confirmingDeleteSessions = true },
+        )
+      } else {
+        FluidBarAction(
+          icon = Icons.Rounded.Edit,
+          contentDescription = editLabel,
+          onClick = onEdit,
+          actions = {
+            buildList {
+              add(FluidContextAction(label = editLabel) { onEdit() })
+              add(FluidContextAction(label = importLabel) { onImport() })
+              if (tab == NoteTab.AUDIO && state.sessions.isNotEmpty()) add(FluidContextAction(label = selectLabel) { selecting = true })
+              add(FluidContextAction(label = exportLabel) { exporting = true })
+              add(FluidContextAction(label = shareLabel) { sharing = true })
+              add(FluidContextAction(label = if (state.note?.pinned == true) unpinLabel else pinLabel) { onTogglePinned() })
+              add(FluidContextAction(label = deleteLabel, destructive = true) { confirmingDelete = true })
+            }
+          },
+        )
+      }
     },
   ) {
+    if (selecting) {
+      sessionSelection(state, selected) { id -> selected = if (id in selected) selected - id else selected + id }
+      return@FluidScreen
+    }
+
     item {
       FluidPillTabs(
         options = tabLabels,
@@ -172,8 +225,49 @@ private fun NoteScreen(
     }
   }
 
+  if (confirmingRetranscribe) {
+    FluidAlert(
+      onDismissRequest = { confirmingRetranscribe = false },
+      title = stringResource(R.string.session_retranscribe_title),
+      message = pluralStringResource(R.plurals.selection_retranscribe_message, selected.size, selected.size),
+      actions = listOf(
+        FluidAlertAction(
+          label = retranscribeLabel,
+          emphasis = FluidAlertAction.Emphasis.Preferred,
+          onClick = {
+            confirmingRetranscribe = false
+            onRetranscribe(selected)
+            exitSelection()
+          },
+        ),
+        FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = { confirmingRetranscribe = false }),
+      ),
+    )
+  }
+
+  if (confirmingDeleteSessions) {
+    FluidAlert(
+      onDismissRequest = { confirmingDeleteSessions = false },
+      title = stringResource(R.string.selection_delete_title),
+      message = pluralStringResource(R.plurals.selection_delete_sessions_message, selected.size, selected.size),
+      actions = listOf(
+        FluidAlertAction(
+          label = deleteLabel,
+          emphasis = FluidAlertAction.Emphasis.Destructive,
+          onClick = {
+            confirmingDeleteSessions = false
+            onDeleteSessions(selected)
+            exitSelection()
+          },
+        ),
+        FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = { confirmingDeleteSessions = false }),
+      ),
+    )
+  }
+
   state.note?.let { note ->
     if (exporting) ExportSheet(scope = ExportScope.Note(note.id), onDismiss = { exporting = false })
+    if (sharing) ShareSheet(noteId = note.id, onDismiss = { sharing = false })
   }
 
   if (confirmingDelete) {
@@ -328,6 +422,40 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
   }
 }
 
+/**
+ * Le sessioni come righe da scegliere: una per sessione, con il segno davanti. Una sessione con un
+ * lavoro in corso non si sceglie — cancellarla sotto al worker o metterla in coda due volte non ha
+ * senso — e la riga lo dice al posto dello stato della trascrizione.
+ */
+private fun androidx.compose.foundation.lazy.LazyListScope.sessionSelection(
+  state: NoteUiState,
+  selected: Set<String>,
+  onToggle: (String) -> Unit,
+) {
+  item(key = "selection") {
+    FluidListGroup {
+      state.sessions.forEachIndexed { index, session ->
+        if (index > 0) FluidListDivider()
+        val id = session.session.id
+        val busy = state.activeJobs[id] != null
+        val checked = id in selected
+        FluidListRow(
+          title = sessionTitle(index, session.session.title, session.session.date),
+          subtitle = pluralStringResource(R.plurals.session_part_count, session.parts.size, session.parts.size) + " · " + Formats.duration(session.durationMs),
+          meta = when {
+            busy -> stringResource(R.string.jobs_section_active)
+            state.transcripts[id] != null -> stringResource(R.string.note_transcribed)
+            else -> stringResource(R.string.note_to_transcribe)
+          },
+          tone = if (checked) FluidTone.Primary else FluidTone.Neutral,
+          leading = { SelectionMark(checked) },
+          onClick = if (busy) null else ({ onToggle(id) }),
+        )
+      }
+    }
+  }
+}
+
 /** Le prime righe di una trascrizione, tagliate a fine parola. */
 private fun preview(text: String, maxChars: Int = 220): String {
   val flat = text.replace(Regex("""\s+"""), " ").trim()
@@ -371,12 +499,13 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sourcesTab(
         if (index > 0) FluidListDivider()
         FluidListRow(
           title = source.originalName,
-          subtitle = sourceSubtitle(source),
+          subtitle = sourceSubtitle(source, missing = source.id in state.missingSources),
           eyebrow = sourceKindLabel(source.kind),
           meta = Formats.bytes(source.sizeBytes),
           tone = sourceTone(source.status),
-          // Solo chi ha un file conservato si riapre: il testo incollato non ha un originale.
-          onClick = if (source.storedFileName != null) { { onOpenSource(source) } } else null,
+          // Solo chi ha un file conservato si riapre: il testo incollato non ha un originale. E un
+          // file che sta su un altro dispositivo, non ancora sul computer, non si puo' chiedere a nessuno.
+          onClick = if (source.storedFileName != null && (source.id !in state.missingSources || source.archivedAt > 0)) { { onOpenSource(source) } } else null,
           badge = if (source.status != SourceStatus.OK) {
             { FluidStatusBadge(label = sourceStatusLabel(source.status), tone = sourceTone(source.status)) }
           } else {
@@ -402,9 +531,12 @@ private fun sourceTone(status: SourceStatus): FluidTone = when (status) {
 }
 
 @Composable
-private fun sourceSubtitle(source: SourceEntity): String {
+private fun sourceSubtitle(source: SourceEntity, missing: Boolean): String {
   val detail = source.detail
   return when {
+    // Il file non e' qui: e' la prima cosa da dire, prima di quante lettere ne sono uscite.
+    missing && source.archivedAt > 0 -> stringResource(R.string.note_source_remote)
+    missing -> stringResource(R.string.note_source_elsewhere)
     detail != null -> detail
     source.extractedChars > 0 -> pluralStringResource(R.plurals.note_source_chars, source.extractedChars, source.extractedChars)
     else -> stringResource(R.string.note_source_attached)

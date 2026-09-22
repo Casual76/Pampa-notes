@@ -101,6 +101,7 @@ fun SessionRoute(
     onUserScrolled = viewModel::stopFollowing,
     onTranscribe = viewModel::transcribe,
     onCancelJob = viewModel::cancelJob,
+    onFetchMissing = viewModel::fetchMissing,
     onRename = viewModel::rename,
     onShowTranscript = viewModel::showTranscript,
     onMovePart = viewModel::movePart,
@@ -128,6 +129,7 @@ private fun SessionScreen(
   onUserScrolled: () -> Unit,
   onTranscribe: () -> Unit,
   onCancelJob: (String) -> Unit,
+  onFetchMissing: () -> Unit,
   onRename: (String, String) -> Unit,
   onShowTranscript: (String) -> Unit,
   onMovePart: (String, Int) -> Unit,
@@ -143,6 +145,7 @@ private fun SessionScreen(
   val listState = rememberLazyListState()
   var renaming by remember { mutableStateOf(false) }
   var confirmingDelete by remember { mutableStateOf(false) }
+  var confirmingRetranscribe by remember { mutableStateOf(false) }
   var refining by remember { mutableStateOf(false) }
   // Dove sta il tasto «altro»: i pop-up di rinomina e ripulitura nascono da li'.
   var moreOrigin by remember { mutableStateOf<Rect?>(null) }
@@ -169,6 +172,7 @@ private fun SessionScreen(
 
   val renameLabel = stringResource(R.string.session_rename)
   val refineLabel = stringResource(R.string.refine_action)
+  val retranscribeLabel = stringResource(R.string.session_retranscribe)
   val mergeLabel = stringResource(R.string.session_merge)
   val deleteLabel = stringResource(R.string.session_delete)
   val moreLabel = stringResource(R.string.action_more)
@@ -187,7 +191,7 @@ private fun SessionScreen(
     },
     // Il lettore galleggia sopra la lista, quindi la lista deve finire prima di lui: senza questo
     // spazio l'ultimo paragrafo di una lezione non si riesce a leggere.
-    extraBottomPadding = if (state.parts.isEmpty()) 0.dp else PlayerBarHeight,
+    extraBottomPadding = if (state.playable) PlayerBarHeight else 0.dp,
     actions = {
       FluidBarAction(
         icon = Icons.Rounded.MoreHoriz,
@@ -205,6 +209,11 @@ private fun SessionScreen(
                 },
               )
             }
+            // Rifare da capo: una grezza venuta male da Groq si rifa' col computer di casa, o con un
+            // vocabolario migliore. La conferma c'e' perche' si porta via anche le versioni ripulite.
+            if (state.raw != null && state.job == null && state.parts.isNotEmpty()) {
+              add(FluidContextAction(label = retranscribeLabel) { confirmingRetranscribe = true })
+            }
             if (state.canMerge) add(FluidContextAction(label = mergeLabel) { onMerge() })
             add(FluidContextAction(label = deleteLabel, destructive = true) { confirmingDelete = true })
           }
@@ -212,7 +221,7 @@ private fun SessionScreen(
       )
     },
     overlay = { backdrop ->
-      if (state.parts.isNotEmpty()) {
+      if (state.playable) {
         PlayerBar(
           state = playback,
           backdrop = backdrop,
@@ -229,6 +238,7 @@ private fun SessionScreen(
     },
   ) {
     jobItem(state, onCancelJob)
+    remoteAudioItem(state, onFetchMissing)
     partsSection(state, onSeek, onMovePart, onMovePartTo, onSplitAt, onDeletePart)
     transcriptSection(state, onTranscribe, onShowTranscript) {
       onPrepareRefinement()
@@ -264,6 +274,25 @@ private fun SessionScreen(
     )
   }
 
+  if (confirmingRetranscribe) {
+    FluidAlert(
+      onDismissRequest = { confirmingRetranscribe = false },
+      title = stringResource(R.string.session_retranscribe_title),
+      message = stringResource(R.string.session_retranscribe_message),
+      actions = listOf(
+        FluidAlertAction(
+          label = retranscribeLabel,
+          emphasis = FluidAlertAction.Emphasis.Preferred,
+          onClick = {
+            confirmingRetranscribe = false
+            onTranscribe()
+          },
+        ),
+        FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = { confirmingRetranscribe = false }),
+      ),
+    )
+  }
+
   if (confirmingDelete) {
     FluidAlert(
       onDismissRequest = { confirmingDelete = false },
@@ -288,6 +317,7 @@ private fun SessionScreen(
 private fun headerItemCount(state: SessionUiState): Int {
   var count = 0
   if (state.job != null) count++
+  if (!state.missing.isNullOrEmpty()) count++
   if (state.parts.isNotEmpty()) count++
   if (state.untranscribed.isNotEmpty()) count++
   if (state.transcripts.size > 1) count++
@@ -318,6 +348,48 @@ private fun LazyListScope.jobItem(state: SessionUiState, onCancelJob: (String) -
         fillWidth = true,
         modifier = Modifier.fillMaxWidth(),
       )
+    }
+  }
+}
+
+/**
+ * Le registrazioni che non sono su questo dispositivo.
+ *
+ * Una sessione arrivata dall'indice in cloud ha le righe e non i file: si dice dove sono e si
+ * offre di prenderli, con il peso davanti, perche' da fuori casa passano da Tailscale e sessanta
+ * megabyte l'ora sono una scelta da fare sapendolo. Quando invece l'altro dispositivo non le ha
+ * ancora archiviate, non c'e' niente da chiedere a nessuno, e lo si dice.
+ */
+private fun LazyListScope.remoteAudioItem(state: SessionUiState, onFetch: () -> Unit) {
+  val missing = state.missing?.takeIf { it.isNotEmpty() } ?: return
+  item(key = "remote-audio") {
+    val fetch = state.fetch
+    val bytes = missing.sumOf { it.sizeBytes }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      when {
+        fetch != null && fetch.error == null -> {
+          FluidInlineMessage(
+            title = stringResource(R.string.session_remote_fetching, (fetch.done + 1).coerceAtMost(fetch.total), fetch.total),
+            message = fetch.label,
+            tone = FluidTone.Info,
+          )
+          FluidProgressBar(progress = { fetch.fraction }, modifier = Modifier.padding(horizontal = 4.dp))
+        }
+        state.fetchable -> {
+          val detail = pluralStringResource(R.plurals.session_remote_detail, missing.size, missing.size, Formats.bytes(bytes))
+          FluidInlineMessage(
+            title = stringResource(R.string.session_remote_title),
+            message = fetch?.error?.let { detail + "\n" + stringResource(R.string.session_remote_error, it) } ?: detail,
+            tone = if (fetch?.error != null) FluidTone.Danger else FluidTone.Warning,
+          )
+          FluidButton(text = stringResource(R.string.session_remote_fetch), onClick = onFetch, fillWidth = true)
+        }
+        else -> FluidInlineMessage(
+          title = stringResource(R.string.session_remote_unavailable_title),
+          message = stringResource(R.string.session_remote_unavailable_detail),
+          tone = FluidTone.Warning,
+        )
+      }
     }
   }
 }

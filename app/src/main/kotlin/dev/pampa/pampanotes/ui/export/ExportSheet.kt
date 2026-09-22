@@ -300,6 +300,20 @@ private fun ColumnScope.DoneBody(state: ExportUiState) {
       style = MaterialTheme.typography.bodySmall,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    if (result.skippedAudio > 0) {
+      Text(
+        text = pluralStringResource(R.plurals.export_skipped_audio, result.skippedAudio, result.skippedAudio),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.error,
+      )
+    }
+    if (result.skippedSources > 0) {
+      Text(
+        text = pluralStringResource(R.plurals.export_skipped_sources, result.skippedSources, result.skippedSources),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.error,
+      )
+    }
   }
 }
 

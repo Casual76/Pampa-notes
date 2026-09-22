@@ -35,6 +35,12 @@ sealed class TranscriptionError(message: String, cause: Throwable? = null) : Exc
   /** Una risposta 2xx che non si capisce: JSON rotto, campi mancanti. */
   class Parse(message: String, cause: Throwable? = null) : TranscriptionError(message, cause)
 
+  /**
+   * Una risposta buona, ma vuota: il servizio non ha riconosciuto parole. Silenzio, rumore, una
+   * registrazione partita per sbaglio. Non e' un errore di formato, e riprovare non cambia niente.
+   */
+  class NoSpeech(message: String) : TranscriptionError(message)
+
   /** Il modello chiesto non esiste piu' sul servizio. */
   class UnknownModel(val model: String, message: String) : TranscriptionError(message)
 
@@ -51,6 +57,7 @@ sealed class TranscriptionError(message: String, cause: Throwable? = null) : Exc
       is Timeout -> "timeout"
       is Decode -> "decode"
       is Parse -> "parse"
+      is NoSpeech -> "no_speech"
       is UnknownModel -> "unknown_model"
       is Cancelled -> "cancelled"
     }
