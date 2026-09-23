@@ -879,4 +879,46 @@
     <item quantity="one">%d handwritten page</item>
     <item quantity="other">%d handwritten pages</item>
   </plurals>
+
+  <!-- Bug hunt: import, export, editor, backup, configuration links -->
+  <string name="export_failure_write">Couldn\'t write the export.</string>
+  <string name="export_failure_create">The chosen folder didn\'t allow creating the file.</string>
+  <string name="export_failure_not_writable">No permission to write to that folder.</string>
+  <string name="export_failure_folder_gone">The chosen folder can no longer be reached.</string>
+  <string name="export_failure_interrupted">Writing stopped halfway: the incomplete file was removed.</string>
+  <string name="link_confirm_sync_title">Connect sync?</string>
+  <string name="link_confirm_sync_message">Your notes, folders and transcripts will be sent to %1$s.\n\n%2$s\n\nOnly connect if it\'s your own service or one you trust.</string>
+  <string name="link_confirm_endpoint_title">Connect this computer?</string>
+  <string name="link_confirm_endpoint_message">Recordings to transcribe will be sent to %1$s, which becomes the transcription service.\n\n%2$s\n\nOnly connect if it\'s your computer or one you trust.</string>
+  <string name="link_confirm_connect">Connect</string>
+  <string name="import_error_no_target">Choose where to put what you\'re importing.</string>
+  <string name="import_error_failed">Import failed.</string>
+  <string name="import_pasted_text">Pasted text</string>
+  <string name="import_leave_title">Import in progress</string>
+  <string name="import_leave_message">If you leave now the import stops halfway: what\'s already written stays, the rest doesn\'t.</string>
+  <string name="import_leave_stay">Wait</string>
+  <string name="import_leave_anyway">Leave anyway</string>
+  <string name="import_summary_unavailable">File not available</string>
+  <string name="import_summary_unreadable">File can\'t be read</string>
+  <string name="import_summary_unsupported">Type not supported yet: the file stays attached</string>
+  <string name="import_summary_samsung_empty">The note had no typed text, recordings or ink to draw</string>
+  <plurals name="import_summary_pages">
+    <item quantity="one">%d handwritten page, attached to the note as an image</item>
+    <item quantity="other">%d handwritten pages, attached to the note as images</item>
+  </plurals>
+  <string name="import_summary_updated">Updated: %1$d new recordings, %2$d already there</string>
+  <string name="editor_conflict_title">The note changed meanwhile</string>
+  <string name="editor_conflict_message">Another version arrived while you were writing. Yours stays here; the other one is in “%1$s”, in the same folder.</string>
+  <string name="note_handwriting_unavailable">This page was drawn on another device and the home computer hasn\'t received it yet: open it there, or use “Redraw handwritten pages”.</string>
+  <string name="note_handwriting_elsewhere">On another device, and the computer doesn\'t have it yet</string>
+  <string name="backup_failure_folder_gone">The chosen folder can no longer be reached.</string>
+  <string name="backup_failure_not_writable">No permission to write to that folder.</string>
+  <string name="backup_failure_create">Couldn\'t create the file in the chosen folder.</string>
+  <string name="backup_failure_interrupted">Writing stopped: the incomplete file was removed.</string>
+  <string name="backup_failure_open">Can\'t open that file.</string>
+  <string name="backup_failure_not_a_backup">This file isn\'t a Pampa Notes backup.</string>
+  <string name="backup_failure_newer">This backup comes from a newer version of the app: update it and try again.</string>
+  <string name="backup_failure_bad_manifest">The backup\'s index can\'t be read.</string>
+  <string name="backup_failure_no_database">The backup doesn\'t contain the database.</string>
+  <string name="account_no_google_account">There\'s no Google account on this device: add one in Android settings and try again.</string>
 </resources>

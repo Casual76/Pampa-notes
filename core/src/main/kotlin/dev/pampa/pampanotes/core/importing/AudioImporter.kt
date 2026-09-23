@@ -59,8 +59,13 @@ class AudioImporter @Inject constructor(
   ): List<ImportedItem> = withContext(Dispatchers.IO) {
     if (candidates.isEmpty()) return@withContext emptyList()
 
+    // Accodare vale solo dentro la stessa nota. Una sessione di un'altra nota — rimasta scelta nel
+    // wizard dopo aver cambiato destinazione — farebbe finire la registrazione in una nota diversa
+    // da quella che si vede: la si rifiuta, e l'audio entra in una sessione nuova della nota giusta.
     val sessionId = when (placement) {
-      is AudioPlacement.Append -> placement.sessionId
+      is AudioPlacement.Append ->
+        placement.sessionId.takeIf { sessions.get(it)?.noteId == noteId }
+          ?: createSession(noteId, AudioPlacement.NewSession())
       is AudioPlacement.NewSession -> createSession(noteId, placement)
     }
 
@@ -72,7 +77,7 @@ class AudioImporter @Inject constructor(
     candidates.sortedBy { it.displayName.lowercase() }.forEach { candidate ->
       val temp = candidate.file
       if (temp == null || !temp.exists()) {
-        results += ImportedItem(candidate.id, candidate.displayName, candidate.kind, SourceStatus.FAILED, "File non disponibile")
+        results += ImportedItem(candidate.id, candidate.displayName, candidate.kind, SourceStatus.FAILED, summary = ImportSummary.FileUnavailable)
         return@forEach
       }
       val partId = Ids.newId()

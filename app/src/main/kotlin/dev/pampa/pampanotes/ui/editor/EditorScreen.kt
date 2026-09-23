@@ -1,5 +1,6 @@
 package dev.pampa.pampanotes.ui.editor
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,6 +31,8 @@ import dev.antigravity.fluidengine.ui.fluid.FluidSectionFootnote
 import dev.antigravity.fluidengine.ui.fluid.FluidTextEdit
 import dev.antigravity.fluidengine.ui.fluid.FluidTextField
 import dev.antigravity.fluidengine.ui.theme.FluidCard
+import dev.antigravity.fluidengine.ui.theme.FluidInlineMessage
+import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.ui.common.MarkdownText
 
@@ -43,6 +46,7 @@ fun EditorRoute(
     title = state.title,
     body = state.body,
     saving = state.saving,
+    conflictTitle = state.conflictTitle,
     onTitleChange = viewModel::setTitle,
     onBodyChange = viewModel::setBody,
     onDone = {
@@ -57,10 +61,14 @@ private fun EditorScreen(
   title: String,
   body: String,
   saving: Boolean,
+  conflictTitle: String?,
   onTitleChange: (String) -> Unit,
   onBodyChange: (String) -> Unit,
   onDone: () -> Unit,
 ) {
+  // Il tasto indietro del sistema passa dallo stesso posto della freccia: salva, poi chiude. Senza,
+  // chiudeva e basta, e il salvataggio col timer moriva col ViewModel.
+  BackHandler(onBack = onDone)
   var preview by remember { mutableStateOf(false) }
   val previewLabel = stringResource(R.string.editor_preview)
   val writeLabel = stringResource(R.string.editor_write)
@@ -95,6 +103,15 @@ private fun EditorScreen(
       )
     },
   ) {
+    conflictTitle?.let { copy ->
+      item {
+        FluidInlineMessage(
+          title = stringResource(R.string.editor_conflict_title),
+          message = stringResource(R.string.editor_conflict_message, copy),
+          tone = FluidTone.Warning,
+        )
+      }
+    }
     item {
       FluidTextField(
         value = title,

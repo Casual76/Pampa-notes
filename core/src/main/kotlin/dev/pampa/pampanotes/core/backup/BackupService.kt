@@ -68,8 +68,8 @@ class BackupService @Inject constructor(
     onProgress: (Float) -> Unit = {},
   ): BackupResult = withContext(io) {
     val folder = DocumentFile.fromTreeUri(context, tree)
-      ?: throw BackupFailure("la cartella scelta non e' piu' raggiungibile")
-    if (!folder.canWrite()) throw BackupFailure("non ho il permesso di scrivere in quella cartella")
+      ?: throw BackupFailure(BackupFailure.Reason.FOLDER_GONE)
+    if (!folder.canWrite()) throw BackupFailure(BackupFailure.Reason.NOT_WRITABLE)
 
     val snapshot = snapshotDatabase()
     try {
@@ -78,33 +78,65 @@ class BackupService @Inject constructor(
       val card = manifest(app, includeAudio, includeSources, snapshot.length())
       val name = backupFileName(card.createdAt)
 
-      // Uno stesso nome se ne va: due backup dello stesso minuto sono lo stesso backup rifatto.
-      folder.findFile(name)?.delete()
-      val document = folder.createFile(MIME, name)
-        ?: throw BackupFailure("non sono riuscito a creare il file nella cartella scelta")
+      // Si scrive con un nome provvisorio e si rinomina alla fine: un file col nome di un backup e'
+      // un backup finito. Se l'app muore a meta' — un backup con le registrazioni dura minuti — nella
+      // cartella resta un `.partial` che nessuno scambia per un backup da ripristinare. Il tipo e'
+      // generico apposta: con `application/zip` alcuni provider aggiungono `.zip` in fondo al nome.
+      val partialName = "$name$PARTIAL"
+      folder.findFile(partialName)?.delete()
+      val document = folder.createFile(PARTIAL_MIME, partialName)
+        ?: throw BackupFailure(BackupFailure.Reason.CREATE)
 
-      runCatching {
+      try {
         val stream = context.contentResolver.openOutputStream(document.uri)
-          ?: throw BackupFailure("la cartella scelta non accetta scritture")
+          ?: throw BackupFailure(BackupFailure.Reason.NOT_WRITABLE)
         stream.use { out -> BackupArchive.write(out, card, snapshot, audio, sourceFiles, onProgress) }
-      }.getOrElse {
+      } catch (e: Throwable) {
         // Un archivio a meta' e' peggio di nessun archivio: chi prova a ripristinarlo lo scopre nel
         // momento in cui ha gia' perso il resto.
-        document.delete()
-        throw if (it is BackupFailure) it else BackupFailure("la scrittura si e' interrotta", it)
+        runCatching { document.delete() }
+        if (e is kotlin.coroutines.cancellation.CancellationException || e is BackupFailure) throw e
+        throw BackupFailure(BackupFailure.Reason.INTERRUPTED, e)
+      }
+
+      // Uno stesso nome se ne va, ma solo adesso che quello nuovo e' completo: due backup dello
+      // stesso minuto sono lo stesso backup rifatto.
+      folder.findFile(name)?.delete()
+      val finished = if (document.renameTo(name)) {
+        document
+      } else {
+        // Un provider che non sa rinominare: si copia nel nome buono. Costa una seconda scrittura,
+        // ma e' l'unico modo di non lasciare il backup con un nome che dice «a meta'».
+        copyToFinal(folder, document, name)
       }
 
       settings.setLastBackupAt(card.createdAt)
-      BackupResult(document.uri, name, document.length(), card)
+      BackupResult(finished.uri, name, finished.length(), card)
     } finally {
       snapshot.delete()
     }
   }
 
+  private fun copyToFinal(folder: DocumentFile, partial: DocumentFile, name: String): DocumentFile {
+    val target = folder.createFile(MIME, name) ?: throw BackupFailure(BackupFailure.Reason.CREATE)
+    try {
+      val input = context.contentResolver.openInputStream(partial.uri) ?: throw BackupFailure(BackupFailure.Reason.OPEN)
+      val output = context.contentResolver.openOutputStream(target.uri) ?: throw BackupFailure(BackupFailure.Reason.NOT_WRITABLE)
+      input.use { source -> output.use { sink -> source.copyTo(sink, 64 * 1024) } }
+    } catch (e: Throwable) {
+      runCatching { target.delete() }
+      runCatching { partial.delete() }
+      if (e is BackupFailure) throw e
+      throw BackupFailure(BackupFailure.Reason.INTERRUPTED, e)
+    }
+    runCatching { partial.delete() }
+    return target
+  }
+
   /** Cosa c'e' dentro quel file, senza aprirlo davvero: il manifesto e' la prima voce. */
   suspend fun inspect(uri: Uri): BackupManifest = withContext(io) {
     val stream = context.contentResolver.openInputStream(uri)
-      ?: throw BackupFailure("non riesco ad aprire quel file")
+      ?: throw BackupFailure(BackupFailure.Reason.OPEN)
     stream.use { BackupArchive.readManifest(it) }
   }
 
@@ -118,19 +150,16 @@ class BackupService @Inject constructor(
    */
   suspend fun restore(uri: Uri, onProgress: (Float) -> Unit = {}): BackupManifest = withContext(io) {
     val staging = File(files.root, "restore")
+    // La versione si controlla sul manifesto, prima di estrarre: un backup piu' nuovo si rifiuta
+    // senza aver scritto un byte.
+    val current = database.openHelper.readableDatabase.version
     val staged = try {
       val stream = context.contentResolver.openInputStream(uri)
-        ?: throw BackupFailure("non riesco ad aprire quel file")
-      stream.use { BackupArchive.extract(it, staging, onProgress) }
+        ?: throw BackupFailure(BackupFailure.Reason.OPEN)
+      stream.use { BackupArchive.extract(it, staging, onProgress, maxDatabaseVersion = current) }
     } catch (failure: Throwable) {
       staging.deleteRecursively()
       throw failure
-    }
-
-    val current = database.openHelper.readableDatabase.version
-    if (staged.manifest.databaseVersion > current) {
-      staging.deleteRecursively()
-      throw BackupFailure("questo backup viene da una versione piu' recente dell'app")
     }
 
     try {
@@ -237,5 +266,7 @@ class BackupService @Inject constructor(
 
   companion object {
     const val MIME = "application/zip"
+    private const val PARTIAL = ".partial"
+    private const val PARTIAL_MIME = "application/octet-stream"
   }
 }

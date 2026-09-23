@@ -82,7 +82,9 @@ object SdocxParser {
       .filter { it.substringAfterLast('.', "").lowercase() in AUDIO_EXTENSIONS }
       .toList()
 
-    val handwritten = SdocxInk.read(zip).sumOf { InkLayout.slices(it).size }
+    // Solo il conto: le pagine si leggono una alla volta e si buttano, e un inchiostro che non si
+    // legge vale zero pagine invece di far fallire l'ispezione di una nota che ha anche del testo.
+    val handwritten = SdocxInk.countSlices(zip)
     return SdocxDocument(title = title, body = body, recordings = pairRecordings(media, voices, audioEntries), handwrittenPages = handwritten)
   }
 

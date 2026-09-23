@@ -24,7 +24,10 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 /** Dove finisce il bundle. */
@@ -62,7 +65,24 @@ data class ExportResult(
   val skippedSources: Int = 0,
 )
 
-class ExportFailure(message: String, cause: Throwable? = null) : IOException(message, cause)
+/**
+ * Un export non riuscito, con il perche' in un codice: la frase la sceglie la schermata, nella
+ * lingua dell'app. Dal modulo `:core` le stringhe dell'app non si leggono.
+ */
+class ExportFailure(val reason: Reason, cause: Throwable? = null) : IOException(reason.name, cause) {
+  enum class Reason {
+    /** Il file (o i file sciolti) nella cache non si sono scritti. */
+    WRITE,
+    /** La cartella scelta non ha lasciato creare il file o la cartella. */
+    CREATE,
+    /** La cartella scelta non accetta scritture, o non se ne ha piu' il permesso. */
+    NOT_WRITABLE,
+    /** La cartella scelta non si raggiunge piu'. */
+    FOLDER_GONE,
+    /** La scrittura si e' fermata a meta'. */
+    INTERRUPTED,
+  }
+}
 
 /**
  * Raccoglie e scrive.
@@ -147,7 +167,12 @@ class ExportService @Inject constructor(
     labels: ExportLabels = ExportLabels(),
     onProgress: (Float) -> Unit = {},
   ): ExportResult = withContext(io) {
-    val writer = BundleWriter(audioDir = files.audio, sourcesDir = files.sources, labels = labels)
+    // «Annulla» deve fermare davvero: la scrittura e' codice bloccante, che da solo non si accorge
+    // che la coroutine e' stata annullata. Il writer chiede a ogni file (e a ogni blocco di un file
+    // lungo) se deve continuare, e un annullamento arriva come CancellationException.
+    val job = currentCoroutineContext()
+    val checkpoint: () -> Unit = { job.ensureActive() }
+    val writer = BundleWriter(audioDir = files.audio, sourcesDir = files.sources, labels = labels, checkpoint = checkpoint)
     val format = options.format
     val name = fileName(set, format)
     // Con l'indice in cloud una nota puo' avere le righe delle registrazioni e non i file: il
@@ -163,21 +188,27 @@ class ExportService @Inject constructor(
       0
     }
 
-    if (format == ExportFormat.FILES) return@withContext exportLoose(set, options, destination, writer, name, onProgress)
+    if (format == ExportFormat.FILES) return@withContext exportLoose(set, options, destination, writer, name, onProgress, checkpoint)
 
     val single = format == ExportFormat.SINGLE
     val mime = if (single) "text/markdown" else "application/zip"
     when (destination) {
       is ExportDestination.Share -> {
         val target = File(files.exports, name)
-        runCatching {
-          target.outputStream().use { out ->
+        // Si scrive con un altro nome e si rinomina solo alla fine: un file col nome buono e' un
+        // file finito, anche se l'app muore a meta' e nessuno arriva a cancellare il parziale.
+        val partial = File(files.exports, "$name.partial")
+        try {
+          partial.outputStream().use { out ->
             if (single) out.write(writer.single(set, options).toByteArray(Charsets.UTF_8))
             else writer.write(set, options, out, onProgress)
           }
-        }.getOrElse {
           target.delete()
-          throw ExportFailure("non sono riuscito a scrivere il file", it)
+          if (!partial.renameTo(target)) throw IOException("rename")
+        } catch (e: Throwable) {
+          partial.delete()
+          if (e is CancellationException) throw e
+          throw ExportFailure(ExportFailure.Reason.WRITE, e)
         }
         ExportResult(Uri.fromFile(target), name, target.length(), mime, set.notes.size, target, skippedAudio = skipped, skippedSources = skippedSources)
       }
@@ -186,22 +217,28 @@ class ExportService @Inject constructor(
         val tree = folderOf(destination)
         // Un file con lo stesso nome se ne va: due export dello stesso minuto sono lo stesso export
         // rifatto, e lasciare "bundle (1).zip" accanto a "bundle.zip" confonde e basta.
+        //
+        // Qui si scrive col nome buono e non con un nome provvisorio: rinominare un documento SAF
+        // non e' una cosa che tutti i provider sanno fare, e un `.partial` rimasto su Drive perche'
+        // il rename non e' passato sarebbe peggio. Il parziale si cancella se qualcosa va storto,
+        // compreso «Annulla».
         tree.findFile(name)?.delete()
         val document = tree.createFile(mime, name)
-          ?: throw ExportFailure("non sono riuscito a creare il file nella cartella scelta")
+          ?: throw ExportFailure(ExportFailure.Reason.CREATE)
 
-        runCatching {
+        try {
           val stream = context.contentResolver.openOutputStream(document.uri)
-            ?: throw ExportFailure("la cartella scelta non accetta scritture")
+            ?: throw ExportFailure(ExportFailure.Reason.NOT_WRITABLE)
           stream.use { out ->
             if (single) out.write(writer.single(set, options).toByteArray(Charsets.UTF_8))
             else writer.write(set, options, out, onProgress)
           }
-        }.getOrElse {
+        } catch (e: Throwable) {
           // Un file a meta' e' peggio di nessun file: chi lo apre trova un archivio rotto e non sa
           // che l'export era fallito.
-          document.delete()
-          throw if (it is ExportFailure) it else ExportFailure("la scrittura si e' interrotta", it)
+          runCatching { document.delete() }
+          if (e is CancellationException || e is ExportFailure) throw e
+          throw ExportFailure(ExportFailure.Reason.INTERRUPTED, e)
         }
         ExportResult(document.uri, name, document.length(), mime, set.notes.size, skippedAudio = skipped, skippedSources = skippedSources)
       }
@@ -222,12 +259,25 @@ class ExportService @Inject constructor(
     writer: BundleWriter,
     name: String,
     onProgress: (Float) -> Unit,
+    checkpoint: () -> Unit,
   ): ExportResult {
     val directory = File(files.exports, name)
+    // Come per lo ZIP: la cartella col nome buono c'e' solo quando e' completa.
+    val partial = File(files.exports, "$name.partial")
     directory.deleteRecursively()
-    val written = runCatching { writer.writeLoose(set, options, directory, onProgress) }.getOrElse {
+    partial.deleteRecursively()
+    // Verso una cartella scelta c'e' anche la copia, che su Drive e' la parte lenta: la barra ne
+    // tiene conto, meta' per scrivere e meta' per copiare, invece di arrivare in fondo e fermarsi.
+    val toFolder = destination is ExportDestination.Folder
+    val written = try {
+      val files = writer.writeLoose(set, options, partial) { onProgress(if (toFolder) it / 2 else it) }
+      if (!partial.renameTo(directory)) throw IOException("rename")
+      files.map { File(directory, it.relativeTo(partial).path) }
+    } catch (e: Throwable) {
+      partial.deleteRecursively()
       directory.deleteRecursively()
-      throw ExportFailure("non sono riuscito a scrivere i file", it)
+      if (e is CancellationException) throw e
+      throw ExportFailure(ExportFailure.Reason.WRITE, e)
     }
     val size = written.sumOf { it.length() }
 
@@ -239,19 +289,23 @@ class ExportService @Inject constructor(
         val tree = folderOf(destination)
         tree.findFile(name)?.delete()
         val folder = tree.createDirectory(name)
-          ?: throw ExportFailure("non sono riuscito a creare la cartella")
-        runCatching {
-          written.forEach { file ->
+          ?: throw ExportFailure(ExportFailure.Reason.CREATE)
+        try {
+          written.forEachIndexed { index, file ->
+            checkpoint()
             val mime = if (file.extension == "png") "image/png" else "text/markdown"
             val document = folder.createFile(mime, file.name)
-              ?: throw ExportFailure("non sono riuscito a creare ${file.name}")
+              ?: throw ExportFailure(ExportFailure.Reason.CREATE)
             val stream = context.contentResolver.openOutputStream(document.uri)
-              ?: throw ExportFailure("la cartella scelta non accetta scritture")
+              ?: throw ExportFailure(ExportFailure.Reason.NOT_WRITABLE)
             stream.use { out -> file.inputStream().use { it.copyTo(out) } }
+            onProgress(0.5f + 0.5f * (index + 1) / written.size)
           }
-        }.getOrElse {
-          folder.delete()
-          throw if (it is ExportFailure) it else ExportFailure("la scrittura si e' interrotta", it)
+        } catch (e: Throwable) {
+          runCatching { folder.delete() }
+          directory.deleteRecursively()
+          if (e is CancellationException || e is ExportFailure) throw e
+          throw ExportFailure(ExportFailure.Reason.INTERRUPTED, e)
         }
         directory.deleteRecursively()
         ExportResult(folder.uri, name, size, "text/markdown", set.notes.size, isDirectory = true)
@@ -261,8 +315,8 @@ class ExportService @Inject constructor(
 
   private fun folderOf(destination: ExportDestination.Folder): DocumentFile {
     val tree = DocumentFile.fromTreeUri(context, destination.treeUri)
-      ?: throw ExportFailure("la cartella scelta non e' piu' raggiungibile")
-    if (!tree.canWrite()) throw ExportFailure("non ho il permesso di scrivere in quella cartella")
+      ?: throw ExportFailure(ExportFailure.Reason.FOLDER_GONE)
+    if (!tree.canWrite()) throw ExportFailure(ExportFailure.Reason.NOT_WRITABLE)
     return tree
   }
 

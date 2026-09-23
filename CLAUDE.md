@@ -103,7 +103,7 @@ Sincronizzazione: indice compilato se non se n'e' scritto un altro, sessione, si
 accesa, un primo giro aspettato) ritrova le note e arriva a «Chi trascrive» col computer di casa
 gia' collegato, detto in una riga con «Cambia». I campi del computer si salvano anche con
 «Avanti», non solo con «Prova»; un link `pampanotes://endpoint` aperto durante il primo avvio si
-applica subito (`OnboardingLinks` in `MainApp.kt`). Si puo' arrivare in fondo senza
+puo' collegare subito (`OnboardingLinks` in `MainApp.kt`), con la stessa conferma della shell. Si puo' arrivare in fondo senza
 configurare niente, perche' un avvio che non lascia entrare finche' non gli si da' una chiave API e'
 un avvio che si chiude; quello che chiede lo chiede pero' adesso, che e' l'unico momento in cui
 qualcuno scrive l'indirizzo di un server. Finche' `onboardingDone` non si sa — e' `null`, non
@@ -187,7 +187,12 @@ trascrizioni coi segmenti, fonti e preset fra i dispositivi. **Solo testo**: reg
 originali vanno da dispositivo a computer (`companion/archive.py`) e basta, e `jobs` resta la coda
 di quel dispositivo. In locale: `cd worker && npm run dev` (D1 su disco in `.wrangler/`, token in
 `wrangler.toml`), e `pampanotes://sync?url=...&token=...&name=...` configura l'app senza scrivere
-niente — sul tablet la dettatura di KeyVoice si infila in qualunque campo a fuoco.
+niente — sul tablet la dettatura di KeyVoice si infila in qualunque campo a fuoco. **Un link di
+configurazione non si applica da solo**: `sync` ed `endpoint` si fermano in
+`MainViewModel.pendingLink` e un `FluidAlert` mostra l'host a cui andranno note o registrazioni;
+solo «Collega» scrive le impostazioni. Qualunque pagina o messaggio puo' aprire un link, e un tocco
+non deve bastare a mandare gli appunti al server di un altro. Per il QR del proprio PC e' un tocco
+in piu'.
 
 Il client sta in `core/sync/`. Cinque cose che reggono tutto:
 

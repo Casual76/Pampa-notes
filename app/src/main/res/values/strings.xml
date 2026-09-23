@@ -909,4 +909,46 @@
     <item quantity="one">%d pagina scritta a mano</item>
     <item quantity="other">%d pagine scritte a mano</item>
   </plurals>
+
+  <!-- Caccia ai problemi: import, export, editor, backup, link di configurazione -->
+  <string name="export_failure_write">Non sono riuscito a scrivere il pacchetto.</string>
+  <string name="export_failure_create">La cartella scelta non ha lasciato creare il file.</string>
+  <string name="export_failure_not_writable">Non ho il permesso di scrivere in quella cartella.</string>
+  <string name="export_failure_folder_gone">La cartella scelta non è più raggiungibile.</string>
+  <string name="export_failure_interrupted">La scrittura si è interrotta a metà: il file incompleto è stato tolto.</string>
+  <string name="link_confirm_sync_title">Collegare la sincronizzazione?</string>
+  <string name="link_confirm_sync_message">Le tue note, le cartelle e le trascrizioni verranno mandate a %1$s.\n\n%2$s\n\nCollega solo se è un servizio tuo o di cui ti fidi.</string>
+  <string name="link_confirm_endpoint_title">Collegare questo computer?</string>
+  <string name="link_confirm_endpoint_message">Le registrazioni da trascrivere verranno mandate a %1$s, che diventa il servizio di trascrizione.\n\n%2$s\n\nCollega solo se è il tuo computer o uno di cui ti fidi.</string>
+  <string name="link_confirm_connect">Collega</string>
+  <string name="import_error_no_target">Scegli dove mettere quello che importi.</string>
+  <string name="import_error_failed">Import non riuscito.</string>
+  <string name="import_pasted_text">Testo incollato</string>
+  <string name="import_leave_title">Import in corso</string>
+  <string name="import_leave_message">Se esci adesso l\'import si ferma a metà: quello già scritto resta, il resto no.</string>
+  <string name="import_leave_stay">Aspetta</string>
+  <string name="import_leave_anyway">Esci lo stesso</string>
+  <string name="import_summary_unavailable">File non disponibile</string>
+  <string name="import_summary_unreadable">File non leggibile</string>
+  <string name="import_summary_unsupported">Tipo non ancora supportato: il file resta allegato</string>
+  <string name="import_summary_samsung_empty">Nella nota non c\'era testo battuto, né registrazioni, né inchiostro da disegnare</string>
+  <plurals name="import_summary_pages">
+    <item quantity="one">%d pagina scritta a mano, attaccata alla nota come immagine</item>
+    <item quantity="other">%d pagine scritte a mano, attaccate alla nota come immagini</item>
+  </plurals>
+  <string name="import_summary_updated">Aggiornata: %1$d registrazioni nuove, %2$d già presenti</string>
+  <string name="editor_conflict_title">Nel frattempo la nota è cambiata</string>
+  <string name="editor_conflict_message">Mentre scrivevi è arrivata un\'altra versione. Qui resta la tua; l\'altra è in «%1$s», nella stessa cartella.</string>
+  <string name="note_handwriting_unavailable">Questa pagina è stata disegnata su un altro dispositivo e il computer di casa non l\'ha ancora ricevuta: aprila da lì, o usa «Ricava le pagine a mano».</string>
+  <string name="note_handwriting_elsewhere">Sta su un altro dispositivo, e il computer non l\'ha ancora</string>
+  <string name="backup_failure_folder_gone">La cartella scelta non è più raggiungibile.</string>
+  <string name="backup_failure_not_writable">Non ho il permesso di scrivere in quella cartella.</string>
+  <string name="backup_failure_create">Non sono riuscito a creare il file nella cartella scelta.</string>
+  <string name="backup_failure_interrupted">La scrittura si è interrotta: il file incompleto è stato tolto.</string>
+  <string name="backup_failure_open">Non riesco ad aprire quel file.</string>
+  <string name="backup_failure_not_a_backup">Questo file non è un backup di Pampa Notes.</string>
+  <string name="backup_failure_newer">Questo backup viene da una versione più recente dell\'app: aggiornala e riprova.</string>
+  <string name="backup_failure_bad_manifest">Il backup ha un indice illeggibile.</string>
+  <string name="backup_failure_no_database">Il backup non contiene il database.</string>
+  <string name="account_no_google_account">Su questo dispositivo non c\'è un account Google: aggiungilo nelle impostazioni di Android e riprova.</string>
 </resources>

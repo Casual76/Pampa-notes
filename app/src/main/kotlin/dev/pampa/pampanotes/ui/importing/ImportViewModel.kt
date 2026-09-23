@@ -49,6 +49,8 @@ data class ImportUiState(
   /** Le note toccate dall'import, nell'ordine: piu' di una quando le registrazioni sono state divise. */
   val createdNotes: List<CreatedNote> = emptyList(),
   val error: String? = null,
+  /** Un errore che l'app sa dire con le sue parole; [error] e' quello che arriva da sotto, cosi' com'e'. */
+  @param:androidx.annotation.StringRes val errorRes: Int? = null,
   /** Come dividere le registrazioni. Nasce entrando nel passo audio, e segue le esclusioni. */
   val grouping: AudioGrouping? = null,
 ) {
@@ -88,8 +90,13 @@ data class ImportUiState(
     index == 0 && newNoteTitle.isNotBlank() -> newNoteTitle
     else -> items.firstOrNull()?.displayName?.substringBeforeLast('.').orEmpty()
   }
-  /** Una nota di Samsung Notes da sola: il caso di tutti i giorni, e quello con il percorso corto. */
-  val samsungNote: ImportCandidate? get() = candidates.singleOrNull()?.takeIf { it.isSamsungNote }
+  /**
+   * Una nota di Samsung Notes da sola: il caso di tutti i giorni, e quello con il percorso corto.
+   * Non quando la nota di destinazione e' gia' decisa: il percorso corto sceglie cartella e titolo
+   * e propone «Aggiorna» su un'altra nota, e chi ha premuto «Importa qui» dentro una nota ha gia'
+   * detto dove va.
+   */
+  val samsungNote: ImportCandidate? get() = candidates.singleOrNull()?.takeIf { it.isSamsungNote && !targetIsFixed }
   val hasDocuments: Boolean get() = included.any { !it.isAudio }
   /** Quando la nota e' gia' decisa (import da dentro una nota) il passo destinazione non serve. */
   val targetIsFixed: Boolean get() = selectedNoteId != null && selectedFolderId == null
@@ -110,6 +117,7 @@ data class CreatedNote(val id: String, val title: String, val recordings: Int)
 
 @HiltViewModel
 class ImportViewModel @Inject constructor(
+  @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
   private val coordinator: ImportCoordinator,
   private val folders: FolderRepository,
   private val notes: NoteRepository,
@@ -195,7 +203,9 @@ class ImportViewModel @Inject constructor(
   }
 
   fun selectFolder(folderId: String) {
-    _uiState.update { it.copy(selectedFolderId = folderId, selectedNoteId = null) }
+    // Le sessioni erano quelle della nota scelta prima: con una nota nuova non c'e' dove accodare,
+    // e un «accoda alla lezione di oggi» rimasto indietro metterebbe l'audio nella nota sbagliata.
+    _uiState.update { it.copy(selectedFolderId = folderId, selectedNoteId = null, existingSessions = emptyList(), appendToSessionId = null) }
     viewModelScope.launch {
       val inFolder = notes.byFolder(folderId)
       _uiState.update { it.copy(notesInFolder = inFolder) }
@@ -203,7 +213,7 @@ class ImportViewModel @Inject constructor(
   }
 
   fun selectNote(noteId: String?) {
-    _uiState.update { it.copy(selectedNoteId = noteId) }
+    _uiState.update { it.copy(selectedNoteId = noteId, existingSessions = emptyList(), appendToSessionId = null) }
     if (noteId != null) loadSessions(noteId)
   }
 
@@ -227,7 +237,7 @@ class ImportViewModel @Inject constructor(
 
   fun createFolder(name: String) {
     viewModelScope.launch {
-      val folder = folders.create(name)
+      val folder = folders.create(name, untitled = context.getString(dev.pampa.pampanotes.R.string.import_folder))
       val allFolders = folders.all()
       val paths = allFolders.associate { it.id to folders.parentPathString(it.id) }
       _uiState.update { it.copy(folders = allFolders, folderPaths = paths, selectedFolderId = folder.id, notesInFolder = emptyList()) }
@@ -283,6 +293,8 @@ class ImportViewModel @Inject constructor(
     viewModelScope.launch {
       val list = sessions.byNote(noteId).map { it.session }
       _uiState.update { state ->
+        // Due tocchi veloci su due note: arriva per ultima la risposta della prima, e non vale piu'.
+        if (state.selectedNoteId != noteId) return@update state
         state.copy(
           existingSessions = list,
           // Il default: se la nota ha gia' una sessione di oggi, il nuovo audio ci va dentro. E'
@@ -300,6 +312,8 @@ class ImportViewModel @Inject constructor(
       _uiState.update { it.copy(step = ImportStep.DONE) }
       return
     }
+    // [ImportUiState.samsungNote] e' gia' null quando la nota e' fissata: lo si aggiorna solo
+    // dal percorso corto, mai da «Importa qui».
     val updating = state.samsungNote?.takeIf { it.canUpdate && state.updateExisting }
     val target = when {
       updating != null -> ImportTarget.UpdateNote(updating.updateOfNoteId!!)
@@ -308,7 +322,7 @@ class ImportViewModel @Inject constructor(
       else -> null
     }
     if (target == null) {
-      _uiState.update { it.copy(step = ImportStep.REVIEW, error = "Scegli dove mettere quello che importi") }
+      _uiState.update { it.copy(step = ImportStep.REVIEW, errorRes = dev.pampa.pampanotes.R.string.import_error_no_target) }
       return
     }
     val placement = state.appendToSessionId
@@ -338,7 +352,10 @@ class ImportViewModel @Inject constructor(
         }
         outcomes.map { it.noteId }.distinct().forEach { transcribeIfAsked(it) }
       }.onFailure { error ->
-        _uiState.update { it.copy(step = ImportStep.DONE, error = error.message ?: "Import non riuscito") }
+        _uiState.update {
+          if (error.message.isNullOrBlank()) it.copy(step = ImportStep.DONE, errorRes = dev.pampa.pampanotes.R.string.import_error_failed)
+          else it.copy(step = ImportStep.DONE, error = error.message)
+        }
       }
     }
   }
@@ -428,11 +445,12 @@ class ImportViewModel @Inject constructor(
    * barra e inutile in un elenco. Se la prima frase e' comunque lunga si taglia a una parola intera.
    */
   private fun defaultTextName(text: String): String {
+    val pasted = context.getString(dev.pampa.pampanotes.R.string.import_pasted_text)
     val firstLine = text.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.removePrefix("#")?.trim()
-      ?: return "Testo incollato"
+      ?: return pasted
     val firstSentence = firstLine.split(SentenceEnd).firstOrNull()?.trim().orEmpty().ifEmpty { firstLine }
     val candidate = firstSentence.trimEnd('.', '!', '?', ';', ':')
-    if (candidate.length <= MAX_TITLE_CHARS) return candidate.ifEmpty { "Testo incollato" }
+    if (candidate.length <= MAX_TITLE_CHARS) return candidate.ifEmpty { pasted }
     return candidate.take(MAX_TITLE_CHARS).substringBeforeLast(' ').trimEnd(',', ';', '-').ifEmpty { candidate.take(MAX_TITLE_CHARS) } + "…"
   }
 

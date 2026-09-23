@@ -57,7 +57,34 @@ data class ImportedItem(
   val charsAdded: Int = 0,
   /** L'id della fonte salvata; null quando l'import e' fallito prima di salvarla. */
   val sourceId: String? = null,
+  /**
+   * Com'e' andata, in una forma che la schermata sa dire nella sua lingua. [detail] resta per quello
+   * che arriva da un lettore (le pagine saltate di un PDF) e per la riga della fonte nel database;
+   * quando c'e' questo, la schermata usa questo.
+   */
+  val summary: ImportSummary? = null,
 )
+
+/** Gli esiti che il wizard dice con le sue parole. */
+sealed interface ImportSummary {
+  /** Il file copiato all'ispezione non c'e' piu'. */
+  data object FileUnavailable : ImportSummary
+
+  /** Un `.sdocx` che non si e' riusciti a leggere. */
+  data object Unreadable : ImportSummary
+
+  /** Un tipo che nessun lettore capisce: resta allegato. */
+  data object Unsupported : ImportSummary
+
+  /** Una nota Samsung senza testo, registrazioni ne' inchiostro. */
+  data object SamsungEmpty : ImportSummary
+
+  /** Una nota Samsung nuova con delle pagine scritte a mano. */
+  data class SamsungPages(val pages: Int) : ImportSummary
+
+  /** Una nota Samsung aggiornata: registrazioni nuove, gia' presenti, pagine a mano. */
+  data class SamsungUpdated(val newRecordings: Int, val kept: Int, val pages: Int) : ImportSummary
+}
 
 /**
  * Il passaggio fra "l'utente ha scelto dei file" e "la nota adesso contiene qualcosa".
@@ -239,7 +266,7 @@ class ImportCoordinator @Inject constructor(
       return ImportedItem(candidate.id, candidate.displayName, candidate.kind, SourceStatus.OK, charsAdded = candidate.inlineText.length, sourceId = sourceId)
     }
 
-    val temp = candidate.file ?: return ImportedItem(candidate.id, candidate.displayName, candidate.kind, SourceStatus.FAILED, "File non disponibile")
+    val temp = candidate.file ?: return ImportedItem(candidate.id, candidate.displayName, candidate.kind, SourceStatus.FAILED, summary = ImportSummary.FileUnavailable)
 
     // L'originale si conserva: per riestrarlo dopo, e per metterlo nel bundle di export.
     val storedName = files.newSourceName(sourceId, candidate.displayName, candidate.mime)
@@ -254,7 +281,10 @@ class ImportCoordinator @Inject constructor(
     }
 
     val status = extracted?.status ?: SourceStatus.PARTIAL
+    // Il `detail` resta scritto nella riga, che viaggia col sync: e' un testo breve, e per chi lo
+    // legge nell'elenco delle fonti. Il wizard invece dice l'esito con le sue parole ([summary]).
     val detail = extracted?.detail ?: if (extracted == null) "Tipo non ancora supportato: il file resta allegato" else null
+    val summary = if (extracted == null) ImportSummary.Unsupported else null
 
     sources.upsert(
       SourceEntity(
@@ -272,7 +302,7 @@ class ImportCoordinator @Inject constructor(
         importedAt = System.currentTimeMillis(),
       ),
     )
-    return ImportedItem(candidate.id, candidate.displayName, candidate.kind, status, detail, text.length, sourceId)
+    return ImportedItem(candidate.id, candidate.displayName, candidate.kind, status, detail, text.length, sourceId, summary)
   }
 
   /**
@@ -295,20 +325,38 @@ class ImportCoordinator @Inject constructor(
     placement: AudioPlacement,
     replace: Boolean = false,
   ): List<ImportedItem> {
-    val doc = candidate.sdocx ?: return listOf(ImportedItem(candidate.id, candidate.displayName, candidate.kind, SourceStatus.FAILED, "File non leggibile"))
-    val temp = candidate.file ?: return listOf(ImportedItem(candidate.id, candidate.displayName, candidate.kind, SourceStatus.FAILED, "File non disponibile"))
+    val doc = candidate.sdocx ?: return listOf(ImportedItem(candidate.id, candidate.displayName, candidate.kind, SourceStatus.FAILED, summary = ImportSummary.Unreadable))
+    val temp = candidate.file ?: return listOf(ImportedItem(candidate.id, candidate.displayName, candidate.kind, SourceStatus.FAILED, summary = ImportSummary.FileUnavailable))
     val results = mutableListOf<ImportedItem>()
 
-    // 1. L'archivio originale, per sempre.
+    // 1. L'archivio originale, per sempre. La riga si scrive **subito**, prima di tutto il resto:
+    //    le pagine a mano la citano, e se l'import muore a meta' la nota ha comunque il suo
+    //    originale da cui rifarle, invece di un file su disco che nessuna riga cita e che la
+    //    pulizia porterebbe via. Lo stato vero si scrive alla fine.
     val sourceId = Ids.newId()
     val storedName = files.newSourceName(sourceId, candidate.displayName, candidate.mime)
     val stored = files.sourceFile(storedName)
     temp.copyTo(stored, overwrite = true)
     temp.delete()
+    val oldSdocx = if (replace) sources.byNote(noteId).filter { it.kind == SourceKind.SDOCX } else emptyList()
+    val body = doc.body.trim()
+    val entity = SourceEntity(
+      id = sourceId,
+      noteId = noteId,
+      kind = SourceKind.SDOCX,
+      originalName = candidate.displayName,
+      mime = candidate.mime,
+      sizeBytes = candidate.sizeBytes,
+      sha256 = candidate.sha256,
+      storedFileName = storedName,
+      extractedChars = body.length,
+      status = SourceStatus.PARTIAL,
+      importedAt = System.currentTimeMillis(),
+    )
+    sources.upsert(entity)
 
     // 2. Il testo. In un aggiornamento si sostituisce, non si accoda: gli appunti si prendono in
     //    Samsung Notes, e la versione nuova del file *e'* la nota.
-    val body = doc.body.trim()
     if (replace) {
       notes.setBody(noteId, body)
     } else if (body.isNotEmpty()) {
@@ -368,34 +416,24 @@ class ImportCoordinator @Inject constructor(
       results += audioImporter.importAll(extracted, noteId, sessionPlacement)
     }
 
-    // 4. La fonte. In un aggiornamento quella vecchia se ne va: la riga, il file qui, e il blob sul
-    //    computer di casa se nessun'altra fonte lo cita. Il sync porta il tombstone agli altri
-    //    dispositivi, che mettono il loro file in quarantena.
-    if (replace) {
-      sources.byNote(noteId).filter { it.kind == SourceKind.SDOCX }.forEach { old ->
-        // Le pagine scritte a mano del file vecchio se ne vanno con lui: quelle del nuovo le
-        // contengono gia', e magari piu' lunghe.
-        handwriting.forget(old.id)
-        old.storedFileName?.let { files.sourceFile(it).delete() }
-        sources.delete(old.id)
-        if (sources.findBySha(old.sha256) == null) archive.forget(old.sha256)
-      }
-    }
-    val entity = SourceEntity(
-      id = sourceId,
-      noteId = noteId,
-      kind = SourceKind.SDOCX,
-      originalName = candidate.displayName,
-      mime = candidate.mime,
-      sizeBytes = candidate.sizeBytes,
-      sha256 = candidate.sha256,
-      storedFileName = storedName,
-      extractedChars = body.length,
-      importedAt = System.currentTimeMillis(),
-    )
-
-    // 5. L'inchiostro: le pagine scritte a mano diventano immagini attaccate alla nota.
+    // 4. L'inchiostro: le pagine scritte a mano diventano immagini attaccate alla nota. Prima di
+    //    togliere le vecchie: se questo passo si ferma, la nota ha ancora le pagine di prima.
     val pages = handwriting.derive(entity, stored, doc.title ?: candidate.displayName.substringBeforeLast('.'))
+
+    // 5. La fonte vecchia, in un aggiornamento, se ne va: la riga, il file qui, e il blob sul
+    //    computer di casa se nessun'altra fonte lo cita. Il sync porta il tombstone agli altri
+    //    dispositivi, che mettono il loro file in quarantena. Le richieste al computer si fanno
+    //    tutte alla fine, quando le righe sono gia' a posto: sono rete, e possono non rispondere.
+    val forgetOnComputer = mutableListOf<String>()
+    oldSdocx.filter { it.id != sourceId }.forEach { old ->
+      // Le pagine scritte a mano del file vecchio se ne vanno con lui: quelle del nuovo le
+      // contengono gia', e magari piu' lunghe.
+      forgetOnComputer += handwriting.forgetPages(old.id)
+      old.storedFileName?.let { files.sourceFile(it).delete() }
+      sources.delete(old.id)
+      forgetOnComputer += old.sha256
+    }
+    handwriting.forgetRemotely(forgetOnComputer)
 
     val status = if (body.isEmpty() && extracted.isEmpty() && alreadyThere == 0 && pages == 0) SourceStatus.PARTIAL else SourceStatus.OK
     val detail = when {
@@ -405,8 +443,14 @@ class ImportCoordinator @Inject constructor(
       pages > 1 -> "$pages pagine scritte a mano, attaccate alla nota come immagini"
       else -> null
     }
+    val summary = when {
+      status == SourceStatus.PARTIAL -> ImportSummary.SamsungEmpty
+      replace -> ImportSummary.SamsungUpdated(extracted.size, alreadyThere, pages)
+      pages > 0 -> ImportSummary.SamsungPages(pages)
+      else -> null
+    }
     sources.upsert(entity.copy(status = status, detail = detail))
-    results.add(0, ImportedItem(candidate.id, doc.title ?: candidate.displayName, SourceKind.SDOCX, status, detail, body.length, sourceId))
+    results.add(0, ImportedItem(candidate.id, doc.title ?: candidate.displayName, SourceKind.SDOCX, status, detail, body.length, sourceId, summary))
     return results
   }
 

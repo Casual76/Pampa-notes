@@ -3,6 +3,7 @@ package dev.pampa.pampanotes.core.importing
 import java.io.File
 import java.util.zip.ZipFile
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -92,9 +93,91 @@ class SdocxInkTest {
     slices.forEach { slice -> assertTrue(lines.any { it in slice.top..slice.bottom }) }
   }
 
-  private fun page(lines: List<Float>, height: Int = 3_051) = InkPage(
+  // -----------------------------------------------------------------------------------------------
+  // Dati strani
+  // -----------------------------------------------------------------------------------------------
+
+  @Test
+  fun `una larghezza che non e' da pagina non da' fette`() {
+    val lines = (0 until 20).map { 100f + it * 30f }
+    assertTrue(InkLayout.slices(page(lines = lines, width = 3)).isEmpty())
+    assertTrue(InkLayout.slices(page(lines = lines, width = 2_000_000)).isEmpty())
+    assertTrue(InkLayout.slices(page(lines = lines, width = 0)).isEmpty())
+  }
+
+  @Test(timeout = 5_000)
+  fun `un tratto infinito o lontanissimo non allarga l'inchiostro`() {
+    val good = (0 until 20).map { 100f + it * 30f }
+    val strokes = page(lines = good).strokes + listOf(
+      stroke(floatArrayOf(Float.POSITIVE_INFINITY, 1f)),
+      stroke(floatArrayOf(Float.NaN, 1f)),
+      stroke(floatArrayOf(10f, 9e30f)),
+      stroke(floatArrayOf(10f, -1e9f)),
+    )
+    val slices = InkLayout.slices(InkPage(0, 1080, 3_051, strokes))
+
+    assertEquals(1, slices.size)
+    assertTrue(slices.single().bottom < 800f)
+  }
+
+  @Test(timeout = 5_000)
+  fun `una pagina altissima si ferma al tetto delle fette`() {
+    // Righe per tutta l'altezza consentita: senza tetto sarebbero settanta immagini.
+    val lines = (0 until 2_000).map { it * 50f }
+    val slices = InkLayout.slices(page(lines = lines, height = 100_000))
+
+    assertTrue(slices.size <= InkLayout.MAX_SLICES)
+    slices.forEach { assertTrue(it.height > 0f && it.height <= 1080 * InkLayout.MAX_ASPECT + 0.01f) }
+  }
+
+  @Test
+  fun `il lettore scarta i tratti fuori scala`() {
+    assertTrue(SdocxInk.plausible(floatArrayOf(0f, 1080f, -20f, 49_999f)))
+    assertFalse(SdocxInk.plausible(floatArrayOf(0f, Float.NaN)))
+    assertFalse(SdocxInk.plausible(floatArrayOf(Float.NEGATIVE_INFINITY)))
+    assertFalse(SdocxInk.plausible(floatArrayOf(50_001f)))
+  }
+
+  @Test
+  fun `una pagina con una larghezza assurda si legge vuota`() {
+    val bytes = ByteArray(64)
+    java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).apply {
+      putInt(0, 0x20)
+      putInt(0x16, 12)
+      putInt(0x1A, 3_000)
+    }
+    val page = SdocxInk.readPage(bytes)
+
+    assertTrue(page.strokes.isEmpty())
+  }
+
+  @Test(timeout = 5_000)
+  fun `un livello che torna indietro non gira per sempre`() {
+    // Un'intestazione negativa riportava il cursore allo stesso livello, per miliardi di volte.
+    val bytes = ByteArray(128)
+    java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).apply {
+      putInt(0, 0x40) // i livelli cominciano qui
+      putInt(0x16, 1080)
+      putInt(0x1A, 3_000)
+      putInt(0x40, 1_000) // quanti livelli
+      putInt(0x44, -36) // l'intestazione che riporta indietro
+    }
+
+    val failure = runCatching { SdocxInk.readPage(bytes) }.exceptionOrNull()
+    assertTrue(failure is IllegalArgumentException)
+  }
+
+  private fun stroke(ys: FloatArray) = InkStroke(
+    xs = FloatArray(ys.size) { 100f },
+    ys = ys,
+    pressures = FloatArray(ys.size) { 0.5f },
+    argb = 0xFF252525.toInt(),
+    size = 6f,
+  )
+
+  private fun page(lines: List<Float>, height: Int = 3_051, width: Int = 1080) = InkPage(
     index = 0,
-    width = 1080,
+    width = width,
     height = height,
     strokes = lines.map { y ->
       InkStroke(

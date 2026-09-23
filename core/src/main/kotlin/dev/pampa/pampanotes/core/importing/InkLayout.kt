@@ -29,9 +29,19 @@ object InkLayout {
   const val MAX_ASPECT = 1.4f
   private const val MARGIN = 24f
 
+  /**
+   * Al massimo tante fette per pagina. Con le coordinate dentro ±50 000 una pagina non ne da' mai
+   * piu' di qualche decina; il tetto sta qui perche' questo ciclo e' l'unico posto dove un dato
+   * strano diventa un'attesa senza fine o una memoria piena, e un tetto non si discute.
+   */
+  const val MAX_SLICES = 30
+
   fun slices(page: InkPage): List<InkSlice> {
-    val strokes = page.strokes.filter { it.pointCount > 0 }
-    if (strokes.size < MIN_STROKES || page.width <= 0) return emptyList()
+    if (page.width !in SdocxInk.MIN_PAGE_WIDTH..SdocxInk.MAX_PAGE_WIDTH) return emptyList()
+    // Il lettore scarta gia' i tratti impossibili; questo e' il posto dove, se ne passa uno lo
+    // stesso (un test, un altro lettore domani), non fa danni.
+    val strokes = page.strokes.filter { it.pointCount > 0 && SdocxInk.plausible(it.xs) && SdocxInk.plausible(it.ys) }
+    if (strokes.size < MIN_STROKES) return emptyList()
 
     val top = (strokes.minOf { it.minY } - MARGIN).coerceAtLeast(0f)
     val bottom = strokes.maxOf { it.maxY } + MARGIN
@@ -48,18 +58,20 @@ object InkLayout {
 
     val result = mutableListOf<InkSlice>()
     var start = top
-    while (bottom - start > maxHeight) {
+    val gaps = occupied.zipWithNext().map { (above, below) -> (above.second + below.first) / 2 }
+    // Ogni giro scende di almeno meta' fetta, quindi finisce; il conto delle fette lo chiude
+    // comunque, e l'ultima si ferma a un'altezza da fetta invece di portarsi dietro il resto.
+    while (bottom - start > maxHeight && result.size < MAX_SLICES - 1) {
       val limit = start + maxHeight
       // Il vuoto piu' in basso che sta dentro il limite, ma non troppo in alto: una fetta alta un
       // terzo del dovuto e' peggio di una riga tagliata di rado.
-      val gap = occupied.zipWithNext()
-        .map { (above, below) -> (above.second + below.first) / 2 }
-        .lastOrNull { it > start + maxHeight * 0.5f && it <= limit }
+      val gap = gaps.lastOrNull { it > start + maxHeight * 0.5f && it <= limit }
       val cut = gap ?: limit
+      if (!(cut > start)) break
       result += InkSlice(start, cut)
       start = cut
     }
-    result += InkSlice(start, bottom)
+    result += InkSlice(start, minOf(bottom, start + maxHeight))
     // Una fetta senza inchiostro dentro — un grande vuoto fra due blocchi — non si salva.
     return result.filter { slice -> occupied.any { it.second >= slice.top && it.first <= slice.bottom } }
   }

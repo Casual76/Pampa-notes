@@ -4,6 +4,9 @@ import android.content.Context
 import androidx.core.content.FileProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.pampa.pampanotes.core.archive.ArchiveFetcher
+import dev.pampa.pampanotes.core.archive.ArchiveHttp
+import dev.pampa.pampanotes.core.archive.ArchiveRepository
 import dev.pampa.pampanotes.core.db.FolderEntity
 import dev.pampa.pampanotes.core.db.PampaDatabase
 import dev.pampa.pampanotes.core.db.SourceKind
@@ -11,6 +14,8 @@ import dev.pampa.pampanotes.core.db.SourceStatus
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.repo.NoteRepository
 import dev.pampa.pampanotes.core.repo.StorageRepository
+import dev.pampa.pampanotes.core.settings.PampaSettingsStore
+import dev.pampa.pampanotes.core.transcription.EndpointResolver
 import java.io.File
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -47,6 +52,13 @@ class ImportCoordinatorTest {
     val notes = NoteRepository(db.notes(), db.tags(), storage)
     val extractors = TextExtractorRegistry(PlainTextExtractor(), PdfTextExtractor(context), DocxTextExtractor())
     val audio = AudioImporter(files, db.sessions(), db.audioParts())
+    // Il computer di casa qui non c'e': nessun indirizzo configurato, quindi archivio e download non
+    // fanno richieste. Servono solo perche' le pagine a mano sanno dove chiedere un originale.
+    val settings = PampaSettingsStore(context)
+    val resolver = EndpointResolver()
+    val http = ArchiveHttp(userAgent = "PampaNotes-test")
+    val archive = ArchiveRepository(db.audioParts(), db.sources(), files, settings, resolver, http)
+    val fetcher = ArchiveFetcher(files, settings, resolver, http, db.audioParts(), db.sources())
     coordinator = ImportCoordinator(
       context = context,
       files = files,
@@ -57,6 +69,8 @@ class ImportCoordinatorTest {
       sessions = db.sessions(),
       extractors = extractors,
       audioImporter = audio,
+      archive = archive,
+      handwriting = HandwritingPages(db.sources(), files, fetcher, archive),
     )
   }
 

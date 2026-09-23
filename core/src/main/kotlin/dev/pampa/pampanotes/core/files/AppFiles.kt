@@ -37,18 +37,41 @@ class AppFiles(context: Context) {
 
   fun sizeOf(dir: File): Long = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
 
-  /** Elimina i file che nessuna riga cita piu': la rete di sicurezza fra una DELETE e la sua cancellazione su disco. */
-  fun sweepOrphans(referencedAudio: Set<String>, referencedSources: Set<String>, activeJobIds: Set<String>): Int {
+  /**
+   * Elimina i file che nessuna riga cita piu': la rete di sicurezza fra una DELETE e la sua
+   * cancellazione su disco.
+   *
+   * Un file giovane non si tocca anche se nessuna riga lo cita ancora: un import copia prima il file
+   * al suo posto e poi scrive la riga, e una pulizia che cade in mezzo gli toglierebbe il file da
+   * sotto. Un quarto d'ora copre anche un `.sdocx` con un'ora di registrazioni.
+   */
+  fun sweepOrphans(
+    referencedAudio: Set<String>,
+    referencedSources: Set<String>,
+    activeJobIds: Set<String>,
+    now: Long = System.currentTimeMillis(),
+  ): Int {
     var removed = 0
-    audio.listFiles()?.forEach { if (it.isFile && it.name !in referencedAudio && it.delete()) removed++ }
-    sources.listFiles()?.forEach { if (it.isFile && it.name !in referencedSources && it.delete()) removed++ }
-    jobs.listFiles()?.forEach { if (it.isDirectory && it.name !in activeJobIds && it.deleteRecursively()) removed++ }
+    fun old(file: File) = isOldEnough(file.lastModified(), now)
+    audio.listFiles()?.forEach { if (it.isFile && it.name !in referencedAudio && old(it) && it.delete()) removed++ }
+    sources.listFiles()?.forEach { if (it.isFile && it.name !in referencedSources && old(it) && it.delete()) removed++ }
+    jobs.listFiles()?.forEach { if (it.isDirectory && it.name !in activeJobIds && old(it) && it.deleteRecursively()) removed++ }
     return removed
   }
 
   fun clearExports(): Int = exports.listFiles()?.count { it.deleteRecursively() } ?: 0
 
   companion object {
+    /** Quanto deve avere un file senza riga prima che la pulizia lo consideri orfano. */
+    const val ORPHAN_MIN_AGE_MS = 15 * 60 * 1000L
+
+    /**
+     * Vecchio abbastanza da essere un orfano vero. Un'ora di modifica nel futuro (l'orologio
+     * spostato indietro) conta come giovane: meglio un file in piu' per un giorno che uno in meno.
+     */
+    fun isOldEnough(lastModified: Long, now: Long, minAgeMs: Long = ORPHAN_MIN_AGE_MS): Boolean =
+      lastModified > 0 && now - lastModified >= minAgeMs
+
     /**
      * L'estensione dal nome, altrimenti dal MIME, altrimenti quella di ripiego. Sempre minuscola,
      * mai vuota.

@@ -1,6 +1,7 @@
 package dev.pampa.pampanotes.ui.onboarding
 
 import android.content.Intent
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -83,8 +84,11 @@ fun OnboardingRoute(
   val context = LocalContext.current
 
   var groqKey by remember { mutableStateOf("") }
-  var endpointUrl by remember(settings.endpointUrl) { mutableStateOf(settings.endpointUrl) }
-  var endpointRemoteUrl by remember(settings.endpointRemoteUrl) { mutableStateOf(settings.endpointRemoteUrl) }
+  // Gli indirizzi sopravvivono a una rotazione: riscriverli a meta' primo avvio e' il modo di farli
+  // saltare. Il codice e la chiave di Groq invece no — lo stato salvato finisce su disco, in chiaro,
+  // e un segreto non ci va: al massimo si riscrive.
+  var endpointUrl by rememberSaveable(settings.endpointUrl) { mutableStateOf(settings.endpointUrl) }
+  var endpointRemoteUrl by rememberSaveable(settings.endpointRemoteUrl) { mutableStateOf(settings.endpointRemoteUrl) }
   var endpointToken by remember { mutableStateOf("") }
   // Il computer arrivato dall'account si mostra come una riga; «Cambia» riapre i campi.
   var editingEndpoint by rememberSaveable { mutableStateOf(false) }
@@ -113,10 +117,17 @@ fun OnboardingRoute(
   }
 
   val last = steps.lastIndex
+  val goBack: () -> Unit = {
+    leaveStep()
+    index -= 1
+  }
+  // Il tasto indietro del sistema fa quello che fa la freccia: un passo indietro. Al benvenuto
+  // lascia fare al sistema, che chiude l'app.
+  BackHandler(enabled = index > 0, onBack = goBack)
   FluidScreen(
     title = stringResource(step.title),
     subtitle = stringResource(R.string.onboarding_step, index + 1, last + 1),
-    onBack = if (index > 0) ({ leaveStep(); index-- }) else null,
+    onBack = if (index > 0) goBack else null,
     ambient = FluidAmbient(tone = FluidHeroTone.PrimaryToSecondary, motif = FluidHeroMotif.Glow),
   ) {
     when (step) {

@@ -91,6 +91,9 @@ fun NoteRoute(
         source,
         onReady = { openWithSystem(context, it, source.mime) },
         onError = { Toast.makeText(context, context.getString(R.string.note_source_fetch_failed, it), Toast.LENGTH_LONG).show() },
+        // Una pagina a mano e' sempre toccabile — e' una scheda, non una riga spenta — quindi un
+        // tocco che non puo' fare niente deve almeno dire perche'.
+        onUnavailable = { Toast.makeText(context, context.getString(R.string.note_handwriting_unavailable), Toast.LENGTH_LONG).show() },
       )
     },
     onRederiveHandwriting = {
@@ -345,6 +348,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.textTab(
             label = stringResource(R.string.note_handwriting_page, index + 1),
             file = file,
             missing = page.id in state.missingSources,
+            archived = page.archivedAt > 0,
             onOpen = { onOpenPage(page) },
           )
         }

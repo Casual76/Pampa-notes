@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.pampa.pampanotes.BuildConfig
+import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.backup.BackupFailure
 import dev.pampa.pampanotes.core.backup.BackupManifest
 import dev.pampa.pampanotes.core.backup.BackupResult
@@ -58,6 +59,7 @@ data class BackupUiState(
  */
 @HiltViewModel
 class BackupViewModel @Inject constructor(
+  @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
   private val service: BackupService,
   private val settings: PampaSettingsStore,
   private val work: WorkScheduler,
@@ -183,8 +185,23 @@ class BackupViewModel @Inject constructor(
 
   private fun generator(): String = "Pampa Notes ${BuildConfig.VERSION_NAME}"
 
-  private fun messageOf(failure: Throwable): String =
-    (failure as? BackupFailure)?.message ?: failure.message ?: failure.javaClass.simpleName
+  /** Il perche' di un fallimento, detto nella lingua dell'app: il modulo core da' solo un codice. */
+  private fun messageOf(failure: Throwable): String {
+    val reason = (failure as? BackupFailure)?.reason ?: return failure.message ?: failure.javaClass.simpleName
+    return context.getString(
+      when (reason) {
+        BackupFailure.Reason.FOLDER_GONE -> R.string.backup_failure_folder_gone
+        BackupFailure.Reason.NOT_WRITABLE -> R.string.backup_failure_not_writable
+        BackupFailure.Reason.CREATE -> R.string.backup_failure_create
+        BackupFailure.Reason.INTERRUPTED -> R.string.backup_failure_interrupted
+        BackupFailure.Reason.OPEN -> R.string.backup_failure_open
+        BackupFailure.Reason.NOT_A_BACKUP -> R.string.backup_failure_not_a_backup
+        BackupFailure.Reason.NEWER -> R.string.backup_failure_newer
+        BackupFailure.Reason.BAD_MANIFEST -> R.string.backup_failure_bad_manifest
+        BackupFailure.Reason.NO_DATABASE -> R.string.backup_failure_no_database
+      },
+    )
+  }
 
   /** L'ultimo pezzo dell'URI di una cartella SAF e' il suo nome, quando si riesce a leggerlo. */
   private fun folderNameOf(uri: String): String {

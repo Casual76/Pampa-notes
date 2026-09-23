@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.Flow
 @Singleton
 class FolderRepository @Inject constructor(
   private val folders: FolderDao,
+  private val storage: StorageRepository,
 ) {
   fun observeChildren(parentId: String?): Flow<List<FolderRow>> = folders.observeChildren(parentId)
   fun observe(id: String): Flow<FolderEntity?> = folders.observe(id)
@@ -20,12 +21,13 @@ class FolderRepository @Inject constructor(
   suspend fun get(id: String): FolderEntity? = folders.get(id)
   suspend fun all(): List<FolderEntity> = folders.all()
 
-  suspend fun create(name: String, parentId: String? = null, tone: String? = null, icon: String? = null): FolderEntity {
+  /** [untitled] e' il nome di ripiego nella lingua di chi chiama: il modulo core non ha stringhe. */
+  suspend fun create(name: String, parentId: String? = null, tone: String? = null, icon: String? = null, untitled: String = "Cartella"): FolderEntity {
     val now = System.currentTimeMillis()
     val siblings = folders.children(parentId)
     val folder = FolderEntity(
       id = Ids.newId(),
-      name = uniqueName(name.trim().ifEmpty { "Cartella" }, siblings.map { it.name }),
+      name = uniqueName(name.trim().ifEmpty { untitled }, siblings.map { it.name }),
       parentId = parentId,
       sortOrder = (siblings.maxOfOrNull { it.sortOrder } ?: -1) + 1,
       tone = tone,
@@ -64,7 +66,15 @@ class FolderRepository @Inject constructor(
     return true
   }
 
-  suspend fun delete(id: String) = folders.delete(id)
+  /**
+   * Una cartella se ne va con tutto quello che ha dentro, in cascata: note, sessioni, parti, fonti.
+   * Le righe spariscono tutte insieme e i file restano su disco; la pulizia li toglie subito, come
+   * fa la cancellazione di una nota, invece di lasciarli li' finche' qualcuno apre Archiviazione.
+   */
+  suspend fun delete(id: String) {
+    folders.delete(id)
+    runCatching { storage.sweepOrphans() }
+  }
 
   /** La catena dalla radice alla cartella, per il breadcrumb. */
   suspend fun pathTo(id: String): List<FolderEntity> {

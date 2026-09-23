@@ -1,5 +1,6 @@
 package dev.pampa.pampanotes.ui.importing
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,6 +16,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.antigravity.fluidengine.ui.fluid.FluidAlert
+import dev.antigravity.fluidengine.ui.fluid.FluidAlertAction
 import dev.antigravity.fluidengine.ui.fluid.FluidAmbient
 import dev.antigravity.fluidengine.ui.fluid.FluidButton
 import dev.antigravity.fluidengine.ui.fluid.FluidButtonStyle
@@ -39,6 +42,7 @@ import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.db.SourceKind
 import dev.pampa.pampanotes.core.db.SourceStatus
 import dev.pampa.pampanotes.core.importing.ImportCandidate
+import dev.pampa.pampanotes.core.importing.ImportSummary
 import dev.pampa.pampanotes.core.model.Dates
 import dev.pampa.pampanotes.ui.common.Formats
 
@@ -97,15 +101,31 @@ private fun ImportScreen(
   onBack: () -> Unit,
 ) {
   var creatingFolder by remember { mutableStateOf(false) }
+  var confirmingLeave by remember { mutableStateOf(false) }
+
+  // Indietro fa un passo indietro, non chiude il wizard: chi ha scelto la cartella e torna a
+  // guardare i file non deve ricominciare da capo. Mentre scrive, chiede: il lavoro vive con la
+  // schermata, e uscire lo fermerebbe a meta'. A import finito, chiude.
+  val handleBack: () -> Unit = {
+    when (state.step) {
+      ImportStep.INSPECTING, ImportStep.REVIEW, ImportStep.DONE -> onClose()
+      ImportStep.DESTINATION, ImportStep.AUDIO -> onBack()
+      ImportStep.RUNNING -> confirmingLeave = true
+    }
+  }
+  BackHandler(onBack = handleBack)
 
   FluidScreen(
     title = stringResource(R.string.import_title),
     subtitle = stepSubtitle(state),
-    onBack = if (state.step == ImportStep.REVIEW || state.step == ImportStep.INSPECTING) onClose else onBack,
+    onBack = handleBack,
     ambient = FluidAmbient(tone = FluidHeroTone.TertiaryToPrimary, motif = FluidHeroMotif.Cards),
   ) {
     state.error?.let { message ->
       item { FluidInlineMessage(message = message, title = stringResource(R.string.import_problem), tone = FluidTone.Danger) }
+    }
+    state.errorRes?.takeIf { state.error == null }?.let { res ->
+      item { FluidInlineMessage(message = stringResource(res), title = stringResource(R.string.import_problem), tone = FluidTone.Danger) }
     }
 
     when (state.step) {
@@ -119,6 +139,8 @@ private fun ImportScreen(
       }
 
       ImportStep.REVIEW -> {
+        // [ImportUiState.samsungNote] e' null quando la nota e' gia' scelta: un `.sdocx` importato
+        // dentro una nota passa dall'elenco normale, e il suo testo si accoda come ogni documento.
         val samsung = state.samsungNote
         if (samsung != null) {
           samsungStep(state, samsung, onSelectFolder, onTitleChange, onUpdateExisting, onNext, { creatingFolder = true })
@@ -131,6 +153,25 @@ private fun ImportScreen(
       ImportStep.RUNNING -> runningStep(state)
       ImportStep.DONE -> doneStep(state, onClose, onOpenNote)
     }
+  }
+
+  if (confirmingLeave) {
+    FluidAlert(
+      onDismissRequest = { confirmingLeave = false },
+      title = stringResource(R.string.import_leave_title),
+      message = stringResource(R.string.import_leave_message),
+      actions = listOf(
+        FluidAlertAction(label = stringResource(R.string.import_leave_stay), onClick = { confirmingLeave = false }, emphasis = FluidAlertAction.Emphasis.Preferred),
+        FluidAlertAction(
+          label = stringResource(R.string.import_leave_anyway),
+          emphasis = FluidAlertAction.Emphasis.Destructive,
+          onClick = {
+            confirmingLeave = false
+            onClose()
+          },
+        ),
+      ),
+    )
   }
 
   if (creatingFolder) {
@@ -658,7 +699,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.doneStep(
           if (index > 0) FluidListDivider()
           FluidListRow(
             title = item.displayName,
-            subtitle = item.detail ?: importedSubtitle(item),
+            subtitle = item.summary?.let { importSummaryText(it) } ?: item.detail ?: importedSubtitle(item),
             tone = when (item.status) {
               SourceStatus.OK -> FluidTone.Success
               SourceStatus.PARTIAL -> FluidTone.Warning
@@ -687,6 +728,19 @@ private fun androidx.compose.foundation.lazy.LazyListScope.doneStep(
       fillWidth = true,
       modifier = Modifier.fillMaxWidth(),
     )
+  }
+}
+
+@Composable
+private fun importSummaryText(summary: ImportSummary): String = when (summary) {
+  ImportSummary.FileUnavailable -> stringResource(R.string.import_summary_unavailable)
+  ImportSummary.Unreadable -> stringResource(R.string.import_summary_unreadable)
+  ImportSummary.Unsupported -> stringResource(R.string.import_summary_unsupported)
+  ImportSummary.SamsungEmpty -> stringResource(R.string.import_summary_samsung_empty)
+  is ImportSummary.SamsungPages -> pluralStringResource(R.plurals.import_summary_pages, summary.pages, summary.pages)
+  is ImportSummary.SamsungUpdated -> {
+    val updated = stringResource(R.string.import_summary_updated, summary.newRecordings, summary.kept)
+    if (summary.pages > 0) updated + " · " + pluralStringResource(R.plurals.note_handwriting_done, summary.pages, summary.pages) else updated
   }
 }
 

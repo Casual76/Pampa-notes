@@ -30,20 +30,22 @@ import kotlinx.coroutines.withContext
  * decodifica a meta' risoluzione — 540 pixel bastano a una colonna di lettura e costano un quarto
  * della memoria — fuori dal thread principale. Un tocco la apre col visualizzatore di sistema, per
  * ingrandirla. Una pagina il cui file sta su un altro dispositivo e' una riga, come le fonti:
- * toccandola si scarica.
+ * toccandola si scarica — se il computer di casa ce l'ha; altrimenti la riga lo dice.
  */
 @Composable
-fun HandwritingPageCard(label: String, file: File, missing: Boolean, onOpen: () -> Unit) {
+fun HandwritingPageCard(label: String, file: File, missing: Boolean, archived: Boolean, onOpen: () -> Unit) {
   if (missing) {
     FluidListRow(
       title = label,
-      subtitle = stringResource(R.string.note_handwriting_missing),
+      subtitle = stringResource(if (archived) R.string.note_handwriting_missing else R.string.note_handwriting_elsewhere),
       onClick = onOpen,
     )
     return
   }
 
-  val bitmap by produceState<ImageBitmap?>(initialValue = null, file) {
+  // La chiave comprende data e peso del file: «Ricava le pagine a mano» riscrive lo stesso nome, e
+  // con il solo percorso la scheda continuerebbe a mostrare il disegno di prima.
+  val bitmap by produceState<ImageBitmap?>(initialValue = null, file, file.lastModified(), file.length()) {
     value = withContext(Dispatchers.IO) {
       runCatching {
         BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inSampleSize = 2 })?.asImageBitmap()
