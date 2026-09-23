@@ -57,7 +57,6 @@ import dev.pampa.pampanotes.ui.common.folderIconOf
 import dev.pampa.pampanotes.ui.common.jobStateLabel
 import dev.pampa.pampanotes.ui.common.toneFromName
 import dev.pampa.pampanotes.ui.common.rememberComputerOnly
-import dev.pampa.pampanotes.core.export.ExportScope
 import dev.pampa.pampanotes.ui.export.ExportSheet
 import java.time.LocalDate
 
