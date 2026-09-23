@@ -81,12 +81,12 @@ class SyncApplierTest {
   private fun apply(vararg changes: WireChange) = runBlocking { applier.apply(changes.toList(), ownerId = "me", deviceName = "questo") }
 
   /** Come se tutto quello che c'e' fosse gia' stato sincronizzato: niente di sporco. */
-  private fun clean() = runBlocking { db.sync().clearAllOutbox() }
+  private fun clean(): Unit = runBlocking { db.sync().clearAllOutbox() }
 
   // -----------------------------------------------------------------------------------------------
 
   @Test
-  fun una_sottocartella_arrivata_prima_della_sua_cartella_entra_nella_stessa_pagina() = runBlocking {
+  fun una_sottocartella_arrivata_prima_della_sua_cartella_entra_nella_stessa_pagina(): Unit = runBlocking {
     // Stessa tabella, seq piu' basso: l'ordine per tabella non basta, serve il secondo giro.
     val outcome = apply(
       upFolder(folder("sotto", parentId = "sopra"), seq = 1),
@@ -101,7 +101,7 @@ class SyncApplierTest {
   }
 
   @Test
-  fun un_orfano_vero_torna_indietro_e_le_altre_righe_restano_scritte() = runBlocking {
+  fun un_orfano_vero_torna_indietro_e_le_altre_righe_restano_scritte(): Unit = runBlocking {
     val outcome = apply(
       upFolder(folder("f"), seq = 1),
       upNote(note("n", folderId = "f"), seq = 2),
@@ -126,7 +126,7 @@ class SyncApplierTest {
   }
 
   @Test
-  fun una_nota_spostata_e_la_cartella_cancellata_nella_stessa_pagina() = runBlocking {
+  fun una_nota_spostata_e_la_cartella_cancellata_nella_stessa_pagina(): Unit = runBlocking {
     db.folders().upsert(folder("A"))
     db.folders().upsert(folder("B"))
     db.notes().upsert(note("n", folderId = "A"))
@@ -145,7 +145,7 @@ class SyncApplierTest {
   }
 
   @Test
-  fun la_nota_cancellata_altrove_con_un_figlio_nuovo_qui_resta_e_risale() = runBlocking {
+  fun la_nota_cancellata_altrove_con_un_figlio_nuovo_qui_resta_e_risale(): Unit = runBlocking {
     db.folders().upsert(folder("f"))
     db.notes().upsert(note("n", folderId = "f"))
     db.sessions().upsert(session("s", noteId = "n"))
@@ -167,7 +167,7 @@ class SyncApplierTest {
   }
 
   @Test
-  fun un_figlio_solo_toccato_non_ferma_la_cancellazione() = runBlocking {
+  fun un_figlio_solo_toccato_non_ferma_la_cancellazione(): Unit = runBlocking {
     db.folders().upsert(folder("f"))
     db.notes().upsert(note("n", folderId = "f"))
     val s = session("s", noteId = "n")
@@ -185,7 +185,7 @@ class SyncApplierTest {
   }
 
   @Test
-  fun la_cartella_cancellata_altrove_manda_nel_cestino_i_file_di_tutto_quello_che_aveva_dentro() = runBlocking {
+  fun la_cartella_cancellata_altrove_manda_nel_cestino_i_file_di_tutto_quello_che_aveva_dentro(): Unit = runBlocking {
     db.folders().upsert(folder("f"))
     db.folders().upsert(folder("dentro", parentId = "f"))
     db.notes().upsert(note("n", folderId = "dentro"))
@@ -211,7 +211,7 @@ class SyncApplierTest {
   }
 
   @Test
-  fun i_segmenti_sporcano_la_loro_trascrizione_ma_non_la_sua_cancellazione() = runBlocking {
+  fun i_segmenti_sporcano_la_loro_trascrizione_ma_non_la_sua_cancellazione(): Unit = runBlocking {
     db.folders().upsert(folder("f"))
     db.notes().upsert(note("n", folderId = "f"))
     db.sessions().upsert(session("s", noteId = "n"))
