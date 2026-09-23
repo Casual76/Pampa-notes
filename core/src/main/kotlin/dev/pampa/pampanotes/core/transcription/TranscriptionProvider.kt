@@ -80,6 +80,49 @@ data class UploadProgress(val sentBytes: Long, val totalBytes: Long) {
   val fraction: Float get() = if (totalBytes <= 0) 0f else (sentBytes.toFloat() / totalBytes).coerceIn(0f, 1f)
 }
 
+/**
+ * Cosa sta facendo il computer di casa con l'audio che ha ricevuto, come lo dice `GET /v1/jobs/<id>`.
+ *
+ * I codici sono quelli del companion; uno che l'app non conosce (un companion piu' nuovo) si
+ * ignora invece di rompere qualcosa.
+ */
+enum class RemoteStage(val code: String) {
+  RECEIVED("received"),
+  QUEUED("queued"),
+  DECODING("decoding"),
+  LOADING_MODEL("loading_model"),
+  TRANSCRIBING("transcribing"),
+  ALIGNING("aligning"),
+  DONE("done"),
+  FAILED("failed"),
+  ;
+
+  val finished: Boolean get() = this == DONE || this == FAILED
+
+  companion object {
+    fun fromCode(code: String?): RemoteStage? = entries.firstOrNull { it.code == code }
+  }
+}
+
+/**
+ * A che punto e' il lavoro dall'altra parte.
+ *
+ * [fraction] vale dentro lo stadio (la trascrizione da 0 a 1, poi l'allineamento da 0 a 1): il
+ * conto sull'intera sessione lo fa [TranscriptionRunner], che sa quante registrazioni ci sono.
+ */
+data class RemoteProgress(
+  val stage: RemoteStage,
+  val fraction: Float = 0f,
+  /** In fila: 2 vuol dire «c'e' una lezione davanti», quella che il computer sta facendo adesso. */
+  val position: Int? = null,
+  val audioSeconds: Double? = null,
+  /** Quanto manca allo stadio corrente, quando il computer ha abbastanza dati per dirlo. */
+  val etaSeconds: Double? = null,
+  /** "cuda" o "cpu": la stessa lezione sul processore dura dieci volte tanto, e va detto. */
+  val device: String? = null,
+  val detail: String? = null,
+)
+
 /** Se il server risponde, e cosa dice di se'. */
 data class EndpointHealth(
   val reachable: Boolean,
@@ -107,10 +150,16 @@ interface TranscriptionProvider {
 
   suspend fun health(): EndpointHealth
 
+  /**
+   * @param onProgress i byte che partono.
+   * @param onRemote quello che il servizio sta facendo, finito il caricamento. Solo il computer di
+   *   casa lo racconta: Groq risponde in secondi e non ha niente da dire nel frattempo.
+   */
   suspend fun transcribe(
     file: File,
     mime: String,
     request: TranscribeRequest,
     onProgress: (UploadProgress) -> Unit = {},
+    onRemote: (RemoteProgress) -> Unit = {},
   ): TranscriptResult
 }

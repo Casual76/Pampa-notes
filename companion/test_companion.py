@@ -215,6 +215,119 @@ class PriorityGateTest(unittest.TestCase):
 
         self.assertEqual(asyncio.run(scenario()), ["proprietario", "ospite"])
 
+    def test_position_counts_the_one_running(self) -> None:
+        """«Sei il 2°»: chi trascrive adesso conta, e il proprietario arrivato dopo passa davanti."""
+
+        async def scenario() -> list:
+            gate = server.PriorityGate()
+            release = asyncio.Event()
+            seen: list = []
+
+            async def holder() -> None:
+                async with gate.slot(0, key="adesso"):
+                    await release.wait()
+
+            async def waiter(key: str, priority: int) -> None:
+                async with gate.slot(priority, key=key):
+                    pass
+
+            first = asyncio.create_task(holder())
+            await asyncio.sleep(0.01)
+            seen.append(gate.position("adesso"))  # sta lavorando, non aspetta
+            guest = asyncio.create_task(waiter("ospite", 1))
+            await asyncio.sleep(0.01)
+            seen.append(gate.position("ospite"))
+            owner = asyncio.create_task(waiter("mio", 0))
+            await asyncio.sleep(0.01)
+            seen.extend([gate.position("mio"), gate.position("ospite")])
+            release.set()
+            await asyncio.wait_for(asyncio.gather(first, guest, owner), timeout=2)
+            seen.append(gate.position("ospite"))
+            return seen
+
+        self.assertEqual(asyncio.run(scenario()), [None, 2, 2, 3, None])
+
+
+# --- a che punto e' una trascrizione -----------------------------------------------------------------
+
+
+def as_caller(kind: str, bearer: str) -> server.Caller:
+    return server.Caller(kind, "test", None, bearer)
+
+
+class JobProgressTest(unittest.TestCase):
+    def test_late_callback_of_an_abandoned_pass_is_ignored(self) -> None:
+        progress = server.JobProgress("abcdefgh")
+        progress.set("transcribing")
+        old = progress.callback("transcribing")
+        old(60.0)
+        self.assertAlmostEqual(progress.fraction, 0.6)
+        progress.set("aligning")
+        old(90.0)  # lo scatto tardivo del passo prima non tocca l'allineamento
+        self.assertEqual((progress.state, progress.fraction), ("aligning", 0.0))
+        progress.callback("aligning")(40.0)
+        progress.callback("aligning")(30.0)  # non torna indietro
+        self.assertAlmostEqual(progress.fraction, 0.4)
+
+    def test_snapshot_tells_elapsed_eta_and_processing(self) -> None:
+        progress = server.JobProgress("abcdefgh", now=100.0)
+        progress.set("queued", now=101.0)
+        snap = progress.snapshot(position=2, now=105.0)
+        self.assertEqual((snap["state"], snap["position"], snap["elapsed_s"], snap["eta_s"]), ("queued", 2, 5.0, None))
+        progress.admitted(now=110.0)
+        progress.set("transcribing", now=110.0)
+        progress.advance(0.25, "transcribing")
+        snap = progress.snapshot(position=7, now=120.0)
+        self.assertIsNone(snap["position"], "il posto in fila vale solo in fila")
+        self.assertEqual(snap["eta_s"], 30.0)  # 10 s per il 25%: ne mancano 30
+        self.assertEqual(snap["processing_s"], 10.0)
+        progress.set("done", 1.0, now=130.0)
+        snap = progress.snapshot(now=500.0)
+        self.assertEqual((snap["processing_s"], snap["elapsed_s"]), (20.0, 30.0))
+
+
+class JobRegistryTest(unittest.TestCase):
+    def test_ids_are_checked(self) -> None:
+        jobs = server.JobRegistry()
+        owner = as_caller("owner", "pt_good")
+        self.assertIsNone(jobs.open("", owner))
+        self.assertIsNone(jobs.open("corto", owner))
+        self.assertIsNone(jobs.open("../../etc/passwd", owner))
+        self.assertIsNotNone(jobs.open("3f2b8c1e-5a6d-4e7f-8a9b-0c1d2e3f4a5b", owner))
+
+    def test_guest_reads_only_its_own_and_cannot_take_an_id(self) -> None:
+        jobs = server.JobRegistry()
+        mine = jobs.open("job-del-proprietario", as_caller("owner", "pt_good"))
+        theirs = jobs.open("job-dell-ospite-anna", as_caller("guest", "pg_friend"))
+        self.assertFalse(jobs.visible_to(mine, as_caller("guest", "pg_friend")))
+        self.assertTrue(jobs.visible_to(theirs, as_caller("guest", "pg_friend")))
+        self.assertFalse(jobs.visible_to(theirs, as_caller("guest", "pg_other")))
+        self.assertTrue(jobs.visible_to(theirs, as_caller("owner", "pt_good")), "il computer e' del proprietario")
+        # Lo stesso id da un altro bearer non sostituisce quello che c'e'.
+        self.assertIsNone(jobs.open("job-del-proprietario", as_caller("guest", "pg_friend")))
+        self.assertIs(jobs.get("job-del-proprietario"), mine)
+        # Dallo stesso bearer si' (l'app che riprova con lo stesso id).
+        again = jobs.open("job-del-proprietario", as_caller("owner", "pt_good"))
+        self.assertIsNot(again, mine)
+
+    def test_finished_jobs_expire_and_the_registry_is_bounded(self) -> None:
+        jobs = server.JobRegistry(limit=3, keep_s=600)
+        owner = as_caller("owner", "")
+        done = jobs.open("finito-da-poco", owner, now=1000.0)
+        done.set("done", 1.0, now=1000.0)
+        self.assertIsNotNone(jobs.get("finito-da-poco", now=1500.0))
+        self.assertIsNone(jobs.get("finito-da-poco", now=1700.0))
+        for index in range(3):
+            jobs.open(f"in-corso-{index}", owner, now=2000.0)
+        finished = jobs.open("finito-dopo", owner, now=2001.0)
+        finished.set("done", 1.0, now=2001.0)
+        jobs.open("l-ultimo-arrivato", owner, now=2002.0)
+        self.assertEqual(len(jobs), 3)
+        # Esce prima un lavoro finito, anche se piu' giovane, che uno in corso.
+        self.assertIsNone(jobs.get("finito-dopo", now=2002.0))
+        self.assertIsNone(jobs.get("in-corso-0", now=2002.0))
+        self.assertIsNotNone(jobs.get("l-ultimo-arrivato", now=2002.0))
+
 
 class BoundedCacheTest(unittest.TestCase):
     def test_evicts_oldest_and_expires(self) -> None:
@@ -249,12 +362,16 @@ class FakeModel:
         self.error = error
         self.sizes: list[int] = []
 
-    def transcribe(self, audio: object, batch_size: int, language: str | None) -> dict:
+    def transcribe(self, audio: object, batch_size: int, language: str | None, progress_callback=None) -> dict:
         self.sizes.append(batch_size)
+        if progress_callback is not None:
+            progress_callback(50.0)  # meta' dei segmenti, poi magari la memoria finisce
         if self.error is not None:
             raise self.error
         if batch_size > self.fits:
             raise FakeOOM()
+        if progress_callback is not None:
+            progress_callback(100.0)
         return {"language": "it", "segments": [{"start": 0.0, "end": 1.0, "text": "ciao a tutti"}]}
 
 
@@ -277,15 +394,38 @@ class FakeEngine(server.Engine):
         self.cpu_loads += 1
         return self.cpu
 
-    def align(self, segments: list[dict], language: str, audio: object, device: str) -> list[dict]:
+    def align(self, segments: list[dict], language: str, audio: object, device: str, progress_callback=None) -> list[dict]:
         self.align_devices.append(device)
         error = self.align_errors.get(device)
         if error is not None:
             raise error
+        if progress_callback is not None:
+            progress_callback(100.0)
         return [dict(segment, words=[{"word": "ciao", "start": 0.0, "end": 0.4, "score": 0.9}]) for segment in segments]
+
+    def needs_load(self) -> bool:
+        return self.main is not None or self.load_error is not None
 
     def release(self) -> None:
         self.releases += 1
+
+
+class RecordingProgress(server.JobProgress):
+    """Un JobProgress che si ricorda ogni stato in cui e' passato, con la percentuale a cui l'ha lasciato."""
+
+    def __init__(self) -> None:
+        super().__init__("job-registrato", "", False)
+        self.trail: list[tuple[str, str | None]] = []
+        self.reached: dict[str, float] = {}
+
+    def set(self, state: str, fraction: float = 0.0, detail: str | None = None, now: float | None = None) -> None:
+        super().set(state, fraction, detail, now)
+        self.trail.append((state, detail))
+
+    def advance(self, fraction: float, state: str) -> None:
+        super().advance(fraction, state)
+        if self.state == state:
+            self.reached[state] = self.fraction
 
 
 class RunJobTest(unittest.TestCase):
@@ -350,6 +490,29 @@ class RunJobTest(unittest.TestCase):
         self.assertNotIn("words", job["segments"][0])
         # Con la traccia, non solo la riga: e' quello che mancava.
         self.assertTrue(any("Traceback" in line for line in logs.output))
+
+    def test_progress_walks_through_the_states(self) -> None:
+        progress = RecordingProgress()
+        server.run_job(None, "it", FakeEngine(FakeModel(fits=99)), 16, "cuda", progress)
+        self.assertEqual([state for state, _ in progress.trail], ["loading_model", "transcribing", "aligning"])
+        self.assertEqual(progress.reached, {"transcribing": 1.0, "aligning": 1.0})
+        self.assertEqual(progress.device, "cuda")
+
+    def test_progress_restarts_and_says_why_on_fallback(self) -> None:
+        progress = RecordingProgress()
+        server.run_job(None, "it", FakeEngine(FakeModel(fits=0)), 2, "cuda", progress)
+        self.assertEqual(
+            progress.trail,
+            [
+                ("loading_model", None),
+                ("transcribing", None),
+                ("transcribing", "batch 1"),
+                ("loading_model", "cpu"),
+                ("transcribing", "cpu"),
+                ("aligning", None),
+            ],
+        )
+        self.assertEqual(progress.device, "cpu")
 
 
 class WordsTest(unittest.TestCase):
@@ -712,6 +875,84 @@ class ServerTest(StateMixin, unittest.TestCase):
             )
             sock.sendall(b"--zzz\r\n")
             return sock.recv(4096).decode(errors="replace")
+
+    @staticmethod
+    def multipart(audio: bytes = b"un audio finto") -> tuple[bytes, dict]:
+        boundary = "pampatest"
+        head = (
+            f'--{boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nm\r\n'
+            f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="voce.m4a"\r\n'
+            "Content-Type: audio/mp4\r\n\r\n"
+        )
+        body = head.encode() + audio + f"\r\n--{boundary}--\r\n".encode()
+        return body, {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+
+    def test_job_progress_is_readable_while_it_runs(self) -> None:
+        server.JOBS.clear()
+        release = threading.Event()
+        inside = threading.Event()
+
+        def fake(path: str, language: str | None, progress: server.JobProgress) -> dict:
+            progress.audio_s = 60.0
+            progress.set("transcribing")
+            progress.callback("transcribing")(70.0)
+            inside.set()
+            release.wait(10)
+            return {
+                "task": "transcribe", "language": "it", "duration": 1.0, "text": "ciao",
+                "segments": [{"start": 0.0, "end": 1.0, "text": "ciao"}], "device_used": "cpu", "audio_s": 60.0,
+            }
+
+        job_id = "3f2b8c1e-5a6d-4e7f-8a9b-0c1d2e3f4a5b"
+        body, headers = self.multipart()
+        headers["X-Pampa-Job"] = job_id
+        answer: dict = {}
+        with mock.patch.object(server, "_transcribe", fake):
+            post = threading.Thread(
+                target=lambda: answer.update(r=self.call("POST", "/v1/audio/transcriptions", bearer="pg_friend", body=body, headers=headers))
+            )
+            post.start()
+            try:
+                self.assertTrue(inside.wait(10))
+                status, _, got = self.call("GET", f"/v1/jobs/{job_id}", bearer="pg_friend")
+                self.assertEqual(status, 200, got)
+                data = json.loads(got)
+                self.assertEqual((data["state"], data["fraction"], data["audio_s"]), ("transcribing", 0.7, 60.0))
+                self.assertIsNone(data["position"])
+                # Senza credenziali no, il proprietario si', un id che non c'e' e' un 404.
+                self.assertEqual(self.call("GET", f"/v1/jobs/{job_id}")[0], 401)
+                self.assertEqual(self.call("GET", f"/v1/jobs/{job_id}", bearer="pt_good")[0], 200)
+                self.assertEqual(self.call("GET", "/v1/jobs/nessuno-lo-conosce", bearer="pg_friend")[0], 404)
+                # Il lavoro del proprietario, all'ospite, non esiste.
+                server.JOBS.open("job-del-proprietario", as_caller("owner", "pt_good"))
+                self.assertEqual(self.call("GET", "/v1/jobs/job-del-proprietario", bearer="pg_friend")[0], 404)
+                self.assertEqual(self.call("GET", "/v1/jobs/job-del-proprietario", bearer="pt_good")[0], 200)
+            finally:
+                release.set()
+                post.join(10)
+
+        status, _, got = answer["r"]
+        self.assertEqual(status, 200, got)
+        result = json.loads(got)
+        self.assertEqual(result["audio_s"], 60.0)
+        self.assertGreaterEqual(result["processing_s"], 0.0)
+        data = json.loads(self.call("GET", f"/v1/jobs/{job_id}", bearer="pg_friend")[2])
+        self.assertEqual((data["state"], data["fraction"]), ("done", 1.0))
+
+    def test_failed_job_says_so(self) -> None:
+        server.JOBS.clear()
+
+        def broken(path: str, language: str | None, progress: server.JobProgress) -> dict:
+            progress.set("transcribing")
+            raise ValueError("file rotto")
+
+        body, headers = self.multipart()
+        headers["X-Pampa-Job"] = "lavoro-che-fallisce"
+        with mock.patch.object(server, "_transcribe", broken), self.assertLogs("pampa", level="ERROR"):
+            status = self.call("POST", "/v1/audio/transcriptions", bearer="pt_good", body=body, headers=headers)[0]
+        self.assertEqual(status, 500)
+        data = json.loads(self.call("GET", "/v1/jobs/lavoro-che-fallisce", bearer="pt_good")[2])
+        self.assertEqual((data["state"], data["detail"]), ("failed", "file rotto"))
 
     def test_upload_without_credentials_is_refused_before_the_body(self) -> None:
         answer = self.refused_before_body("POST /v1/audio/transcriptions")

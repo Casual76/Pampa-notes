@@ -125,7 +125,13 @@ class TranscriptionRunnerTest {
     override val capabilities = TranscriptionCapabilities(maxUploadBytes = null, supportsSegments = true, needsChunking = false)
     override suspend fun listModels() = emptyList<String>()
     override suspend fun health() = EndpointHealth(reachable = true, latencyMs = 0)
-    override suspend fun transcribe(file: File, mime: String, request: TranscribeRequest, onProgress: (UploadProgress) -> Unit): TranscriptResult {
+    override suspend fun transcribe(
+      file: File,
+      mime: String,
+      request: TranscribeRequest,
+      onProgress: (UploadProgress) -> Unit,
+      onRemote: (RemoteProgress) -> Unit,
+    ): TranscriptResult {
       calls++
       return answer(file)
     }
