@@ -63,6 +63,7 @@ class ArchiveFetcher @Inject constructor(
   private val audioParts: AudioPartDao,
   private val sources: SourceDao,
   private val auth: ComputerAuth,
+  private val computerOnly: ComputerOnlyScope,
 ) {
   private val oneAtATime = Mutex()
 
@@ -101,21 +102,31 @@ class ArchiveFetcher @Inject constructor(
   }
 
   /**
+   * Quanti file il computer ha e questo dispositivo no: zero vuol dire che un giro non serve.
+   * Quello che una regola «solo sul computer» copre non conta: non e' che manca, e' che sta la'.
+   */
+  suspend fun pendingCount(): Int = withContext(Dispatchers.IO) {
+    val scope = computerOnly.current()
+    missing(audioParts.archived()).count { !scope.covers(it) } + sources.archived().count { isMissing(it) && !scope.covers(it) }
+  }
+
+  /**
    * Tutto quello che il computer ha e questo dispositivo no, in un giro: «tieni tutto anche qui».
    *
    * Prima le registrazioni e poi gli originali, dal piu' recente: se il giro si interrompe a meta'
    * — Wi-Fi che cade, telefono che si spegne — quello che e' arrivato e' quello che serve prima.
    * Un file che fallisce non ferma gli altri, ma se il server non risponde all'inizio non ha senso
    * provarli tutti: e' lo stesso server per ognuno.
+   *
+   * Salta quello che una regola «solo sul computer» copre ([ComputerOnlyScope]): scaricarlo qui
+   * vorrebbe dire toglierlo di nuovo al prossimo giro d'archivio. Chi lo chiede uno per uno —
+   * lettore, export, trascrizione, fonti — passa da [fetchPart] e [fetchSource], che non guardano
+   * la regola.
    */
-  /** Quanti file il computer ha e questo dispositivo no: zero vuol dire che un giro non serve. */
-  suspend fun pendingCount(): Int = withContext(Dispatchers.IO) {
-    missing(audioParts.archived()).size + sources.archived().count { isMissing(it) }
-  }
-
   suspend fun fetchAll(onProgress: (FetchProgress) -> Unit = {}): FetchOutcome = withContext(Dispatchers.IO) {
-    val parts = missing(audioParts.archived())
-    val docs = sources.archived().filter { isMissing(it) }
+    val scope = computerOnly.current()
+    val parts = missing(audioParts.archived()).filterNot { scope.covers(it) }
+    val docs = sources.archived().filter { isMissing(it) && !scope.covers(it) }
     val total = parts.size + docs.size
     if (total == 0) return@withContext FetchOutcome()
 

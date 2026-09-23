@@ -59,6 +59,7 @@ import dev.pampa.pampanotes.ui.common.JobProgressBars
 import dev.pampa.pampanotes.ui.common.jobPhaseText
 import dev.pampa.pampanotes.ui.common.MarkdownText
 import dev.pampa.pampanotes.ui.common.OverflowMenuButton
+import dev.pampa.pampanotes.ui.common.rememberComputerOnly
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import dev.antigravity.fluidengine.ui.fluid.FluidSectionFootnote
@@ -143,6 +144,7 @@ private fun NoteScreen(
   var confirmingDelete by remember { mutableStateOf(false) }
   var exporting by remember { mutableStateOf(false) }
   var sharing by remember { mutableStateOf(false) }
+  val computerOnly = rememberComputerOnly()
   // La selezione delle sessioni: la barra in alto diventa quella della selezione, le schede
   // spariscono e ogni sessione e' una riga con il suo segno. Indietro la chiude.
   var selecting by remember { mutableStateOf(false) }
@@ -238,6 +240,7 @@ private fun NoteScreen(
               }
               add(FluidContextAction(label = exportLabel) { exporting = true })
               add(FluidContextAction(label = shareLabel) { sharing = true })
+              state.note?.let { note -> add(computerOnly.noteAction(note.id, note.folderId, note.title)) }
               add(FluidContextAction(label = if (state.note?.pinned == true) unpinLabel else pinLabel) { onTogglePinned() })
               add(FluidContextAction(label = deleteLabel, destructive = true) { confirmingDelete = true })
             }

@@ -12,6 +12,7 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.archive.ArchiveRepository
+import dev.pampa.pampanotes.core.repo.StorageRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
@@ -32,6 +33,7 @@ class ArchiveWorker @AssistedInject constructor(
   private val settingsStore: PampaSettingsStore,
   private val transcription: TranscriptionRepository,
   private val scheduler: WorkScheduler,
+  private val storage: StorageRepository,
 ) : CoroutineWorker(context, params) {
 
   override suspend fun getForegroundInfo(): ForegroundInfo = foregroundInfo(text = null, progress = null)
@@ -73,6 +75,10 @@ class ArchiveWorker @AssistedInject constructor(
     // Il computer ha risposto: se c'e' una trascrizione in fila che lo aspettava, e' il momento.
     val answered = outcome.uploaded + outcome.alreadyThere > 0
     if (answered && transcription.queuedCount(OpenAiCompatProvider.ID) > 0) scheduler.wake(OpenAiCompatProvider.ID)
+    // «Solo sul computer»: quello che il giro ha appena portato sul PC, e che una regola tiene
+    // lontano da qui, se ne va adesso. Solo se il computer ha risposto: senza, il giro non ha
+    // cambiato niente, e la pulizia puo' aspettare quello dopo.
+    if (!outcome.unreachable) runCatching { storage.evictComputerOnly() }
     // Il server non c'era: si riprova con l'attesa che cresce. Un server che c'e' e rifiuta un file
     // invece chiude bene: sara' il prossimo giro a riprovare quello rimasto indietro.
     return if (outcome.unreachable) Result.retry() else Result.success(data)

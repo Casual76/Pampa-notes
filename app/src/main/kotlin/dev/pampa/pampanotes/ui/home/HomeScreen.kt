@@ -60,6 +60,7 @@ import dev.pampa.pampanotes.ui.common.Formats
 import dev.pampa.pampanotes.ui.common.folderIconOf
 import dev.pampa.pampanotes.ui.common.folderVividColors
 import dev.pampa.pampanotes.ui.common.toneFromName
+import dev.pampa.pampanotes.ui.common.rememberComputerOnly
 import dev.pampa.pampanotes.core.export.ExportScope
 import dev.pampa.pampanotes.ui.export.ExportSheet
 
@@ -78,6 +79,7 @@ fun HomeRoute(
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
   var pendingDelete by remember { mutableStateOf<RecentNote?>(null) }
+  val computerOnly = rememberComputerOnly()
   var exporting by remember { mutableStateOf<RecentNote?>(null) }
 
   val pinLabel = stringResource(R.string.note_pin)
@@ -162,6 +164,7 @@ fun HomeRoute(
                 viewModel.togglePinned(recent.row.note.id, !recent.row.note.pinned)
               },
               FluidContextAction(label = exportLabel) { exporting = recent },
+              computerOnly.noteAction(recent.row.note.id, recent.row.note.folderId, recent.row.note.title),
               FluidContextAction(label = deleteLabel, destructive = true) { pendingDelete = recent },
             )
           },

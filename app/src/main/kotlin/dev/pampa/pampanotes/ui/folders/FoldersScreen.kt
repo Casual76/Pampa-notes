@@ -41,6 +41,7 @@ import dev.antigravity.fluidengine.ui.theme.FluidQuickAction
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.db.FolderRow
 import dev.pampa.pampanotes.ui.common.FolderEditorSheet
+import dev.pampa.pampanotes.ui.common.rememberComputerOnly
 import dev.pampa.pampanotes.ui.common.folderIconOf
 import dev.pampa.pampanotes.ui.common.folderVividColors
 import dev.pampa.pampanotes.ui.common.toneFromName
@@ -68,6 +69,7 @@ fun FoldersRoute(
   var editing by remember { mutableStateOf<FolderEdit?>(null) }
   var pendingDelete by remember { mutableStateOf<FolderRow?>(null) }
   var exporting by remember { mutableStateOf<FolderRow?>(null) }
+  val computerOnly = rememberComputerOnly()
 
   val newLabel = stringResource(R.string.home_new_folder)
   val editLabel = stringResource(R.string.action_edit)
@@ -115,6 +117,7 @@ fun FoldersRoute(
           pair.forEach { row ->
             FolderTile(
               row = row,
+              onComputer = if (computerOnly.folderMarked(row.folder.id)) computerOnly.marker else null,
               modifier = Modifier.weight(1f),
               onClick = { onOpenFolder(row.folder.id) },
               contextActions = {
@@ -122,6 +125,7 @@ fun FoldersRoute(
                   FluidContextAction(label = editLabel) { editing = FolderEdit.Existing(row) },
                   // Dove uno lo cerca: tenendo premuta la materia da dare all'assistente.
                   FluidContextAction(label = exportLabel) { exporting = row },
+                  computerOnly.folderAction(row.folder.id, row.folder.name),
                   FluidContextAction(label = deleteLabel, destructive = true) { pendingDelete = row },
                 )
               },
@@ -183,6 +187,8 @@ private sealed interface FolderEdit {
 @Composable
 private fun FolderTile(
   row: FolderRow,
+  /** «sul computer» in coda al sottotitolo, se una regola la copre. */
+  onComputer: String?,
   modifier: Modifier = Modifier,
   onClick: () -> Unit,
   contextActions: () -> List<FluidContextAction>,
@@ -214,7 +220,7 @@ private fun FolderTile(
         overflow = TextOverflow.Ellipsis,
       )
       Text(
-        text = tileSubtitle(row),
+        text = tileSubtitle(row).let { if (onComputer != null) "$it · $onComputer" else it },
         style = MaterialTheme.typography.labelMedium,
         color = colors.content.copy(alpha = 0.78f),
         maxLines = 1,

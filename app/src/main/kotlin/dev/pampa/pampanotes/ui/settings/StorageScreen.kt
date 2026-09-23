@@ -35,6 +35,10 @@ import dev.pampa.pampanotes.core.files.ArchiveOutlook
 import dev.pampa.pampanotes.core.files.FileLocations
 import dev.pampa.pampanotes.core.files.FilePlace
 import dev.pampa.pampanotes.core.files.PlaceSummary
+import dev.pampa.pampanotes.ui.common.ComputerOnlyRule
+import dev.pampa.pampanotes.ui.common.ComputerOnlySummary
+import dev.pampa.pampanotes.ui.common.ComputerOnlyTarget
+import dev.pampa.pampanotes.ui.common.ComputerOnlyViewModel
 import dev.pampa.pampanotes.ui.common.Formats
 import dev.pampa.pampanotes.ui.nav.SettingsSection
 import java.text.DateFormat
@@ -66,6 +70,11 @@ fun StorageSectionRoute(
   val usage = state.usage
   // Cosa si sta per togliere dal dispositivo: "sources" o "audio". Null: nessuna domanda aperta.
   var confirmEvict by remember { mutableStateOf<String?>(null) }
+  // «Solo sul computer»: l'elenco aperto, e la regola che si sta per togliere.
+  val computerOnly: ComputerOnlyViewModel = hiltViewModel()
+  val computerOnlySummary by computerOnly.summary.collectAsStateWithLifecycle()
+  var computerOnlyOpen by remember { mutableStateOf(false) }
+  var keepingHere by remember { mutableStateOf<ComputerOnlyRule?>(null) }
 
   FluidScreen(
     title = SettingsSection.STORAGE.label(),
@@ -75,6 +84,14 @@ fun StorageSectionRoute(
     whereSection(state)
     toComputerSection(state, viewModel, onOpenServices)
     toHereSection(state, viewModel)
+    if (state.hasEndpoint || computerOnlySummary.rules.isNotEmpty()) {
+      computerOnlySection(
+        summary = computerOnlySummary,
+        open = computerOnlyOpen,
+        onToggle = { computerOnlyOpen = !computerOnlyOpen },
+        onKeep = { keepingHere = it },
+      )
+    }
     spaceSection(state, viewModel, onAskEvict = { confirmEvict = it })
 
     state.event?.let { event ->
@@ -102,6 +119,27 @@ fun StorageSectionRoute(
     }
 
     item { FluidSectionFootnote(text = stringResource(R.string.storage_footnote)) }
+  }
+
+  keepingHere?.let { rule ->
+    FluidAlert(
+      onDismissRequest = { keepingHere = null },
+      title = stringResource(R.string.computer_only_keep_title, rule.name),
+      message = stringResource(R.string.computer_only_keep_message),
+      actions = listOf(
+        FluidAlertAction(
+          label = stringResource(R.string.computer_only_off),
+          emphasis = FluidAlertAction.Emphasis.Preferred,
+          onClick = {
+            keepingHere = null
+            computerOnly.keepHere(
+              if (rule.isFolder) ComputerOnlyTarget.Folder(rule.id, rule.name) else ComputerOnlyTarget.Notes(setOf(rule.id), rule.name),
+            )
+          },
+        ),
+        FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = { keepingHere = null }),
+      ),
+    )
   }
 
   confirmEvict?.let { kind ->
@@ -468,6 +506,55 @@ private fun LazyListScope.toHereSection(state: StorageUiState, viewModel: Storag
         message = if (detail != null) "$summary\n$detail" else summary,
         tone = if (last.failed > 0) FluidTone.Warning else FluidTone.Success,
       )
+    }
+  }
+}
+
+// --- Solo sul computer ---
+
+/**
+ * Le cartelle e le note che su questo dispositivo stanno solo sul computer: quante, quanto pesano,
+ * e — aperto — una riga per regola, che si tocca per tenerla anche qui. Le regole si accendono dalle
+ * cartelle e dalle note; qui si guardano e si tolgono.
+ */
+private fun LazyListScope.computerOnlySection(
+  summary: ComputerOnlySummary,
+  open: Boolean,
+  onToggle: () -> Unit,
+  onKeep: (ComputerOnlyRule) -> Unit,
+) {
+  item {
+    FluidSectionHeader(
+      title = stringResource(R.string.computer_only_header),
+      detail = stringResource(R.string.computer_only_header_detail),
+    )
+  }
+  item {
+    val empty = summary.rules.isEmpty()
+    FluidListGroup {
+      FluidListRow(
+        title = if (empty) {
+          stringResource(R.string.computer_only_row_none)
+        } else {
+          buildList {
+            if (summary.folderCount > 0) add(pluralStringResource(R.plurals.computer_only_folders, summary.folderCount, summary.folderCount))
+            if (summary.noteCount > 0) add(pluralStringResource(R.plurals.computer_only_notes, summary.noteCount, summary.noteCount))
+          }.joinToString(", ")
+        },
+        subtitle = stringResource(if (empty) R.string.computer_only_row_empty else R.string.computer_only_row_open),
+        meta = if (empty) null else Formats.bytes(summary.bytes),
+        onClick = if (empty) null else onToggle,
+      )
+      if (open) {
+        summary.rules.forEach { rule ->
+          FluidListDivider()
+          FluidListRow(
+            title = rule.name,
+            subtitle = stringResource(if (rule.isFolder) R.string.computer_only_rule_folder else R.string.computer_only_rule_note),
+            onClick = { onKeep(rule) },
+          )
+        }
+      }
     }
   }
 }
