@@ -48,9 +48,15 @@ data class SyncReport(
  *
  * Il primo giro di un dispositivo e' speciale, e lo e' anche quello dopo un ripristino di backup:
  * il database ha un `deviceId` che non e' quello di questo telefono (vive nelle preferenze, che
- * un backup non porta), quindi e' un database venuto da altrove. Si riparte da zero: identita'
- * nuova, impronte azzerate, e **tutto quello che c'e' entra nell'outbox** — i trigger registrano
- * solo il futuro, e senza questa seminatura un archivio gia' pieno non salirebbe mai.
+ * un backup non porta), quindi e' un database venuto da altrove. Se non si sa di chi e', si riparte
+ * da zero: identita' nuova, impronte azzerate, e **tutto quello che c'e' entra nell'outbox** — i
+ * trigger registrano solo il futuro, e senza questa seminatura un archivio gia' pieno non salirebbe
+ * mai. Ma se l'account e' quello di sempre (chi esce e rientra, un backup ripristinato sullo stesso
+ * account) le impronte e il punto del pull restano: cambia solo l'id. Azzerarle voleva dire tirare
+ * tutto da capo senza sapere cosa si era concordato — note cancellate qui che rinascevano, ogni nota
+ * cambiata altrove biforcata in una copia di conflitto. Con l'id nuovo le righe scritte con quello
+ * vecchio sono «di un altro», e il pull le riporta: e' cosi' che un backup vecchio ritrova le
+ * modifiche fatte dopo ([afterRestore]).
  *
  * **Un altro account no.** Chi esce e rientra con un altro account Google sullo stesso telefono
  * trova qui le note del primo: ripartire da zero come un dispositivo nuovo vorrebbe dire seminarle
@@ -96,17 +102,23 @@ class SyncRepository @Inject constructor(
     try {
       val status = api.status(url, token)
       val names = status.devices.associate { it.deviceId to it.name.orEmpty() }
+      // L'account che questo database conosceva *prima* di questo giro: `checkAccount` impara quello
+      // nuovo quando non ne conosceva nessuno, e un account appena imparato non garantisce niente.
+      val knownOwner = settingsStore.syncOwnerId()
       // Prima di tutto il resto, computer compreso: niente deve passare da un account all'altro.
       if (!checkAccount(status.ownerId, deviceId)) return@withLock failed(FOREIGN_ACCOUNT, foreignAccount = true)
-      val state = ensureIdentity(deviceId)
+      val state = ensureIdentity(deviceId, status.ownerId, sameAccount = knownOwner == status.ownerId)
       // Le statistiche scritte prima che viaggiassero: prendono il nome di qui, e l'UPDATE le mette
       // nell'outbox. Dopo la seminatura di un dispositivo nuovo, cosi' non ci si pestano i piedi.
       db.stats().claimUnnamed(deviceName)
       syncComputer(url, token, deviceId)
       var pulled = pull(url, token, deviceId, deviceName, names, status.ownerId, state.lastPullSeq, countOrphans = true)
+      // Prima del push, sempre: i tombstone dei figli di una riga rinata non devono salire.
+      reviveChildren(url, token, deviceId, deviceName, names, status.ownerId)
       var pushed = push(url, token, deviceId, deviceName)
       if (pushed.rejected > 0) {
         pulled += pull(url, token, deviceId, deviceName, names, status.ownerId, db.sync().state()?.lastPullSeq ?: 0, countOrphans = false)
+        reviveChildren(url, token, deviceId, deviceName, names, status.ownerId)
         // Rifiutate e troppo grandi si contano una volta, com'e' finita: il secondo push le rimanda.
         val again = push(url, token, deviceId, deviceName)
         pushed = Pushed(pushed.sent + again.sent, again.rejected, again.tooLarge)
@@ -140,6 +152,28 @@ class SyncRepository @Inject constructor(
     val token = settingsStore.syncToken() ?: return@withLock
     val status = api.status(url, token)
     switchAccount(status.ownerId, settingsStore.syncDeviceId())
+  }
+
+  /**
+   * Da chiamare subito dopo aver ripristinato un backup, prima del riavvio dell'app.
+   *
+   * Il database ripristinato ha il `deviceId` di questo telefono, e un `lastPullSeq` e delle
+   * impronte di quando il backup e' stato fatto. Senza fare niente, il giro dopo tirerebbe dal punto
+   * del backup **escludendo le righe di questo dispositivo** (il pull non rimanda a chi le ha
+   * scritte): tutto quello che il telefono aveva scritto dopo il backup resterebbe nell'indice e non
+   * tornerebbe mai qui. E con lo stesso id il server lascerebbe al database vecchio sovrascrivere le
+   * righe nuove come se fossero sue (un dispositivo puo' riscrivere la sua ultima versione).
+   *
+   * Qui si dimentica l'id: il primo giro ne prende uno nuovo, e siccome l'account e' lo stesso
+   * [ensureIdentity] tiene impronte e punto del pull. Le righe scritte con l'id di prima sono
+   * adesso «di un altro», arrivano col pull e passano dal merge a tre vie come ogni altra modifica.
+   * Non tocca il database (che in quel momento puo' essere chiuso o appena sostituito): solo le
+   * preferenze.
+   */
+  suspend fun afterRestore() {
+    settingsStore.forgetSyncDevice()
+    settingsStore.setSyncOrphanAttempts(emptyMap())
+    settingsStore.clearSyncReviveRoots(settingsStore.syncReviveRoots())
   }
 
   /**
@@ -185,6 +219,7 @@ class SyncRepository @Inject constructor(
       seedOutbox()
     }
     settingsStore.setSyncOrphanAttempts(emptyMap())
+    settingsStore.clearSyncReviveRoots(settingsStore.syncReviveRoots())
     settingsStore.disownComputer()
     settingsStore.setSyncOwnerId(ownerId)
   }
@@ -210,11 +245,30 @@ class SyncRepository @Inject constructor(
     return SyncReport(error = message, foreignAccount = foreignAccount)
   }
 
-  /** Lo stato di sync di *questo* dispositivo. Un database di un altro — o mai sincronizzato — riparte da zero. */
-  private suspend fun ensureIdentity(deviceId: String): SyncStateEntity {
+  /**
+   * Lo stato di sync di *questo* dispositivo.
+   *
+   * Un id diverso da quello del database vuol dire un dispositivo che si presenta in un altro modo:
+   * uscito e rientrato, ripristinato da un backup, o un database arrivato da altrove. Se l'account e'
+   * quello che questo database conosceva gia' ([sameAccount]) e nessuna sua riga viene dall'indice di
+   * un altro, quello che e' stato concordato vale ancora: impronte e `lastPullSeq` restano, cambia
+   * solo l'id, e nell'outbox entra solo quello che il server non ha mai visto (i trigger hanno gia'
+   * messo in coda quello che e' cambiato dopo). Altrimenti — un account nuovo, o non si sa — si
+   * riparte da zero.
+   */
+  private suspend fun ensureIdentity(deviceId: String, ownerId: String, sameAccount: Boolean): SyncStateEntity {
     val sync = db.sync()
     val state = sync.state()
     if (state != null && state.deviceId == deviceId) return state
+    if (state != null && sameAccount && holdsSyncedData() && sync.foreignOriginCount(ownerId) == 0) {
+      val kept = state.copy(deviceId = deviceId)
+      db.withTransaction {
+        sync.upsertState(kept)
+        seedUnsynced()
+      }
+      android.util.Log.i("SyncRepository", "id del dispositivo nuovo, stesso account: impronte e seq ${kept.lastPullSeq} tenuti")
+      return kept
+    }
     val fresh = SyncStateEntity(lastPullSeq = 0, deviceId = deviceId)
     db.withTransaction {
       sync.upsertState(fresh)
@@ -223,6 +277,7 @@ class SyncRepository @Inject constructor(
       seedOutbox()
     }
     settingsStore.setSyncOrphanAttempts(emptyMap())
+    settingsStore.clearSyncReviveRoots(settingsStore.syncReviveRoots())
     return fresh
   }
 
@@ -230,6 +285,12 @@ class SyncRepository @Inject constructor(
     val sync = db.sync()
     sync.seedFolders(); sync.seedNotes(); sync.seedSources(); sync.seedSessions()
     sync.seedAudioParts(); sync.seedTranscripts(); sync.seedExportPresets(); sync.seedTranscriptionRuns()
+  }
+
+  private suspend fun seedUnsynced() {
+    val sync = db.sync()
+    sync.seedUnsyncedFolders(); sync.seedUnsyncedNotes(); sync.seedUnsyncedSources(); sync.seedUnsyncedSessions()
+    sync.seedUnsyncedAudioParts(); sync.seedUnsyncedTranscripts(); sync.seedUnsyncedExportPresets(); sync.seedUnsyncedTranscriptionRuns()
   }
 
   private data class Pushed(val sent: Int = 0, val rejected: Int = 0, val tooLarge: Int = 0) {
@@ -321,6 +382,7 @@ class SyncRepository @Inject constructor(
       val page = api.pull(url, token, deviceId, since)
       if (page.rebaseline) return rebaseline(url, token, deviceId, deviceName, names, ownerId, countOrphans)
       val outcome = applier.apply(parked + page.changes, ownerId, deviceName, names)
+      settingsStore.addSyncReviveRoots(outcome.revived)
       applied += outcome.applied; deleted += outcome.deleted; forked += outcome.forked
       parked = outcome.orphans
       since = page.seq
@@ -382,6 +444,7 @@ class SyncRepository @Inject constructor(
       val (own, others) = page.changes.partition { it.deviceId == deviceId }
       if (own.isNotEmpty()) sawOwn = true
       val outcome = applier.apply(parked + others, ownerId, deviceName, names)
+      settingsStore.addSyncReviveRoots(outcome.revived)
       applied += outcome.applied; deleted += outcome.deleted; forked += outcome.forked
       parked = outcome.orphans
       since = page.seq
@@ -392,9 +455,13 @@ class SyncRepository @Inject constructor(
     val stale = buildList {
       // Le righe che il server non conosce e che nessuno ha toccato qui: il tombstone e' stato
       // potato prima che arrivasse. Un tombstone sintetico le tratta come una cancellazione
-      // remota, quarantena dei file e figli cambiati qui compresi.
+      // remota, quarantena dei file e figli cambiati qui compresi. Solo quelle che il server ha
+      // conosciuto (una versione concordata in `sync_meta`): una riga che non gli e' mai arrivata
+      // — rifiutata perche' troppo grande, e uscita dall'outbox — non e' sparita dall'indice, non
+      // c'e' mai stata, e cancellarla voleva dire perdere una lezione che esisteva solo qui.
       for (table in STALE_TABLES) {
-        localIds(table).forEach { if (it !in seen[table].orEmpty() && table to it !in dirty) add(WireChange(table, it, WireChange.OP_DELETE, now)) }
+        val known = db.sync().metaIds(table).toHashSet()
+        localIds(table).forEach { if (it in known && it !in seen[table].orEmpty() && table to it !in dirty) add(WireChange(table, it, WireChange.OP_DELETE, now)) }
       }
     }
     // Ma solo se il server aveva davvero qualcosa, e anche quello mandato da qui: un indice vuoto,
@@ -409,7 +476,52 @@ class SyncRepository @Inject constructor(
     return Pulled(applied, deleted, forked, rebaselined = true)
   }
 
+  /**
+   * I figli delle righe cancellate qui e rinate da un pull ([ApplyOutcome.revived]).
+   *
+   * Una nota cancellata qui si porta via in cascata sessioni, registrazioni, trascrizioni e fonti,
+   * e i loro tombstone aspettano il push. Se intanto altrove la nota e' cambiata davvero, il merge
+   * la fa rinascere — ma i figli qui non ci sono piu', e i loro tombstone, saliti, li
+   * cancellerebbero ovunque: la nota resterebbe, le sue lezioni no. Qui si tira tutto l'indice
+   * (anche le righe di questo dispositivo: i figli sono quasi sempre suoi), si risale di padre in
+   * padre, e le righe che stanno sotto una rinata e qui mancano si riscrivono, scordando il loro
+   * tombstone nella stessa transazione.
+   *
+   * E' un pull intero, ma succede solo quando una cancellazione di qui incrocia una modifica fatta
+   * altrove. Delle righe si tengono in memoria solo il padre (per tutte) e il payload di quelle che
+   * qui mancano. Le radici stanno in DataStore finche' non e' andata: un giro interrotto a meta'
+   * ci riprova, e il push non parte prima.
+   */
+  private suspend fun reviveChildren(url: String, token: String, deviceId: String, deviceName: String, names: Map<String, String>, ownerId: String) {
+    val roots = settingsStore.syncReviveRoots()
+    if (roots.isEmpty()) return
+    val here = REVIVE_TABLES.associateWith { localIds(it).toHashSet() }
+    val parents = HashMap<String, String>()
+    val missing = HashMap<String, WireChange>()
+    var since = 0L
+    while (true) {
+      val page = api.pull(url, token, deviceId, since, includeOwn = true)
+      for (change in page.changes) {
+        if (change.isDelete) continue
+        val key = SyncPlan.key(change.tbl, change.id)
+        SyncPlan.parentOf(change.tbl, change.payload)?.let { parents[key] = SyncPlan.key(it.tbl, it.id) }
+        val ids = here[change.tbl] ?: continue
+        if (change.id !in ids && (missing[key]?.seq ?: -1) < change.seq) missing[key] = change
+      }
+      since = page.seq
+      if (!page.more) break
+    }
+    val wanted = missing.values.filter { SyncPlan.descendsFrom(SyncPlan.key(it.tbl, it.id), roots, parents) }
+    if (wanted.isNotEmpty()) {
+      val outcome = applier.apply(wanted, ownerId, deviceName, names, revive = wanted.map { SyncPlan.key(it.tbl, it.id) }.toSet())
+      settingsStore.addSyncReviveRoots(outcome.revived)
+      android.util.Log.i("SyncRepository", "riallineamento dei figli di ${roots.size} righe rinate: ${outcome.applied} riportate, ${outcome.orphans.size} senza padre")
+    }
+    settingsStore.clearSyncReviveRoots(roots)
+  }
+
   private suspend fun localIds(table: String): List<String> = when (table) {
+    "folders" -> db.folders().all().map { it.id }
     "notes" -> db.notes().all().map { it.id }
     "sessions" -> db.sessions().all().map { it.id }
     "audio_parts" -> db.audioParts().all().map { it.id }
@@ -422,6 +534,8 @@ class SyncRepository @Inject constructor(
     const val REASON_TOO_LARGE = "too_large"
     /** Senza `folders`, apposta: vedi [rebaseline]. */
     val STALE_TABLES = listOf("notes", "sessions", "audio_parts", "transcripts", "sources")
+    /** Le tabelle con un padre, e le cartelle che possono esserlo: quelle che [reviveChildren] riporta. */
+    val REVIVE_TABLES = listOf("folders", "notes", "sessions", "audio_parts", "transcripts", "sources")
     const val FOREIGN_ACCOUNT =
       "Questo dispositivo contiene note sincronizzate con un altro account: rientra con quello per continuare, " +
         "oppure scegli di portarle in questo account."

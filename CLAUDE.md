@@ -261,9 +261,21 @@ Il client sta in `core/sync/`. Cinque cose che reggono tutto:
 - **Il testo scritto a mano non si perde mai.** Una nota cambiata da tutte e due le parti: vince la
   piu' recente e l'altra diventa una nota «(conflitto — dispositivo, data)» nella stessa cartella,
   in tutti e due i versi. Per tutto il resto (sessioni, parti, cartelle) vale l'ultimo che ha scritto.
-- **Un dispositivo nuovo, o un backup ripristinato**, riparte da zero: `deviceId` diverso da quello
-  in `sync_state`, impronte azzerate, e l'outbox seminata con tutto quello che c'e'
-  (`SyncRepository.ensureIdentity`), perche' i trigger registrano solo il futuro.
+- **Un dispositivo nuovo** riparte da zero: `deviceId` diverso da quello in `sync_state`, impronte
+  azzerate, e l'outbox seminata con tutto quello che c'e' (`SyncRepository.ensureIdentity`), perche'
+  i trigger registrano solo il futuro. **Lo stesso account con un id nuovo** (uscito e rientrato, un
+  backup ripristinato) invece tiene impronte e `lastPullSeq`, e semina solo le righe senza impronta:
+  azzerare faceva rinascere le note cancellate qui e biforcava ogni nota cambiata altrove. Il
+  ripristino di un backup deve chiamare `SyncRepository.afterRestore()` (dimentica l'id): con l'id
+  vecchio il pull non riporterebbe mai le righe scritte da questo telefono dopo il backup, e il
+  server lascerebbe al database vecchio riscriverle.
+- **Una riga cancellata qui e cambiata altrove** resta cancellata se il remoto e' uguale alla base
+  (o diverso solo per il segno «in trascrizione su»), e rinasce se e' cambiato davvero. Se rinasce
+  una cartella, una nota o una sessione, i figli portati via dalla cascata di qui tornano prima del
+  push (`reviveChildren`: un pull intero con `includeOwn`, le radici in DataStore finche' non e'
+  andata), e i loro tombstone non salgono. Un remoto con la stessa impronta della base non e' mai un
+  conflitto: e' una riga riscaricata. Il server accetta una riga scritta sopra la *propria* ultima
+  versione anche con la base vecchia (la risposta di un push persa), mai sopra quella di un altro.
 - **L'accesso e' un token, sempre.** Con `pampa.googleClientId` in `local.properties` (e lo stesso
   valore in `GOOGLE_CLIENT_ID` del Worker) la pagina mostra «Accedi con Google»: il Credential
   Manager da' un ID token, `POST /v1/auth/google` lo verifica e apre una **sessione** per

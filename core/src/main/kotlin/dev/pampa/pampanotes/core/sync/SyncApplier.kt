@@ -38,6 +38,13 @@ data class ApplyOutcome(
   val orphans: List<WireChange> = emptyList(),
   /** Le cancellazioni remote fermate da una modifica fatta qui a un figlio: la riga risale col push. */
   val resurrected: Int = 0,
+  /**
+   * Cartelle, note e sessioni cancellate qui e rinate perche' altrove sono cambiate davvero
+   * (`tbl/id`). I loro figli qui se ne sono andati in cascata, e i tombstone dei figli aspettano
+   * nell'outbox: prima del push vanno riportati indietro ([SyncRepository], `revive`), o salirebbero
+   * e cancellerebbero registrazioni e trascrizioni ovunque mentre la nota resta.
+   */
+  val revived: List<String> = emptyList(),
 )
 
 /**
@@ -75,6 +82,12 @@ data class ApplyOutcome(
  *    questo dispositivo resta quello di qui, quello degli altri viene dal remoto anche quando il
  *    resto della riga resta locale ([TranscribingMarker.merge]). Tenuto il nostro sopra una riga
  *    remota, la sessione torna sporca e il push lo rimanda;
+ *  - una riga **cancellata qui** il cui tombstone non e' ancora salito resta cancellata se il
+ *    remoto non porta niente di nuovo (anche solo il segno di una trascrizione): la versione
+ *    remota diventa la base, e il tombstone sale senza essere rifiutato. Se invece il remoto e'
+ *    cambiato davvero vince lui e la riga rinasce; se e' un contenitore i suoi figli, portati via
+ *    dalla cascata di qui, tornano con [ApplyOutcome.revived]. Se anche il padre e' stato
+ *    cancellato qui, la cancellazione resta: non c'e' dove rimetterla;
  *  - i **file** delle parti e delle fonti cancellate altrove, anche in cascata, non si buttano:
  *    vanno in `filesDir/trash/<giorno>/`, e solo dopo che la transazione e' andata a buon fine.
  *    Questo dispositivo potrebbe averne l'unica copia, e una pagina tornata indietro non deve
@@ -99,7 +112,18 @@ class SyncApplier @Inject constructor(
    * fonte, magari in una pagina successiva. Chi chiama ripresenta gli orfani insieme alla pagina
    * dopo, dove il padre di solito c'e'.
    */
-  suspend fun apply(changes: List<WireChange>, ownerId: String, deviceName: String, deviceNames: Map<String, String> = emptyMap()): ApplyOutcome {
+  /**
+   * @param revive le righe (`tbl/id`) da riportare indietro anche se qui sono state cancellate: i
+   *   figli di una riga rinata ([ApplyOutcome.revived]). Il loro tombstone nell'outbox si scorda
+   *   dentro la stessa transazione che le riscrive.
+   */
+  suspend fun apply(
+    changes: List<WireChange>,
+    ownerId: String,
+    deviceName: String,
+    deviceNames: Map<String, String> = emptyMap(),
+    revive: Set<String> = emptySet(),
+  ): ApplyOutcome {
     if (changes.isEmpty()) return ApplyOutcome()
     val latest = SyncPlan.latestPerRow(changes)
     val upserts = SyncPlan.upserts(latest)
@@ -115,7 +139,7 @@ class SyncApplier @Inject constructor(
       // transazionale, quindi anche questo torna indietro se qualcosa va storto.
       if (big) SEARCH_TRIGGER_NAMES.forEach { db.openHelper.writableDatabase.execSQL("DROP TRIGGER IF EXISTS $it") }
       try {
-        val tally = Tally(ownerId, deviceName, deviceNames, trash)
+        val tally = Tally(ownerId, deviceName, deviceNames, trash, revive)
         var pending: List<WireChange> = upserts
         while (pending.isNotEmpty()) {
           val parked = pending.filterNot { applyOne(it, tally) }
@@ -142,35 +166,54 @@ class SyncApplier @Inject constructor(
     val deviceName: String,
     val deviceNames: Map<String, String>,
     val trash: MutableList<File>,
+    val revive: Set<String>,
   ) {
     var applied = 0
     var deleted = 0
     var skipped = 0
     var forked = 0
     var resurrected = 0
+    val revived = mutableListOf<String>()
 
-    fun outcome(orphans: List<WireChange>) = ApplyOutcome(applied, deleted, skipped, forked, orphans, resurrected)
+    fun outcome(orphans: List<WireChange>) = ApplyOutcome(applied, deleted, skipped, forked, orphans, resurrected, revived)
   }
 
   /** @return false se la riga aspetta il suo padre: niente e' stato scritto. */
   private suspend fun applyOne(change: WireChange, tally: Tally): Boolean {
     val sync = db.sync()
     val local = payloads.encode(change.tbl, change.id)
-    val entry = sync.outboxEntry(change.tbl, change.id)
+    var entry = sync.outboxEntry(change.tbl, change.id)
     val meta = sync.meta(change.tbl, change.id)
+    // Un figlio di una riga rinata: il suo tombstone e' quello della cascata di qui, e non deve
+    // salire. Via, e la riga si decide come se qui non ci fosse mai stata.
+    if (local == null && entry?.op == WireChange.OP_DELETE && !change.isDelete && SyncPlan.key(change.tbl, change.id) in tally.revive) {
+      sync.forgetOutbox(change.tbl, change.id)
+      entry = null
+    }
     val view = LocalView(
       exists = local != null,
       dirty = entry != null,
       localHash = local?.hash,
       localUpdatedAt = local?.updatedAt,
       metaHash = meta?.hash,
+      localBareHash = if (local != null) localBareHash(change.tbl, change.id) else null,
     )
     val decision = SyncMerge.decide(change.tbl, view, change)
 
     // Il remoto sta per essere scritto: il suo padre deve esserci. Si guarda prima, e se manca non
     // si tocca niente — nemmeno la copia di conflitto, che al secondo tentativo nascerebbe due volte.
     val writesRemote = !change.isDelete && (decision == Decision.APPLY || decision == Decision.APPLY_AND_FORK)
-    if (writesRemote && parentMissing(change)) return false
+    if (writesRemote && parentMissing(change)) {
+      // Cancellata qui insieme al padre, che non torna: la cancellazione resta. La versione remota
+      // diventa la base, cosi' il tombstone sale invece di tornare `stale` a ogni giro. Se il padre
+      // rinasce piu' avanti, questa torna con lui (`revive`): il suo tombstone e' ancora qui.
+      if (view.pendingDelete && parentDeletedHere(change)) {
+        rebase(change, tally.ownerId)
+        tally.skipped++
+        return true
+      }
+      return false
+    }
 
     when (decision) {
       Decision.SKIP -> {
@@ -178,6 +221,10 @@ class SyncApplier @Inject constructor(
         if (change.isDelete && local == null && entry != null) sync.forgetOutbox(change.tbl, change.id)
         if (local != null) {
           if (change.tbl == "sessions" && !change.isDelete) adoptRemoteMarker(change, tally.deviceName)
+          rebase(change, tally.ownerId)
+        } else if (!change.isDelete && view.pendingDelete) {
+          // Cancellata qui, e il remoto non ha niente di nuovo: la cancellazione resta, e sale
+          // dichiarando come base la versione che il server ha adesso.
           rebase(change, tally.ownerId)
         }
         tally.skipped++
@@ -199,8 +246,12 @@ class SyncApplier @Inject constructor(
           fork(change.id, tally.deviceName)
           tally.forked++
         }
+        // Rinata sopra una cancellazione di qui: i figli se ne sono andati con la cascata, e tornano
+        // col riallineamento che [SyncRepository] fa prima del push.
+        val reborn = !change.isDelete && view.pendingDelete && change.tbl in CONTAINERS
         val keptLocalMarker = if (change.isDelete) { delete(change, tally.trash); false } else upsert(change, tally.deviceName)
         bookkeep(change, tally.ownerId)
+        if (reborn) tally.revived += SyncPlan.key(change.tbl, change.id)
         // La sessione e' quella remota, ma il segno «in trascrizione su» e' rimasto quello di qui:
         // e' diversa da quella concordata, e deve salire.
         if (keptLocalMarker) sync.markDirty(SyncOutboxEntity(tbl = change.tbl, rowId = change.id, op = WireChange.OP_UPSERT))
@@ -213,6 +264,12 @@ class SyncApplier @Inject constructor(
   private suspend fun parentMissing(change: WireChange): Boolean {
     val parent = SyncPlan.parentOf(change.tbl, change.payload) ?: return false
     return !exists(parent)
+  }
+
+  /** Il padre di questa riga e' stato cancellato qui, e il suo tombstone non e' ancora salito. */
+  private suspend fun parentDeletedHere(change: WireChange): Boolean {
+    val parent = SyncPlan.parentOf(change.tbl, change.payload) ?: return false
+    return db.sync().outboxEntry(parent.tbl, parent.id)?.op == WireChange.OP_DELETE
   }
 
   private suspend fun exists(ref: SyncPlan.RowRef): Boolean = when (ref.tbl) {
@@ -293,12 +350,19 @@ class SyncApplier @Inject constructor(
    * e' un figlio cambiato. Una nota cancellata altrove mentre qui la si trascrive se ne va — e il
    * lavoro si annulla con lei — invece di rinascere per uno stato che nessuno ha scritto.
    */
-  private suspend fun onlyMarkerChanged(table: String, id: String, metaHash: String): Boolean {
-    if (table != "sessions") return false
-    val session = db.sessions().get(id) ?: return false
-    if (session.transcribingOn == null) return false
+  private suspend fun onlyMarkerChanged(table: String, id: String, metaHash: String): Boolean =
+    localBareHash(table, id)?.let { it == metaHash } ?: false
+
+  /**
+   * L'impronta di una sessione di qui senza il segno «in trascrizione su»; null se non e' una
+   * sessione o se il segno non c'e' (allora l'impronta e' gia' quella). Vedi [LocalView.localBareHash].
+   */
+  private suspend fun localBareHash(table: String, id: String): String? {
+    if (table != "sessions") return null
+    val session = db.sessions().get(id) ?: return null
+    if (session.transcribingOn == null && session.transcribingSince == null) return null
     val bare = session.copy(transcribingOn = null, transcribingSince = null)
-    return SyncPayloads.encode(SessionEntity.serializer(), bare, bare.updatedAt).hash == metaHash
+    return SyncPayloads.encode(SessionEntity.serializer(), bare, bare.updatedAt).hash
   }
 
   /** Quello che una cancellazione si porta via in cascata, radice compresa. */

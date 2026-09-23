@@ -60,10 +60,17 @@ class NoteRepository @Inject constructor(
    * nella stessa cartella. Il testo di qualcuno non si perde mai, e l'editor non si vede cambiare
    * le parole sotto le dita.
    *
+   * Il titolo si scrive solo se l'editor l'ha cambiato ([title] non null): chi ha aperto la nota e
+   * scrive nel corpo non deve riportare indietro un titolo rinominato altrove mentre scriveva.
+   *
+   * Lettura, confronto e scritture stanno in una transazione: un giro di sync che applica una
+   * versione nuova fra la lettura e la scrittura verrebbe sovrascritto senza passare dal confronto.
+   *
+   * @param title il titolo nuovo, o null se l'editor non l'ha toccato
    * @return la nota di conflitto, se e' nata
    */
-  suspend fun saveEdit(id: String, title: String, body: String, baseBody: String): NoteEntity? {
-    val current = notes.get(id) ?: return null
+  suspend fun saveEdit(id: String, title: String?, body: String, baseBody: String): NoteEntity? = notes.inTransaction {
+    val current = notes.get(id) ?: return@inTransaction null
     val now = System.currentTimeMillis()
     var conflict: NoteEntity? = null
     if (current.body != baseBody && current.body != body) {
@@ -77,10 +84,10 @@ class NoteRepository @Inject constructor(
       )
       notes.upsert(conflict)
     }
-    val cleanTitle = title.trim().ifEmpty { current.title }
+    val cleanTitle = title?.trim()?.ifEmpty { current.title } ?: current.title
     if (cleanTitle != current.title) notes.updateTitle(id, cleanTitle, now)
     if (body != current.body) notes.updateBody(id, body, now)
-    return conflict
+    conflict
   }
 
   /** Aggiunge testo in fondo alla nota, separato da una riga vuota: quello che fa ogni import. */

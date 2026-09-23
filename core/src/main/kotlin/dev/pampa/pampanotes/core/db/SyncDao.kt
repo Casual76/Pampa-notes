@@ -68,6 +68,34 @@ interface SyncDao {
   @Query("INSERT OR IGNORE INTO sync_outbox (tbl, rowId, op) SELECT 'transcription_runs', id, 'U' FROM transcription_runs")
   suspend fun seedTranscriptionRuns()
 
+  // --- la seminatura di un dispositivo che cambia id ma non account: solo quello che il server non
+  // ha mai concordato con questo database. Il resto ha la sua impronta, e i trigger hanno gia'
+  // messo nell'outbox quello che e' cambiato da allora. ---
+
+  @Query("INSERT OR IGNORE INTO sync_outbox (tbl, rowId, op) SELECT 'folders', id, 'U' FROM folders WHERE id NOT IN (SELECT rowId FROM sync_meta WHERE tbl = 'folders')")
+  suspend fun seedUnsyncedFolders()
+
+  @Query("INSERT OR IGNORE INTO sync_outbox (tbl, rowId, op) SELECT 'notes', id, 'U' FROM notes WHERE id NOT IN (SELECT rowId FROM sync_meta WHERE tbl = 'notes')")
+  suspend fun seedUnsyncedNotes()
+
+  @Query("INSERT OR IGNORE INTO sync_outbox (tbl, rowId, op) SELECT 'sources', id, 'U' FROM sources WHERE id NOT IN (SELECT rowId FROM sync_meta WHERE tbl = 'sources')")
+  suspend fun seedUnsyncedSources()
+
+  @Query("INSERT OR IGNORE INTO sync_outbox (tbl, rowId, op) SELECT 'sessions', id, 'U' FROM sessions WHERE id NOT IN (SELECT rowId FROM sync_meta WHERE tbl = 'sessions')")
+  suspend fun seedUnsyncedSessions()
+
+  @Query("INSERT OR IGNORE INTO sync_outbox (tbl, rowId, op) SELECT 'audio_parts', id, 'U' FROM audio_parts WHERE id NOT IN (SELECT rowId FROM sync_meta WHERE tbl = 'audio_parts')")
+  suspend fun seedUnsyncedAudioParts()
+
+  @Query("INSERT OR IGNORE INTO sync_outbox (tbl, rowId, op) SELECT 'transcripts', id, 'U' FROM transcripts WHERE id NOT IN (SELECT rowId FROM sync_meta WHERE tbl = 'transcripts')")
+  suspend fun seedUnsyncedTranscripts()
+
+  @Query("INSERT OR IGNORE INTO sync_outbox (tbl, rowId, op) SELECT 'export_presets', id, 'U' FROM export_presets WHERE id NOT IN (SELECT rowId FROM sync_meta WHERE tbl = 'export_presets')")
+  suspend fun seedUnsyncedExportPresets()
+
+  @Query("INSERT OR IGNORE INTO sync_outbox (tbl, rowId, op) SELECT 'transcription_runs', id, 'U' FROM transcription_runs WHERE id NOT IN (SELECT rowId FROM sync_meta WHERE tbl = 'transcription_runs')")
+  suspend fun seedUnsyncedTranscriptionRuns()
+
   // --- stato ---
 
   @Query("SELECT * FROM sync_state WHERE id = 1")
@@ -111,6 +139,14 @@ interface SyncDao {
 
   @Query("DELETE FROM sync_origin")
   suspend fun clearAllOrigin()
+
+  /** Righe arrivate dall'indice di un account diverso da [ownerId]: un database che non e' suo. */
+  @Query("SELECT COUNT(*) FROM sync_origin WHERE ownerId != :ownerId")
+  suspend fun foreignOriginCount(ownerId: String): Int
+
+  /** Le righe di una tabella che il server conosce: solo queste possono essere «sparite» dall'indice. */
+  @Query("SELECT rowId FROM sync_meta WHERE tbl = :tbl")
+  suspend fun metaIds(tbl: String): List<String>
 
   /** Quante righe hanno una versione concordata con un account: zero vuol dire «mai sincronizzato». */
   @Query("SELECT COUNT(*) FROM sync_meta")

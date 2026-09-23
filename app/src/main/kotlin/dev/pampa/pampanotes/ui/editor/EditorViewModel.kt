@@ -52,6 +52,13 @@ class EditorViewModel @Inject constructor(
   /** Il corpo su cui si sta scrivendo: quello caricato, poi l'ultimo salvato. */
   private var baseBody: String = ""
 
+  /**
+   * Il titolo com'era all'apertura, poi l'ultimo salvato. Se quello a schermo e' ancora questo,
+   * l'editor non l'ha toccato e non lo scrive: un titolo rinominato altrove mentre si scriveva nel
+   * corpo resta quello nuovo.
+   */
+  private var baseTitle: String = ""
+
   /** Qualcosa di battuto che non e' ancora nel database. */
   @Volatile private var dirty = false
 
@@ -62,6 +69,7 @@ class EditorViewModel @Inject constructor(
     viewModelScope.launch {
       val note = notes.get(noteId)
       baseBody = note?.body.orEmpty()
+      baseTitle = note?.title.orEmpty()
       _uiState.value = EditorUiState(
         title = note?.title.orEmpty(),
         body = note?.body.orEmpty(),
@@ -121,10 +129,16 @@ class EditorViewModel @Inject constructor(
     }
     val state = _uiState.value
     dirty = false
-    val saved = runCatching { notes.saveEdit(noteId, state.title, state.body, baseBody) }
+    val title = state.title.takeIf { it != baseTitle }
+    val saved = runCatching { notes.saveEdit(noteId, title, state.body, baseBody) }
     // Quello che e' nel database adesso e' quello che si e' appena scritto: la base del prossimo
     // confronto. Se la scrittura non e' passata si riprova al prossimo giro, con la base di prima.
-    if (saved.isSuccess) baseBody = state.body else dirty = true
+    if (saved.isSuccess) {
+      baseBody = state.body
+      baseTitle = state.title
+    } else {
+      dirty = true
+    }
     val conflict = saved.getOrNull()
     _uiState.update { it.copy(saving = false, conflictTitle = conflict?.title ?: it.conflictTitle) }
   }

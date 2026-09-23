@@ -260,6 +260,7 @@ class PampaSettingsStore(
       prefs.remove(SyncOwnerId)
       prefs.remove(SyncForeignOwner)
       prefs.remove(SyncOrphanAttempts)
+      prefs.remove(SyncReviveRoots)
     }
     prefs[SyncServerUrl] = next
   }
@@ -364,8 +365,11 @@ class PampaSettingsStore(
 
   /**
    * Chi esce dimentica anche l'id del dispositivo: chi rientra — lo stesso account o un altro — e'
-   * un dispositivo nuovo per il server, e `ensureIdentity` riparte da zero. Tenerlo vorrebbe dire
-   * presentarsi al server col nome di una sessione chiusa.
+   * un dispositivo nuovo per il server. Tenerlo vorrebbe dire presentarsi al server col nome di una
+   * sessione chiusa. Con lo stesso account `ensureIdentity` tiene le impronte e il punto del pull
+   * (cambia solo l'id); con un altro riparte da zero. Lo stesso dopo un ripristino di backup
+   * (`SyncRepository.afterRestore`): le righe scritte con l'id di prima diventano «di un altro», e
+   * il pull le riporta.
    */
   suspend fun forgetSyncDevice() = edit { it.remove(SyncDeviceId) }
 
@@ -377,6 +381,24 @@ class PampaSettingsStore(
 
   suspend fun setSyncOrphanAttempts(attempts: Map<String, Int>) = edit {
     if (attempts.isEmpty()) it.remove(SyncOrphanAttempts) else it[SyncOrphanAttempts] = kotlinx.serialization.json.Json.encodeToString(ORPHANS, attempts)
+  }
+
+  /**
+   * Le righe (`tbl/id`) cancellate qui e rinate da un pull, i cui figli sono ancora da riportare
+   * indietro prima del prossimo push (`SyncRepository.revive`). In DataStore e non in memoria: se
+   * il giro si interrompe fra il pull e il riallineamento, il giro dopo deve ricordarselo, o i
+   * tombstone dei figli salirebbero.
+   */
+  suspend fun syncReviveRoots(): Set<String> = store.data.first()[SyncReviveRoots].orEmpty()
+
+  suspend fun addSyncReviveRoots(roots: Collection<String>) = edit {
+    if (roots.isNotEmpty()) it[SyncReviveRoots] = it[SyncReviveRoots].orEmpty() + roots
+  }
+
+  /** Toglie solo quelle riallineate: una rinata nel frattempo aspetta il suo giro. */
+  suspend fun clearSyncReviveRoots(done: Set<String>) = edit {
+    val left = it[SyncReviveRoots].orEmpty() - done
+    if (left.isEmpty()) it.remove(SyncReviveRoots) else it[SyncReviveRoots] = left
   }
 
   /** Il computer che c'e' qui e' arrivato da un altro account: non sale su questo. */
@@ -581,6 +603,7 @@ class PampaSettingsStore(
     val SyncOwnerId = stringPreferencesKey("sync_owner_id")
     val SyncForeignOwner = stringPreferencesKey("sync_foreign_owner")
     val SyncOrphanAttempts = stringPreferencesKey("sync_orphan_attempts")
+    val SyncReviveRoots = stringSetPreferencesKey("sync_revive_roots")
     val ComputerForeign = booleanPreferencesKey("computer_foreign")
     val ORPHANS = kotlinx.serialization.serializer<Map<String, Int>>()
 

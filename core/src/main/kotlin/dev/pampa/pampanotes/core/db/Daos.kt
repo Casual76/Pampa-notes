@@ -179,6 +179,13 @@ interface NoteDao {
 
   @Query("SELECT COUNT(*) FROM notes")
   suspend fun count(): Int
+
+  /**
+   * [block] in una transazione sola: le letture e le scritture della nota che fa dentro vedono lo
+   * stesso database, senza un giro di sync che si infila in mezzo (vedi `NoteRepository.saveEdit`).
+   */
+  @Transaction
+  suspend fun inTransaction(block: suspend () -> NoteEntity?): NoteEntity? = block()
 }
 
 @Dao
