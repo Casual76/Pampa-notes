@@ -20,6 +20,8 @@ import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.LastListened
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.stats.TranscriptionStats
+import dev.pampa.pampanotes.core.transcription.NoteTranscribingElsewhere
+import dev.pampa.pampanotes.core.transcription.TranscribingMarker
 import dev.pampa.pampanotes.work.WorkScheduler
 import javax.inject.Inject
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -42,7 +44,12 @@ data class RecentNote(
   val row: NoteRow,
   val folder: FolderEntity?,
   val job: JobEntity? = null,
-)
+  /** Lezioni della nota che un altro dispositivo sta trascrivendo: in corso, non da fare. */
+  val elsewhere: NoteTranscribingElsewhere? = null,
+) {
+  /** Le sessioni senza trascrizione che nessuno sta trascrivendo, ne' qui ne' altrove. */
+  val toTranscribe: Int get() = row.untranscribedSessions - (elsewhere?.untranscribed ?: 0)
+}
 
 /**
  * La scheda «Riprendi ad ascoltare»: la sessione ascoltata per ultima su questo dispositivo, e il
@@ -132,6 +139,12 @@ class HomeViewModel @Inject constructor(
       .groupBy({ it.first }, { it.second })
   }
 
+  /** I lavori di qui e quelli degli altri dispositivi, per nota: tutti e due fanno «in corso». */
+  private val workByNote: Flow<Pair<Map<String, List<JobEntity>>, Map<String, NoteTranscribingElsewhere>>> = combine(
+    jobsByNote,
+    transcription.observeElsewhere().map { TranscribingMarker.byNote(it.values) },
+  ) { jobs, elsewhere -> jobs to elsewhere }
+
   /** L'ultima sessione ascoltata, con quello che la scheda mostra; null se finita o cancellata. */
   private val resume: Flow<ResumeCard?> = settingsStore.lastListened.flatMapLatest { last ->
     if (last == null || last.finished) return@flatMapLatest flowOf(null)
@@ -162,11 +175,12 @@ class HomeViewModel @Inject constructor(
     notes.observeRecent(RECENT_FETCHED),
     noteDao.observeTodo(TODO_FETCHED),
     folders.observeAll(),
-    jobsByNote,
+    workByNote,
     resume,
-  ) { recent, todo, allFolders, byNote, resume ->
+  ) { recent, todo, allFolders, work, resume ->
+    val (byNote, elsewhere) = work
     val byId = allFolders.associateBy { it.id }
-    fun wrap(row: NoteRow) = RecentNote(row, byId[row.note.folderId], byNote[row.note.id]?.firstOrNull())
+    fun wrap(row: NoteRow) = RecentNote(row, byId[row.note.folderId], byNote[row.note.id]?.firstOrNull(), elsewhere[row.note.id])
     val shownTodo = todo.take(TODO_SHOWN).map(::wrap)
     val shownIds = shownTodo.mapTo(mutableSetOf()) { it.row.note.id }
     HomeUiState(
@@ -174,7 +188,7 @@ class HomeViewModel @Inject constructor(
       recent = recent.filterNot { it.note.id in shownIds }.take(RECENT_SHOWN).map(::wrap),
       todo = shownTodo,
       todoCount = todo.size,
-      canTranscribeAll = todo.any { row -> row.untranscribedSessions > byNote[row.note.id].orEmpty().size },
+      canTranscribeAll = todo.any { row -> wrap(row).toTranscribe > byNote[row.note.id].orEmpty().size },
       resume = resume?.copy(folder = byId[resume.folderId]),
       folderCount = allFolders.size,
       loading = false,
@@ -210,7 +224,8 @@ class HomeViewModel @Inject constructor(
       noteDao.observeTodo(TODO_FETCHED).first().forEach { row ->
         sessions.byNote(row.note.id)
           .filter { it.parts.isNotEmpty() && it.session.activeTranscriptId == null }
-          .forEach { transcription.enqueue(it.session.id, provider); any = true }
+          // Quelle che un altro dispositivo sta trascrivendo le salta `enqueue`.
+          .forEach { if (transcription.enqueue(it.session.id, provider) != null) any = true }
       }
       if (any) scheduler.kick(provider.id)
     }

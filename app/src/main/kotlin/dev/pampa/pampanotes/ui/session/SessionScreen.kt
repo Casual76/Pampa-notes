@@ -221,7 +221,7 @@ private fun SessionScreen(
             }
             // Rifare da capo: una grezza venuta male da Groq si rifa' col computer di casa, o con un
             // vocabolario migliore. La conferma c'e' perche' si porta via anche le versioni ripulite.
-            if (state.raw != null && state.job == null && state.parts.isNotEmpty() && state.transcribableHere) {
+            if (state.raw != null && state.job == null && state.elsewhere == null && state.parts.isNotEmpty() && state.transcribableHere) {
               add(FluidContextAction(label = retranscribeLabel) { confirmingRetranscribe = true })
             }
             if (state.canMerge) add(FluidContextAction(label = mergeLabel) { onMerge() })
@@ -328,7 +328,20 @@ private fun SessionScreen(
 // -------------------------------------------------------------------------------------------------
 
 private fun LazyListScope.jobItem(state: SessionUiState, onCancelJob: (String) -> Unit) {
-  val job = state.job ?: return
+  val job = state.job
+  if (job == null) {
+    // Il lavoro sta su un altro dispositivo: qui non ci sono barre da mostrare, solo dove, e che
+    // il testo arrivera' da solo.
+    val remote = state.elsewhere ?: return
+    item(key = "job-elsewhere") {
+      FluidInlineMessage(
+        title = stringResource(R.string.transcribing_elsewhere, remote.device),
+        message = stringResource(R.string.transcribing_elsewhere_detail),
+        tone = FluidTone.Info,
+      )
+    }
+    return
+  }
   item(key = "job") {
     FluidCard {
       Text(
@@ -520,7 +533,7 @@ private fun LazyListScope.transcriptSection(
         ),
       )
     }
-    if (state.parts.isNotEmpty() && state.job == null && state.transcribableHere) {
+    if (state.parts.isNotEmpty() && state.job == null && state.elsewhere == null && state.transcribableHere) {
       item(key = "transcribe") {
         FluidButton(
           text = stringResource(R.string.note_transcribe),

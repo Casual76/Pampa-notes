@@ -35,6 +35,7 @@ import dev.pampa.pampanotes.core.repo.RefinementRepository
 import dev.pampa.pampanotes.core.settings.RefinementPreset
 import dev.pampa.pampanotes.core.repo.SessionRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
+import dev.pampa.pampanotes.core.transcription.RemoteTranscribing
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.player.PlayablePart
 import dev.pampa.pampanotes.player.PlaybackState
@@ -81,6 +82,8 @@ data class SessionUiState(
   val activeTranscript: TranscriptEntity? = null,
   val segments: List<SegmentEntity> = emptyList(),
   val job: JobEntity? = null,
+  /** Un altro dispositivo la sta trascrivendo adesso: qui niente «Trascrivi» (vedi `TranscribingMarker`). */
+  val elsewhere: RemoteTranscribing? = null,
   /** Le altre sessioni della stessa nota: dove una parte puo' andare. */
   val siblings: List<SessionEntity> = emptyList(),
   /**
@@ -235,6 +238,7 @@ class SessionViewModel @Inject constructor(
     _missing,
     _fetch,
     stats.observeLatest(sessionId),
+    transcription.observeElsewhere().map { it[sessionId] },
   ) { values ->
     @Suppress("UNCHECKED_CAST")
     val withParts = values[0] as SessionWithParts?
@@ -254,6 +258,7 @@ class SessionViewModel @Inject constructor(
       missing = values[7] as List<AudioPartEntity>?,
       fetch = values[8] as FetchState?,
       lastRun = values[9] as TranscriptionRunEntity?,
+      elsewhere = values[10] as RemoteTranscribing?,
       loading = false,
     )
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SessionUiState())

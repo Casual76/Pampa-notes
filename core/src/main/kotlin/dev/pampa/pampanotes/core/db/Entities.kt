@@ -98,6 +98,15 @@ data class SessionEntity(
   val activeTranscriptId: String? = null,
   val createdAt: Long,
   val updatedAt: Long,
+  /**
+   * Il dispositivo che la sta trascrivendo adesso, col nome che ha nel sync (`deviceLabel()`), e da
+   * quando. Null quando nessuno ci lavora. `jobs` resta di ogni dispositivo; questo e' il riflesso
+   * che viaggia, perche' il tablet non offra «Trascrivi» per una lezione su cui il telefono sta gia'
+   * lavorando. Lo scrive solo il dispositivo che trascrive, e senza alzare [updatedAt]: e' uno stato,
+   * non una modifica, e non deve vincere su un titolo cambiato altrove (vedi `TranscribingMarker`).
+   */
+  val transcribingOn: String? = null,
+  val transcribingSince: Long? = null,
 )
 
 /** Un file audio dentro una sessione, copiato in filesDir/audio: gli URI condivisi non durano. */

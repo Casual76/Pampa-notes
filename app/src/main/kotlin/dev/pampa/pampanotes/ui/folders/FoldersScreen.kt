@@ -42,6 +42,7 @@ import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.db.FolderRow
 import dev.pampa.pampanotes.ui.common.FolderEditorSheet
 import dev.pampa.pampanotes.ui.common.rememberComputerOnly
+import dev.pampa.pampanotes.ui.common.rememberPullToSync
 import dev.pampa.pampanotes.ui.common.folderIconOf
 import dev.pampa.pampanotes.ui.common.folderVividColors
 import dev.pampa.pampanotes.ui.common.toneFromName
@@ -70,6 +71,8 @@ fun FoldersRoute(
   var pendingDelete by remember { mutableStateOf<FolderRow?>(null) }
   var exporting by remember { mutableStateOf<FolderRow?>(null) }
   val computerOnly = rememberComputerOnly()
+  // Tirando giu' la griglia si sincronizza: vedi PullToSync.
+  val pull = rememberPullToSync()
 
   val newLabel = stringResource(R.string.home_new_folder)
   val editLabel = stringResource(R.string.action_edit)
@@ -85,6 +88,8 @@ fun FoldersRoute(
     title = stringResource(R.string.folders_title),
     subtitle = stringResource(R.string.folders_subtitle),
     ambient = FluidAmbient(tone = FluidHeroTone.Primary, motif = FluidHeroMotif.Cards),
+    isRefreshing = pull.isRefreshing,
+    onRefresh = pull.onRefresh,
     actions = {
       FluidBarAction(
         icon = Icons.Rounded.Add,

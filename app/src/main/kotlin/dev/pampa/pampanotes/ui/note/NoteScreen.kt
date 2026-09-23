@@ -48,6 +48,7 @@ import dev.antigravity.fluidengine.ui.theme.FluidPillTabs
 import dev.antigravity.fluidengine.ui.theme.FluidQuickAction
 import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
 import dev.antigravity.fluidengine.ui.theme.FluidTone
+import dev.antigravity.fluidengine.ui.theme.FluidInlineMessage
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.export.ExportScope
 import dev.pampa.pampanotes.ui.export.ExportSheet
@@ -60,6 +61,7 @@ import dev.pampa.pampanotes.ui.common.jobPhaseText
 import dev.pampa.pampanotes.ui.common.MarkdownText
 import dev.pampa.pampanotes.ui.common.OverflowMenuButton
 import dev.pampa.pampanotes.ui.common.rememberComputerOnly
+import dev.pampa.pampanotes.ui.common.rememberPullToSync
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import dev.antigravity.fluidengine.ui.fluid.FluidSectionFootnote
@@ -145,6 +147,8 @@ private fun NoteScreen(
   var exporting by remember { mutableStateOf(false) }
   var sharing by remember { mutableStateOf(false) }
   val computerOnly = rememberComputerOnly()
+  // Tirando giu' la nota si sincronizza: la trascrizione fatta sull'altro dispositivo arriva adesso.
+  val pull = rememberPullToSync()
   // La selezione delle sessioni: la barra in alto diventa quella della selezione, le schede
   // spariscono e ogni sessione e' una riga con il suo segno. Indietro la chiude.
   var selecting by remember { mutableStateOf(false) }
@@ -189,6 +193,8 @@ private fun NoteScreen(
     onBack = if (selecting) exitSelection else onBack,
     // Primary, cioe' la materia: il fondale della nota e' dello stesso colore della sua tessera.
     ambient = FluidAmbient(tone = FluidHeroTone.Primary, motif = FluidHeroMotif.Cards),
+    isRefreshing = pull.isRefreshing,
+    onRefresh = pull.onRefresh.takeUnless { selecting },
     titleFacets = if (selecting) emptyList() else buildList {
       if (state.partCount > 0) add(Formats.durationShort(state.audioDurationMs))
       if (state.sources.isNotEmpty()) add("${state.sources.size}")
@@ -224,7 +230,8 @@ private fun NoteScreen(
                 }
                 NoteTab.AUDIO -> {
                   add(FluidContextAction(label = addAudioLabel) { onImport() })
-                  val transcribable = state.sessions.filter { it.parts.isNotEmpty() && state.activeJobs[it.session.id] == null }
+                  // Ne' quelle in lavoro qui, ne' quelle che un altro dispositivo sta gia' trascrivendo.
+                  val transcribable = state.sessions.filter { it.parts.isNotEmpty() && state.activeJobs[it.session.id] == null && it.session.id !in state.elsewhere }
                   // Rifare da capo quello che c'e': tutto in un colpo, o scegliendo sessione per sessione.
                   if (transcribable.any { state.transcripts[it.session.id] != null }) {
                     add(
@@ -441,6 +448,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
 
         val job = state.activeJobs[sessionId]
         val transcript = state.transcripts[sessionId]
+        val remote = state.elsewhere[sessionId]
 
         // Un assaggio, non il testo intero. Una lezione da un'ora sono tremila parole, e stamparle
         // qui vorrebbe dire una nota in cui per arrivare alla seconda sessione si scorre un minuto.
@@ -477,6 +485,26 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
               fillWidth = true,
               modifier = Modifier.fillMaxWidth(),
             )
+          }
+
+          // Un altro dispositivo la sta trascrivendo: niente «Trascrivi», che la manderebbe al
+          // computer (o a Groq) una seconda volta. Il testo arriva col sync; se c'e' gia' una
+          // trascrizione — la si sta rifacendo — resta apribile.
+          remote != null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            FluidInlineMessage(
+              title = stringResource(R.string.transcribing_elsewhere, remote.device),
+              message = stringResource(R.string.transcribing_elsewhere_detail),
+              tone = FluidTone.Info,
+            )
+            if (transcript != null) {
+              FluidButton(
+                text = stringResource(R.string.note_open_session),
+                onClick = { onOpenSession(sessionId) },
+                style = FluidButtonStyle.Plain,
+                fillWidth = true,
+                modifier = Modifier.fillMaxWidth(),
+              )
+            }
           }
 
           // Gia' trascritta: aprirla, o rifarla da capo — col computer di casa invece di Groq, o
@@ -534,12 +562,14 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sessionSelection(
       state.sessions.forEachIndexed { index, session ->
         if (index > 0) FluidListDivider()
         val id = session.session.id
-        val busy = state.activeJobs[id] != null
+        val remote = state.elsewhere[id]
+        val busy = state.activeJobs[id] != null || remote != null
         val checked = id in selected
         FluidListRow(
           title = sessionTitle(index, session.session.title, session.session.date),
           subtitle = pluralStringResource(R.plurals.session_part_count, session.parts.size, session.parts.size) + " · " + Formats.duration(session.durationMs),
           meta = when {
+            remote != null -> stringResource(R.string.transcribing_elsewhere, remote.device)
             busy -> stringResource(R.string.jobs_section_active)
             state.transcripts[id] != null -> stringResource(R.string.note_transcribed)
             else -> stringResource(R.string.note_to_transcribe)

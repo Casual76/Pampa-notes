@@ -1295,4 +1295,7 @@
   <string name="more_version_update">%1$s · version %2$s is here</string>
   <string name="update_permission">To install the update, Android asks once to allow apps from Pampa Notes. Turn on “Allow from this source” and come back: the update resumes by itself.</string>
   <string name="update_permission_open">Settings</string>
+  <!-- livesync -->
+  <string name="transcribing_elsewhere">Transcribing on %1$s</string>
+  <string name="transcribing_elsewhere_detail">The transcript will arrive here with sync: no need to redo it from this device.</string>
 </resources>

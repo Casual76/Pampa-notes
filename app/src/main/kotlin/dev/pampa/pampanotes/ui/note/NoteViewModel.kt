@@ -22,6 +22,7 @@ import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.repo.SessionRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
+import dev.pampa.pampanotes.core.transcription.RemoteTranscribing
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.work.WorkScheduler
 import dev.pampa.pampanotes.core.repo.NoteRepository
@@ -56,6 +57,11 @@ data class NoteUiState(
   val handwriting: List<SourceEntity> = emptyList(),
   /** I lavori attivi di questa nota, per sessione: la riga mostra a che punto sono. */
   val activeJobs: Map<String, JobEntity> = emptyMap(),
+  /**
+   * Le sessioni che un altro dispositivo sta trascrivendo adesso, per id: al posto di «Trascrivi»
+   * la riga dice dove (vedi `TranscribingMarker`). Quelle di qui stanno in [activeJobs].
+   */
+  val elsewhere: Map<String, RemoteTranscribing> = emptyMap(),
   /** La trascrizione mostrata di ogni sessione. */
   val transcripts: Map<String, TranscriptEntity> = emptyMap(),
   /** Le fonti con un file conservato che pero' non e' su questo dispositivo, per id. */
@@ -121,6 +127,7 @@ class NoteViewModel @Inject constructor(
     folderFlow,
     missingSources,
     missingParts,
+    transcription.observeElsewhere(),
   ) { values ->
     @Suppress("UNCHECKED_CAST")
     NoteUiState(
@@ -135,6 +142,7 @@ class NoteViewModel @Inject constructor(
       transcripts = values[6] as Map<String, TranscriptEntity>,
       missingSources = values[8] as Set<String>,
       missingParts = values[9] as Set<String>,
+      elsewhere = values[10] as Map<String, RemoteTranscribing>,
       loading = false,
     )
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NoteUiState())
