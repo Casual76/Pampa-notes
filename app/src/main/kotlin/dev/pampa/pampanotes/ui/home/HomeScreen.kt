@@ -55,6 +55,7 @@ import dev.pampa.pampanotes.core.stats.lessonMs
 import dev.pampa.pampanotes.ui.common.Formats
 import dev.pampa.pampanotes.ui.common.folderIconOf
 import dev.pampa.pampanotes.ui.common.jobStateLabel
+import dev.pampa.pampanotes.ui.common.folderVividColors
 import dev.pampa.pampanotes.ui.common.toneFromName
 import dev.pampa.pampanotes.ui.common.rememberComputerOnly
 import dev.pampa.pampanotes.ui.export.ExportSheet
@@ -262,7 +263,15 @@ private fun NoteGroup(
         meta = if (note.pinned) "$pinned · $date" else date,
         tone = toneFromName(recent.folder?.tone),
         badge = noteBadge(recent),
-        leading = { Icon(imageVector = folderIconOf(recent.folder?.icon), contentDescription = null) },
+        // L'icona nel colore della materia, come la sua tessera: la riga e' compatta, ma Storia si
+        // riconosce ancora a colpo d'occhio.
+        leading = {
+          Icon(
+            imageVector = folderIconOf(recent.folder?.icon),
+            contentDescription = null,
+            tint = folderVividColors(toneFromName(recent.folder?.tone)).start,
+          )
+        },
         onClick = { onOpenNote(note.id) },
         contextActions = { contextActions(recent) },
       )
