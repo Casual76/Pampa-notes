@@ -27,13 +27,17 @@ data class ResolvedEndpoint(val url: String, val viaLan: Boolean)
  *
  * La sonda e' un parametro perche' la decisione — quale, quando riprovare — si prova in JVM senza
  * una rete; quella vera batte `/health`, che il companion espone senza token apposta.
+ *
+ * Il mezzo minuto si misura con un orologio **monotono**, non con l'ora del telefono: un'ora che
+ * torna indietro (la rete che la corregge, un fuso) teneva buona per sempre la strada di prima, e
+ * una che salta avanti la buttava a ogni chiamata. Anche l'orologio e' un parametro, per i test.
  */
 @Singleton
 class EndpointResolver internal constructor(
   private val probe: suspend (baseUrl: String) -> Boolean,
   private val clock: () -> Long,
 ) {
-  @Inject constructor() : this(probe = ::reachable, clock = System::currentTimeMillis)
+  @Inject constructor() : this(probe = ::reachable, clock = { System.nanoTime() / 1_000_000 })
 
   private val lock = Mutex()
   private var cached: Cached? = null

@@ -286,7 +286,17 @@ class SettingsViewModel @Inject constructor(
     settingsStore.setPreferredProvider(provider)
   }
 
-  fun setCustomOnly(only: Boolean) = viewModelScope.launch { settingsStore.setCustomOnly(only) }
+  /**
+   * «Solo il computer di casa». Accesa, vale anche per quello che c'era gia': le trascrizioni in
+   * fila o fallite per Groq passano al computer, e la sua coda si sveglia. Senza, una lezione accodata
+   * un minuto prima finiva nel cloud lo stesso.
+   */
+  fun setCustomOnly(only: Boolean) = viewModelScope.launch {
+    settingsStore.setCustomOnly(only)
+    if (only && runCatching { transcription.moveGroqTranscriptionsToComputer() }.getOrDefault(0) > 0) {
+      scheduler.kick(dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider.ID)
+    }
+  }
 
   fun setLanguage(language: String) = viewModelScope.launch { settingsStore.setLanguage(language) }
   fun setVocabulary(text: String) = viewModelScope.launch { settingsStore.setVocabulary(text) }

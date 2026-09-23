@@ -128,10 +128,20 @@ Tre cose che la coda faceva male e non fa piu':
   coroutine viene annullata, anche mentre aspetta la risposta; i timeout di lettura sono lunghi ma
   finiti (90 minuti per il companion). Una `CancellationException` non diventa mai un errore del
   lavoro: se il sistema ferma il worker, il lavoro torna in coda.
-- **Un worker partito in background** a cui Android rifiuta il servizio in primo piano risponde
-  `retry` invece di fallire. Un pezzo di silenzio vale come pezzo vuoto; fallisce solo una sessione
-  tutta muta. Un retry-after di Groq piu' lungo di un minuto e mezzo rimette il lavoro in coda con la
-  fase `until:<ms>` («riparte alle 14:32»).
+- **Un worker partito in background** a cui Android rifiuta il servizio in primo piano non fallisce
+  e non fa `retry` (l'attesa cresceva, e restavano scritte fasi non piu' vere): i lavori in fila
+  prendono la fase `app` («Pronta: apri l'app»), una notifica apre l'app, e `MainActivity.onStart`
+  sveglia tutte e due le code (`readyToWake`: non chi aspetta un `until:` nel futuro). Un pezzo di
+  silenzio vale come pezzo vuoto; fallisce solo una sessione tutta muta. Un retry-after di Groq piu'
+  lungo di un minuto e mezzo rimette il lavoro in coda con la fase `until:<ms>` («riparte alle 14:32»).
+- **Le scritture della riga sono condizionate**: partire (`start`, solo da `QUEUED`, e il numero di
+  righe dice al worker se il lavoro e' ancora suo), finire, fallire (mai sopra un `CANCEL_REQUESTED`,
+  che vince) e annullare sono `UPDATE` delle sole colonne che contano, non la copia della riga che il
+  worker aveva letto alla partenza. Il tasto «Annulla» della notifica passa da `JobCancelReceiver`
+  (`requestCancel`), non dal `PendingIntent` di WorkManager, che fermava il worker e non il lavoro.
+- **Il tetto di tempo e' di silenzio** (`withIdleTimeout`): `endpointTimeoutMinutes` senza un evento
+  di progresso, con un tetto complessivo largo (lo stesso per parte, piu' uno). Prima era un
+  `withTimeout` sull'intera sessione, che uccideva lezioni lunghe che andavano benissimo.
 
 La ricerca è FTS4 su note e trascrizioni, tenuta in passo da **trigger SQL** (in
 `PampaDatabase.SEARCH_TRIGGERS`), non da Room: un contenuto esterno si aggancia al rowid, e il rowid
@@ -308,7 +318,12 @@ quando c'e' (vuoto, la sessione ha l'impronta di prima) e da solo non fa rinasce
 cancellata altrove; **scade** — dopo tre ore non vale (rinnovato ogni ora mentre lavora), e
 all'avvio il dispositivo toglie i suoi. Il segno sale con `WorkScheduler.syncSoon` (un giro dopo
 quello in corso, non il `KEEP` di `syncNow`). Gli altri mostrano «In trascrizione su …» al posto di
-«Trascrivi» e dei badge «Da trascrivere», e `enqueue` salta la sessione.
+«Trascrivi» e dei badge «Da trascrivere», e `enqueue` salta la sessione. Il worker riguarda **prima
+di partire**, perche' un lavoro accodato qui prima che l'altro cominciasse non l'aveva visto: se il
+segno c'e' il lavoro resta in fila con la fase `elsewhere:<dispositivo>` e si riguarda fra dieci
+minuti; se la grezza della sessione e' nata dopo il lavoro e copre tutte le parti
+(`arrivedFromElsewhere`), il lavoro si chiude fatto senza chiamare nessuno — rifarlo cancellerebbe il
+risultato dell'altro e le sue raffinate.
 
 ### I file di un altro dispositivo
 
@@ -416,6 +431,15 @@ Attenzione all'ordine quando una parte cambia sessione: **prima si ricompone chi
 perde**. Cancellare la trascrizione di una sessione rimasta vuota si porta dietro i suoi segmenti
 via cascata, compresi quelli appena spostati altrove. `SessionRepositoryTest` copre tutti e tre i
 casi (sposta, separa, unisci).
+
+Vale anche per il risultato di una trascrizione, che arriva minuti o ore dopo la fotografia delle
+parti fatta alla partenza: `SessionRepository.saveTranscription` scrive i segmenti **per parte**,
+nella sessione in cui ogni parte sta adesso (`TranscriptPlacement`, puro: quella del lavoro per
+ultima), riadotta sotto la grezza nuova le parole delle altre parti della sessione, salta le parti
+cancellate, e ricompone ogni sessione toccata. Una sessione unita a un'altra mentre si trascriveva
+si porta via la riga del lavoro (cascata), ma il worker continua (`partsOutliveSession`) e il
+risultato va in quella che resta; una sessione cancellata con le sue parti non ha niente da
+salvare, e si chiude in silenzio.
 
 Il lettore (`SessionPlayer`) parla solo in tempo di sessione: dentro ci sono N file e un indice di
 playlist, ma chi tocca la frase del minuto quaranta sente il minuto quaranta della lezione, non
@@ -750,7 +774,10 @@ passaggio che toglie intercalari e rimette la punteggiatura senza cambiare il co
 `customOnly`: mai con Groq, nemmeno in automatico. `PampaSettings.transcriptionProvider` e' quello
 che ogni `enqueue` usa (import, nota, sessione, selezione), e con l'interruttore acceso e' sempre
 `CUSTOM`; il selettore del servizio sparisce dalle impostazioni. E' la garanzia che serve per tenere
-accesa «trascrivi appena importi» senza che una lezione finisca nel cloud per sbaglio.
+accesa «trascrivi appena importi» senza che una lezione finisca nel cloud per sbaglio. Vale anche
+per quello che c'era gia': accenderla sposta al computer le trascrizioni per Groq in fila o fallite
+(`moveGroqTranscriptionsToComputer`), la coda di Groq fa lo stesso prima di prendere un lavoro, e
+«Riprova» rimanda al computer (`effectiveProvider`).
 
 Quello che la rende utilizzabile e' che **la coda del computer di casa aspetta invece di fallire**.
 `TranscriptionQueueWorker`, prima di ogni lavoro di quella coda, chiede
@@ -764,7 +791,11 @@ solo, che non tocca mai la coda) e scadendo chiama `wake`, solo se la fila ha an
 quando si aspetta sta in DataStore (`endpointWaitingSince`), azzerato quando il PC risponde. Il
 worker accende anche la sonda `EndpointWatchWorker`,
 ogni quarto d'ora finche' la fila non e' vuota, come rete di sicurezza. Un errore di
-rete a meta' lavoro col computer muto rimette in fila invece di fallire (`requeueForEndpoint`). Chi
+rete a meta' lavoro col computer muto rimette in fila invece di fallire (`requeueForEndpoint`); col
+computer che risponde da un altro indirizzo (casa → Tailscale uscendo) il lavoro riparte subito da
+li' (`endpointMovedFrom`). Tutte e due al massimo due volte: alla terza (`MAX_ENDPOINT_LOSSES`,
+contate in `optionsJson`, azzerate da «Riprova») il lavoro fallisce con `computer_lost`, perche'
+una registrazione che fa cadere il companion tornava in testa alla fila per sempre. Chi
 vede il computer rispondere lo sveglia prima: l'archivio dopo un giro andato bene, «Prova» in
 Impostazioni e nel primo avvio, l'apertura dell'app (`WorkScheduler.wake`, che sostituisce un
 tentativo in attesa ma mai un worker che lavora).

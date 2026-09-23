@@ -505,6 +505,17 @@ interface JobDao {
   @Query("SELECT * FROM jobs WHERE provider = :provider AND state = 'QUEUED' ORDER BY createdAt LIMIT 1")
   suspend fun nextQueued(provider: String): JobEntity?
 
+  /**
+   * Il prossimo in fila, saltando quelli che questo giro del worker ha gia' lasciato stare (una
+   * sessione che un altro dispositivo sta trascrivendo): senza, il worker riprenderebbe sempre lo
+   * stesso, che resta in fila apposta.
+   */
+  @Query("SELECT * FROM jobs WHERE provider = :provider AND state = 'QUEUED' AND id NOT IN (:skip) ORDER BY createdAt LIMIT 1")
+  suspend fun nextQueuedExcept(provider: String, skip: List<String>): JobEntity?
+
+  @Query("SELECT * FROM jobs WHERE provider = :provider AND state = 'QUEUED' ORDER BY createdAt")
+  suspend fun queued(provider: String): List<JobEntity>
+
   @Query("SELECT COUNT(*) FROM jobs WHERE provider = :provider AND state = 'QUEUED'")
   suspend fun queuedCount(provider: String): Int
 
@@ -512,8 +523,79 @@ interface JobDao {
   @Query("UPDATE jobs SET phase = :phase, updatedAt = :now WHERE provider = :provider AND state = 'QUEUED'")
   suspend fun setQueuedPhase(provider: String, phase: String?, now: Long)
 
+  /**
+   * Toglie una fase dai lavori in fila che dicono proprio quella, e lascia le altre: «il computer ha
+   * risposto» non deve cancellare «in trascrizione su Tab S9».
+   */
+  @Query("UPDATE jobs SET phase = NULL, updatedAt = :now WHERE provider = :provider AND state = 'QUEUED' AND phase = :phase")
+  suspend fun clearQueuedPhase(provider: String, phase: String, now: Long)
+
+  /** La fase di un lavoro in fila, e solo se e' ancora in fila. */
+  @Query("UPDATE jobs SET phase = :phase, updatedAt = :now WHERE id = :id AND state = 'QUEUED'")
+  suspend fun setPhaseIfQueued(id: String, phase: String?, now: Long): Int
+
+  /**
+   * Le trascrizioni di un servizio passano a un altro: «solo il computer di casa» acceso con dei
+   * lavori per Groq gia' in fila o falliti. Solo quelli fermi: uno al lavoro e' gia' partito.
+   */
+  @Query(
+    "UPDATE jobs SET provider = :to, phase = NULL, updatedAt = :now " +
+      "WHERE provider = :from AND type = 'TRANSCRIBE' AND state IN ('QUEUED','FAILED')",
+  )
+  suspend fun moveTranscriptions(from: String, to: String, now: Long): Int
+
+  /**
+   * Il lavoro parte: da `QUEUED` a [state], con un tentativo in piu'. La condizione e' il punto: un
+   * «Annulla» arrivato un attimo prima l'ha gia' tolto dalla fila, e il numero di righe dice al
+   * worker se il lavoro e' ancora suo.
+   */
+  @Query(
+    "UPDATE jobs SET state = :state, model = :model, attempts = attempts + 1, phase = NULL, errorCode = NULL, " +
+      "errorMessage = NULL, updatedAt = :now WHERE id = :id AND state = 'QUEUED'",
+  )
+  suspend fun start(id: String, state: JobState, model: String?, now: Long): Int
+
+  /** Finito bene: solo le colonne dell'esito, senza riscrivere la riga con una copia vecchia. */
+  @Query(
+    "UPDATE jobs SET state = 'DONE', progress = 1, phase = NULL, errorCode = NULL, errorMessage = NULL, " +
+      "finishedAt = :now, updatedAt = :now WHERE id = :id",
+  )
+  suspend fun markDone(id: String, now: Long): Int
+
+  /**
+   * Fallito: solo le colonne dell'esito, e mai sopra un «Annulla» o un lavoro gia' chiuso. La copia
+   * che il worker teneva in mano riportava indietro tentativi e modello, e sovrascriveva la
+   * richiesta di annullare arrivata mentre il lavoro cadeva.
+   */
+  @Query(
+    "UPDATE jobs SET state = 'FAILED', errorCode = :code, errorMessage = :message, phase = NULL, " +
+      "finishedAt = :now, updatedAt = :now WHERE id = :id AND state NOT IN ('CANCEL_REQUESTED','CANCELLED','DONE')",
+  )
+  suspend fun fail(id: String, code: String, message: String?, now: Long): Int
+
+  /** «Annulla» su un lavoro ancora in fila: si chiude subito. Il numero di righe dice se lo era. */
+  @Query("UPDATE jobs SET state = 'CANCELLED', phase = NULL, finishedAt = :now, updatedAt = :now WHERE id = :id AND state = 'QUEUED'")
+  suspend fun cancelIfQueued(id: String, now: Long): Int
+
+  /** «Annulla» su un lavoro gia' partito: lo dice alla riga, e il worker che la guarda si ferma. */
+  @Query(
+    "UPDATE jobs SET state = 'CANCEL_REQUESTED', updatedAt = :now " +
+      "WHERE id = :id AND state IN ('PREPARING','UPLOADING','TRANSCRIBING','STITCHING')",
+  )
+  suspend fun requestCancelIfRunning(id: String, now: Long): Int
+
   @Query("SELECT * FROM jobs WHERE state = 'FAILED'")
   suspend fun failed(): List<JobEntity>
+
+  /**
+   * Di nuovo in fila: «Riprova». I tentativi restano (una ripresa dai pezzi gia' su disco va
+   * segnata tale nelle statistiche); le opzioni le decide chi chiama.
+   */
+  @Query(
+    "UPDATE jobs SET state = 'QUEUED', provider = :provider, optionsJson = :optionsJson, errorCode = NULL, " +
+      "errorMessage = NULL, phase = NULL, progress = 0, finishedAt = NULL, updatedAt = :now WHERE id = :id",
+  )
+  suspend fun retry(id: String, provider: String, optionsJson: String?, now: Long): Int
 
   /**
    * Le sessioni che hanno qui una trascrizione al lavoro adesso: partita e non ancora finita. Non
@@ -577,6 +659,13 @@ interface JobDao {
       "finishedAt = NULL, updatedAt = :updatedAt WHERE id = :id AND state != 'CANCEL_REQUESTED'",
   )
   suspend fun requeue(id: String, phase: String?, updatedAt: Long): Int
+
+  /** Come [requeue], e intanto aggiorna le opzioni del lavoro (il conto delle volte che il computer e' sparito). */
+  @Query(
+    "UPDATE jobs SET state = 'QUEUED', phase = :phase, optionsJson = :optionsJson, progress = 0, errorCode = NULL, " +
+      "errorMessage = NULL, finishedAt = NULL, updatedAt = :updatedAt WHERE id = :id AND state != 'CANCEL_REQUESTED'",
+  )
+  suspend fun requeueWithOptions(id: String, phase: String?, optionsJson: String?, updatedAt: Long): Int
 
   @Query("UPDATE jobs SET state = 'CANCELLED', phase = NULL, finishedAt = :now, updatedAt = :now WHERE id = :id")
   suspend fun markCancelled(id: String, now: Long)

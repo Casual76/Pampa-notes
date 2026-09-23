@@ -11,6 +11,8 @@ import dev.pampa.pampanotes.core.db.SessionEntity
 import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.db.TranscriptKind
 import dev.pampa.pampanotes.core.files.AppFiles
+import dev.pampa.pampanotes.core.transcription.SessionSegment
+import dev.pampa.pampanotes.core.transcription.SessionTranscript
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -221,6 +223,115 @@ class SessionRepositoryTest {
   }
 
   // -----------------------------------------------------------------------------------------------
+  // Il risultato di una trascrizione, quando la sessione e' cambiata mentre il computer lavorava
+  // -----------------------------------------------------------------------------------------------
+
+  @Test
+  fun il_risultato_segue_il_riordino_fatto_durante_la_trascrizione() = runTest {
+    val session = seedSession("sessione", parts = listOf("prima" to 30L, "seconda" to 20L))
+    val snapshot = listOf("prima", "seconda")
+    repository.movePart("seconda", -1)
+
+    repository.saveTranscription(session, snapshot, result("prima" to "L'inizio.", "seconda" to "Il seguito."))!!
+
+    val raw = db.transcripts().rawForSession(session)!!
+    assertEquals("Il seguito.\n\nL'inizio.", raw.text)
+    val segments = db.segments().byTranscript(raw.id).sortedBy { it.sessionStartMs }
+    assertEquals("seconda", segments[0].partId)
+    assertEquals(20 * 60_000L + 1_000L, segments[1].sessionStartMs)
+  }
+
+  @Test
+  fun una_parte_separata_durante_la_trascrizione_porta_le_sue_parole_nella_sessione_nuova() = runTest {
+    val session = seedSession("sessione", parts = listOf("prima" to 30L, "seconda" to 20L))
+    val created = repository.splitAt("seconda")!!
+
+    repository.saveTranscription(session, listOf("prima", "seconda"), result("prima" to "L'inizio.", "seconda" to "Il seguito."))!!
+
+    assertEquals("L'inizio.", db.transcripts().rawForSession(session)!!.text)
+    val split = db.transcripts().rawForSession(created.id)!!
+    assertEquals("Il seguito.", split.text)
+    assertEquals(1_000L, db.segments().byTranscript(split.id).single().sessionStartMs)
+  }
+
+  @Test
+  fun una_parte_cancellata_durante_la_trascrizione_non_lascia_segmenti_orfani() = runTest {
+    val session = seedSession("sessione", parts = listOf("prima" to 30L, "seconda" to 20L))
+    repository.deletePart("prima")
+
+    repository.saveTranscription(session, listOf("prima", "seconda"), result("prima" to "L'inizio.", "seconda" to "Il seguito."))!!
+
+    val raw = db.transcripts().rawForSession(session)!!
+    assertEquals("Il seguito.", raw.text)
+    assertEquals(listOf("seconda"), db.segments().all().map { it.partId })
+  }
+
+  @Test
+  fun unita_durante_la_trascrizione_il_risultato_va_nella_sessione_che_resta() = runTest {
+    val first = seedSession("prima-sessione", parts = listOf("a" to 30L), position = 0)
+    val second = seedSession("seconda-sessione", parts = listOf("b" to 20L), position = 1)
+    transcribe(first, listOf("a" to "Il primo giorno."))
+    repository.mergeIntoPrevious(second)
+
+    val saved = repository.saveTranscription(second, listOf("b"), result("b" to "Il secondo giorno."))!!
+
+    assertEquals(first, saved.sessionId)
+    val raw = db.transcripts().rawForSession(first)!!
+    // Le parole di «a», gia' trascritte, restano: la grezza nuova le riadotta.
+    assertEquals("Il primo giorno.\n\nIl secondo giorno.", raw.text)
+    assertEquals(2, db.segments().byTranscript(raw.id).size)
+  }
+
+  @Test
+  fun sessione_cancellata_durante_la_trascrizione_niente_da_salvare() = runTest {
+    val session = seedSession("sessione", parts = listOf("unica" to 30L))
+    repository.deleteSession(session)
+
+    assertNull(repository.saveTranscription(session, listOf("unica"), result("unica" to "Parole perse.")))
+    assertTrue(db.transcripts().all().isEmpty())
+  }
+
+  @Test
+  fun ritrascrivere_sostituisce_la_grezza_e_porta_via_le_raffinate() = runTest {
+    val session = seedSession("sessione", parts = listOf("unica" to 30L))
+    val old = transcribe(session, listOf("unica" to "Prima versione."))
+    db.transcripts().upsert(
+      TranscriptEntity(
+        id = "raffinata", sessionId = session, kind = TranscriptKind.REFINED, provider = "groq", model = "m",
+        text = "Prima versione, ripulita.", parentId = old, wordCount = 3, createdAt = 0,
+      ),
+    )
+
+    val saved = repository.saveTranscription(session, listOf("unica"), result("unica" to "Seconda versione."))!!
+
+    assertNull(db.transcripts().get(old))
+    assertNull(db.transcripts().get("raffinata"))
+    assertEquals("Seconda versione.", saved.transcript!!.text)
+    assertEquals(saved.transcript!!.id, db.sessions().get(session)!!.activeTranscriptId)
+  }
+
+  // -----------------------------------------------------------------------------------------------
+
+  /** Il risultato del motore: una frase per parte, al secondo uno, nell'ordine dato. */
+  private fun result(vararg texts: Pair<String, String>) = SessionTranscript(
+    text = texts.joinToString("\n\n") { it.second },
+    segments = texts.mapIndexed { index, (partId, text) ->
+      SessionSegment(
+        partId = partId,
+        indexInPart = 0,
+        partStartMs = 1_000,
+        partEndMs = 3_000,
+        sessionStartMs = index * 1_000_000L + 1_000,
+        sessionEndMs = index * 1_000_000L + 3_000,
+        text = text,
+        noSpeechProb = null,
+        avgLogProb = null,
+      )
+    },
+    language = "it",
+    model = "large-v3",
+    provider = "custom",
+  )
 
   private suspend fun seedSession(
     id: String,

@@ -21,6 +21,8 @@ package dev.pampa.pampanotes.core.transcription
  * | [Endpoint] | `endpoint` |
  * | [Until] | `until:<epoch ms>` |
  * | [Stitching] | `stitching` |
+ * | [NeedsApp] | `app` |
+ * | [Elsewhere] | `elsewhere:<dispositivo>` (il nome e' tutto quello che segue, `:` compresi) |
  *
  * Parti e pezzi contano da uno. Un campo facoltativo vuoto (`remote:queued:2/6:0::1/1`) vale assente.
  */
@@ -97,6 +99,23 @@ sealed interface JobPhase {
     override fun encode() = "stitching"
   }
 
+  /**
+   * Pronto a partire, ma Android non lascia partire il servizio in primo piano finche' l'app non si
+   * apre (da Android 12, un worker svegliato in background). Non e' un'attesa di qualcun altro: e'
+   * un tocco di chi legge.
+   */
+  data object NeedsApp : JobPhase {
+    override fun encode() = "app"
+  }
+
+  /**
+   * Un altro dispositivo sta trascrivendo la stessa sessione ([device], il suo nome nel sync): il
+   * lavoro resta in fila invece di partire, e la trascrizione arriva col sync.
+   */
+  data class Elsewhere(val device: String) : JobPhase {
+    override fun encode() = "elsewhere:$device"
+  }
+
   companion object {
     /** Null per una fase assente o che non si capisce: chi legge ripiega sullo stato del lavoro. */
     fun parse(raw: String?): JobPhase? {
@@ -139,6 +158,9 @@ sealed interface JobPhase {
         "endpoint" -> Endpoint
         "until" -> field(1)?.toLongOrNull()?.let(::Until)
         "stitching" -> Stitching
+        "app" -> NeedsApp
+        // Il nome di un dispositivo puo' contenere di tutto, anche i due punti: e' il resto della riga.
+        "elsewhere" -> raw.substringAfter(':', "").takeIf { it.isNotBlank() }?.let(::Elsewhere)
         else -> null
       }
     }

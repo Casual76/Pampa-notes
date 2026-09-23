@@ -61,6 +61,13 @@ sealed class TranscriptionError(message: String, cause: Throwable? = null) : Exc
    */
   class OwnerOnly(message: String) : TranscriptionError(message)
 
+  /**
+   * Il computer di casa se n'e' andato a meta' lavoro troppe volte sulla stessa registrazione
+   * (`TranscriptionRepository.MAX_ENDPOINT_LOSSES`): o e' spento a ogni tentativo, o e' proprio
+   * questa registrazione a farlo cadere. Riprovare da soli non serve; «Riprova» a mano si'.
+   */
+  class ComputerLost(message: String) : TranscriptionError(message)
+
   /** Il codice con cui l'errore si salva sul lavoro, e da cui la UI ripesca la frase. */
   val code: String
     get() = when (this) {
@@ -77,6 +84,7 @@ sealed class TranscriptionError(message: String, cause: Throwable? = null) : Exc
       is Cancelled -> "cancelled"
       is BlobMissing -> "blob_missing"
       is OwnerOnly -> "owner_only"
+      is ComputerLost -> "computer_lost"
     }
 
   /**
