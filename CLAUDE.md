@@ -113,9 +113,23 @@ di benvenuto a ogni apertura.
 `JobEntity` è la coda: una riga per lavoro, il worker la porta avanti, la UI la guarda. Una coda per
 provider (`groq`, `custom`), concorrenza 1 dentro ciascuna. Un lavoro che all'avvio del processo e'
 ancora «in corso» e' un lavoro il cui processo e' morto (Android l'ha ucciso, un aggiornamento l'ha
-sostituito): `PampaNotesApp.onCreate` lo rimette in coda (`requeueInterrupted`) prima che WorkManager
-possa far partire un worker. Esisteva la query ma non la chiamava nessuno, e la fila restava ferma
-dietro un «caricamento 98%» per sempre.
+sostituito): torna in coda (`TranscriptionRepository.requeueInterruptedOnce`), una volta per processo,
+chiamata sia dall'avvio dell'app sia dal worker prima di prendere un lavoro — chi arriva secondo
+aspetta. Un «annullamento chiesto» rimasto a meta' diventa annullato. Esisteva la query ma non la
+chiamava nessuno, e la fila restava ferma dietro un «caricamento 98%» per sempre.
+
+Tre cose che la coda faceva male e non fa piu':
+- **«Annulla» annulla davvero.** Il progresso si scrive con un `UPDATE … WHERE state !=
+  'CANCEL_REQUESTED'` (prima la riga intera, ogni mezzo secondo, sovrascriveva la richiesta) e il
+  worker guarda la riga: se diventa annullata, smette.
+- **Una richiesta al PC non resta appesa.** `CancellableConnection` chiude il socket appena la
+  coroutine viene annullata, anche mentre aspetta la risposta; i timeout di lettura sono lunghi ma
+  finiti (90 minuti per il companion). Una `CancellationException` non diventa mai un errore del
+  lavoro: se il sistema ferma il worker, il lavoro torna in coda.
+- **Un worker partito in background** a cui Android rifiuta il servizio in primo piano risponde
+  `retry` invece di fallire. Un pezzo di silenzio vale come pezzo vuoto; fallisce solo una sessione
+  tutta muta. Un retry-after di Groq piu' lungo di un minuto e mezzo rimette il lavoro in coda con la
+  fase `until:<ms>` («riparte alle 14:32»).
 
 La ricerca è FTS4 su note e trascrizioni, tenuta in passo da **trigger SQL** (in
 `PampaDatabase.SEARCH_TRIGGERS`), non da Room: un contenuto esterno si aggancia al rowid, e il rowid
@@ -173,6 +187,7 @@ Quattro cose non ovvie, tutte in `core/backup/`:
 | M13 accesso Google (sessioni per dispositivo), Worker pubblicato, ospiti del computer | fatto |
 | M14 aggiornare una nota da un `.sdocx` piu' nuovo, libera spazio, «solo il computer di casa», «tieni tutto anche qui», ritrascrivi, selezione multipla | fatto |
 | M15 export per agenti (una cartella, un file per lezione, file sciolti), pagine scritte a mano come immagini, il computer di casa segue l'account, accesso Google nel primo avvio | fatto |
+| M16 caccia ai problemi: sync senza corse ne' orfani, coda che si annulla e non si appende, il PC riconosce l'account, parole allineate in italiano, link che chiedono conferma | fatto |
 
 Dopo M7, il rifacimento dell'interfaccia (engine 1.32–1.35): misura di lettura e pagine intere,
 vetro solo sugli elementi piccoli, tre pannelli sul tablet, la materia che colora l'app, il testo
@@ -215,9 +230,30 @@ Il client sta in `core/sync/`. Cinque cose che reggono tutto:
   punto — col push fermo dietro («FOREIGN KEY constraint failed» sul tablet, 23/09). Due difese: il
   Worker, quando una pagina si ferma a meta', ci mette dentro anche i padri che arriverebbero dopo
   (`parentsAfter`, provato su una copia del D1 vero: da 24 punti di partenza che fallivano a zero);
-  il client, se un padre manca lo stesso, riporta la riga indietro nel suo savepoint e la ripresenta
-  con la pagina dopo, senza che `lastPullSeq` la scavalchi (`SyncApplier.applyOrPark`). Il push manda
-  prima i padri.
+  il client, se un padre manca lo stesso, **controlla prima di scrivere** (`SyncPlan`): la riga
+  resta da parte senza toccare il database, si riprova nella stessa pagina finche' un giro non ne
+  applica nessuna, e `lastPullSeq` non la scavalca; dopo tre giri senza padre si salta
+  (`OrphanLedger`). Una prima versione catturava l'errore della chiave esterna dentro un savepoint:
+  ma ogni scrittura di Room e' una transazione annidata, e una annidata fallita fa tornare indietro
+  **in silenzio** l'intera pagina. Non si fa.
+- **Prima gli upsert, poi le cancellazioni.** Gli upsert da padre a figlio, le cancellazioni da
+  figlio a padre: una cartella cancellata e una nota spostata fuori nella stessa pagina lasciavano
+  la nota senza sessioni. Una cancellazione remota di una nota, una sessione o una cartella con
+  sotto qualcosa cambiato qui si salta, e il push la fa rinascere; i file di quello che cade in
+  cascata vanno in `trash/`.
+- **Il push e' ripetibile.** Il Worker riserva i numeri di sequenza dentro lo stesso lotto che
+  scrive le righe, e ogni riga si scrive solo se e' ancora la versione letta: due dispositivi che
+  mandano insieme non si danno lo stesso numero e non si sovrascrivono. Il `batchId` e' l'impronta
+  del contenuto del lotto, cosi' un push interrotto a meta' si rimanda identico; il server registra
+  il lotto per ultimo e riscrive una trascrizione arrivata senza i suoi segmenti. Pagine e lotti sono
+  limitati anche in byte (~4 MB); una riga oltre 1,9 MB viene rifiutata da sola (`too_large`) ed esce
+  dall'outbox. Il push manda prima i padri.
+- **Un altro account non si mescola.** Il dispositivo ricorda l'`ownerId` (`sync_owner_id`): se
+  qualcuno entra con un altro account su un telefono che ha note sincronizzate col primo, il giro si
+  ferma e lo dice; «Porta queste note in questo account» (`adoptAccount`) e' una scelta esplicita.
+  Il riallineamento completo chiede anche le righe del dispositivo stesso (`includeOwn=1`), o le
+  cancellava come sparite. L'impronta di una trascrizione comprende i suoi segmenti, e due trigger
+  su `segments` la sporcano: prima un riordino delle parti non arrivava agli altri.
 - **Il testo scritto a mano non si perde mai.** Una nota cambiata da tutte e due le parti: vince la
   piu' recente e l'altra diventa una nota «(conflitto — dispositivo, data)» nella stessa cartella,
   in tutti e due i versi. Per tutto il resto (sessioni, parti, cartelle) vale l'ultimo che ha scritto.
@@ -514,7 +550,29 @@ Due strade, stessa interfaccia (`TranscriptionProvider`):
   per richiesta sul piano gratuito, quindi un'ora di audio va decodificata a PCM 16 kHz mono,
   tagliata nei silenzi e ricucita.
 - **Endpoint compatibile OpenAI** (`{base}/v1/audio/transcriptions`): il PC di casa con WhisperX
-  dietro il server in `companion/`. Accetta file interi, niente chunking, e restituisce i segmenti.
+  dietro il server in `companion/`. Di serie il file va **intero** — piu' contesto per Whisper — e
+  in Impostazioni si puo' mettere un tetto (30, 60, 120 minuti: `customMaxMinutes`) per chi ha poca
+  VRAM; con un tetto si taglia e si ricuce come per Groq. Se la scheda si riempie, il companion
+  dimezza il lotto e alla fine trascrive quella lezione sul processore (`device_used`), invece di
+  fallire.
+
+**Il PC riconosce l'account.** Verso il companion non viaggia mai il token del sync (in casa e' http
+in chiaro, e apre tutte le note): l'app chiede al Worker un **biglietto per il PC**
+(`POST /v1/computer/ticket`, `pt_…`, firmato con una chiave derivata da `COMPUTER_KEY`, dura dodici
+ore) e lo manda come bearer (`ComputerAuth`); il companion lo fa verificare
+(`POST /v1/computer/verify` con l'`owner` del suo `config.json`) e tiene la risposta fino alla
+scadenza, cosi' un'interruzione di internet non ferma il PC. Il codice scritto a mano resta per chi
+non ha l'account. Il companion controlla le credenziali **prima** di leggere il corpo. Senza
+credenziali risponde 401, a meno di `accept_anonymous`: acceso da solo sui `config.json` che
+esistevano gia' (e non avevano un token), perche' l'app vecchia non manda niente; si spegne dal menu
+dell'icona quando tutti i dispositivi sono aggiornati. Il QR non porta piu' il token.
+
+**Le parole allineate, per davvero.** Fino al 23/09 ogni lezione tornava coi tempi per frase: prima
+di allineare WhisperX divide il testo con NLTK, e NLTK 3.10 rifiuta un file il cui percorso risolto
+non sta sotto le sue cartelle — che e' quello che succede quando il companion parte da dentro l'app
+di Claude, che sposta `%APPDATA%` in una copia virtuale. L'eccezione veniva inghiottita.
+`trust_sentence_splitter` aggiunge a NLTK la cartella vera; `/health` dice per lingua come e' andato
+l'ultimo allineamento (`"alignment": {"it": "ok"}`).
 
 Il raffinamento passa da `ChatProvider.complete` di `engine-ai` su Groq. Non è un assistente: è un
 passaggio che toglie intercalari e rimette la punteggiatura senza cambiare il contenuto.
