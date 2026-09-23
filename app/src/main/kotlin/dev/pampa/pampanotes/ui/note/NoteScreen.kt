@@ -5,6 +5,7 @@ import android.widget.Toast
 import java.io.File
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -56,6 +57,7 @@ import dev.pampa.pampanotes.core.db.SourceKind
 import dev.pampa.pampanotes.core.db.SourceStatus
 import dev.pampa.pampanotes.ui.common.Formats
 import dev.pampa.pampanotes.ui.common.MarkdownText
+import dev.pampa.pampanotes.ui.common.OverflowMenuButton
 import androidx.compose.ui.platform.LocalContext
 import dev.antigravity.fluidengine.ui.fluid.FluidSectionFootnote
 import dev.pampa.pampanotes.ui.common.ReportSubject
@@ -164,6 +166,9 @@ private fun NoteScreen(
   val selectLabel = stringResource(R.string.action_select)
   val retranscribeLabel = stringResource(R.string.session_retranscribe)
   val rederiveLabel = stringResource(R.string.note_handwriting_rederive)
+  val addAudioLabel = stringResource(R.string.note_add_audio)
+  val retranscribeAllLabel = stringResource(R.string.note_retranscribe_all)
+  val chooseSessionsLabel = stringResource(R.string.note_choose_sessions)
 
   val tabLabels = listOf(tabText, tabAudio, tabSources)
   val selectedLabel = when (tab) {
@@ -197,19 +202,38 @@ private fun NoteScreen(
           onClick = { confirmingDeleteSessions = true },
         )
       } else {
-        FluidBarAction(
-          icon = Icons.Rounded.Edit,
-          contentDescription = editLabel,
-          onClick = onEdit,
+        // La matita solo dove c'e' qualcosa da scrivere: nella scheda Audio e in Fonti modificare gli
+        // appunti non c'entra, e il tasto piu' in vista deve essere quello che serve li'.
+        if (tab == NoteTab.TEXT) {
+          FluidBarAction(icon = Icons.Rounded.Edit, contentDescription = editLabel, onClick = onEdit)
+        }
+        OverflowMenuButton(
           actions = {
             buildList {
-              add(FluidContextAction(label = editLabel) { onEdit() })
-              add(FluidContextAction(label = importLabel) { onImport() })
-              if (tab == NoteTab.AUDIO && state.sessions.isNotEmpty()) add(FluidContextAction(label = selectLabel) { selecting = true })
+              when (tab) {
+                NoteTab.TEXT -> {
+                  add(FluidContextAction(label = editLabel) { onEdit() })
+                  add(FluidContextAction(label = importLabel) { onImport() })
+                  if (state.sources.any { it.kind == SourceKind.SDOCX }) add(FluidContextAction(label = rederiveLabel) { onRederiveHandwriting() })
+                }
+                NoteTab.AUDIO -> {
+                  add(FluidContextAction(label = addAudioLabel) { onImport() })
+                  val transcribable = state.sessions.filter { it.parts.isNotEmpty() && state.activeJobs[it.session.id] == null }
+                  // Rifare da capo quello che c'e': tutto in un colpo, o scegliendo sessione per sessione.
+                  if (transcribable.any { state.transcripts[it.session.id] != null }) {
+                    add(
+                      FluidContextAction(label = retranscribeAllLabel) {
+                        selected = transcribable.map { it.session.id }.toSet()
+                        confirmingRetranscribe = true
+                      },
+                    )
+                  }
+                  if (state.sessions.isNotEmpty()) add(FluidContextAction(label = chooseSessionsLabel) { selecting = true })
+                }
+                NoteTab.SOURCES -> add(FluidContextAction(label = importLabel) { onImport() })
+              }
               add(FluidContextAction(label = exportLabel) { exporting = true })
               add(FluidContextAction(label = shareLabel) { sharing = true })
-              // Solo una nota che viene da Samsung Notes ha dell'inchiostro da rileggere.
-              if (state.sources.any { it.kind == SourceKind.SDOCX }) add(FluidContextAction(label = rederiveLabel) { onRederiveHandwriting() })
               add(FluidContextAction(label = if (state.note?.pinned == true) unpinLabel else pinLabel) { onTogglePinned() })
               add(FluidContextAction(label = deleteLabel, destructive = true) { confirmingDelete = true })
             }
@@ -239,7 +263,10 @@ private fun NoteScreen(
 
     when (tab) {
       NoteTab.TEXT -> textTab(state, onEdit, onOpenSource)
-      NoteTab.AUDIO -> audioTab(state, onImport, onTranscribe, onCancelJob, onOpenSession)
+      NoteTab.AUDIO -> audioTab(state, onImport, onTranscribe, onCancelJob, onOpenSession) { sessionId ->
+        selected = setOf(sessionId)
+        confirmingRetranscribe = true
+      }
       NoteTab.SOURCES -> sourcesTab(state, onImport, onOpenSource)
     }
   }
@@ -363,6 +390,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
   onTranscribe: (String) -> Unit,
   onCancelJob: (String) -> Unit,
   onOpenSession: (String) -> Unit,
+  onRetranscribe: (String) -> Unit,
 ) {
   if (state.sessions.isEmpty()) {
     item {
@@ -396,7 +424,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
             if (partIndex > 0) FluidListDivider()
             FluidListRow(
               title = part.originalName,
-              subtitle = Formats.duration(part.durationMs),
+              subtitle = Formats.duration(part.durationMs) + " · " + partLocation(part.archivedAt > 0, part.id in state.missingParts),
               eyebrow = stringResource(R.string.note_part_number, partIndex + 1),
               meta = Formats.bytes(part.sizeBytes),
               onClick = { onOpenSession(sessionId) },
@@ -436,13 +464,25 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
             )
           }
 
-          transcript != null -> FluidButton(
-            text = stringResource(R.string.note_open_session),
-            onClick = { onOpenSession(sessionId) },
-            style = FluidButtonStyle.Plain,
-            fillWidth = true,
-            modifier = Modifier.fillMaxWidth(),
-          )
+          // Gia' trascritta: aprirla, o rifarla da capo — col computer di casa invece di Groq, o
+          // dopo che l'allineamento delle parole e' stato sistemato. La conferma c'e' perche' la
+          // nuova grezza si porta via anche le versioni ripulite.
+          transcript != null -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FluidButton(
+              text = stringResource(R.string.note_open_session),
+              onClick = { onOpenSession(sessionId) },
+              style = FluidButtonStyle.Plain,
+              fillWidth = true,
+              modifier = Modifier.weight(1f),
+            )
+            FluidButton(
+              text = stringResource(R.string.session_retranscribe),
+              onClick = { onRetranscribe(sessionId) },
+              style = FluidButtonStyle.Plain,
+              fillWidth = true,
+              modifier = Modifier.weight(1f),
+            )
+          }
 
           else -> FluidButton(
             text = stringResource(R.string.note_transcribe),
@@ -565,6 +605,20 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sourcesTab(
     )
   }
 }
+
+/**
+ * Dove sta il file di una registrazione, in due parole. Con l'indice in cloud «il file non c'e'» e'
+ * normale, e senza dirlo non si capisce perche' una lezione chiede di scaricare o non si trascrive.
+ */
+@Composable
+private fun partLocation(archived: Boolean, missing: Boolean): String = stringResource(
+  when {
+    !missing && archived -> R.string.note_part_here_and_pc
+    !missing -> R.string.note_part_here_only
+    archived -> R.string.note_part_on_pc
+    else -> R.string.note_part_elsewhere
+  },
+)
 
 private fun sourceTone(status: SourceStatus): FluidTone = when (status) {
   SourceStatus.OK -> FluidTone.Neutral

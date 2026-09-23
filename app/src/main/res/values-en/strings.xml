@@ -203,6 +203,12 @@
   <string name="note_audio_empty_title">No recordings</string>
   <string name="note_audio_empty_detail">Add audio and we transcribe it. Parts of one lecture stay together.</string>
   <string name="note_add_audio">Add audio</string>
+  <string name="note_retranscribe_all">Transcribe everything again</string>
+  <string name="note_choose_sessions">Choose what to transcribe again or delete</string>
+  <string name="note_part_here_only">only here</string>
+  <string name="note_part_here_and_pc">here and on the computer</string>
+  <string name="note_part_on_pc">on the computer, downloaded when needed</string>
+  <string name="note_part_elsewhere">on another device</string>
   <string name="note_sources_empty_title">No sources</string>
   <string name="note_sources_empty_detail">Every file this note took something from is listed here.</string>
   <string name="note_session_number">Session %1$d</string>

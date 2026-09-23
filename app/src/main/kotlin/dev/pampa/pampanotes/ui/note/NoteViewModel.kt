@@ -60,6 +60,8 @@ data class NoteUiState(
   val transcripts: Map<String, TranscriptEntity> = emptyMap(),
   /** Le fonti con un file conservato che pero' non e' su questo dispositivo, per id. */
   val missingSources: Set<String> = emptySet(),
+  /** Le parti audio il cui file non e' su questo dispositivo, per id: sul computer o altrove. */
+  val missingParts: Set<String> = emptySet(),
   val loading: Boolean = true,
 ) {
   val audioDurationMs: Long get() = sessions.sumOf { it.durationMs }
@@ -86,6 +88,7 @@ class NoteViewModel @Inject constructor(
   private val noteId: String = savedStateHandle.get<String>("noteId").orEmpty()
   private val folderPath = MutableStateFlow("")
   private val missingSources = MutableStateFlow<Set<String>>(emptySet())
+  private val missingParts = MutableStateFlow<Set<String>>(emptySet())
 
   @OptIn(ExperimentalCoroutinesApi::class)
   private val folderFlow: Flow<FolderEntity?> = notes.observe(noteId).flatMapLatest { note ->
@@ -117,6 +120,7 @@ class NoteViewModel @Inject constructor(
     transcriptTexts,
     folderFlow,
     missingSources,
+    missingParts,
   ) { values ->
     @Suppress("UNCHECKED_CAST")
     NoteUiState(
@@ -130,6 +134,7 @@ class NoteViewModel @Inject constructor(
       activeJobs = (values[5] as List<JobEntity>).associateBy { it.sessionId },
       transcripts = values[6] as Map<String, TranscriptEntity>,
       missingSources = values[8] as Set<String>,
+      missingParts = values[9] as Set<String>,
       loading = false,
     )
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NoteUiState())
@@ -140,6 +145,13 @@ class NoteViewModel @Inject constructor(
       // Quali originali ci sono davvero: con l'indice in cloud una fonte puo' avere la riga e non il file.
       sources.observeByNote(noteId).distinctUntilChanged().collect { list ->
         missingSources.value = withContext(Dispatchers.IO) { list.filter { fetcher.isMissing(it) }.map { it.id }.toSet() }
+      }
+    }
+    viewModelScope.launch {
+      // Dove sta ogni registrazione: la riga lo dice, perche' «il file non c'e'» e' uno stato normale
+      // con l'indice in cloud, e senza dirlo non si capisce perche' una lezione non parte.
+      sessionDao.observeByNote(noteId).map { list -> list.flatMap { it.parts } }.distinctUntilChanged().collect { parts ->
+        missingParts.value = withContext(Dispatchers.IO) { fetcher.missing(parts).map { it.id }.toSet() }
       }
     }
     viewModelScope.launch {

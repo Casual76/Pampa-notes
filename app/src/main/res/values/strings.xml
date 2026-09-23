@@ -216,6 +216,12 @@
   <string name="note_audio_empty_title">Nessuna registrazione</string>
   <string name="note_audio_empty_detail">Aggiungi un audio e lo trascriviamo. Le parti di una stessa lezione restano insieme.</string>
   <string name="note_add_audio">Aggiungi audio</string>
+  <string name="note_retranscribe_all">Ritrascrivi tutto</string>
+  <string name="note_choose_sessions">Scegli cosa ritrascrivere o eliminare</string>
+  <string name="note_part_here_only">solo qui</string>
+  <string name="note_part_here_and_pc">qui e sul computer</string>
+  <string name="note_part_on_pc">sul computer, si scarica quando serve</string>
+  <string name="note_part_elsewhere">su un altro dispositivo</string>
   <string name="note_sources_empty_title">Nessuna fonte</string>
   <string name="note_sources_empty_detail">Qui resta traccia di ogni file da cui questa nota ha preso qualcosa.</string>
   <string name="note_session_number">Sessione %1$d</string>
