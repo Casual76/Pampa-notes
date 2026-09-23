@@ -705,6 +705,35 @@ da fare, sposta con `FolderPickerSheet`, esporta con `ExportScope.Notes`, elimin
 diventa quella della selezione — titolo «N selezionate», indietro la chiude — invece di una barra
 in basso che non esiste nell'engine. In Lavori, «Riprova tutti i falliti».
 
+## Il companion per tutti
+
+Fino alla 0.3.0 il companion si installava a mano (`setup.ps1`, una venv, torch rimesso dopo
+WhisperX). Adesso c'e' un installer per Windows in `companion/installer/`:
+
+- `PampaCompanion.iss` (Inno Setup 6) installa per utente in `%LOCALAPPDATA%\Programs\PampaCompanion`,
+  senza amministratore; `uv` porta Python 3.11 **con tkinter** (il Python «embeddable» non ce l'ha,
+  e la finestra di installazione e' Tk) e la venv dentro quella cartella, poi lancia `install.py`.
+- `install.py` fa i passi con una barra e un log, e «Riprova» se la rete cade: controlli (Windows,
+  10 GB), la scheda (`nvidia-smi`; il driver sceglie torch cu128, cu126 o il processore), WhisperX e
+  poi torch nell'ordine di `setup.ps1`, **ffmpeg** in `bin/` (il companion non l'aveva mai
+  installato: su un PC nuovo mancava), il modello scelto con lo stesso `plan_vram` del server e
+  scaricato subito, `config.json` (mai sovrascritto), firewall (l'unico passo con UAC), avvio
+  automatico, Tailscale, e alla fine la pagina col QR. `--upgrade` tiene venv e modello e riavvia
+  il tray solo se `/health` dice fermo.
+- `build-installer.ps1` fa l'`.exe` con la versione di `companion/VERSION`; senza Inno Setup o `uv`
+  dice il comando winget e si ferma.
+- **Il collegamento all'account senza scrivere niente**: finche' il PC non ha un `owner`, il link del
+  QR porta `&bind=<codice>` (dieci minuti, una volta sola). L'app, a «Collega», manda
+  `POST /v1/pair/bind` con il suo biglietto per il PC, il codice, l'account e l'indice
+  (`CompanionBinder`); il companion accetta solo dalla rete di casa, da Tailscale o dal PC stesso,
+  chiede al Worker se il biglietto e' di quell'account (`/v1/computer/verify`) e solo allora scrive
+  `owner` e `index_url`. Un PC gia' di un altro account risponde 409.
+- **Si aggiorna da se'**: il tray guarda una volta al giorno l'ultima release `companion-v*` di
+  GitHub e offre «Aggiorna a vX», che scarica il setup e lo lancia in modalita' aggiornamento, solo a
+  companion fermo e solo per le copie installate dal setup (quella di sviluppo mai).
+- Nell'app: Impostazioni → Servizi → «Installa sul tuo computer» (e una riga nel primo avvio), con
+  il link alle release, «Condividi il link» e «Cerca il computer».
+
 ## Firma e pubblicazione
 
 `local.properties` (git-ignorato) con `pampa.storeFile`, `pampa.storePassword`, `pampa.keyAlias`,
