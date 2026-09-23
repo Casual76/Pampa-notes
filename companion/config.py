@@ -35,8 +35,15 @@ DEFAULTS: dict[str, Any] = {
     "device": "auto",
     # Vuoto = float16 sulla scheda, int8 sul processore.
     "compute_type": "",
-    # Abbassalo se la GPU va in esaurimento.
+    # Il lotto piu' grande che si usa: quante finestre di trenta secondi passano insieme. Il lotto
+    # vero lo sceglie il server sotto questo tetto, in base alla VRAM (vedi `vram_mode`).
     "batch_size": 16,
+    # Come si decide quanta VRAM usare. «auto»: si legge la scheda e si sceglie il lotto (e, se non
+    # basta, un calcolo o un modello piu' leggero) perche' la stima stia nell'85%. «manual»: lo
+    # stesso conto, ma sulla VRAM scritta in `vram_gb` — «la VRAM che ho», o quella che si vuole
+    # lasciare al companion mentre il resto della scheda serve ad altro.
+    "vram_mode": "auto",
+    "vram_gb": None,
     "port": 8765,
     # Se c'e', l'app deve mandarlo. Vuoto = chiunque raggiunga la porta puo' trascrivere.
     "token": "",
@@ -128,6 +135,11 @@ def set_value(key: str, value: Any, path: Path = CONFIG_PATH) -> None:
     ogni chiave che l'utente non aveva mai scritto, e il file che ha aperto a mano non sarebbe piu'
     quello che ricorda.
     """
+    set_values({key: value}, path)
+
+
+def set_values(values: dict[str, Any], path: Path = CONFIG_PATH) -> None:
+    """[set_value] per piu' chiavi insieme, con una scrittura sola: dall'app ne arrivano diverse."""
     stored: dict[str, Any] = {}
     if path.exists():
         try:
@@ -136,7 +148,7 @@ def set_value(key: str, value: Any, path: Path = CONFIG_PATH) -> None:
                 stored = loaded
         except (OSError, ValueError):
             stored = {}
-    stored[key] = value
+    stored.update(values)
     _dump(stored, path)
 
 
@@ -183,7 +195,9 @@ def add_arguments(parser: Any) -> None:
     parser.add_argument("--model", default=None, help="large-v3, medium, small...")
     parser.add_argument("--device", default=None, help="cuda, cpu, auto")
     parser.add_argument("--compute-type", dest="compute_type", default=None, help="float16 su GPU, int8 su CPU")
-    parser.add_argument("--batch-size", dest="batch_size", type=int, default=None, help="abbassalo se la GPU va in esaurimento")
+    parser.add_argument("--batch-size", dest="batch_size", type=int, default=None, help="il lotto massimo: quello vero lo sceglie la VRAM")
+    parser.add_argument("--vram-mode", dest="vram_mode", choices=["auto", "manual"], default=None, help="auto legge la scheda, manual usa --vram-gb")
+    parser.add_argument("--vram-gb", dest="vram_gb", type=float, default=None, help="la VRAM da usare per i conti, in GB")
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--token", default=None, help="se c'e', l'app deve mandarlo")
     parser.add_argument(

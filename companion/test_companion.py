@@ -106,8 +106,13 @@ def free_port() -> int:
 class StateMixin:
     """Ogni prova parte da uno STATE pulito e lo rimette com'era."""
 
+    SAVED = (
+        "token", "index_url", "owner", "accept_anonymous", "alignment", "device", "name", "compute_type",
+        "batch_size", "idle_seconds", "tunables", "vram", "gpu", "config_path",
+    )
+
     def setUp(self) -> None:  # noqa: D401
-        self._saved = {key: server.STATE[key] for key in ("token", "index_url", "owner", "accept_anonymous", "alignment", "device")}
+        self._saved = {key: server.STATE[key] for key in self.SAVED}
         server.GUEST_CACHE.clear()
         server.TICKET_CACHE.clear()
 
@@ -363,6 +368,181 @@ class WordsTest(unittest.TestCase):
         json.dumps(words, allow_nan=False)
 
 
+# --- quanta VRAM ------------------------------------------------------------------------------------
+
+
+GPU_12 = {"name": "NVIDIA GeForce RTX 4070 Ti", "total_gb": 12.0}
+
+
+def tunables(**overrides: object) -> dict:
+    base = {"model": "large-v3", "compute_type": "", "vram_mode": "auto", "vram_gb": None, "batch_size_max": 16, "idle_minutes": 10}
+    base.update(overrides)
+    return base
+
+
+class EstimatorTest(unittest.TestCase):
+    def test_large_v3_float16_batch_16(self) -> None:
+        # 3,1 di pesi + 16 × 0,25 + 0,4 di allineamento + 0,7 di contesto.
+        self.assertAlmostEqual(server.estimate_vram_gb("large-v3", "float16", 16), 8.2, places=2)
+        self.assertAlmostEqual(server.estimate_vram_gb("large-v3", "", 16), 8.2, places=2, msg="vuoto = float16 sulla scheda")
+        self.assertAlmostEqual(server.estimate_vram_gb("large-v3", "float16", 16, align=False), 7.8, places=2)
+
+    def test_int8_halves_the_weights_not_the_batch(self) -> None:
+        full = server.vram_breakdown("large-v3", "float16", 8)
+        light = server.vram_breakdown("large-v3", "int8_float16", 8)
+        self.assertAlmostEqual(light["weights"], 1.7, places=1)
+        self.assertEqual(light["batch"], full["batch"])
+        self.assertLess(light["total"], full["total"])
+
+    def test_batch_grows_linearly_and_smaller_models_cost_less(self) -> None:
+        one, two = (server.estimate_vram_gb("large-v3", "float16", n) for n in (1, 2))
+        self.assertAlmostEqual(two - one, server.BATCH_ITEM_GB, places=2)
+        sizes = [server.estimate_vram_gb(model, "float16", 16) for model in ("large-v3", "medium", "small", "base", "tiny")]
+        self.assertEqual(sizes, sorted(sizes, reverse=True))
+        self.assertAlmostEqual(server.vram_breakdown("medium", "int8_float16", 0)["weights"], 0.8, places=1)
+
+    def test_duration_is_not_a_parameter(self) -> None:
+        """La domanda dell'utente: la durata non cambia la VRAM, e la funzione non la chiede nemmeno."""
+        import inspect
+
+        self.assertEqual(list(inspect.signature(server.estimate_vram_gb).parameters), ["model", "compute_type", "batch_size", "align"])
+
+    def test_unknown_names_are_guessed_on_the_heavy_side(self) -> None:
+        self.assertEqual(server.model_family("Systran/faster-whisper-large-v3"), "large-v3")
+        self.assertEqual(server.model_family("faster-whisper-medium"), "medium")
+        self.assertEqual(server.model_family("C:/modelli/mio"), "large-v3")
+
+
+class VramPlanTest(unittest.TestCase):
+    def plan(self, total: float | None = None, **overrides: object) -> dict:
+        gpu = {"name": "scheda", "total_gb": total} if total else None
+        return server.decide_vram(tunables(**overrides), "cuda", gpu)
+
+    def test_12_gb_keeps_large_float16_at_the_max_batch(self) -> None:
+        plan = self.plan(12.0)
+        self.assertEqual((plan["model"], plan["compute_type"], plan["batch_size"]), ("large-v3", "float16", 16))
+        self.assertEqual((plan["mode"], plan["budget_gb"], plan["usable_gb"]), ("auto", 12.0, 10.2))
+        self.assertAlmostEqual(plan["estimate_gb"], 8.2, places=2)
+        self.assertFalse(plan["downgraded"])
+        self.assertTrue(plan["fits"])
+
+    def test_8_gb_lowers_the_batch(self) -> None:
+        plan = self.plan(8.0)
+        self.assertEqual((plan["model"], plan["compute_type"], plan["batch_size"]), ("large-v3", "float16", 10))
+        self.assertLessEqual(plan["estimate_gb"], 8.0 * server.HEADROOM)
+
+    def test_4_gb_goes_down_to_medium(self) -> None:
+        plan = self.plan(4.0)
+        self.assertEqual((plan["model"], plan["compute_type"], plan["batch_size"]), ("medium", "int8_float16", 9))
+        self.assertTrue(plan["downgraded"])
+        self.assertEqual(plan["requested"], {"model": "large-v3", "compute_type": "float16", "batch_size_max": 16})
+        self.assertLessEqual(plan["estimate_gb"], 4.0 * server.HEADROOM)
+
+    def test_manual_6_gb_uses_the_number_not_the_card(self) -> None:
+        plan = self.plan(12.0, vram_mode="manual", vram_gb=6)
+        self.assertEqual(plan["mode"], "manual")
+        self.assertEqual(plan["budget_gb"], 6.0)
+        # large float16 ci starebbe solo con lotto 3: large in int8 con lotto 9 e' meglio.
+        self.assertEqual((plan["model"], plan["compute_type"], plan["batch_size"]), ("large-v3", "int8_float16", 9))
+        self.assertLessEqual(plan["estimate_gb"], 6.0 * server.HEADROOM)
+
+    def test_never_above_the_configured_max(self) -> None:
+        self.assertEqual(self.plan(24.0, batch_size_max=8)["batch_size"], 8)
+
+    def test_nothing_fits(self) -> None:
+        plan = self.plan(1.0)
+        self.assertFalse(plan["fits"])
+        self.assertEqual((plan["model"], plan["batch_size"]), ("tiny", 1))
+
+    def test_small_model_is_never_upgraded(self) -> None:
+        plan = self.plan(4.0, model="small")
+        self.assertEqual((plan["model"], plan["compute_type"]), ("small", "float16"))
+        self.assertFalse(plan["downgraded"])
+
+    def test_cpu_and_unknown_card(self) -> None:
+        cpu = server.decide_vram(tunables(), "cpu", None)
+        self.assertEqual((cpu["device"], cpu["compute_type"], cpu["estimate_gb"], cpu["budget_gb"]), ("cpu", "int8", None, None))
+        unmeasured = self.plan(None)
+        self.assertEqual((unmeasured["model"], unmeasured["batch_size"], unmeasured["budget_gb"]), ("large-v3", 16, None))
+        self.assertAlmostEqual(unmeasured["estimate_gb"], 8.2, places=2)
+
+    def test_describe_says_what_was_asked(self) -> None:
+        line = server.describe_plan(self.plan(4.0))
+        self.assertIn("medium int8_float16", line)
+        self.assertIn("chiesto large-v3 float16", line)
+
+
+class ConfigureVramTest(StateMixin, unittest.TestCase):
+    def test_manual_config_drives_the_state(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "config.json"
+            path.write_text(json.dumps({"vram_mode": "manual", "vram_gb": 6, "accept_anonymous": False}), encoding="utf-8")
+            with mock.patch.object(config, "resolve_device", return_value="cuda"), \
+                    mock.patch.object(server, "detect_gpu", return_value=GPU_12), \
+                    mock.patch.object(archive, "open_archive"), self.assertLogs("pampa", level="INFO") as logs:
+                resolved = server.configure(config.load(path), path)
+        self.assertEqual((resolved["model"], resolved["compute_type"], resolved["batch_size"]), ("large-v3", "int8_float16", 9))
+        self.assertEqual((server.STATE["name"], server.STATE["compute_type"], server.STATE["batch_size"]), ("large-v3", "int8_float16", 9))
+        self.assertEqual(server.STATE["tunables"]["batch_size_max"], 16)
+        self.assertEqual(server.STATE["config_path"], path)
+        self.assertTrue(any("non ci stava" in line for line in logs.output), logs.output)
+
+    def test_manual_without_a_number_falls_back_to_auto(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "config.json"
+            path.write_text(json.dumps({"vram_mode": "manual", "accept_anonymous": False}), encoding="utf-8")
+            with mock.patch.object(config, "resolve_device", return_value="cuda"), \
+                    mock.patch.object(server, "detect_gpu", return_value=GPU_12), \
+                    mock.patch.object(archive, "open_archive"), self.assertLogs("pampa", level="WARNING"):
+                server.configure(config.load(path), path)
+        self.assertEqual(server.STATE["vram"]["mode"], "auto")
+        self.assertEqual(server.STATE["batch_size"], 16)
+
+
+class EnsureModelTest(StateMixin, unittest.TestCase):
+    def test_reloads_when_the_settings_changed_under_it(self) -> None:
+        """Il modello cambiato dall'app mentre si trascriveva: il lavoro dopo carica quello nuovo."""
+        import sys
+        import types
+
+        loads: list[tuple] = []
+        fake = types.SimpleNamespace(load_model=lambda name, device, compute_type: loads.append((name, device, compute_type)) or f"modello {name}")
+        old = object()
+        server.STATE.update(model=old, loaded_as=("large-v3", "cpu", "int8"), name="large-v3", device="cpu", compute_type="int8")
+        self.addCleanup(server.STATE.update, model=None, loaded_as=None)
+        with mock.patch.dict(sys.modules, {"whisperx": fake}), self.assertLogs("pampa", level="INFO"):
+            server.ensure_model()
+            self.assertIs(server.STATE["model"], old, "stesse impostazioni: resta quello che c'e'")
+            server.STATE["name"] = "medium"
+            server.ensure_model()
+        self.assertEqual(loads, [("medium", "cpu", "int8")])
+        self.assertEqual(server.STATE["model"], "modello medium")
+        self.assertEqual(server.STATE["loaded_as"], ("medium", "cpu", "int8"))
+
+
+class ValidateTunablesTest(unittest.TestCase):
+    def test_good_and_bad_values(self) -> None:
+        current = tunables()
+        merged = server.validate_tunables({"vram_mode": "manual", "vram_gb": 6}, current)
+        self.assertEqual((merged["vram_mode"], merged["vram_gb"]), ("manual", 6.0))
+        self.assertEqual(current["vram_mode"], "auto", "le impostazioni di adesso non si toccano")
+        for bad in (
+            {"model": "enorme"},
+            {"compute_type": "int4"},
+            {"vram_mode": "boh"},
+            {"vram_mode": "manual"},
+            {"vram_gb": 0.5},
+            {"vram_gb": True},
+            {"batch_size_max": 0},
+            {"batch_size_max": 8.5},
+            {"idle_minutes": -1},
+            {"token": "x"},
+            ["model"],
+        ):
+            with self.assertRaises(ValueError, msg=bad):
+                server.validate_tunables(bad, current)
+
+
 # --- chi entra ------------------------------------------------------------------------------------
 
 
@@ -547,6 +727,108 @@ class ServerTest(StateMixin, unittest.TestCase):
         self.assertTrue(json.loads(body)["stored"])
         status, _, got = self.call("GET", f"/v1/files/{sha}", bearer="pt_good")
         self.assertEqual((status, got), (200, data))
+
+    def use_config(self, stored: dict) -> Path:
+        """Un config.json temporaneo, letto e messo in uso come farebbe `main`, su una scheda da 12 GB finta."""
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        path = Path(folder.name) / "config.json"
+        path.write_text(json.dumps(stored), encoding="utf-8")
+        with mock.patch.object(config, "resolve_device", return_value="cuda"), \
+                mock.patch.object(server, "detect_gpu", return_value=GPU_12), \
+                mock.patch.object(archive, "open_archive"), self.assertLogs("pampa", level="INFO"):
+            server.configure(config.load(path), path)
+        server.STATE.update(token="", index_url=self.worker.url, owner=FakeWorker.OWNER, accept_anonymous=False)
+        return path
+
+    def post_json(self, path: str, payload: object, bearer: str = "pt_good"):
+        return self.call("POST", path, bearer=bearer, body=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
+
+    def test_health_tells_gpu_and_vram(self) -> None:
+        self.use_config({"accept_anonymous": False})
+        data = json.loads(self.call("GET", "/health")[2])
+        self.assertEqual(data["gpu"]["name"], GPU_12["name"])
+        self.assertEqual(data["gpu"]["total_gb"], 12.0)
+        self.assertIn("free_gb", data["gpu"])
+        vram = data["vram"]
+        self.assertEqual({key: vram[key] for key in ("mode", "budget_gb", "batch_size", "model", "compute_type")},
+                         {"mode": "auto", "budget_gb": 12.0, "batch_size": 16, "model": "large-v3", "compute_type": "float16"})
+        self.assertAlmostEqual(vram["estimate_gb"], 8.2, places=2)
+        self.assertNotIn("breakdown", vram)
+        server.STATE.update(device="cpu", vram=server.decide_vram(tunables(), "cpu", None))
+        data = json.loads(self.call("GET", "/health")[2])
+        self.assertIsNone(data["gpu"])
+        self.assertEqual(data["vram"]["device"], "cpu")
+
+    def test_admin_settings_are_for_the_owner_only(self) -> None:
+        self.use_config({"accept_anonymous": False})
+        self.assertEqual(self.call("GET", "/v1/admin/settings", bearer="pg_friend")[0], 401)
+        self.assertEqual(self.post_json("/v1/admin/settings", {"batch_size_max": 4}, bearer="pg_friend")[0], 401)
+        self.assertEqual(self.post_json("/v1/admin/estimate", {"batch_size_max": 4}, bearer="pg_friend")[0], 401)
+        self.assertEqual(self.call("GET", "/v1/admin/settings")[0], 401)
+        # Un ospite resta fuori anche con l'accesso libero acceso; chi non manda niente, li', e' il proprietario.
+        server.STATE["accept_anonymous"] = True
+        self.assertEqual(self.call("GET", "/v1/admin/settings", bearer="pg_friend")[0], 401)
+        self.assertEqual(self.call("GET", "/v1/admin/settings")[0], 200)
+        server.STATE.update(accept_anonymous=False, token="segreto")
+        self.assertEqual(self.call("GET", "/v1/admin/settings", bearer="segreto")[0], 200)
+        status, _, body = self.call("GET", "/v1/admin/settings", bearer="pt_good")
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data["settings"], tunables())
+        self.assertEqual(data["vram"]["batch_size"], 16)
+        self.assertIn("breakdown", data["vram"])
+        self.assertIn("large-v3", data["models"])
+
+    def test_admin_settings_are_saved_and_applied(self) -> None:
+        path = self.use_config({"accept_anonymous": False, "port": 9000, "chiave_mia": 1})
+        status, _, body = self.post_json("/v1/admin/settings", {"vram_mode": "manual", "vram_gb": 6, "idle_minutes": 5})
+        self.assertEqual(status, 200, body)
+        data = json.loads(body)
+        self.assertEqual((data["vram"]["model"], data["vram"]["compute_type"], data["vram"]["batch_size"]), ("large-v3", "int8_float16", 9))
+        self.assertFalse(data["unloaded"], "non c'era niente in memoria")
+        self.assertEqual((server.STATE["compute_type"], server.STATE["batch_size"], server.STATE["idle_seconds"]), ("int8_float16", 9, 300))
+        stored = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(stored, {"accept_anonymous": False, "port": 9000, "chiave_mia": 1, "vram_mode": "manual", "vram_gb": 6.0, "idle_minutes": 5})
+        # Il tetto del lotto si scrive nella chiave di sempre, e al riavvio vale lo stesso piano.
+        self.assertEqual(self.post_json("/v1/admin/settings", {"batch_size_max": 8})[0], 200)
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["batch_size"], 8)
+        self.assertEqual(server.STATE["batch_size"], 8)
+        self.assertEqual(config.load(path)["vram_mode"], "manual")
+
+    def test_admin_settings_refuse_bad_values_without_writing(self) -> None:
+        path = self.use_config({"accept_anonymous": False})
+        before = path.read_text(encoding="utf-8")
+        for payload in ({"model": "enorme"}, {"vram_mode": "manual"}, {"batch_size_max": 0}, {"token": "x"}):
+            status, _, body = self.post_json("/v1/admin/settings", payload)
+            self.assertEqual(status, 400, payload)
+            self.assertTrue(json.loads(body)["detail"])
+        self.assertEqual(self.call("POST", "/v1/admin/settings", bearer="pt_good", body=b"non json", headers={"Content-Type": "application/json"})[0], 400)
+        self.assertEqual(path.read_text(encoding="utf-8"), before)
+        self.assertEqual(server.STATE["batch_size"], 16)
+
+    def test_changing_the_model_unloads_the_old_one(self) -> None:
+        self.use_config({"accept_anonymous": False})
+        server.STATE.update(model=object(), loaded_as=("large-v3", "cuda", "float16"))
+        self.addCleanup(server.STATE.update, model=None, loaded_as=None)
+        with mock.patch.object(server, "unload_model", side_effect=lambda reason: server.STATE.update(model=None, loaded_as=None)) as unload:
+            status, _, body = self.post_json("/v1/admin/settings", {"model": "medium"})
+        self.assertEqual(status, 200, body)
+        self.assertTrue(json.loads(body)["unloaded"])
+        unload.assert_called_once()
+        self.assertEqual(server.STATE["name"], "medium")
+
+    def test_estimate_previews_without_saving(self) -> None:
+        path = self.use_config({"accept_anonymous": False})
+        before = path.read_text(encoding="utf-8")
+        status, _, body = self.post_json("/v1/admin/estimate", {"vram_mode": "manual", "vram_gb": 4})
+        self.assertEqual(status, 200, body)
+        data = json.loads(body)
+        self.assertEqual((data["vram"]["model"], data["vram"]["compute_type"], data["vram"]["batch_size"]), ("medium", "int8_float16", 9))
+        self.assertEqual(data["settings"]["vram_gb"], 4.0)
+        self.assertEqual(path.read_text(encoding="utf-8"), before)
+        self.assertEqual((server.STATE["name"], server.STATE["batch_size"], server.STATE["tunables"]["vram_mode"]), ("large-v3", 16, "auto"))
+        self.assertEqual(self.post_json("/v1/admin/estimate", {"vram_gb": 0})[0], 400)
 
     def test_pair_page_has_no_token_and_is_not_cached(self) -> None:
         server.STATE["token"] = "segretissimo"
