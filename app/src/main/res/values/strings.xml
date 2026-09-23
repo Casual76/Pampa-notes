@@ -83,6 +83,8 @@
   <string name="folder_name_placeholder">Storia, Filosofia, Matematica…</string>
   <string name="folder_delete_title">Eliminare «%1$s»?</string>
   <string name="folder_delete_message">Se ne vanno anche le note, gli audio e le trascrizioni che contiene. Non si torna indietro.</string>
+  <string name="folder_edit_this">Modifica cartella</string>
+  <string name="folder_delete_this">Elimina cartella</string>
   <string name="folder_tone_label">Colore</string>
 
   <!-- Ricerca -->

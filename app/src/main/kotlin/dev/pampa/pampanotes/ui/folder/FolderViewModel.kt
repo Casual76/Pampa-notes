@@ -14,12 +14,14 @@ import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.work.WorkScheduler
 import javax.inject.Inject
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class FolderUiState(
   val folder: FolderEntity? = null,
@@ -96,7 +98,9 @@ class FolderViewModel @Inject constructor(
   }
 
   fun deleteFolder(id: String) {
-    viewModelScope.launch { folders.delete(id) }
+    // Chi cancella la cartella che sta guardando torna subito indietro, e il ViewModel se ne va
+    // con la pagina: la cancellazione non deve andarsene con lui.
+    viewModelScope.launch { withContext(NonCancellable) { folders.delete(id) } }
   }
 
   fun deleteNote(id: String) {

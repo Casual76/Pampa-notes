@@ -36,6 +36,7 @@ import dev.antigravity.fluidengine.ui.theme.FluidQuickAction
 import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
+import dev.pampa.pampanotes.ui.common.OverflowMenuButton
 import dev.pampa.pampanotes.core.export.ExportScope
 import dev.pampa.pampanotes.ui.export.ExportSheet
 import dev.pampa.pampanotes.core.db.FolderRow
@@ -121,6 +122,8 @@ private fun FolderScreen(
   // Le etichette dei menu si leggono qui: le lambda che le ricevono non sono composable.
   val renameLabel = stringResource(R.string.action_rename)
   val deleteLabel = stringResource(R.string.action_delete)
+  val editFolderLabel = stringResource(R.string.folder_edit_this)
+  val deleteFolderLabel = stringResource(R.string.folder_delete_this)
   val pinLabel = stringResource(R.string.note_pin)
   val unpinLabel = stringResource(R.string.note_unpin)
   val newNoteLabel = stringResource(R.string.folder_new_note)
@@ -158,14 +161,20 @@ private fun FolderScreen(
           icon = Icons.Rounded.Add,
           contentDescription = newNoteLabel,
           onClick = { creatingNote = true },
-          // Tenuto: il tasto si apre nel proprio menu, dove c'e' anche la sottocartella.
+        )
+        // Il resto sta nei tre pallini, che si aprono al tocco: tenere premuto il «+» per trovare
+        // «Seleziona» o «Esporta» era un menu che nessuno scopriva.
+        OverflowMenuButton(
           actions = {
             buildList {
-              add(FluidContextAction(label = newNoteLabel) { creatingNote = true })
               add(FluidContextAction(label = importLabel) { onImport() })
               add(FluidContextAction(label = newSubfolderLabel) { creatingFolder = true })
               if (state.notes.isNotEmpty()) add(FluidContextAction(label = selectLabel) { selecting = true })
               add(FluidContextAction(label = exportLabel) { exporting = true })
+              state.folder?.let { folder ->
+                add(FluidContextAction(label = editFolderLabel) { renaming = FolderRow(folder, 0, 0) })
+                add(FluidContextAction(label = deleteFolderLabel, destructive = true) { pendingFolderDelete = FolderRow(folder, 0, 0) })
+              }
             }
           },
         )
@@ -385,6 +394,8 @@ private fun FolderScreen(
           onClick = {
             onDeleteFolder(row.folder.id)
             pendingFolderDelete = null
+            // La cartella che si sta guardando: dopo, qui non c'e' piu' niente da vedere.
+            if (row.folder.id == state.folder?.id) onBack()
           },
         ),
         FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = { pendingFolderDelete = null }),
