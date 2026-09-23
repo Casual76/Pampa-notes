@@ -80,9 +80,6 @@ class TranscriptionQueueWorker @AssistedInject constructor(
   /** Il lavoro l'ha annullato chi guardava la riga: l'utente, o la riga che non c'e' piu'. */
   private class JobCancelled : CancellationException("lavoro annullato")
 
-  /** Vero se in questo giro il computer di casa ha risposto almeno una volta. */
-  private var endpointAnswered = false
-
   override suspend fun getForegroundInfo(): ForegroundInfo = foregroundInfo(
     title = applicationContext.getString(dev.pampa.pampanotes.R.string.notification_transcribing),
     text = null,
@@ -105,8 +102,9 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     ) {
       return waitForEndpoint(providerId)
     }
-    // Il computer ha risposto: se si torna ad aspettarlo, e' un'attesa nuova (vedi [waitForEndpoint]).
-    endpointAnswered = true
+    // Il computer ha risposto: l'attesa e' finita, e se si torna ad aspettarlo e' un'attesa nuova,
+    // dal passo corto. Il timer che l'avrebbe svegliata non serve piu'.
+    if (providerId == OpenAiCompatProvider.ID) endWait(providerId)
 
     // Da Android 12 un servizio in primo piano non parte se l'app e' in background (un tentativo
     // rimandato che scade mentre il telefono e' in tasca): e' un «non adesso», non un guasto. Il
@@ -159,8 +157,16 @@ class TranscriptionQueueWorker @AssistedInject constructor(
   }
 
   private suspend fun finish(providerId: String): Result {
-    if (providerId == OpenAiCompatProvider.ID) repository.markWaitingForEndpoint(false)
+    if (providerId == OpenAiCompatProvider.ID) {
+      repository.markWaitingForEndpoint(false)
+      endWait(providerId)
+    }
     return Result.success()
+  }
+
+  private suspend fun endWait(providerId: String) {
+    runCatching { settingsStore.setEndpointWaitingSince(providerId, null) }
+    scheduler.cancelEndpointRetry(providerId)
   }
 
   /** In primo piano, se il sistema lo concede adesso. */
@@ -189,18 +195,21 @@ class TranscriptionQueueWorker @AssistedInject constructor(
    * Si riprova a passo fisso ([EndpointWait]: un minuto per la prima mezz'ora, poi cinque) e non
    * col `retry` di WorkManager, la cui attesa raddoppia: dopo un riavvio del PC la coda restava
    * ferma minuti con il companion che rispondeva gia'. Per questo il worker chiude con `success`
-   * dopo aver lasciato in coda il tentativo successivo ([WorkScheduler.retryForEndpoint]), che si
-   * porta dietro da quando si aspetta. Una sonda ogni quarto d'ora ([EndpointWatchWorker]) resta
-   * come rete di sicurezza; chi il computer lo vede rispondere — l'archivio, «Prova», l'apertura
-   * dell'app — sveglia la coda prima.
+   * dopo aver messo il timer ([WorkScheduler.retryForEndpoint], uno solo per provider) che sveglia
+   * la coda. Da quando si aspetta sta in DataStore ([PampaSettingsStore.endpointWaitingSince]):
+   * sopravvive al processo e al riavvio, e si azzera quando il computer risponde. E' ora del
+   * telefono e non un orologio monotono, perche' deve valere anche dopo un riavvio; se l'ora salta,
+   * al peggio si sceglie il passo corto o quello lungo un giro prima (vedi [EndpointWait]). Una
+   * sonda ogni quarto d'ora ([EndpointWatchWorker]) resta come rete di sicurezza; chi il computer
+   * lo vede rispondere — l'archivio, «Prova», l'apertura dell'app — sveglia la coda prima.
    */
   private suspend fun waitForEndpoint(providerId: String): Result {
     repository.markWaitingForEndpoint(true)
     scheduler.watchEndpoint(true)
     val now = System.currentTimeMillis()
-    val carried = if (endpointAnswered) 0L else inputData.getLong(KEY_WAITING_SINCE, 0L)
-    val since = EndpointWait.waitingSince(carried, now)
-    scheduler.retryForEndpoint(providerId, EndpointWait.nextDelayMs(now - since), since)
+    val since = EndpointWait.waitingSince(runCatching { settingsStore.endpointWaitingSince(providerId) }.getOrDefault(0L), now)
+    runCatching { settingsStore.setEndpointWaitingSince(providerId, since) }
+    scheduler.retryForEndpoint(providerId, EndpointWait.nextDelayMs(now - since))
     return Result.success()
   }
 
@@ -500,9 +509,6 @@ class TranscriptionQueueWorker @AssistedInject constructor(
 
   companion object {
     const val KEY_PROVIDER = "provider"
-
-    /** Da quando la coda aspetta il computer di casa: passa da un tentativo al successivo. */
-    const val KEY_WAITING_SINCE = "waitingSince"
 
     /** Ogni mezzo secondo: piu' spesso di cosi' la barra non si muove comunque. */
     private const val PUBLISH_EVERY_MS = 500L

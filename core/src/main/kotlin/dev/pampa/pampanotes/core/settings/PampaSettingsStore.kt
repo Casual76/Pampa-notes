@@ -276,6 +276,20 @@ class PampaSettingsStore(
 
   suspend fun setHandwritingBackfillDone() = edit { it[HandwritingBackfillDone] = true }
 
+  /**
+   * Da quando la coda di [providerId] aspetta il computer di casa (ora del telefono, 0 se non
+   * aspetta): decide il passo dei tentativi (`EndpointWait`). Qui e non nei dati del worker, perche'
+   * deve sopravvivere al processo e a un riavvio, e un timer solo non si porta dietro niente.
+   */
+  suspend fun endpointWaitingSince(providerId: String): Long = store.data.first()[endpointWaitingKey(providerId)] ?: 0L
+
+  /** Null: il computer ha risposto, e la prossima attesa ricomincia dal passo corto. */
+  suspend fun setEndpointWaitingSince(providerId: String, at: Long?) = edit {
+    if (at == null) it.remove(endpointWaitingKey(providerId)) else it[endpointWaitingKey(providerId)] = at
+  }
+
+  private fun endpointWaitingKey(providerId: String) = longPreferencesKey("endpoint_waiting_since_$providerId")
+
   // --- date vere e «Riprendi ad ascoltare» -------------------------------------------------------
 
   /** L'ultima sessione ascoltata qui, o null. Vedi [LastListened]. */

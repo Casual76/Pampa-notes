@@ -236,8 +236,10 @@ class RemoteProgressTest {
     val provider = OpenAiCompatProvider(TranscriptionHttp("test"), server.url(""), pollIntervalMs = 100)
     val result = provider.transcribe(audio, "audio/mp4", TranscribeRequest("m"))
     assertEquals("ciao", result.text)
-    // Due 404 e basta, non una domanda ogni decimo di secondo per un secondo e mezzo.
-    assertEquals(RemoteJobPoller.MAX_MISSES, server.requests.count { it.method == "GET" })
+    // Due 404 e basta, non una domanda ogni decimo di secondo per un secondo e mezzo; piu' una
+    // `/health` per chiedere chi e' (un 404 anche quella: non e' un companion nuovo).
+    assertEquals(RemoteJobPoller.MAX_MISSES, server.requests.count { it.method == "GET" && it.path.startsWith("/v1/jobs/") })
+    assertEquals(1, server.requests.count { it.path == "/health" })
   }
 
   @Test

@@ -19,8 +19,13 @@ class TinyHttpServer {
     fun header(name: String): String? = headers.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
   }
 
-  class Response(val code: Int, val body: ByteArray = ByteArray(0), val contentType: String = "application/json") {
-    constructor(code: Int, json: String) : this(code, json.toByteArray(Charsets.UTF_8))
+  class Response(
+    val code: Int,
+    val body: ByteArray = ByteArray(0),
+    val contentType: String = "application/json",
+    val headers: Map<String, String> = emptyMap(),
+  ) {
+    constructor(code: Int, json: String, headers: Map<String, String> = emptyMap()) : this(code, json.toByteArray(Charsets.UTF_8), headers = headers)
   }
 
   private val socket = ServerSocket(0, 8, InetAddress.getLoopbackAddress())
@@ -70,8 +75,9 @@ class TinyHttpServer {
     requests += request
     val response = handler(request)
     val reason = when (response.code) { 200 -> "OK"; 404 -> "Not Found"; 500 -> "Internal Server Error"; else -> "Status" }
+    val extra = response.headers.entries.joinToString("") { "${it.key}: ${it.value}\r\n" }
     val out = c.getOutputStream()
-    out.write("HTTP/1.1 ${response.code} $reason\r\nContent-Type: ${response.contentType}\r\nContent-Length: ${response.body.size}\r\nConnection: close\r\n\r\n".toByteArray(Charsets.ISO_8859_1))
+    out.write("HTTP/1.1 ${response.code} $reason\r\nContent-Type: ${response.contentType}\r\nContent-Length: ${response.body.size}\r\n${extra}Connection: close\r\n\r\n".toByteArray(Charsets.ISO_8859_1))
     out.write(response.body)
     out.flush()
   }

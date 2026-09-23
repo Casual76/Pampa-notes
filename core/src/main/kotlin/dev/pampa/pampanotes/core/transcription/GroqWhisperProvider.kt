@@ -4,9 +4,11 @@ import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -154,6 +156,14 @@ class OpenAiCompatProvider(
   private val pollIntervalMs: Long = RemoteJobPoller.DEFAULT_INTERVAL_MS,
   /** Dopo quanto silenzio il computer si da' per perso (vedi [RemoteJobPoller]); i test lo accorciano. */
   private val lostAfterSilenceMs: Long = RemoteJobPoller.LOST_AFTER_SILENCE_MS,
+  /** Ogni quanto la sola sonda chiede `/health` (vedi [RemoteJobPoller]); i test lo accorciano. */
+  private val blindIntervalMs: Long = RemoteJobPoller.BLIND_INTERVAL_MS,
+  /**
+   * I lavori lasciati indietro sul companion (vedi [AbandonedCompanionJobs]). Di serie uno suo, che
+   * vale per i tentativi di questo provider; la coda gli passa quello del processo, cosi' vale anche
+   * da un lavoro al successivo. La prova di «Prova» no: non trascrive niente.
+   */
+  private val abandoned: AbandonedCompanionJobs = AbandonedCompanionJobs(),
 ) : TranscriptionProvider, CompanionTranscription {
 
   /** Normalizzato una volta: chi digita l'indirizzo mette o non mette la barra e il `/v1`. */
@@ -314,21 +324,59 @@ class OpenAiCompatProvider(
   /**
    * La POST, con accanto le domande su a che punto e' ([RemoteJobPoller]).
    *
+   * Un companion che si sta riavviando risponde `503 restarting` con un `Retry-After`: non e' un
+   * guasto ma un «un attimo», e si aspetta qui ([restartWait], da 5 a 120 secondi) e si rimanda —
+   * senza consumare i tentativi del runner, che sono per i guasti veri. Al massimo
+   * [MAX_RESTART_WAITS] volte per lavoro: un companion che dice di riavviarsi per sempre non si
+   * sta riavviando.
+   */
+  private suspend fun watching(
+    onRemote: (RemoteProgress) -> Unit,
+    uploadedAlready: Boolean,
+    post: suspend (headers: Map<String, String>, uploaded: AtomicBoolean) -> JsonElement?,
+  ): JsonElement? {
+    while (true) {
+      try {
+        return watchOnce(onRemote, uploadedAlready, post)
+      } catch (error: TranscriptionError.Server) {
+        val wait = restartWait(error) ?: throw error
+        if (++restartWaits > MAX_RESTART_WAITS) throw error
+        delay(wait)
+      }
+    }
+  }
+
+  /** Quante volte questo lavoro ha aspettato un companion che si riavviava (vedi [watching]). */
+  @Volatile
+  private var restartWaits = 0
+
+  /**
+   * Una POST, con accanto le domande su a che punto e'.
+   *
    * Un id per richiesta, scelto qui: e' con questo che si chiede al companion a che punto e'. Lo
    * stesso anche se [authorized] rimanda la POST con un biglietto nuovo — il primo tentativo e'
-   * stato rifiutato prima di arrivare al lavoro, e il companion lo registra solo se passa.
+   * stato rifiutato prima di arrivare al lavoro, e il companion lo registra solo se passa. Tutto —
+   * POST, domande, sonda, `DELETE` — va allo stesso [base]: il provider nasce con un indirizzo
+   * risolto e non lo cambia, anche se nel frattempo il resolver passasse da casa a Tailscale.
    *
-   * Due cose che la POST da sola non sa fare:
+   * Quello che la POST da sola non sa fare:
    *  - **accorgersi che il computer ha perso il lavoro** (riavviato, spento a meta'): lo dice il
-   *    [RemoteJobPoller] con [RemoteJobLost], e qui diventa un [TranscriptionError.Network] che
-   *    annulla la POST e si riprova — invece di novanta minuti di timeout con la coda ferma dietro;
-   *  - **fermare il computer quando si annulla qui**: chiudere la connessione non bastava, il
-   *    companion 1.0.0 continuava a trascrivere per nessuno. Una coroutine annullata (l'utente,
-   *    il tetto di tempo, il sistema che ferma il worker) manda `DELETE /v1/jobs/<id>` ([cancelRemote]).
+   *    [RemoteJobPoller] con [RemoteJobLost], confermato da `/health` ([pulse]), e qui diventa un
+   *    [TranscriptionError.Network] che annulla la POST e si riprova — invece di novanta minuti di
+   *    timeout con la coda ferma dietro;
+   *  - **fermare il computer quando si annulla qui**: una coroutine annullata (l'utente, il tetto di
+   *    tempo, il sistema che ferma il worker) manda `DELETE /v1/jobs/<id>` ([cancelRemote]). Anche
+   *    a meta' caricamento: il companion registra il lavoro alle intestazioni;
+   *  - **non far lavorare il PC due volte**: una POST abbandonata (persa, caduta) finisce in
+   *    [abandoned], e la POST dopo — un altro tentativo della stessa parte, o la parte successiva —
+   *    le manda la `DELETE`. **Dopo** essersi agganciata al companion (la prima scheda del lavoro
+   *    nuovo, o al massimo [STALE_ATTACH_WAIT_MS]), non prima: il companion unisce le richieste
+   *    identiche per impronta, e una `DELETE` stacca solo quella a cui e' mandata. Mandata prima,
+   *    fermerebbe il lavoro vecchio proprio mentre quello nuovo poteva riprenderlo da dove era.
    *
    * @param uploadedAlready vero quando non c'e' niente da caricare: si chiede da subito.
    */
-  private suspend fun watching(
+  private suspend fun watchOnce(
     onRemote: (RemoteProgress) -> Unit,
     uploadedAlready: Boolean,
     post: suspend (headers: Map<String, String>, uploaded: AtomicBoolean) -> JsonElement?,
@@ -339,14 +387,29 @@ class OpenAiCompatProvider(
     // annullare il lavoro che hanno creato. Null finche' non ne e' partita nessuna.
     var sentWith: Map<String, String>? = null
     val lost = AtomicBoolean(false)
+    val stale = abandoned.drain()
+    // Il companion ha il lavoro nuovo (la prima scheda), o la POST e' finita comunque.
+    val attached = CompletableDeferred<Unit>()
     return coroutineScope {
+      val sweeper = if (stale.isEmpty()) null else launch {
+        try {
+          withTimeoutOrNull(STALE_ATTACH_WAIT_MS) { attached.await() }
+        } finally {
+          withContext(NonCancellable) { sweep(stale) }
+        }
+      }
       val poller = launch {
         try {
           RemoteJobPoller(
             fetch = { http.getJson("$base/jobs/$jobId", headers(auth.bearer()), readTimeoutMillis = POLL_TIMEOUT_MS) },
             intervalMs = pollIntervalMs,
             silenceLimitMs = lostAfterSilenceMs,
-            onUpdate = onRemote,
+            probe = { pulse() },
+            blindIntervalMs = blindIntervalMs,
+            onUpdate = { progress ->
+              attached.complete(Unit)
+              onRemote(progress)
+            },
           ).run(ready = { uploaded.get() })
         } catch (cancelled: CancellationException) {
           throw cancelled
@@ -363,18 +426,65 @@ class OpenAiCompatProvider(
       try {
         authorized { headers ->
           sentWith = headers
+          // Un secondo giro (biglietto rinnovato) ricarica da capo: le domande aspettano di nuovo
+          // l'ultimo byte, o un caricamento lento conterebbe come silenzio.
+          if (!uploadedAlready) uploaded.set(false)
           post(headers + (JOB_HEADER to jobId), uploaded)
         }
       } catch (cancelled: CancellationException) {
-        // Perso, il lavoro non c'e' piu' da fermare; e col PC muto la DELETE costerebbe solo attesa.
         val headers = sentWith
-        if (headers != null && !lost.get()) withContext(NonCancellable) { cancelRemote(jobId, headers) }
+        if (headers != null) {
+          if (lost.get()) {
+            // Perso: niente da fermare adesso, e col PC muto la DELETE costerebbe solo attesa. Se
+            // era solo la rete, la prossima POST lo ferma.
+            abandoned.record(jobId, headers)
+          } else if (!withContext(NonCancellable) { cancelRemote(jobId, headers) }) {
+            abandoned.record(jobId, headers)
+          }
+        }
         throw cancelled
+      } catch (error: Throwable) {
+        // La POST e' caduta (rete, 5xx, un rifiuto): il companion potrebbe avere ancora il lavoro.
+        // Un «mi sto riavviando» no: il lavoro non l'ha nemmeno registrato.
+        val headers = sentWith
+        if (headers != null && restartWait(error) == null) abandoned.record(jobId, headers)
+        throw error
       } finally {
+        attached.complete(Unit)
         // Aspettato, non solo annullato: una risposta di stato arrivata dopo la fine riscriverebbe
         // «trascrivo 90%» sopra il pezzo gia' finito.
-        withContext(NonCancellable) { poller.cancelAndJoin() }
+        withContext(NonCancellable) {
+          poller.cancelAndJoin()
+          sweeper?.join()
+        }
       }
+    }
+  }
+
+  /**
+   * `GET /health` con un tempo lungo, per confermare quello che le domande sul lavoro fanno temere
+   * (vedi [RemoteJobPoller]). Una risposta d'errore e' pur sempre una risposta: il PC c'e'.
+   */
+  private suspend fun pulse(): CompanionPulse? = try {
+    val bearer = try {
+      auth.bearer()
+    } catch (cancelled: CancellationException) {
+      throw cancelled
+    } catch (ignored: Throwable) {
+      null
+    }
+    val body = http.getJson("${base.removeSuffix("/v1")}/health", headers(bearer), readTimeoutMillis = HEALTH_CONFIRM_TIMEOUT_MS)
+    CompanionPulse(RemoteJobPoller.instanceOf(body))
+  } catch (cancelled: CancellationException) {
+    throw cancelled
+  } catch (error: Throwable) {
+    if (RemoteJobPoller.httpCode(error) != null) CompanionPulse(null) else null
+  }
+
+  /** Le `DELETE` dei lavori lasciati indietro, insieme; chi non risponde torna nell'elenco. */
+  private suspend fun sweep(stale: List<AbandonedCompanionJobs.Entry>) = coroutineScope {
+    stale.forEach { entry ->
+      launch { if (!cancelRemote(entry.jobId, entry.headers)) abandoned.putBack(entry) }
     }
   }
 
@@ -384,16 +494,24 @@ class OpenAiCompatProvider(
    * annullamento non deve aspettare un PC che non risponde, e un companion che non conosce la rotta
    * (404, 405) o il lavoro gia' finito non sono errori di nessuno. La connessione della POST intanto
    * e' gia' chiusa: un companion che se ne accorge si ferma da se', questo e' il modo sicuro.
+   *
+   * @return vero se il companion ha risposto, qualunque cosa: falso se non l'ha sentita.
    */
-  private suspend fun cancelRemote(jobId: String, headers: Map<String, String>) {
-    try {
-      withTimeoutOrNull(CANCEL_TIMEOUT_MS) {
+  private suspend fun cancelRemote(jobId: String, headers: Map<String, String>): Boolean = try {
+    withTimeoutOrNull(CANCEL_TIMEOUT_MS) {
+      try {
         http.delete("$base/jobs/$jobId", headers, timeoutMillis = CANCEL_SOCKET_TIMEOUT_MS)
+        true
+      } catch (cancelled: CancellationException) {
+        throw cancelled
+      } catch (error: Throwable) {
+        RemoteJobPoller.httpCode(error) != null
       }
-    } catch (ignored: Throwable) {
-      Unit
-    }
+    } ?: false
+  } catch (ignored: Throwable) {
+    false
   }
+
 
   /**
    * I due rifiuti che non sono guasti ma indicazioni: il file non e' nell'archivio, o chi chiede e'
@@ -436,6 +554,33 @@ class OpenAiCompatProvider(
      */
     const val CANCEL_SOCKET_TIMEOUT_MS = 3_000
     const val CANCEL_TIMEOUT_MS = 4_000L
+
+    /**
+     * La `/health` che conferma un sospetto (vedi [RemoteJobPoller]): quindici secondi, tre volte
+     * la pazienza di una domanda sullo stato — un PC sotto sforzo risponde tardi, ma risponde.
+     */
+    const val HEALTH_CONFIRM_TIMEOUT_MS = 15_000
+
+    /** Quanto la POST nuova aspetta di agganciarsi prima di fermare quelle lasciate indietro. */
+    const val STALE_ATTACH_WAIT_MS = 30_000L
+
+    /** Quante volte per lavoro si aspetta un companion che dice di riavviarsi. */
+    const val MAX_RESTART_WAITS = 10
+    const val RESTART_WAIT_MIN_SEC = 5.0
+    const val RESTART_WAIT_MAX_SEC = 120.0
+    const val RESTART_WAIT_DEFAULT_SEC = 10.0
+
+    /**
+     * Quanto aspettare un companion che si sta riavviando (`503 {"detail":"restarting"}`), in
+     * millisecondi: il suo `Retry-After`, fra 5 e 120 secondi. Null per ogni altro errore — un 503
+     * qualunque resta un guasto da riprovare coi tentativi di sempre.
+     */
+    fun restartWait(error: Throwable): Long? {
+      val server = error as? TranscriptionError.Server ?: return null
+      if (server.httpCode != 503 || "restarting" !in server.message.orEmpty()) return null
+      val seconds = (server.retryAfterSec ?: RESTART_WAIT_DEFAULT_SEC).coerceIn(RESTART_WAIT_MIN_SEC, RESTART_WAIT_MAX_SEC)
+      return (seconds * 1000).toLong()
+    }
 
     /** I campi del companion che lavora da se' (vedi [CompanionTranscription]). */
     const val FIELD_SHA = "source_sha256"
