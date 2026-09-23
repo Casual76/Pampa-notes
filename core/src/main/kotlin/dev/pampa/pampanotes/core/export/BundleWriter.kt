@@ -254,7 +254,13 @@ class BundleWriter(
               provider = session.transcript?.provider?.takeIf { it.isNotBlank() },
               model = session.transcript?.model?.takeIf { it.isNotBlank() },
               words = session.transcript?.wordCount ?: 0,
-              audio = if (options.includeAudio) session.parts.map { files.audio.getValue(it.id) } else emptyList(),
+              // Solo le registrazioni che ci sono davvero: chi ha scelto «Esporta senza» per quelle che
+              // non si potevano avere non deve trovarle promesse nel manifest.
+              audio = if (options.includeAudio) {
+                session.parts.filter { File(audioDir, it.fileName).exists() }.map { files.audio.getValue(it.id) }
+              } else {
+                emptyList()
+              },
             )
           },
           sources = note.sources.mapIndexed { index, source ->
@@ -263,7 +269,7 @@ class BundleWriter(
               kind = source.kind.name.lowercase(),
               sha256 = source.sha256,
               bytes = source.sizeBytes,
-              file = if (options.includeSources) files.sources[index] else null,
+              file = if (options.includeSources && source.storedFileName?.let { File(sourcesDir, it).exists() } == true) files.sources[index] else null,
             )
           },
           files = buildList {

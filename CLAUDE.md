@@ -316,9 +316,8 @@ Chi lo chiede: il **lettore** (`SessionViewModel` guarda su disco a ogni cambio 
 carica ExoPlayer finche' non ha guardato; se manca qualcosa la pagina mostra peso e tasto «Scarica»,
 o «registrate su un altro dispositivo» se il PC non le ha ancora); la **coda di trascrizione**
 (`TranscriptionRunner` scarica da solo prima di decodificare, cosi' una lezione registrata sul
-tablet si trascrive dal telefono); le **fonti** della nota (tocco → scarica → apre). L'**export**
-non scarica: dice quante registrazioni non sono entrate (`ExportResult.skippedAudio`), perche' un
-semestre sono gigabyte e non si tirano giu' per sbaglio. Archiviazione conta i file che ci sono
+tablet si trascrive dal telefono); l'**export**, per quello che si e' chiesto di metterci dentro
+(vedi Export); le **fonti** della nota (tocco → scarica → apre). Archiviazione conta i file che ci sono
 davvero, piu' una riga «Sul computer, non qui».
 
 ## Condividere una nota
@@ -465,6 +464,25 @@ in streaming, con le voci di cartella esplicite, e audio e immagini `STORED`. Un
 cancella il file a meta'. I file sciolti si scrivono sempre nella cache e da li' si condividono
 (`ACTION_SEND_MULTIPLE`) o si copiano in una sottocartella di quella scelta. Cambiare «Quale
 trascrizione» nel pannello rifa' la raccolta: si decide leggendo il database, non scrivendo.
+
+**Il pannello chiede una cosa sola: «Dove lo usi?»** (`ExportTarget`): chat (ZIP leggero, testo e
+pagine a mano), Progetto (file sciolti, e «Salva in una cartella» come tasto principale: venti file
+condivisi insieme a un'app di chat arrivano spesso a meta'), agente (ZIP con registrazioni e
+originali), incolla (file singolo). La risposta sceglie formato e allegati (`ExportTarget.defaults`);
+«Personalizza», chiuso, mostra solo gli interruttori che contano per quel formato, e un cambiamento
+tiene la destinazione e la marca «personalizzato». Le opzioni salvate prima della domanda si leggono
+lo stesso: `ExportOptionsCodec` deduce la destinazione da formato e allegati. La pagina Impostazioni →
+Esportazione usa lo stesso componente (`ExportChoices`). Prima di esportare il pannello dice peso e
+token (`ExportEstimator`, puro: parole × 1,4, 1500 token per pagina a mano) e avvisa se una chat non
+ce la fara' (oltre 25 MB o 180k token).
+
+**Quello che si chiede entra.** Registrazioni, originali e pagine a mano che qui non ci sono ma il
+computer di casa ha (`archivedAt > 0`) si scaricano **prima** di scrivere (`ExportService.plan` →
+`fetchMissing`, «Scarico dal computer di casa: 3 di 12»); al primo «non risponde» ci si ferma. Se
+qualcosa non si puo' avere — mai archiviato, o PC muto — il pannello lo dice prima di scrivere, per
+tipo e motivo, con «Esporta senza» / «Annulla»; il risultato dice cosa c'e' dentro e cosa manca, e il
+manifest elenca solo i file che ci sono davvero. Era il difetto da cui e' nato tutto: «esportato»,
+con le registrazioni chieste rimaste sul PC.
 
 Le parole che finiscono dentro il pacchetto passano da `ExportLabels`, riempito dall'app con le
 stringhe della sua lingua: i writer stanno in `:core` e non possono leggere `res/values`.

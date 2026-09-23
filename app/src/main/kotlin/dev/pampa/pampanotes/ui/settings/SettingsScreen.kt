@@ -38,13 +38,12 @@ import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.BuildConfig
 import dev.pampa.pampanotes.R
-import dev.pampa.pampanotes.core.export.ExportFormat
 import dev.pampa.pampanotes.core.export.ExportOptions
-import dev.pampa.pampanotes.core.export.TranscriptChoice
 import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.RefinementPreset
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
 import dev.pampa.pampanotes.ui.common.jobErrorText
+import dev.pampa.pampanotes.ui.export.ExportChoices
 import dev.pampa.pampanotes.ui.nav.SettingsSection
 
 /**
@@ -556,88 +555,16 @@ private fun LazyListScope.refinementSection(
 // -------------------------------------------------------------------------------------------------
 
 /**
- * Cosa finisce dentro un pacchetto, di default.
+ * Da dove parte il pannello di export.
  *
- * Sono i valori con cui si apre il pannello di export, e si riscrivono da soli dopo ogni export
- * riuscito: questa pagina serve a cambiarli senza dover esportare qualcosa per farlo.
+ * Le stesse scelte del pannello, con le stesse parole: «Dove lo usi?» e «Personalizza». Erano
+ * quattro interruttori e un formato senza spiegazione, e chi apriva la pagina non sapeva quale
+ * combinazione serviva a cosa. Si riscrivono da sole dopo ogni export riuscito: questa pagina serve
+ * a cambiarle senza dover esportare qualcosa per farlo.
  */
 private fun LazyListScope.exportSection(defaults: ExportOptions, viewModel: SettingsViewModel) {
   item { FluidSectionFootnote(text = stringResource(R.string.settings_export_explain)) }
-
-  item {
-    val formatLabels = mapOf(
-      ExportFormat.BUNDLE to stringResource(R.string.export_format_bundle),
-      ExportFormat.FILES to stringResource(R.string.export_format_files),
-      ExportFormat.SINGLE to stringResource(R.string.export_format_single),
-    )
-    FluidSegmentedControl(
-      options = listOf(ExportFormat.BUNDLE, ExportFormat.FILES, ExportFormat.SINGLE),
-      selected = defaults.format,
-      onSelect = { viewModel.setExportDefaults(defaults.copy(format = it)) },
-      label = { formatLabels.getValue(it) },
-    )
-  }
-
-  item {
-    val transcriptLabels = mapOf(
-      TranscriptChoice.BEST to stringResource(R.string.export_transcript_best),
-      TranscriptChoice.RAW to stringResource(R.string.export_transcript_raw),
-    )
-    FluidSegmentedControl(
-      options = TranscriptChoice.entries.toList(),
-      selected = defaults.transcript,
-      onSelect = { viewModel.setExportDefaults(defaults.copy(transcript = it)) },
-      label = { transcriptLabels.getValue(it) },
-    )
-  }
-
-  item {
-    FluidListGroup {
-      FluidListRow(
-        title = stringResource(R.string.export_timestamps),
-        subtitle = stringResource(R.string.export_timestamps_detail),
-        badge = {
-          FluidSwitch(
-            checked = defaults.timestamps,
-            onCheckedChange = { viewModel.setExportDefaults(defaults.copy(timestamps = it)) },
-          )
-        },
-      )
-      FluidListDivider()
-      FluidListRow(
-        title = stringResource(R.string.export_skill),
-        subtitle = stringResource(R.string.export_skill_detail),
-        badge = {
-          FluidSwitch(
-            checked = defaults.includeSkill,
-            onCheckedChange = { viewModel.setExportDefaults(defaults.copy(includeSkill = it)) },
-          )
-        },
-      )
-      FluidListDivider()
-      FluidListRow(
-        title = stringResource(R.string.export_audio),
-        subtitle = stringResource(R.string.export_audio_detail),
-        badge = {
-          FluidSwitch(
-            checked = defaults.includeAudio,
-            onCheckedChange = { viewModel.setExportDefaults(defaults.copy(includeAudio = it)) },
-          )
-        },
-      )
-      FluidListDivider()
-      FluidListRow(
-        title = stringResource(R.string.export_sources),
-        subtitle = stringResource(R.string.export_sources_detail),
-        badge = {
-          FluidSwitch(
-            checked = defaults.includeSources,
-            onCheckedChange = { viewModel.setExportDefaults(defaults.copy(includeSources = it)) },
-          )
-        },
-      )
-    }
-  }
+  item { ExportChoices(options = defaults, onOptions = viewModel::setExportDefaults) }
 }
 
 // -------------------------------------------------------------------------------------------------

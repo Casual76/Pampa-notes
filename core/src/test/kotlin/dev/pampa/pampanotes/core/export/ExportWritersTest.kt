@@ -486,6 +486,36 @@ class ExportWritersTest {
     assertEquals(1, note.files.last().session)
   }
 
+  @Test
+  fun `il manifest non promette registrazioni e originali che non sono entrati`() {
+    // «Esporta senza» per una registrazione rimasta su un altro dispositivo: il manifest deve dire
+    // quello che c'e', o un agente cerca un file che non trovera' mai.
+    val audio = temp.newFolder()
+    val sources = temp.newFolder()
+    java.io.File(audio, "p1.m4a").writeBytes(ByteArray(8))
+    val note = note(
+      sessions = listOf(
+        session(
+          parts = listOf(
+            part("p1", "qui.m4a", 60_000, 0),
+            part("p2", "altrove.m4a", 60_000, 60_000),
+          ),
+        ),
+      ),
+    )
+    val out = ByteArrayOutputStream()
+
+    BundleWriter(audio, sources).write(set(listOf(note)), options.copy(includeAudio = true, includeSources = true), out)
+
+    val entries = entriesOf(out.toByteArray())
+    val manifest = Json { ignoreUnknownKeys = true }.decodeFromString<ExportManifest>(entries.getValue("pampa-notes-storia/manifest.json"))
+    val listed = manifest.notes.single().sessions.single().audio
+    assertEquals(listOf("audio/universita--storia--lezione-monti/2025-10-09-01-qui.m4a"), listed)
+    assertTrue(entries.containsKey("pampa-notes-storia/" + listed.single()))
+    // L'originale non e' su disco: resta elencato come fonte, ma senza un file che non c'e'.
+    assertEquals(null, manifest.notes.single().sources.single().file)
+  }
+
   // -----------------------------------------------------------------------------------------------
   // Il file singolo
   // -----------------------------------------------------------------------------------------------

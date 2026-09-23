@@ -7,6 +7,7 @@ import dev.pampa.pampanotes.core.db.SourceStatus
 import dev.pampa.pampanotes.core.db.TranscriptEntity
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 
 /** Cosa si esporta: una nota, una cartella con tutto quello che contiene, o l'archivio intero. */
 sealed interface ExportScope {
@@ -46,6 +47,56 @@ enum class TranscriptChoice {
   RAW,
 }
 
+/**
+ * Dove si usera' il pacchetto: e' la prima e l'unica domanda che il pannello fa.
+ *
+ * Formato, allegati e regole erano quattro interruttori e tre formati da capire prima di poter
+ * esportare, e chi li guardava non sapeva quale combinazione serviva a cosa. Chi esporta sa invece
+ * benissimo dove andra' il file: la risposta sceglie tutto il resto, e «Personalizza» resta per chi
+ * vuole cambiare un pezzo.
+ */
+enum class ExportTarget {
+  /**
+   * Una conversazione di Claude o ChatGPT: uno ZIP leggero, testo e pagine a mano, da allegare.
+   * Niente registrazioni ne' originali: una chat che riceve cento megabyte va in timeout, e un
+   * m4a non lo legge comunque.
+   */
+  CHAT,
+
+  /** Un Progetto di Claude o ChatGPT: file sciolti, perche' un Progetto prende file e non archivi. */
+  PROJECT,
+
+  /** Un agente col terminale (Claude Code, Codex): tutto, anche registrazioni e originali. */
+  AGENT,
+
+  /** Un testo solo da incollare: per quando non si puo' allegare niente. */
+  PASTE,
+  ;
+
+  /** Le opzioni che questa risposta sceglie da sola. */
+  fun defaults(): ExportOptions = when (this) {
+    CHAT -> ExportOptions(target = this, format = ExportFormat.BUNDLE, includeSkill = true, includeAudio = false, includeSources = false)
+    PROJECT -> ExportOptions(target = this, format = ExportFormat.FILES, includeSkill = true, includeAudio = false, includeSources = false)
+    AGENT -> ExportOptions(target = this, format = ExportFormat.BUNDLE, includeSkill = true, includeAudio = true, includeSources = true)
+    PASTE -> ExportOptions(target = this, format = ExportFormat.SINGLE, includeSkill = true, includeAudio = false, includeSources = false)
+  }
+
+  companion object {
+    /**
+     * La risposta che si deduce da opzioni salvate prima che la domanda esistesse.
+     *
+     * Chi aveva scelto i file sciolti li usava per un Progetto, chi metteva dentro registrazioni o
+     * originali li dava a un agente: ripartire da «Chat» per tutti gli avrebbe cambiato il pacchetto
+     * sotto i piedi, e mostrato «personalizzato» senza che avesse toccato niente.
+     */
+    fun inferFrom(options: ExportOptions): ExportTarget = when (options.format) {
+      ExportFormat.FILES -> PROJECT
+      ExportFormat.SINGLE -> PASTE
+      ExportFormat.BUNDLE -> if (options.includeAudio || options.includeSources) AGENT else CHAT
+    }
+  }
+}
+
 @Serializable
 data class ExportOptions(
   val format: ExportFormat = ExportFormat.BUNDLE,
@@ -56,20 +107,48 @@ data class ExportOptions(
   val includeSources: Boolean = false,
   /** `SKILL.md` e `instructions.md`: le regole con cui un assistente deve trattare queste fonti. */
   val includeSkill: Boolean = true,
-)
+  /** La risposta a «Dove lo usi?». In fondo, perche' i JSON salvati prima non l'hanno. */
+  val target: ExportTarget = ExportTarget.CHAT,
+) {
+  /** Vero se qualcosa e' stato cambiato rispetto a quello che [target] sceglie da solo. */
+  val isCustomized: Boolean get() = this != target.defaults()
+
+  /**
+   * Allegati e regole contano solo nello ZIP: i file sciolti e il testo da incollare non hanno dove
+   * mettere un m4a, e le regole le hanno gia' (in `instructions.md` e in cima al testo).
+   */
+  val carriesAttachments: Boolean get() = format == ExportFormat.BUNDLE
+
+  /**
+   * Un'altra risposta a «Dove lo usi?».
+   *
+   * Formato, allegati e regole seguono la nuova risposta; quale trascrizione e i tempi restano come
+   * erano, perche' riguardano il testo e non dove va: chi vuole sempre la grezza la vuole anche in
+   * un Progetto.
+   */
+  fun withTarget(next: ExportTarget): ExportOptions = next.defaults().copy(transcript = transcript, timestamps = timestamps)
+}
 
 /**
  * Le opzioni salvate come testo, per le preferenze.
  *
  * Indulgente in lettura: una stringa vuota, o scritta da una versione che aveva un'opzione in
- * meno, torna ai default invece di far fallire l'apertura del pannello di export.
+ * meno, torna ai default invece di far fallire l'apertura del pannello di export. Un valore che
+ * questa versione non conosce (un destinatario aggiunto da una versione dopo) torna al default del
+ * campo, non butta via le altre scelte.
  */
 object ExportOptionsCodec {
-  private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+  private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; coerceInputValues = true }
 
-  fun decode(raw: String): ExportOptions =
-    if (raw.isBlank()) ExportOptions()
-    else runCatching { json.decodeFromString(ExportOptions.serializer(), raw) }.getOrDefault(ExportOptions())
+  fun decode(raw: String): ExportOptions {
+    if (raw.isBlank()) return ExportOptions()
+    return runCatching {
+      val tree = json.parseToJsonElement(raw).jsonObject
+      val options = json.decodeFromJsonElement(ExportOptions.serializer(), tree)
+      // Scritto prima di «Dove lo usi?»: la risposta si ricava da quello che c'era.
+      if ("target" in tree) options else options.copy(target = ExportTarget.inferFrom(options))
+    }.getOrDefault(ExportOptions())
+  }
 
   fun encode(options: ExportOptions): String = json.encodeToString(ExportOptions.serializer(), options)
 }
@@ -87,6 +166,10 @@ data class ExportSource(
   val storedFileName: String?,
   val status: SourceStatus,
   val extractedChars: Int,
+  /** La riga in `sources`: serve per andarla a prendere dal computer di casa. */
+  val id: String = "",
+  /** Il computer di casa ha l'originale: se qui manca, si puo' scaricare prima di scrivere. */
+  val archived: Boolean = false,
 )
 
 data class ExportPart(
@@ -97,6 +180,8 @@ data class ExportPart(
   /** A che millisecondo della sessione comincia questa parte. */
   val startMs: Long,
   val sizeBytes: Long,
+  /** Il computer di casa ha la registrazione: se qui manca, si puo' scaricare prima di scrivere. */
+  val archived: Boolean = false,
 )
 
 data class ExportSession(
@@ -130,6 +215,9 @@ data class ExportImage(
   /** "Pagina 1", "Pagina 2": l'ordine in cui stavano nel quaderno. */
   val page: Int,
   val sizeBytes: Long,
+  /** La riga in `sources`, per scaricarla quando su questo dispositivo non c'e'. */
+  val id: String = "",
+  val archived: Boolean = false,
 )
 
 data class ExportNote(

@@ -513,8 +513,6 @@
   <string name="export_label_words">words</string>
   <string name="export_label_note">note</string>
   <string name="export_label_notes_plural">notes</string>
-  <string name="export_format_files_detail">The same files without a ZIP, to upload together to a Claude Project or to ChatGPT. The rules are in instructions.md, to paste into the Project instructions.</string>
-  <string name="export_format_files">Loose files</string>
   <string name="export_label_index_how_to">Each note has one file of notes and one file per recorded lesson; long lessons are split into parts. Choose by title and date, and open only the files the question needs.</string>
   <string name="export_label_page_singular">handwritten page</string>
   <string name="export_label_pages">handwritten pages</string>
@@ -532,11 +530,6 @@
   <!-- Export: the panel -->
   <string name="export_scope_everything">Everything</string>
   <string name="export_counting">Looking at what is here…</string>
-  <string name="export_format_label">Format</string>
-  <string name="export_format_bundle">Pack</string>
-  <string name="export_format_single">Single file</string>
-  <string name="export_format_bundle_detail">A ZIP holding one folder: the index, the rules, each note\'s written notes and one file per lesson. Claude loads it as a skill; ChatGPT and agents unzip it and start from the index.</string>
-  <string name="export_format_single_detail">One Markdown file, to paste into a conversation.</string>
   <string name="export_transcript_label">Which transcript</string>
   <string name="export_transcript_best">The best one</string>
   <string name="export_transcript_raw">Always the raw one</string>
@@ -551,12 +544,8 @@
     <item quantity="one">One recording is not in the bundle: it is not on this device.</item>
     <item quantity="other">%d recordings are not in the bundle: they are not on this device.</item>
   </plurals>
-  <string name="export_skill_detail">SKILL.md for Claude, instructions.md for ChatGPT and Gemini</string>
   <string name="export_sources">Original documents</string>
-  <string name="export_sources_detail">The PDFs and files the notes were imported from</string>
   <string name="export_audio">Recordings</string>
-  <string name="export_audio_detail">The audio files. They are heavy.</string>
-  <string name="export_audio_detail_size">The audio files: %1$s of recordings</string>
   <string name="export_share">Share</string>
   <string name="export_save_folder">Save to a folder</string>
   <string name="export_save_in">Save to %1$s</string>
@@ -1023,4 +1012,66 @@
   <string name="storage_free_footnote">Handwritten pages always stay: they weigh little and live inside the note. A recording with a transcription in progress stays until it finishes.</string>
   <string name="storage_free_nothing">Nothing to free: what is here isn\'t on the computer yet.</string>
   <string name="storage_cleanup_header">Clean-up</string>
+  <string name="export_where_title">Where will you use it?</string>
+  <string name="export_target_chat">Claude or ChatGPT chat</string>
+  <string name="export_target_chat_detail">A light ZIP: text and handwritten pages. Attach it to the chat and ask.</string>
+  <string name="export_target_project">Claude or ChatGPT project</string>
+  <string name="export_target_project_detail">Loose files to upload to the project.</string>
+  <string name="export_target_agent">Agent (Claude Code, Codex)</string>
+  <string name="export_target_agent_detail">Full ZIP, recordings and originals included.</string>
+  <string name="export_target_paste">Paste into a chat</string>
+  <string name="export_target_paste_detail">A single text, no attachments.</string>
+  <string name="export_customize">Customize</string>
+  <string name="export_customized">customized</string>
+  <string name="export_yes">yes</string>
+  <string name="export_no">no</string>
+  <string name="export_summary_transcript">Transcript: %1$s</string>
+  <string name="export_summary_best">the best</string>
+  <string name="export_summary_raw">raw</string>
+  <string name="export_summary_timestamps">Timestamps: %1$s</string>
+  <string name="export_summary_audio">Recordings: %1$s</string>
+  <string name="export_summary_sources">Originals: %1$s</string>
+  <string name="export_summary_no_rules">no rules</string>
+  <string name="export_transcript_best_effect">The one you see in the app: the cleaned-up one if there is one, otherwise the raw one.</string>
+  <string name="export_transcript_raw_effect">Always Whisper\'s: the only one with timestamps, and one no model has rewritten.</string>
+  <string name="export_skill_effect">They tell the assistant what notes and transcripts are, and how to cite them. SKILL.md for Claude, instructions.md for the others.</string>
+  <string name="export_audio_effect">The audio files, for whoever wants to listen again. They are heavy; the ones on your home computer are downloaded first.</string>
+  <string name="export_audio_effect_size">%1$s of audio, for whoever wants to listen again. They are heavy; the ones on your home computer are downloaded first.</string>
+  <string name="export_sources_effect">The imported PDFs and documents, as they were. The ones on your home computer are downloaded first.</string>
+  <string name="export_files_no_attachments">A Project takes text: recordings and originals stay out. The rules are in instructions.md, to paste into the Project\'s instructions.</string>
+  <string name="export_single_no_attachments">A text to paste carries no attachments or handwritten pages; the rules are at the top.</string>
+  <string name="export_reset_to">Back to the defaults for “%1$s”</string>
+  <string name="export_estimate">≈ %1$s · about %2$s tokens</string>
+  <string name="export_warn_heavy_title">Heavy for a chat</string>
+  <string name="export_warn_heavy">Above 25 MB, uploading to a chat often breaks off. Leave out recordings or originals, or choose Agent.</string>
+  <string name="export_warn_long_title">Long for a chat</string>
+  <string name="export_warn_long">About %1$s tokens: more than a conversation can hold together with the question. A Project is better, or one folder at a time.</string>
+  <string name="export_warn_paste_long">About %1$s tokens: too much for a single message. A Project is better, or one folder at a time.</string>
+  <string name="export_warn_audio_title">With the recordings</string>
+  <string name="export_warn_audio">The recordings weigh %1$s: a semester adds up to gigabytes. It takes space, and a little patience.</string>
+  <string name="export_project_save_hint">For a Project it is best to save them to a folder and upload from there: shared all at once, some can get lost.</string>
+  <string name="export_fetching">Downloading from your home computer: %1$d of %2$d</string>
+  <string name="export_fetching_detail">These are files you asked for that are not on this device. Then I\'ll write the bundle.</string>
+  <string name="export_missing_title">I can\'t get everything</string>
+  <string name="export_missing_detail">You asked for these files, but they can\'t be reached right now:</string>
+  <string name="export_missing_not_archived">only on another device</string>
+  <string name="export_missing_unreachable">your home computer is not answering</string>
+  <string name="export_missing_failed">the download from your home computer failed</string>
+  <string name="export_missing_retry">You can export without them, and the result will say what is missing; or cancel and retry with your home computer on.</string>
+  <string name="export_missing_without">You can export without them: everything else is there, and the result will say what is missing.</string>
+  <string name="export_missing_continue">Export without</string>
+  <string name="export_done_inside">Also inside: %1$s</string>
+  <string name="export_done_missing">Not included:</string>
+  <plurals name="export_fetched">
+    <item quantity="one">One file downloaded from your home computer.</item>
+    <item quantity="other">%d files downloaded from your home computer.</item>
+  </plurals>
+  <plurals name="export_originals">
+    <item quantity="one">%d original</item>
+    <item quantity="other">%d originals</item>
+  </plurals>
+  <plurals name="export_handwritten_pages">
+    <item quantity="one">%d handwritten page</item>
+    <item quantity="other">%d handwritten pages</item>
+  </plurals>
 </resources>
