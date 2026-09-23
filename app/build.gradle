@@ -43,6 +43,10 @@ def hasReleaseKey = missingKey.isEmpty()
 // stesso valore in wrangler.toml. Vuoto: la pagina Sincronizzazione chiede un codice, non Google.
 def googleClientId = signingValue('pampa.googleClientId', 'PAMPA_GOOGLE_CLIENT_ID') ?: ''
 if (googleClientId.isEmpty()) println "Pampa Notes: pampa.googleClientId non impostato: accesso Google spento in questa build."
+// L'indice in cloud che «Accedi con Google» usa quando l'utente non ne ha scritto un altro: chi
+// entra dal primo avvio non sa cos'e' un Worker, e non deve saperlo. Si cambia per provare un
+// Worker diverso senza toccare il codice.
+def defaultSyncUrl = signingValue('pampa.syncUrl', 'PAMPA_SYNC_URL') ?: 'https://pampa-notes-sync.fluid-transit.workers.dev'
 if (!hasReleaseKey && keyStorePath != null) {
   println "Pampa Notes: firma pampa incompleta (manca ${missingKey.join(', ')}): build firmata DEBUG."
 }
@@ -64,6 +68,7 @@ android {
     // Lo stesso documento serve sia gli aggiornamenti sia i flag: sezioni diverse, un URL solo.
     buildConfigField 'String', 'MANIFEST_URL', '"https://raw.githubusercontent.com/Casual76/Pampa-notes/main/manifest.json"'
     buildConfigField 'String', 'GOOGLE_CLIENT_ID', "\"${googleClientId}\""
+    buildConfigField 'String', 'DEFAULT_SYNC_URL', "\"${defaultSyncUrl}\""
   }
 
   signingConfigs {

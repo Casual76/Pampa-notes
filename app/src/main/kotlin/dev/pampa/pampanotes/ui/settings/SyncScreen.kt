@@ -63,7 +63,7 @@ fun SyncSectionRoute(
         value = serverUrl,
         onValueChange = { serverUrl = it },
         label = stringResource(R.string.sync_server_url),
-        placeholder = "pampa-notes.qualcuno.workers.dev",
+        placeholder = state.defaultServerUrl.removePrefix("https://").ifBlank { "pampa-notes.qualcuno.workers.dev" },
         supportingText = stringResource(R.string.sync_server_hint),
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
         modifier = Modifier.fillMaxWidth(),
@@ -95,7 +95,8 @@ fun SyncSectionRoute(
         FluidButton(
           text = stringResource(if (state.account.isBlank()) R.string.sync_google_signin else R.string.sync_google_signout),
           onClick = { if (state.account.isBlank()) viewModel.signInWithGoogle(context) else viewModel.signOut() },
-          enabled = state.serverUrl.isNotBlank() && !state.authBusy,
+          // Senza indirizzo scritto si entra in quello compilato: `AccountSignIn` lo mette lui.
+          enabled = (state.serverUrl.isNotBlank() || state.defaultServerUrl.isNotBlank()) && !state.authBusy,
           loading = state.authBusy,
           style = if (state.account.isBlank()) FluidButtonStyle.Filled else FluidButtonStyle.Plain,
           fillWidth = true,

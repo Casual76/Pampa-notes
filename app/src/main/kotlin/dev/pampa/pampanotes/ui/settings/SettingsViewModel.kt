@@ -75,6 +75,7 @@ class SettingsViewModel @Inject constructor(
   private val http: TranscriptionHttp,
   private val resolver: EndpointResolver,
   private val refinement: RefinementRepository,
+  private val scheduler: dev.pampa.pampanotes.work.WorkScheduler,
 ) : ViewModel() {
 
   companion object {
@@ -167,7 +168,31 @@ class SettingsViewModel @Inject constructor(
 
   // --- Server personale ---
   fun setEndpoint(url: String, model: String) = viewModelScope.launch {
-    settingsStore.setEndpoint(url, name = "", model = model)
+    // Il nome resta quello che c'e' (arriva dall'account): riscriverlo vuoto sarebbe una modifica,
+    // e salirebbe all'account come se l'utente l'avesse cancellato.
+    settingsStore.setEndpoint(url, name = settingsStore.current().endpointName, model = model)
+  }
+
+  /**
+   * I tre campi del computer come li ha lasciati chi li ha scritti, in un colpo solo: dal primo
+   * avvio quando si va avanti senza aver premuto «Prova». Un token vuoto lascia quello di prima.
+   */
+  fun saveEndpoint(url: String, remoteUrl: String, token: String) = viewModelScope.launch {
+    val current = settingsStore.current()
+    settingsStore.setEndpoint(url, name = current.endpointName, model = current.endpointModel)
+    settingsStore.setEndpointRemoteUrl(remoteUrl)
+    if (token.isNotBlank()) settingsStore.setEndpointToken(token)
+    shareEndpointWithAccount()
+  }
+
+  /**
+   * Un computer appena cambiato sale all'account adesso, non fra sei ore: chi ricollega il PC sul
+   * telefono e poi apre il tablet deve trovarlo gia' li'. `KEEP`: se un giro e' gia' in corso,
+   * la modifica resta sporca e sale col prossimo.
+   */
+  private suspend fun shareEndpointWithAccount() {
+    val settings = settingsStore.current()
+    if (settings.syncEnabled && settings.endpointDirty) scheduler.syncNow()
   }
 
   fun setEndpointToken(token: String?) = viewModelScope.launch { settingsStore.setEndpointToken(token) }
@@ -209,6 +234,8 @@ class SettingsViewModel @Inject constructor(
           it.copy(endpointCheck = CheckState.Failed(health.detail ?: "network"))
         }
       }
+      // «Prova» viene subito dopo aver salvato i campi: a prova finita sono scritti di sicuro.
+      shareEndpointWithAccount()
     }
   }
 

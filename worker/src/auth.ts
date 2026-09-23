@@ -26,6 +26,11 @@ export interface Env {
   PROTOCOL_VERSION?: string;
   /** L'origine con cui si costruiscono i link condivisi, se diversa da quella della richiesta (un dominio davanti al Worker). */
   PUBLIC_ORIGIN?: string;
+  /**
+   * La chiave con cui si cifra il token del computer di casa (`computer.ts`): 32 byte in base64.
+   * Un segreto (`wrangler secret put COMPUTER_KEY`, in locale `.dev.vars`), mai in wrangler.toml.
+   */
+  COMPUTER_KEY?: string;
 }
 
 export class Unauthorized extends Error {}

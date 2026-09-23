@@ -97,6 +97,46 @@ data class GuestInfo(
   val token: String? = null,
 )
 
+/**
+ * Il computer di casa come lo tiene l'account (`GET /v1/account/computer`).
+ *
+ * `token` e' in chiaro perche' lo chiede il proprietario, ed e' `null` quando il server non ne
+ * custodisce uno — mai dato, cancellato, o un Worker senza la chiave per cifrarlo (`tokenStored`).
+ */
+@Serializable
+data class AccountComputer(
+  val url: String = "",
+  val remoteUrl: String = "",
+  val name: String = "",
+  val model: String = "",
+  val token: String? = null,
+  val updatedAt: Long = 0,
+  val deviceId: String = "",
+  val tokenStored: Boolean = false,
+) {
+  val hasEndpoint: Boolean get() = url.isNotBlank() || remoteUrl.isNotBlank()
+}
+
+/** `token`: `null` lascia quello che il server ha, `""` lo cancella. */
+@Serializable
+data class PutComputerRequest(
+  val url: String,
+  val remoteUrl: String,
+  val name: String,
+  val model: String,
+  val token: String?,
+  val updatedAt: Long,
+  val deviceId: String,
+)
+
+/** Sempre con la versione corrente: la nostra se `accepted`, altrimenti quella piu' recente che ha vinto. */
+@Serializable
+data class PutComputerResponse(
+  val accepted: Boolean,
+  val stale: Boolean = false,
+  val computer: AccountComputer,
+)
+
 @Serializable
 data class SyncDevice(val deviceId: String, val name: String? = null, val lastSeenAt: Long = 0)
 

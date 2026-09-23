@@ -226,7 +226,7 @@ class BackupService @Inject constructor(
     settings.setPreferredProvider(saved.providerId())
     settings.setCustomOnly(saved.customOnly)
     settings.setAutoTranscribeOnImport(saved.autoTranscribeOnImport)
-    settings.setEndpoint(saved.endpointUrl, saved.endpointName, saved.endpointModel)
+    settings.setEndpoint(saved.endpointUrl, saved.endpointName, saved.endpointModel, touch = false)
     settings.setEndpointTimeoutMinutes(saved.endpointTimeoutMinutes)
     settings.setRefinementEnabled(saved.refinementEnabled)
     settings.setRefinementModel(saved.refinementModel)

@@ -96,7 +96,14 @@ Cartella (annidabile)
 ```
 
 Il **primo avvio** (`ui/onboarding/`) sono quattro passi e nessuno e' obbligatorio: cosa fa l'app,
-da dove arrivano gli appunti, chi trascrive, dove va il backup. Si puo' arrivare in fondo senza
+da dove arrivano gli appunti, chi trascrive, dove va il backup. Con l'accesso Google compilato ce
+n'e' un quinto, subito dopo il benvenuto — «Hai gia' usato Pampa Notes?» — perche' quello che
+l'account porta cambia i passi dopo: chi entra (`AccountSignIn`, la stessa strada della pagina
+Sincronizzazione: indice compilato se non se n'e' scritto un altro, sessione, sincronizzazione
+accesa, un primo giro aspettato) ritrova le note e arriva a «Chi trascrive» col computer di casa
+gia' collegato, detto in una riga con «Cambia». I campi del computer si salvano anche con
+«Avanti», non solo con «Prova»; un link `pampanotes://endpoint` aperto durante il primo avvio si
+applica subito (`OnboardingLinks` in `MainApp.kt`). Si puo' arrivare in fondo senza
 configurare niente, perche' un avvio che non lascia entrare finche' non gli si da' una chiave API e'
 un avvio che si chiude; quello che chiede lo chiede pero' adesso, che e' l'unico momento in cui
 qualcuno scrive l'indirizzo di un server. Finche' `onboardingDone` non si sa — e' `null`, non
@@ -203,6 +210,23 @@ Il client sta in `core/sync/`. Cinque cose che reggono tutto:
   dispositivo, e il token di sessione va nel Keystore al posto del codice. L'ID token dura un'ora e
   non si tiene. Senza client ID (sviluppo) la pagina chiede un codice, e il server accetta quelli di
   `AUTH_DEV_TOKENS`. Il client non sa quale dei due sta mandando, e non deve.
+
+**Il computer di casa segue l'account.** Chi entra con Google su un dispositivo nuovo non deve
+ricollegare il PC: indirizzo di casa, indirizzo Tailscale, nome, modello e token del companion
+stanno nel Worker (tabella `computers`, `GET/PUT/DELETE /v1/account/computer`, `worker/src/computer.ts`)
+e li porta `ComputerSync`, subito dopo lo stato di ogni giro — prima delle righe, cosi' un primo
+giro lungo e interrotto il computer l'ha portato lo stesso; un suo errore non ferma il giro. Il
+token e' l'unico segreto che l'indice tiene, e sta cifrato (AES-GCM) con `COMPUTER_KEY`, un segreto
+del Worker e non una colonna: chi legge D1 vede un blob. Senza la chiave il Worker tiene gli
+indirizzi e non il token, e lo dice (`tokenStored: false`). Qui non c'e' merge a tre vie: il
+computer e' uno, e vince l'ultimo che ha scritto (`endpoint_updated_at`), con `endpoint_dirty` a
+dire che la modifica e' nata qui (`ComputerMerge`, puro). I setter scritti a mano — Impostazioni,
+primo avvio, il QR di `pampanotes://endpoint` — sporcano solo se qualcosa cambia davvero, e
+spingono un giro; `applyRemoteEndpoint` scrive senza sporcare, e se il servizio non e' mai stato
+scelto sceglie il computer. Il ripristino di un backup non sporca (`touch = false`): un indirizzo
+di marzo non deve vincere su quello che l'account ha di oggi. Un computer configurato prima che
+esistesse tutto questo sale da solo al primo giro, se l'account non ne ha uno. La chiave di Groq
+invece non sale: e' dell'utente e del suo account Groq, non del computer.
 
 I file di una parte o di una fonte cancellate altrove non si buttano: vanno in
 `filesDir/trash/<giorno>/`, perche' questo dispositivo potrebbe averne l'unica copia. Il worker

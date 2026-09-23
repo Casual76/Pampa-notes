@@ -133,7 +133,10 @@ fun MainApp(
             // secondo di pagina vuota e' meno peggio di un lampo di benvenuto a ogni apertura.
             when (onboardingDone) {
               null -> Unit
-              false -> OnboardingRoute(onDone = viewModel::completeOnboarding)
+              false -> {
+                OnboardingLinks(incomingIntents = incomingIntents, onLinkIntent = viewModel::onLinkIntent)
+                OnboardingRoute(onDone = viewModel::completeOnboarding)
+              }
               true -> AppShell(
                 chromeController = chromeController,
                 incomingIntents = incomingIntents,
@@ -152,6 +155,37 @@ fun MainApp(
             modifier = Modifier.align(Alignment.TopCenter),
           )
         }
+      }
+    }
+  }
+}
+
+/**
+ * I link di configurazione durante il primo avvio: il QR del companion e il link dell'indice si
+ * applicano subito, e il passo «Chi trascrive» li mostra gia' scritti. Tutto il resto — una
+ * condivisione, un «Apri con» — resta nel flusso (che ha replay) e lo raccoglie la shell quando il
+ * primo avvio finisce. Un link gia' applicato qui ha perso il suo `data`, quindi la shell non lo
+ * riapplica.
+ */
+@Composable
+private fun OnboardingLinks(
+  incomingIntents: Flow<Intent>,
+  onLinkIntent: (Intent) -> IntentOutcome?,
+) {
+  val notifications = LocalFluidNotificationHostState.current
+  val linkedTitle = stringResource(R.string.settings_endpoint_linked_title)
+  val linkedMessage = stringResource(R.string.settings_endpoint_linked)
+  val syncLinkedTitle = stringResource(R.string.sync_linked_title)
+  val syncLinkedMessage = stringResource(R.string.sync_linked)
+  LaunchedEffect(incomingIntents) {
+    incomingIntents.collect { intent ->
+      val (id, title, message) = when (val outcome = onLinkIntent(intent)) {
+        is IntentOutcome.EndpointLinked -> Triple("endpoint-linked", linkedTitle, linkedMessage.format(outcome.url))
+        is IntentOutcome.SyncLinked -> Triple("sync-linked", syncLinkedTitle, syncLinkedMessage.format(outcome.url))
+        else -> return@collect
+      }
+      launch {
+        notifications?.show(FluidNotification(id = id, title = title, message = message, tone = FluidNotificationTone.Success))
       }
     }
   }

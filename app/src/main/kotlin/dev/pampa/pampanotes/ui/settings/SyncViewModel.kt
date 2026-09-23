@@ -32,6 +32,8 @@ data class SyncUiState(
   val account: String = "",
   /** Il client ID compilato: vuoto vuol dire «niente Google, si entra con un codice». */
   val googleClientId: String = BuildConfig.GOOGLE_CLIENT_ID,
+  /** L'indice compilato, che l'accesso con Google usa se [serverUrl] e' vuoto. */
+  val defaultServerUrl: String = BuildConfig.DEFAULT_SYNC_URL,
   val authBusy: Boolean = false,
   val authError: String? = null,
   val lastSyncAt: Long = 0L,
@@ -55,6 +57,7 @@ class SyncViewModel @Inject constructor(
   private val settingsStore: PampaSettingsStore,
   private val scheduler: WorkScheduler,
   private val api: SyncApi,
+  private val accountSignIn: AccountSignIn,
   sync: SyncDao,
 ) : ViewModel() {
 
@@ -106,23 +109,15 @@ class SyncViewModel @Inject constructor(
   fun syncNow() = scheduler.syncNow(force = true)
 
   /**
-   * Entra con Google: l'ID token dal Credential Manager, la sessione dal Worker, il token di
-   * sessione nel Keystore al posto del codice. Il `context` e' l'Activity: si apre un foglio.
+   * Entra con Google ([AccountSignIn]): sessione, sincronizzazione accesa e un giro, che il
+   * worker fa e la pagina guarda. Il `context` e' l'Activity: si apre un foglio.
    */
   fun signInWithGoogle(context: Context) {
-    val clientId = BuildConfig.GOOGLE_CLIENT_ID
-    if (clientId.isBlank() || _uiState.value.authBusy) return
+    if (!accountSignIn.available || _uiState.value.authBusy) return
     viewModelScope.launch {
       _uiState.update { it.copy(authBusy = true, authError = null) }
       try {
-        val settings = settingsStore.current()
-        val url = settings.syncServerUrl
-        val idToken = GoogleIdentity.idToken(context, clientId)
-        val login = api.loginWithGoogle(url, idToken, settingsStore.syncDeviceId(), settings.syncDeviceName.ifBlank { android.os.Build.MODEL.orEmpty() })
-        settingsStore.setSyncToken(login.token)
-        settingsStore.setSyncAccount(login.email ?: login.name ?: login.ownerId)
-        // Appena dentro, un giro: se l'interruttore e' gia' acceso non c'e' motivo di aspettare.
-        if (settings.syncEnabled) scheduler.syncNow(force = true)
+        accountSignIn.signIn(context, waitForFirstSync = false)
         _uiState.update { it.copy(authBusy = false) }
       } catch (cancelled: CancellationException) {
         throw cancelled

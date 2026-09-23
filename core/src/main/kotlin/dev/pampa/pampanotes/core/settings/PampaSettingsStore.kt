@@ -61,6 +61,15 @@ data class PampaSettings(
   val endpointHasToken: Boolean = false,
   /** Quanto aspettare una risposta del server personale prima di arrendersi. */
   val endpointTimeoutMinutes: Int = 180,
+  /**
+   * Il computer segue l'account: quando e' stato scritto l'ultima volta (orologio di chi l'ha
+   * scritto, qui o altrove) e se la modifica e' nata qui e non e' ancora salita. Vince l'ultimo
+   * che ha scritto; `ComputerSync` fa il resto a ogni giro di sincronizzazione.
+   */
+  val endpointUpdatedAt: Long = 0L,
+  val endpointDirty: Boolean = false,
+  /** Arrivato dall'account e non ancora toccato qui: il primo avvio lo dice invece di chiederlo. */
+  val endpointFromAccount: Boolean = false,
   /** Caricare registrazioni e originali sul computer di casa, quando lo si raggiunge. */
   val archiveEnabled: Boolean = false,
   /** Solo su Wi-Fi: un `.sdocx` da mezzo giga sulla rete dati e' un errore che si paga in bolletta. */
@@ -132,12 +141,90 @@ class PampaSettingsStore(
   suspend fun setCustomOnly(only: Boolean) = edit { it[CustomOnly] = only }
   suspend fun setMirrorEnabled(enabled: Boolean) = edit { it[MirrorEnabled] = enabled }
   suspend fun setAutoTranscribeOnImport(enabled: Boolean) = edit { it[AutoTranscribe] = enabled }
-  suspend fun setEndpoint(url: String, name: String, model: String) = edit {
-    it[EndpointUrl] = url.trim().trimEnd('/')
-    it[EndpointName] = name.trim()
-    it[EndpointModel] = model.trim()
+  /**
+   * Il computer di casa, scritto da chi lo usa: se cambia qualcosa, la modifica e' nata qui e
+   * deve salire all'account ([touchEndpoint]). `touch = false` per chi rimette un valore che non
+   * e' una scelta di adesso — il ripristino di un backup, che puo' essere di marzo, non deve
+   * vincere sull'indirizzo che l'account ha di oggi.
+   */
+  suspend fun setEndpoint(url: String, name: String, model: String, touch: Boolean = true) = edit {
+    val changed = it.setIfChanged(EndpointUrl, url.trim().trimEnd('/')) or
+      it.setIfChanged(EndpointName, name.trim()) or
+      it.setIfChanged(EndpointModel, model.trim())
+    if (changed && touch) touchEndpoint(it)
   }
-  suspend fun setEndpointRemoteUrl(url: String) = edit { it[EndpointRemoteUrl] = url.trim().trimEnd('/') }
+  suspend fun setEndpointRemoteUrl(url: String) = edit {
+    if (it.setIfChanged(EndpointRemoteUrl, url.trim().trimEnd('/'))) touchEndpoint(it)
+  }
+
+  /**
+   * Il computer come l'ha scritto l'account. Non sporca: e' arrivato da li', non ha niente da
+   * rimandare. Si rifiuta solo se nel frattempo qui e' nata una modifica piu' recente — quella
+   * salira' al prossimo giro, e vincera' lei.
+   *
+   * `token` nullo vuol dire «l'account non ne ha uno» (o un server senza la chiave per
+   * custodirlo): si tiene quello che c'e', tranne quando l'account dice che il computer non c'e'
+   * piu' — senza indirizzi un token non apre niente.
+   *
+   * Se la preferenza del servizio non e' mai stata scelta, chi riceve un computer lo usa: e' il
+   * caso del primo avvio, in cui l'accesso con Google viene prima della pagina «Chi trascrive».
+   *
+   * @return se e' stato applicato.
+   */
+  suspend fun applyRemoteEndpoint(
+    url: String,
+    remoteUrl: String,
+    name: String,
+    model: String,
+    token: String?,
+    updatedAt: Long,
+  ): Boolean {
+    var applied = false
+    edit { prefs ->
+      val dirty = prefs[EndpointDirty] ?: false
+      if (dirty && (prefs[EndpointUpdatedAt] ?: 0L) > updatedAt) return@edit
+      val present = url.isNotBlank() || remoteUrl.isNotBlank()
+      prefs[EndpointUrl] = url.trim().trimEnd('/')
+      prefs[EndpointRemoteUrl] = remoteUrl.trim().trimEnd('/')
+      prefs[EndpointName] = name.trim()
+      prefs[EndpointModel] = model.trim()
+      when {
+        !token.isNullOrBlank() -> prefs[EndpointTokenBlob] = cipher.encrypt(token.trim())
+        !present -> prefs.remove(EndpointTokenBlob)
+      }
+      if (present && prefs[PreferredProvider] == null) prefs[PreferredProvider] = TranscriptionProviderId.CUSTOM.id
+      prefs[EndpointUpdatedAt] = updatedAt
+      prefs[EndpointDirty] = false
+      prefs[EndpointFromAccount] = present
+      applied = true
+    }
+    return applied
+  }
+
+  /**
+   * L'account ha preso la versione scritta a `expectedUpdatedAt`, ed e' diventata quella di
+   * `syncedAt`. Pulita solo se nel frattempo non e' cambiato niente: una modifica fatta mentre
+   * la richiesta era in volo resta sporca e sale al prossimo giro.
+   */
+  suspend fun markEndpointSynced(expectedUpdatedAt: Long, syncedAt: Long) = edit {
+    if ((it[EndpointUpdatedAt] ?: 0L) == expectedUpdatedAt) {
+      it[EndpointUpdatedAt] = syncedAt
+      it[EndpointDirty] = false
+    }
+  }
+
+  /** Una modifica nata qui: ora (mai prima dell'ultima nota), sporca, e non piu' «dall'account». */
+  private fun touchEndpoint(prefs: MutablePreferences) {
+    prefs[EndpointUpdatedAt] = maxOf(System.currentTimeMillis(), (prefs[EndpointUpdatedAt] ?: 0L) + 1)
+    prefs[EndpointDirty] = true
+    prefs[EndpointFromAccount] = false
+  }
+
+  private fun MutablePreferences.setIfChanged(key: Preferences.Key<String>, value: String): Boolean {
+    if ((this[key] ?: "") == value) return false
+    this[key] = value
+    return true
+  }
   suspend fun setSyncEnabled(enabled: Boolean) = edit { it[SyncEnabled] = enabled }
   /**
    * Cambiare servizio vuol dire ricominciare: un altro server non ha le nostre righe e non sa
@@ -201,11 +288,13 @@ class PampaSettingsStore(
 
   suspend fun setEndpointToken(token: String?) = edit { prefs ->
     val trimmed = token?.trim()
+    val before = prefs[EndpointTokenBlob]?.let { runCatching { cipher.decrypt(it) }.getOrNull() }.orEmpty()
     if (trimmed.isNullOrEmpty()) {
       prefs.remove(EndpointTokenBlob)
     } else {
       prefs[EndpointTokenBlob] = cipher.encrypt(trimmed)
     }
+    if (before != trimmed.orEmpty()) touchEndpoint(prefs)
   }
 
   private suspend fun edit(block: (MutablePreferences) -> Unit) {
@@ -227,6 +316,9 @@ class PampaSettingsStore(
     endpointModel = this[EndpointModel] ?: "",
     endpointHasToken = this[EndpointTokenBlob] != null,
     endpointTimeoutMinutes = this[EndpointTimeout] ?: 180,
+    endpointUpdatedAt = this[EndpointUpdatedAt] ?: 0L,
+    endpointDirty = this[EndpointDirty] ?: false,
+    endpointFromAccount = this[EndpointFromAccount] ?: false,
     archiveEnabled = this[ArchiveEnabled] ?: false,
     archiveOnlyUnmetered = this[ArchiveOnlyUnmetered] ?: true,
     lastArchiveAt = this[LastArchiveAt] ?: 0L,
@@ -270,6 +362,9 @@ class PampaSettingsStore(
     val EndpointModel = stringPreferencesKey("endpoint_model")
     val EndpointTokenBlob = stringPreferencesKey("endpoint_token")
     val EndpointTimeout = intPreferencesKey("endpoint_timeout_minutes")
+    val EndpointUpdatedAt = longPreferencesKey("endpoint_updated_at")
+    val EndpointDirty = booleanPreferencesKey("endpoint_dirty")
+    val EndpointFromAccount = booleanPreferencesKey("endpoint_from_account")
     val ArchiveEnabled = booleanPreferencesKey("archive_enabled")
     val ArchiveOnlyUnmetered = booleanPreferencesKey("archive_only_unmetered")
     val LastArchiveAt = longPreferencesKey("last_archive_at")

@@ -54,6 +54,7 @@ class SyncRepository @Inject constructor(
   private val applier: SyncApplier,
   private val api: SyncApi,
   private val settingsStore: PampaSettingsStore,
+  private val computer: ComputerSync,
 ) {
   private val oneAtATime = Mutex()
 
@@ -68,6 +69,7 @@ class SyncRepository @Inject constructor(
       val status = api.status(url, token)
       val names = status.devices.associate { it.deviceId to it.name.orEmpty() }
       val state = ensureIdentity(deviceId)
+      syncComputer(url, token, deviceId)
       var pulled = pull(url, token, deviceId, deviceName, names, status.ownerId, state.lastPullSeq)
       var pushed = push(url, token, deviceId, deviceName)
       if (pushed.second > 0) {
@@ -90,6 +92,22 @@ class SyncRepository @Inject constructor(
       throw cancelled
     } catch (error: Exception) {
       failed(error.message ?: error::class.java.simpleName)
+    }
+  }
+
+  /**
+   * Il computer di casa che segue l'account ([ComputerSync]). Subito dopo lo stato, prima delle
+   * righe: il primo giro di un dispositivo appena entrato puo' essere lungo, e se si interrompe a
+   * meta' il computer deve essere arrivato lo stesso — e' quello che serve per trascrivere.
+   * Un suo errore non ferma il giro: le note contano di piu', e al prossimo giro ci si riprova.
+   */
+  private suspend fun syncComputer(url: String, token: String, deviceId: String) {
+    try {
+      computer.sync(url, token, deviceId)
+    } catch (cancelled: CancellationException) {
+      throw cancelled
+    } catch (error: Exception) {
+      android.util.Log.w("SyncRepository", "computer di casa: ${error.message}")
     }
   }
 

@@ -26,6 +26,7 @@ class MainViewModel @Inject constructor(
   engineSettingsStore: EngineSettingsStore,
   private val settingsStore: PampaSettingsStore,
   private val importRequests: ImportRequestHolder,
+  private val scheduler: dev.pampa.pampanotes.work.WorkScheduler,
 ) : ViewModel() {
 
   /** Il tema. Parte dai default compilati: un fotogramma con l'accento giusto vale piu' di uno vuoto. */
@@ -60,6 +61,18 @@ class MainViewModel @Inject constructor(
       importRequests.offer(request)
       return IntentOutcome.Import
     }
+    return onLinkIntent(intent) ?: IntentOutcome.None
+  }
+
+  /**
+   * Solo i due link di configurazione, l'indice e il computer di casa. Il primo avvio passa da qui
+   * e non da [onIntent]: chi inquadra il QR del companion mentre e' ancora al passo «Chi
+   * trascrive» deve vedere il computer collegato subito, non dopo aver finito. Una condivisione
+   * invece aspetta la shell: il wizard dell'import non ha dove aprirsi sopra il benvenuto.
+   *
+   * `null` se l'intent non e' un link nostro.
+   */
+  fun onLinkIntent(intent: Intent): IntentOutcome? {
     SyncLink.parse(intent.dataString)?.let { link ->
       intent.data = null
       viewModelScope.launch {
@@ -69,7 +82,7 @@ class MainViewModel @Inject constructor(
       }
       return IntentOutcome.SyncLinked(link.url)
     }
-    val link = EndpointLink.parse(intent.dataString) ?: return IntentOutcome.None
+    val link = EndpointLink.parse(intent.dataString) ?: return null
     // Il link vale una volta. Una rotazione ricrea l'Activity con lo stesso intent, e senza questo
     // ogni giro risalverebbe le stesse impostazioni sopra quelle che nel frattempo si sono cambiate.
     intent.data = null
@@ -81,6 +94,9 @@ class MainViewModel @Inject constructor(
       // dentro farebbe rispondere 401 a un server che non ne vuole.
       settingsStore.setEndpointToken(link.token)
       settingsStore.setPreferredProvider(TranscriptionProviderId.CUSTOM)
+      // Sono i setter di chi scrive a mano: il computer e' sporco, e sale all'account adesso, cosi'
+      // gli altri dispositivi lo trovano ricollegato senza rifare il QR.
+      if (settings.value.syncEnabled) scheduler.syncNow()
     }
     return IntentOutcome.EndpointLinked(link.url)
   }

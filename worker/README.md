@@ -32,7 +32,12 @@ npx wrangler dev --local --port 8788 --persist-to .wrangler/test-state
 python test_protocol.py http://127.0.0.1:8788
 python test_share.py http://127.0.0.1:8788
 python test_guests.py http://127.0.0.1:8788
+python test_computer.py http://127.0.0.1:8788 --persist-to .wrangler/test-state
 ```
+
+`test_computer.py` vuole anche `COMPUTER_KEY` in `.dev.vars` (32 byte casuali in base64, per esempio
+`python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"`): senza, il Worker
+tiene gli indirizzi del computer ma non il token, e il test lo trova.
  I token di sviluppo stanno in `wrangler.toml` (`AUTH_DEV_TOKENS`, forma `token:ownerId`):
 nell'app, in *Impostazioni → Sincronizzazione*, l'indirizzo è quello del computer (LAN o
 Tailscale, porta 8787) e il codice è uno di quei token. `test_protocol.py` fa il giro che fa un
@@ -45,6 +50,7 @@ npx wrangler login                 # apre il browser: e' il tuo account Cloudfla
 npx wrangler d1 create pampa-notes # stampa un database_id: va in wrangler.toml
 npx wrangler r2 bucket create pampa-notes-audio   # l'audio delle note condivise
 npm run schema:remote
+npx wrangler secret put COMPUTER_KEY   # 32 byte in base64: cifra il token del computer di casa
 npm run deploy                     # https://pampa-notes-sync.<tuo-sottodominio>.workers.dev
 ```
 
@@ -72,6 +78,7 @@ testo di anni di lezioni sono decine di megabyte.
 | `POST /v1/auth/google`, `POST /v1/auth/logout` | Un ID token di Google diventa una sessione (token lungo, per dispositivo); la chiusura la revoca. |
 | `POST /v1/guests`, `GET /v1/guests`, `DELETE /v1/guests/{id}` | Gli ospiti del computer: un token `pg_…` per persona (visibile solo alla creazione), l'elenco con l'uso, la revoca. |
 | `POST /v1/guests/verify`, `POST /v1/guests/usage` | Quello che chiede il companion: «è un ospite di `owner`?» e «ha trascritto N secondi». Senza token del proprietario: il token dell'ospite è la prova. |
+| `GET /v1/account/computer`, `PUT …`, `DELETE …` | Il computer di casa dell'account: indirizzi, nome, modello e il token del companion, cifrato con `COMPUTER_KEY` (AES-GCM). Il `PUT` scrive solo se il suo `updatedAt` e' piu' recente, e risponde sempre con la versione corrente (`accepted`, `stale`); un `token` assente lascia quello di prima, uno vuoto lo cancella. |
 | `GET /health` | Vivo, e con quale versione del protocollo. |
 | `POST /v1/shares`, `GET /v1/shares`, `DELETE /v1/shares/{id}` | Condividere una nota: un link con un token casuale, l'elenco, la revoca (che cancella anche l'audio da R2). |
 | `PUT /v1/shares/{id}/audio/{partId}` e `…/multipart/…` | L'audio della nota condivisa, intero o a blocchi (R2 multipart). `HEAD` dice se c'è già. |

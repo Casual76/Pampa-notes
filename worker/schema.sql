@@ -105,3 +105,18 @@ CREATE TABLE IF NOT EXISTS guests (
   PRIMARY KEY (ownerId, guestId)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS guests_token ON guests(token);
+
+-- Il computer di casa di ogni account: gli indirizzi e il token del companion, cosi' che chi entra
+-- con Google su un dispositivo nuovo non debba ricollegarlo a mano. Il token e' cifrato con
+-- COMPUTER_KEY (un segreto del Worker, AES-GCM): senza la chiave la colonna resta NULL. Vince
+-- l'ultimo che ha scritto, per updatedAt.
+CREATE TABLE IF NOT EXISTS computers (
+  ownerId     TEXT    PRIMARY KEY,
+  url         TEXT    NOT NULL DEFAULT '',  -- l'indirizzo di casa, in LAN
+  remoteUrl   TEXT    NOT NULL DEFAULT '',  -- quello che vale anche da fuori (Tailscale)
+  name        TEXT    NOT NULL DEFAULT '',
+  model       TEXT    NOT NULL DEFAULT '',
+  tokenCipher TEXT,                         -- v1.<iv>.<cifrato>; NULL: nessun token custodito
+  updatedAt   INTEGER NOT NULL,             -- l'orologio del dispositivo che l'ha scritto
+  deviceId    TEXT    NOT NULL DEFAULT ''
+);
