@@ -150,6 +150,29 @@ class MigrationTest {
     }
   }
 
+  @Test
+  fun migrazione6a7_tiene_le_corse_e_le_lascia_senza_nome() {
+    helper.createDatabase(NAME, 6).use { db ->
+      db.execSQL(
+        "INSERT INTO transcription_runs (id, jobId, sessionId, provider, model, device, audioMs, wallMs, words, segments, resumed, finishedAt) " +
+          "VALUES ('r', 'j', 's', 'custom', 'large-v3', 'cuda', 2400000, 48000, 5214, 300, 1, 2)",
+      )
+    }
+
+    helper.runMigrationsAndValidate(NAME, 7, true).use { db ->
+      db.query("SELECT audioMs, wallMs, resumed, deviceName FROM transcription_runs WHERE id = 'r'").use { cursor ->
+        assertEquals(1, cursor.count)
+        cursor.moveToFirst()
+        assertEquals(2_400_000L, cursor.getLong(0))
+        assertEquals(48_000L, cursor.getLong(1))
+        // Ripresa resta ripresa: la media continua a lasciarla fuori.
+        assertEquals(1, cursor.getInt(2))
+        // Senza nome finche' il primo giro di sync non la rivendica (StatsDao.claimUnnamed).
+        assertEquals("", cursor.getString(3))
+      }
+    }
+  }
+
   private companion object {
     const val NAME = "migration-test.db"
   }

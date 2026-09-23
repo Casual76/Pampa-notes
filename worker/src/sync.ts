@@ -42,7 +42,12 @@
 
 import type { Env } from "./auth";
 
-export const TABLES = ["folders", "notes", "sessions", "audio_parts", "transcripts", "sources", "export_presets"] as const;
+/**
+ * Le tabelle che l'indice conosce. `transcription_runs` sono le statistiche delle trascrizioni
+ * (quanto audio, in quanto tempo, su cosa): righe scritte una volta e mai piu' toccate, senza un
+ * padre — una lezione cancellata non si porta via il fatto di essere stata trascritta.
+ */
+export const TABLES = ["folders", "notes", "sessions", "audio_parts", "transcripts", "sources", "export_presets", "transcription_runs"] as const;
 export type Table = (typeof TABLES)[number];
 
 /** L'ordine in cui le righe vanno applicate: un figlio non deve arrivare prima del padre. */
@@ -54,6 +59,7 @@ export const APPLY_ORDER: Record<Table, number> = {
   audio_parts: 4,
   transcripts: 5,
   export_presets: 6,
+  transcription_runs: 7,
 };
 
 export interface Change {
@@ -493,6 +499,8 @@ function parentOf(row: StateRow): { tbl: Table; id: string } | null {
     case "sources": return pick("notes", payload.noteId);
     case "audio_parts": return pick("sessions", payload.sessionId);
     case "transcripts": return pick("sessions", payload.sessionId);
+    // `export_presets` e `transcription_runs` non hanno un padre: il `sessionId` di una corsa non e'
+    // una chiave esterna, e la sessione puo' non esserci piu'.
     default: return null;
   }
 }

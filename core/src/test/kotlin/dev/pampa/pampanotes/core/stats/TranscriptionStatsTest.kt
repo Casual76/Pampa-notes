@@ -158,6 +158,25 @@ class TranscriptionStatsTest {
   }
 
   @Test
+  fun `le corse di tutti i dispositivi contano, e il record fatto altrove dice dove`() {
+    val tablet = run(40 * 60_000L, 30_000L).copy(id = "tablet", deviceName = "Tab S9")
+    val here = run(20 * 60_000L, 60_000L).copy(id = "qui", deviceName = "Pixel")
+    val stats = TranscriptionStats.aggregate(listOf(tablet, here), emptyList(), thisDevice = "Pixel")
+    val speed = stats.speed!!
+    assertEquals(2, speed.runs)
+    assertEquals(80.0, speed.best, 0.001)
+    assertEquals("Tab S9", speed.bestElsewhere)
+
+    // Fatto qui, o da prima che si dicesse chi: niente da aggiungere.
+    assertNull(TranscriptionStats.aggregate(listOf(tablet, here), emptyList(), thisDevice = "Tab S9").speed!!.bestElsewhere)
+    assertNull(TranscriptionStats.aggregate(listOf(tablet.copy(deviceName = "")), emptyList(), thisDevice = "Pixel").speed!!.bestElsewhere)
+    // Una corsa ripresa su un altro dispositivo resta fuori dalla velocita' come una ripresa di qui.
+    val resumed = TranscriptionStats.aggregate(listOf(tablet.copy(resumed = true), here), emptyList(), thisDevice = "Pixel").speed!!
+    assertEquals(1, resumed.runs)
+    assertNull(resumed.bestElsewhere)
+  }
+
+  @Test
   fun `il fattore si scrive come lo scrive la lingua`() {
     assertEquals("50×", StatsFormat.factor(50.0, Locale.ITALIAN))
     assertEquals("50×", StatsFormat.factor(49.6, Locale.ITALIAN))

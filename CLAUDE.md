@@ -629,9 +629,12 @@ passo di adesso, che si anima quando non c'e' niente da misurare.
 
 **Le statistiche.** `transcription_runs` (schema 6) tiene una riga per trascrizione finita: durata
 dell'audio, tempo sul telefono dal primo passo alla fine (la coda esclusa), parole, dispositivo
-(`cuda`, `cpu`, `groq`) e i `processing_s`/`audio_s` che il companion rimanda. **Non si
-sincronizza** — la velocita' e' di questo telefono con quel computer — e non ha chiavi esterne: una
-sessione cancellata non si porta via la storia. Un lavoro ripreso (`resumed`) conta le parole ma non
+(`cuda`, `cpu`, `groq`) e i `processing_s`/`audio_s` che il companion rimanda. Dallo schema 7 **si
+sincronizza** come le altre tabelle, senza padre, e ogni riga dice chi l'ha misurata (`deviceName`,
+il nome del dispositivo nel sync): la home mostra la velocita' di tutto l'account, e il record fatto
+altrove dice dove («record 72× (Tab S9)»). Le corse di prima restano senza nome finche' il primo giro
+non le rivendica (`StatsDao.claimUnnamed`, solo quelle mai concordate con l'indice): e' quell'`UPDATE`
+a metterle nell'outbox. Non ha chiavi esterne: una sessione cancellata non si porta via la storia. Un lavoro ripreso (`resumed`) conta le parole ma non
 la velocita', perche' ha saltato i pezzi gia' fatti. Tutto il resto della home (ore, parole, ritmo,
 lezione piu' lunga) si conta dalle trascrizioni grezze, quindi vale anche per quelle arrivate dal
 sync. I conti stanno in `TranscriptionStats.aggregate`, puro.

@@ -65,6 +65,9 @@ interface SyncDao {
   @Query("INSERT OR IGNORE INTO sync_outbox (tbl, rowId, op) SELECT 'export_presets', id, 'U' FROM export_presets")
   suspend fun seedExportPresets()
 
+  @Query("INSERT OR IGNORE INTO sync_outbox (tbl, rowId, op) SELECT 'transcription_runs', id, 'U' FROM transcription_runs")
+  suspend fun seedTranscriptionRuns()
+
   // --- stato ---
 
   @Query("SELECT * FROM sync_state WHERE id = 1")

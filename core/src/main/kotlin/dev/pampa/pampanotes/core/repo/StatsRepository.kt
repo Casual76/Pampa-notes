@@ -7,7 +7,9 @@ import dev.pampa.pampanotes.core.db.StatsDao
 import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.db.TranscriptionRunEntity
 import dev.pampa.pampanotes.core.model.Ids
+import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.stats.TranscriptionStats
+import dev.pampa.pampanotes.core.sync.deviceLabel
 import dev.pampa.pampanotes.core.transcription.GroqWhisperProvider
 import dev.pampa.pampanotes.core.transcription.ServerReport
 import dev.pampa.pampanotes.core.transcription.ServerReports
@@ -16,21 +18,32 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 /**
  * Le statistiche delle trascrizioni: chi le scrive (la coda, a fine lavoro) e chi le guarda (la
  * home, la sessione). Il conto vero lo fa [TranscriptionStats.aggregate], che e' puro.
+ *
+ * Le corse arrivano anche dagli altri dispositivi dell'account (la tabella si sincronizza): la home
+ * le conta tutte, e sa quali sono di qui confrontando [TranscriptionRunEntity.deviceName] col nome
+ * che questo dispositivo usa nel sync.
  */
 @Singleton
 class StatsRepository @Inject constructor(
   private val stats: StatsDao,
   private val sessions: SessionDao,
   private val parts: AudioPartDao,
+  private val settings: PampaSettingsStore,
 ) {
 
   fun observe(): Flow<TranscriptionStats> =
-    combine(stats.observeRuns(), stats.observeTranscribedSessions()) { runs, lessons ->
-      TranscriptionStats.aggregate(runs, lessons)
+    combine(
+      stats.observeRuns(),
+      stats.observeTranscribedSessions(),
+      settings.settings.map { it.deviceLabel() }.distinctUntilChanged(),
+    ) { runs, lessons, thisDevice ->
+      TranscriptionStats.aggregate(runs, lessons, thisDevice)
     }
 
   fun observeLatest(sessionId: String): Flow<TranscriptionRunEntity?> = stats.observeLatest(sessionId)
@@ -70,6 +83,7 @@ class StatsRepository @Inject constructor(
       // dell'ultimo giro, e la velocita' verrebbe gonfiata. Si segna, e la media lo lascia fuori.
       resumed = job.attempts > 0,
       finishedAt = now,
+      deviceName = settings.current().deviceLabel(),
     )
     stats.insert(run)
     run

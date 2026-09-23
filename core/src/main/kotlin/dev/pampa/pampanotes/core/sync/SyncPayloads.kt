@@ -14,8 +14,10 @@ import dev.pampa.pampanotes.core.db.SessionDao
 import dev.pampa.pampanotes.core.db.SessionEntity
 import dev.pampa.pampanotes.core.db.SourceDao
 import dev.pampa.pampanotes.core.db.SourceEntity
+import dev.pampa.pampanotes.core.db.StatsDao
 import dev.pampa.pampanotes.core.db.TranscriptDao
 import dev.pampa.pampanotes.core.db.TranscriptEntity
+import dev.pampa.pampanotes.core.db.TranscriptionRunEntity
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.serialization.json.JsonElement
@@ -44,9 +46,8 @@ class SyncPayloads @Inject constructor(
   private val segments: SegmentDao,
   private val sources: SourceDao,
   private val presets: ExportPresetDao,
+  private val runs: StatsDao,
 ) {
-  private val json = SyncCodec.json
-
   /** Null quando la riga non c'e' (piu'). */
   suspend fun encode(table: String, id: String): Encoded? = when (table) {
     "folders" -> folders.get(id)?.let { encode(FolderEntity.serializer(), it, it.updatedAt) }
@@ -65,11 +66,28 @@ class SyncPayloads @Inject constructor(
     }
     "sources" -> sources.get(id)?.let { encode(SourceEntity.serializer(), it, it.importedAt) }
     "export_presets" -> presets.get(id)?.let { encode(ExportPresetEntity.serializer(), it, it.lastUsedAt) }
+    "transcription_runs" -> runs.get(id)?.let(RunPayload::encode)
     else -> null
   }
 
-  private fun <T> encode(serializer: kotlinx.serialization.KSerializer<T>, value: T, updatedAt: Long): Encoded {
-    val element = json.encodeToJsonElement(serializer, value)
-    return Encoded(payload = element, hash = SyncCodec.hash(element), updatedAt = updatedAt)
+  companion object {
+    fun <T> encode(serializer: kotlinx.serialization.KSerializer<T>, value: T, updatedAt: Long): Encoded {
+      val element = SyncCodec.json.encodeToJsonElement(serializer, value)
+      return Encoded(payload = element, hash = SyncCodec.hash(element), updatedAt = updatedAt)
+    }
   }
+}
+
+/**
+ * Una corsa di trascrizione sul filo. Puro: si prova in JVM.
+ *
+ * Il payload e' l'entita' intera, niente da togliere dall'impronta: una corsa non ha un `updatedAt`
+ * che si alza da solo, e il suo tempo e' [TranscriptionRunEntity.finishedAt], che non cambia mai.
+ * L'unica scrittura dopo la nascita e' il nome del dispositivo dato alle corse di prima della
+ * versione 7 (`StatsDao.claimUnnamed`), ed e' giusto che cambi l'impronta: e' quella che le fa salire.
+ */
+object RunPayload {
+  fun encode(run: TranscriptionRunEntity): Encoded = SyncPayloads.encode(TranscriptionRunEntity.serializer(), run, run.finishedAt)
+
+  fun decode(payload: JsonElement): TranscriptionRunEntity = SyncCodec.json.decodeFromJsonElement(TranscriptionRunEntity.serializer(), payload)
 }

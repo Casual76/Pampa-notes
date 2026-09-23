@@ -31,6 +31,7 @@ npx wrangler d1 execute pampa-notes --local --persist-to .wrangler/test-state --
 npx wrangler dev --local --port 8788 --persist-to .wrangler/test-state
 python test_protocol.py http://127.0.0.1:8788
 python test_pull_parents.py http://127.0.0.1:8788
+python test_runs.py http://127.0.0.1:8788        # le statistiche: senza padre, id nuovi a ogni giro
 python test_share.py http://127.0.0.1:8788
 python test_guests.py http://127.0.0.1:8788
 python test_computer.py http://127.0.0.1:8788 --persist-to .wrangler/test-state --key <COMPUTER_KEY>

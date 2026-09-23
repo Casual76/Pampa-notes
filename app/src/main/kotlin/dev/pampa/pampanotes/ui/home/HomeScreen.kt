@@ -372,10 +372,15 @@ private fun transcriptionTiles(stats: TranscriptionStats): List<StatTile> = buil
       StatTile(
         label = stringResource(R.string.home_stats_speed_label),
         value = StatsFormat.factor(speed.average),
-        detail = if (speed.runs > 1) {
-          stringResource(R.string.home_stats_speed_detail, StatsFormat.factor(speed.best))
-        } else {
-          stringResource(R.string.home_stats_speed_detail_single)
+        // Le corse arrivano da tutti i dispositivi: il record fatto altrove dice dove.
+        detail = speed.bestElsewhere.let { elsewhere ->
+          when {
+            speed.runs > 1 && elsewhere != null ->
+              stringResource(R.string.home_stats_speed_detail_elsewhere, StatsFormat.factor(speed.best), elsewhere)
+            speed.runs > 1 -> stringResource(R.string.home_stats_speed_detail, StatsFormat.factor(speed.best))
+            elsewhere != null -> stringResource(R.string.home_stats_speed_detail_single_elsewhere, elsewhere)
+            else -> stringResource(R.string.home_stats_speed_detail_single)
+          }
         },
         // La tessera della velocita' prende l'accento: e' il numero che la home non aveva.
         tone = FluidTone.Primary,
