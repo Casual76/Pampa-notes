@@ -153,10 +153,21 @@ export async function headAudio(env: ShareEnv, ownerId: string, shareId: string,
   return { exists: head !== null, bytes: head?.size ?? 0 };
 }
 
+/**
+ * Il tipo con cui l'audio verra' servito a chi apre il link. Solo `audio/*`: il tipo lo sceglie chi
+ * carica, e un `text/html` qui farebbe di un «audio» una pagina servita dall'origine del Worker,
+ * con accesso a tutto quello che l'origine vede. Qualunque altra cosa diventa `audio/mp4`, che e'
+ * quello che l'app registra.
+ */
+function audioMime(declared: string | null | undefined): string {
+  const mime = (declared ?? "").split(";")[0].trim().toLowerCase();
+  return /^audio\/[a-z0-9][a-z0-9.+-]*$/.test(mime) ? mime : "audio/mp4";
+}
+
 /** Un file intero in una richiesta: va bene fino a qualche decina di megabyte. */
 export async function putAudio(env: ShareEnv, ownerId: string, shareId: string, partId: string, request: Request): Promise<{ bytes: number }> {
   await liveShare(env, ownerId, shareId);
-  const mime = request.headers.get("content-type")?.split(";")[0].trim() || "audio/mp4";
+  const mime = audioMime(request.headers.get("content-type"));
   const key = audioKey(ownerId, shareId, partId);
   const before = await env.AUDIO.head(key);
   const object = await env.AUDIO.put(key, request.body, { httpMetadata: { contentType: mime } });
@@ -166,7 +177,7 @@ export async function putAudio(env: ShareEnv, ownerId: string, shareId: string, 
 
 export async function beginMultipart(env: ShareEnv, ownerId: string, shareId: string, partId: string, mime: string): Promise<{ uploadId: string }> {
   await liveShare(env, ownerId, shareId);
-  const upload = await env.AUDIO.createMultipartUpload(audioKey(ownerId, shareId, partId), { httpMetadata: { contentType: mime || "audio/mp4" } });
+  const upload = await env.AUDIO.createMultipartUpload(audioKey(ownerId, shareId, partId), { httpMetadata: { contentType: audioMime(mime) } });
   return { uploadId: upload.uploadId };
 }
 
@@ -337,19 +348,20 @@ export async function audioResponse(env: ShareEnv, token: string, partId: string
   if (!head) return new Response("audio non disponibile", { status: 404 });
 
   const size = head.size;
-  const type = head.httpMetadata?.contentType || "audio/mp4";
+  // Anche quello che e' gia' in R2 passa dal filtro: caricato prima che ci fosse, puo' avere qualunque tipo.
+  const type = audioMime(head.httpMetadata?.contentType);
   const range = parseRange(request.headers.get("range"), size);
   const base: Record<string, string> = { "content-type": type, "accept-ranges": "bytes", "cache-control": "private, max-age=3600" };
 
   if (request.method === "HEAD") return new Response(null, { status: 200, headers: { ...base, "content-length": String(size) } });
 
+  if (range === "unsatisfiable") {
+    return new Response(null, { status: 416, headers: { "content-range": `bytes */${size}` } });
+  }
   if (!range) {
     const object = await env.AUDIO.get(key);
     if (!object) return new Response("audio non disponibile", { status: 404 });
     return new Response(object.body, { status: 200, headers: { ...base, "content-length": String(size) } });
-  }
-  if (range.start >= size) {
-    return new Response(null, { status: 416, headers: { "content-range": `bytes */${size}` } });
   }
   const end = Math.min(range.end, size - 1);
   const object = await env.AUDIO.get(key, { range: { offset: range.start, length: end - range.start + 1 } });
@@ -360,7 +372,13 @@ export async function audioResponse(env: ShareEnv, token: string, partId: string
   });
 }
 
-function parseRange(header: string | null, size: number): { start: number; end: number } | null {
+/**
+ * `null`: nessun `Range`, o uno che non si capisce (altra unita', piu' intervalli) — si ignora e si
+ * manda il file intero, come chiede HTTP. `"unsatisfiable"`: un intervallo scritto bene ma che nel
+ * file non c'e' (`5-3`, oltre la fine, gli ultimi zero byte): 416, non un 206 con una lunghezza
+ * negativa o un corpo vuoto che il lettore scambierebbe per la fine dell'audio.
+ */
+function parseRange(header: string | null, size: number): { start: number; end: number } | "unsatisfiable" | null {
   if (!header) return null;
   const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
   if (!m) return null;
@@ -369,7 +387,11 @@ function parseRange(header: string | null, size: number): { start: number; end: 
   if (a === "") {
     // gli ultimi N byte
     const n = Number(b);
+    if (!Number.isSafeInteger(n) || n <= 0 || size === 0) return "unsatisfiable";
     return { start: Math.max(0, size - n), end: size - 1 };
   }
-  return { start: Number(a), end: b === "" ? size - 1 : Number(b) };
+  const start = Number(a);
+  const end = b === "" ? size - 1 : Number(b);
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || start >= size) return "unsatisfiable";
+  return { start, end };
 }

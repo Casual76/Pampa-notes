@@ -11,6 +11,9 @@
  * Le parole: `inizio,fine,testo` per riga, tempi relativi all'inizio del segmento nella sessione
  * (vedi `WordTimings.encode`, che li salva relativi all'inizio del segmento nella parte: la
  * differenza fra i due e' lo scarto della parte, e `sessionStartMs` lo ha gia' dentro).
+ *
+ * Tutto il file e' un template di TypeScript: ogni `\` del JavaScript qui dentro va scritto doppio.
+ * Un `\d` singolo arriva al browser come `d`, e la data della lezione non si riconosceva mai.
  */
 
 export function pageHtml(): string {
@@ -258,7 +261,7 @@ export function pageHtml(): string {
     }
     for (var s = 0; s < data.sessions.length; s++) {
       var session = data.sessions[s];
-      var when = session.date && /^\d{4}-\d{2}-\d{2}$/.test(session.date)
+      var when = session.date && /^\\d{4}-\\d{2}-\\d{2}$/.test(session.date)
         ? new Date(session.date + 'T12:00:00').toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric' })
         : (session.date || '');
       var title = (session.title || ('Sessione ' + (s + 1))) + (when ? ' — ' + when : '');

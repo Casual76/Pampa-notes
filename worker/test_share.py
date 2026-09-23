@@ -27,6 +27,7 @@ NOW = int(time.time() * 1000)
 def call(method: str, path: str, body: bytes | dict | None = None, token: str | None = TOKEN, headers: dict | None = None) -> tuple[int, dict, bytes]:
     data = json.dumps(body).encode() if isinstance(body, dict) else body
     h = {"Content-Type": "application/json"} if isinstance(body, dict) else {}
+    h["User-Agent"] = "pampa-test/1"
     if token:
         h["Authorization"] = f"Bearer {token}"
     h.update(headers or {})
@@ -143,7 +144,47 @@ def main() -> None:
     assert code == 200 and int(h.get("Content-Length", "0")) == len(audio2)
     code, _, _ = call("GET", f"/s/{token}/audio/p1", token=None, headers={"Range": "bytes=999999-"})
     assert code == 416
-    print("audio: intero uguale, Range a 206 con Content-Range, oltre la fine 416"); ok += 1
+    for bad in ("bytes=5-3", "bytes=300000-300010", "bytes=-0"):
+        code, h, _ = call("GET", f"/s/{token}/audio/p1", token=None, headers={"Range": bad})
+        assert code == 416 and h.get("Content-Range") == "bytes */300000", (bad, code, h)
+    # un Range che non si capisce si ignora: il file intero
+    code, _, raw = call("GET", f"/s/{token}/audio/p1", token=None, headers={"Range": "items=0-5"})
+    assert code == 200 and raw == audio1
+    code, _, raw = call("GET", f"/s/{token}/audio/p1", token=None, headers={"Range": "bytes=299990-400000"})
+    assert code == 206 and raw == audio1[299990:], (code, len(raw))
+    print("audio: intero uguale, Range a 206 con Content-Range, oltre la fine / rovesciato / vuoto 416, sconosciuto ignorato"); ok += 1
+
+    # 5b. le intestazioni: niente Referer, niente indice, niente sniffing; la pagina con la sua CSP
+    for sub in ("", "/data", "/audio/p1", "/audio/nessuna"):
+        code, h, _ = call("GET", f"/s/{token}{sub}", token=None)
+        low = {k.lower(): v for k, v in h.items()}
+        assert low.get("x-content-type-options") == "nosniff" and low.get("referrer-policy") == "no-referrer", (sub, h)
+        assert "noindex" in low.get("x-robots-tag", ""), (sub, h)
+    code, h, html = call("GET", f"/s/{token}", token=None)
+    csp = {k.lower(): v for k, v in h.items()}.get("content-security-policy", "")
+    assert "default-src 'self'" in csp and "script-src 'unsafe-inline'" in csp and "frame-ancestors 'none'" in csp, csp
+    # dentro il template ogni `\` e' doppio: al browser deve arrivare `\d`, non `d`
+    assert rb"/^\d{4}-\d{2}-\d{2}$/" in html, "la regex della data arriva senza le barre"
+    code, h, _ = call("GET", "/s/token-che-non-esiste", token=None)
+    assert code == 404 and "content-security-policy" in {k.lower() for k in h}, h
+    print("intestazioni: nosniff, no-referrer, noindex su pagina, dati e audio; CSP sulla pagina; \\d nella regex"); ok += 1
+
+    # 5c. un «audio» caricato come pagina si serve come audio
+    code, _, raw = call("PUT", f"/v1/shares/{sid}/audio/p3", b"<script>alert(1)</script>", headers={"Content-Type": "text/html"})
+    assert code == 200, (code, raw)
+    code, h, _ = call("GET", f"/s/{token}/audio/p3", token=None)
+    assert code == 200 and h.get("Content-Type") == "audio/mp4", h
+    code, _, raw = call("PUT", f"/v1/shares/{sid}/audio/p3", b"ogg", headers={"Content-Type": "audio/ogg; codecs=opus"})
+    code, h, _ = call("GET", f"/s/{token}/audio/p3", token=None)
+    assert h.get("Content-Type") == "audio/ogg", h
+    code, _, raw = call("POST", f"/v1/shares/{sid}/audio/p4/multipart", {"mime": "image/svg+xml"})
+    upload = js(raw)["uploadId"]
+    code, _, raw = call("PUT", f"/v1/shares/{sid}/audio/p4/multipart/{upload}/1", b"<svg/>", headers={"Content-Type": "application/octet-stream"})
+    code, _, raw = call("POST", f"/v1/shares/{sid}/audio/p4/multipart/{upload}/complete", {"parts": [js(raw)]})
+    assert code == 200, (code, raw)
+    code, h, _ = call("GET", f"/s/{token}/audio/p4", token=None)
+    assert h.get("Content-Type") == "audio/mp4", h
+    print("audio: text/html e image/svg+xml diventano audio/mp4, audio/ogg resta"); ok += 1
 
     # 6. un altro proprietario: non vede, non revoca; il link pero' e' pubblico
     code, _, raw = call("GET", "/v1/shares", token=OTHER)

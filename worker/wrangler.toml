@@ -1,6 +1,7 @@
 # Il Worker dell'indice. Un solo file di configurazione, e un solo segreto fuori da qui:
 # COMPUTER_KEY (`npx wrangler secret put COMPUTER_KEY`, 32 byte in base64; in locale in .dev.vars),
-# la chiave con cui si cifra il token del computer di casa che segue l'account.
+# la chiave con cui si cifra il token del computer di casa che segue l'account, e da cui nasce
+# quella che firma i biglietti per il PC (`/v1/computer/ticket`). Cambiarla li revoca tutti.
 #
 # In locale (`npm run dev`) tutto gira su Miniflare con un D1 su disco in .wrangler/: niente
 # account, niente rete. Per il deploy vero: `wrangler login`, poi `wrangler d1 create pampa-notes`

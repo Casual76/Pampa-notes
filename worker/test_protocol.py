@@ -25,12 +25,22 @@ OTHER = "dev-amico"
 
 def call(method: str, path: str, body: dict | None = None, token: str = TOKEN) -> tuple[int, dict]:
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(BASE + path, data=data, method=method, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    req = urllib.request.Request(BASE + path, data=data, method=method, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Agent": "pampa-test/1"})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             return r.status, json.loads(r.read() or b"{}")
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read() or b"{}")
+
+
+def raw(method: str, path: str, data: bytes | None = None, token: str = TOKEN) -> tuple[int, bytes]:
+    """Una richiesta con un corpo qualunque, anche rotto: per i 400."""
+    req = urllib.request.Request(BASE + path, data=data, method=method, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Agent": "pampa-test/1"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
 
 
 def push(device: str, changes: list, token: str = TOKEN, batch: str | None = None) -> dict:
@@ -39,8 +49,8 @@ def push(device: str, changes: list, token: str = TOKEN, batch: str | None = Non
     return body
 
 
-def pull(device: str, since: int, token: str = TOKEN, limit: int = 200) -> dict:
-    code, body = call("GET", f"/v1/sync/pull?since={since}&limit={limit}&deviceId={device}", token=token)
+def pull(device: str, since: int, token: str = TOKEN, limit: int = 200, own: bool = False) -> dict:
+    code, body = call("GET", f"/v1/sync/pull?since={since}&limit={limit}&deviceId={device}" + ("&includeOwn=1" if own else ""), token=token)
     assert code == 200, (code, body)
     return body
 
@@ -141,7 +151,23 @@ def main() -> None:
     assert call("POST", "/v1/sync/push", {"deviceId": "x", "batchId": "b", "changes": [{"tbl": "jobs", "id": "j", "op": "U", "updatedAt": 1, "payload": {}}]})[0] == 400
     assert call("GET", "/v1/sync/pull?since=0")[0] == 400
     assert call("POST", "/v1/sync/push", {"protocolVersion": 99, "deviceId": "x", "batchId": "b2", "changes": []})[0] == 409
-    print("400 su tabella sconosciuta e deviceId mancante, 409 su protocollo diverso"); ok += 1
+    # un corpo che non e' JSON, o JSON che non e' un lotto, e un percorso con un `%` rotto: 400, mai 500
+    assert raw("POST", "/v1/sync/push", b"{non e' json")[0] == 400
+    assert raw("POST", "/v1/sync/push", b"null")[0] == 400
+    assert raw("POST", "/v1/sync/push", b"[1,2]")[0] == 400
+    assert call("POST", "/v1/sync/push", {"deviceId": "x", "batchId": "b3", "changes": [None]})[0] == 400
+    assert raw("POST", "/v1/shares", b"{")[0] == 400
+    assert raw("GET", "/s/abc%zz")[0] == 400
+    assert raw("POST", "/v1/auth/google", b"null")[0] == 400
+    print("400 su tabella sconosciuta, deviceId mancante, JSON rotto o non oggetto, % rotto; 409 su protocollo diverso"); ok += 1
+
+    # 9b. un token di sviluppo il cui proprietario ha un `:` dentro (`google:123`) si divide al primo
+    code, s = call("GET", "/v1/sync/status", token="dev-google")
+    if code == 200:
+        assert s["ownerId"] == "google:12345", s
+        print("token di sviluppo: il proprietario 'google:12345' resta intero"); ok += 1
+    else:
+        print("token di sviluppo con ':' saltato (manca dev-google:google:12345 in AUTH_DEV_TOKENS)")
 
     # 10. lo stato
     code, s = call("GET", "/v1/sync/status")

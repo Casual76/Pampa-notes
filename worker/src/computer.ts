@@ -17,9 +17,13 @@
  * di quello che c'e' non tocca niente, e la risposta porta la versione corrente, che il client
  * applica. Non ci sono due verita' da conservare come per il testo di una nota: il computer e'
  * uno, e l'ultimo indirizzo scritto e' quello buono.
+ *
+ * Qui stanno anche i **biglietti per il PC** (in fondo): la prova, per il companion, che chi gli
+ * parla ha fatto l'accesso con l'account del proprietario.
  */
 
 import type { Env } from "./auth";
+import { ownerMatches } from "./guests";
 import { BadRequest } from "./sync";
 
 export interface ComputerView {
@@ -70,9 +74,21 @@ export async function getComputer(env: Env, ownerId: string): Promise<ComputerVi
   return row ? view(env, row) : null;
 }
 
+/**
+ * Quanto un orologio puo' stare avanti prima di non essere creduto. Un telefono con la data
+ * dell'anno prossimo scriverebbe un `updatedAt` che nessun'altra scrittura supera piu': il computer
+ * resterebbe inchiodato a quella versione fino all'anno prossimo.
+ */
+const FUTURE_SLACK_MS = 5 * 60_000;
+
 export async function putComputer(env: Env, ownerId: string, body: PutComputerBody): Promise<PutComputerResult> {
-  const updatedAt = Number(body.updatedAt);
-  if (!Number.isFinite(updatedAt) || updatedAt <= 0) throw new BadRequest("updatedAt mancante");
+  const claimed = Number(body.updatedAt);
+  if (!Number.isFinite(claimed) || claimed <= 0) throw new BadRequest("updatedAt mancante");
+  const now = Date.now();
+  const future = now + FUTURE_SLACK_MS;
+  const updatedAt = claimed > future ? now : claimed;
+  // E una riga scritta da un orologio avanti prima di questa regola non vince piu' su nessuno.
+  const effective = (stored: number) => (stored > future ? 0 : stored);
   const url = text(body.url, 500);
   const remoteUrl = text(body.remoteUrl, 500);
   const name = text(body.name, 100);
@@ -84,7 +100,7 @@ export async function putComputer(env: Env, ownerId: string, body: PutComputerBo
   // Uguale non basta per scrivere. Lo stesso PUT rimandato perche' la risposta si e' persa trova
   // la sua stessa versione: «non accettato, ecco la corrente» gli riconsegna quello che ha scritto,
   // e applicarlo non cambia niente.
-  if (existing && updatedAt <= existing.updatedAt) {
+  if (existing && updatedAt <= effective(existing.updatedAt)) {
     return { accepted: false, stale: true, computer: await view(env, existing) };
   }
 
@@ -108,8 +124,8 @@ export async function putComputer(env: Env, ownerId: string, body: PutComputerBo
      ON CONFLICT (ownerId) DO UPDATE SET
        url = excluded.url, remoteUrl = excluded.remoteUrl, name = excluded.name, model = excluded.model,
        tokenCipher = excluded.tokenCipher, updatedAt = excluded.updatedAt, deviceId = excluded.deviceId
-     WHERE excluded.updatedAt > computers.updatedAt`,
-  ).bind(ownerId, url, remoteUrl, name, model, tokenCipher, updatedAt, deviceId).run();
+     WHERE excluded.updatedAt > (CASE WHEN computers.updatedAt > ? THEN 0 ELSE computers.updatedAt END)`,
+  ).bind(ownerId, url, remoteUrl, name, model, tokenCipher, updatedAt, deviceId, future).run();
 
   const current = await env.DB.prepare("SELECT * FROM computers WHERE ownerId = ?").bind(ownerId).first<ComputerRow>();
   if (!current) throw new Error("computer sparito dopo la scrittura");
@@ -201,4 +217,99 @@ function fromBase64(input: string): Uint8Array {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Il biglietto per il PC
+// ---------------------------------------------------------------------------------------------
+//
+// Il companion deve riconoscere chi ha fatto l'accesso con l'account del proprietario, anche in
+// casa. Mandargli il token di sessione del sync vorrebbe dire farlo viaggiare in chiaro su http in
+// LAN, e quel token apre tutte le note. Al suo posto un biglietto: vale solo per il companion, dura
+// dodici ore, e lo firma questo Worker con una chiave che non esce da qui.
+//
+// `pt_<payload>.<firma>`: il payload e' base64url (senza `=`) di `{"o":ownerId,"e":scadenza,"v":1}`,
+// la firma e' HMAC-SHA256 del payload con una chiave derivata da COMPUTER_KEY. Senza stato: nessuna
+// tabella, niente da pulire, e revocarli tutti vuol dire cambiare COMPUTER_KEY. Il companion non lo
+// apre mai da solo: lo manda a `/v1/computer/verify`, che risponde anche di chi e'. Il formato e'
+// fissato in `contratto-biglietti-pc.md`, condiviso con app e companion.
+
+const TICKET_PREFIX = "pt_";
+const TICKET_TTL_MS = 12 * 3_600_000;
+/**
+ * La chiave dei biglietti e' figlia di COMPUTER_KEY e non COMPUTER_KEY stessa: la stessa chiave
+ * usata per due cose diverse (qui HMAC, sopra AES-GCM) e' il modo in cui un errore in una diventa
+ * un errore nell'altra.
+ */
+const TICKET_KEY_LABEL = "pampa-computer-ticket-v1";
+
+let ticketKeyCache: { raw: string; key: CryptoKey | null } | null = null;
+
+async function ticketKey(env: Env): Promise<CryptoKey | null> {
+  const raw = env.COMPUTER_KEY?.trim() ?? "";
+  if (ticketKeyCache && ticketKeyCache.raw === raw) return ticketKeyCache.key;
+  let key: CryptoKey | null = null;
+  if (raw) {
+    try {
+      const secret = fromBase64(raw);
+      if (secret.length) {
+        const master = await crypto.subtle.importKey("raw", secret, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+        const derived = await crypto.subtle.sign("HMAC", master, new TextEncoder().encode(TICKET_KEY_LABEL));
+        key = await crypto.subtle.importKey("raw", derived, { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+      }
+    } catch {
+      console.error("COMPUTER_KEY non e' base64: niente biglietti per il PC");
+    }
+  }
+  ticketKeyCache = { raw, key };
+  return key;
+}
+
+/** Un biglietto nuovo per `ownerId`. `null` se il Worker non ha COMPUTER_KEY: non c'e' con cosa firmarlo. */
+export async function issueTicket(env: Env, ownerId: string): Promise<{ ticket: string; expiresAt: number } | null> {
+  const key = await ticketKey(env);
+  if (!key) return null;
+  const expiresAt = Date.now() + TICKET_TTL_MS;
+  const payload = toBase64Url(new TextEncoder().encode(JSON.stringify({ o: ownerId, e: expiresAt, v: 1 })));
+  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload)));
+  return { ticket: `${TICKET_PREFIX}${payload}.${toBase64Url(signature)}`, expiresAt };
+}
+
+/**
+ * Il companion chiede: questo biglietto e' buono, e per il PC di `owner`? `owner` e' quello che ha
+ * nel `config.json`, un'email o l'`ownerId` nudo, e vale la stessa regola degli ospiti
+ * (`ownerMatches`): un biglietto di un altro account, anche vero, non apre questo PC.
+ *
+ * `"no-key"` se il Worker non ha la chiave: non e' il biglietto a essere sbagliato, e il companion
+ * non deve ricordarselo come tale.
+ */
+export async function verifyTicket(env: Env, ticket: string, owner: string): Promise<{ ownerId: string; expiresAt: number } | null | "no-key"> {
+  const key = await ticketKey(env);
+  if (!key) return "no-key";
+  if (!ticket.startsWith(TICKET_PREFIX) || ticket.length > 2048 || !owner) return null;
+  const [payload, signature, ...rest] = ticket.slice(TICKET_PREFIX.length).split(".");
+  if (!payload || !signature || rest.length) return null;
+
+  let claims: { o?: unknown; e?: unknown; v?: unknown };
+  try {
+    // La firma prima di tutto: un payload non firmato da qui non si guarda nemmeno.
+    // crypto.subtle.verify confronta a tempo costante.
+    if (!(await crypto.subtle.verify("HMAC", key, fromBase64Url(signature), new TextEncoder().encode(payload)))) return null;
+    claims = JSON.parse(new TextDecoder().decode(fromBase64Url(payload)));
+  } catch {
+    return null;
+  }
+  if (!claims || claims.v !== 1 || typeof claims.o !== "string" || !claims.o || typeof claims.e !== "number") return null;
+  if (claims.e <= Date.now()) return null;
+  if (!(await ownerMatches(env, claims.o, owner))) return null;
+  return { ownerId: claims.o, expiresAt: claims.e };
+}
+
+function toBase64Url(bytes: Uint8Array): string {
+  return toBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function fromBase64Url(input: string): Uint8Array {
+  if (!/^[A-Za-z0-9_-]*$/.test(input)) throw new Error("non e' base64url");
+  return fromBase64(input.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (input.length % 4)) % 4));
 }

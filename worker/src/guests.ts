@@ -96,12 +96,22 @@ export async function verifyGuest(env: Env, token: string, owner: string): Promi
   if (!token.startsWith(GUEST_PREFIX) || token.length < 20 || !owner) return null;
   const guest = await env.DB.prepare("SELECT * FROM guests WHERE token = ? AND revokedAt IS NULL").bind(token).first<GuestRow>();
   if (!guest) return null;
-  if (guest.ownerId !== owner) {
-    const session = await env.DB.prepare("SELECT 1 AS ok FROM sessions WHERE ownerId = ? AND lower(email) = lower(?) AND revokedAt IS NULL LIMIT 1")
-      .bind(guest.ownerId, owner).first<{ ok: number }>();
-    if (!session) return null;
-  }
+  if (!(await ownerMatches(env, guest.ownerId, owner))) return null;
   return { name: guest.name };
+}
+
+/**
+ * `owner` (quello che il companion ha nel suo `config.json`) e' il proprietario `ownerId`? Si' se
+ * e' proprio l'`ownerId`, oppure se e' un'email con una sessione viva di quell'`ownerId`: le
+ * sessioni sono l'unico posto in cui il Worker conosce le email. Vale per gli ospiti e per i
+ * biglietti del PC (`computer.ts`), con la stessa regola.
+ */
+export async function ownerMatches(env: Env, ownerId: string, owner: string): Promise<boolean> {
+  if (!owner) return false;
+  if (ownerId === owner) return true;
+  const session = await env.DB.prepare("SELECT 1 AS ok FROM sessions WHERE ownerId = ? AND lower(email) = lower(?) AND revokedAt IS NULL LIMIT 1")
+    .bind(ownerId, owner).first<{ ok: number }>();
+  return session !== null;
 }
 
 /** Una trascrizione fatta: si contano i secondi. Il token e' la prova, come per la verifica. */

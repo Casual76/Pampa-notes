@@ -22,7 +22,7 @@ OTHER = "dev-amico"
 
 def call(method: str, path: str, body: dict | None = None, token: str | None = TOKEN) -> tuple[int, dict]:
     data = json.dumps(body).encode() if body is not None else None
-    headers = {"Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json", "User-Agent": "pampa-test/1"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(BASE + path, data=data, method=method, headers=headers)

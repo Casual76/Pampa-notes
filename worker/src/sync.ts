@@ -8,21 +8,36 @@
  * cancellata nel frattempo. Le righe accettate prendono un `seq` nuovo e crescente.
  *
  * Il lotto ha un id: se arriva due volte — confermato ma perso per strada — la seconda volta si
- * risponde come la prima, senza toccare niente.
+ * risponde come la prima, senza toccare niente. L'id si scrive **per ultimo**, dopo tutte le righe:
+ * un lotto grande va in piu' `batch` di D1, ognuno confermato per conto suo, e un lotto morto a
+ * meta' che avesse gia' l'id scritto verrebbe «riconosciuto» al secondo tentativo e non finirebbe
+ * mai. Senza l'id, il secondo tentativo rifa' il giro: le righe gia' entrate hanno la stessa
+ * impronta e si saltano, le altre entrano.
+ *
+ * **Due push insieme** (due dispositivi, o lo stesso che riprova mentre il primo e' ancora in
+ * volo) non devono ne' darsi lo stesso `seq` ne' passare tutti e due il controllo della base. Il
+ * `seq` si riserva dentro la stessa transazione che scrive le righe (vedi `writeGroup`), e ogni
+ * riga si scrive solo se nel frattempo e' ancora la versione letta: chi perde la corsa se la vede
+ * rifiutata come `stale`, e il merge del pull decide.
  *
  * **Pull.** Le righe con `seq > since`, in ordine, a pagine, escluse quelle che il dispositivo
- * stesso ha scritto (le conosce gia': il push gli ha detto il loro `seq`). Una trascrizione
- * arriva insieme ai suoi segmenti, sempre interi: l'unita' «trascrizione + segmenti» non si spezza
- * fra due pagine, perche' un dispositivo con le parti ma senza i segmenti che riordina una parte
- * farebbe cancellare la trascrizione al suo `rebuildRaw`.
+ * stesso ha scritto (le conosce gia': il push gli ha detto il loro `seq`) — tranne che nel
+ * riallineamento completo (`includeOwn`), in cui il dispositivo deve sapere tutto quello che
+ * l'indice ha, suo compreso. Una trascrizione arriva insieme ai suoi segmenti, sempre interi:
+ * l'unita' «trascrizione + segmenti» non si spezza fra due pagine, perche' un dispositivo con le
+ * parti ma senza i segmenti che riordina una parte farebbe cancellare la trascrizione al suo
+ * `rebuildRaw`. Una pagina e' al massimo duecento righe **e** circa quattro megabyte: una lezione
+ * da due ore con le parole sono un megabyte di segmenti, e duecento cosi' in una risposta sola
+ * finirebbero la memoria del telefono prima di arrivare.
  *
  * **Tombstone.** Una cancellazione resta come riga con `op = 'D'` per novanta giorni; poi si pota,
  * e chi chiede un pull da prima della potatura riceve `rebaseline: true`: deve rifare tutto da
  * zero, cancellando localmente solo cio' che non ha modificato lui.
  *
  * I limiti di D1 disegnano le forme: due megabyte per riga, cento parametri per query, poche
- * decine di query per invocazione. Per questo i segmenti stanno a blocchi e ogni lotto si scrive
- * con un `batch` solo.
+ * decine di query per invocazione. Per questo i segmenti stanno a blocchi, una riga troppo grande
+ * si rifiuta da sola (`too_large`) invece di far fallire il lotto, e le scritture vanno in pochi
+ * `batch`.
  */
 
 import type { Env } from "./auth";
@@ -69,16 +84,39 @@ export interface PushRequest {
 export interface PushResult {
   seq: number;
   applied: number;
-  /** Le righe di cui il dispositivo non aveva visto l'ultima versione: le riprende col pull, e il merge decide. */
-  rejected: { tbl: string; id: string; reason: string }[];
+  /**
+   * Le righe che non sono entrate. `stale`: il dispositivo non aveva visto l'ultima versione, la
+   * riprende col pull e il merge decide. `too_large`: la riga non sta in D1 e non ci stara' mai,
+   * riprovarla non serve.
+   */
+  rejected: { tbl: string; id: string; reason: "stale" | "too_large" }[];
 }
 
 const SEGMENTS_PER_CHUNK = 400;
 const MAX_PULL = 200;
+/** Una riga di D1 vale due megabyte: sotto, con un margine per le altre colonne. */
+const MAX_ROW_BYTES = 1_900_000;
+/** Un blocco di segmenti si chiude a quattrocento segmenti o a un megabyte e mezzo, quello che arriva prima. */
+const CHUNK_BYTES = 1_500_000;
+/** Quanto testo per pagina di pull, segmenti compresi. Almeno una riga passa sempre, anche se da sola e' di piu'. */
+const PULL_BYTES = 4_000_000;
+/**
+ * Un `batch` di D1 e' una transazione: piu' e' grande, piu' tiene fermo il database per tutti. Si
+ * chiude a cinquanta statement o a quattro megabyte, ma un'unita' «riga + blocchi dei segmenti» non
+ * si spezza mai fra due: e' l'unico modo per non lasciare una trascrizione senza segmenti.
+ */
+const WRITE_STATEMENTS = 50;
+const WRITE_BYTES = 4_000_000;
 
 export class BadRequest extends Error {}
 
+const utf8 = new TextEncoder();
+function bytesOf(text: string): number {
+  return utf8.encode(text).length;
+}
+
 function assertChange(c: Change): void {
+  if (!c || typeof c !== "object") throw new BadRequest("modifica malformata");
   if (!(TABLES as readonly string[]).includes(c.tbl)) throw new BadRequest(`tabella sconosciuta: ${c.tbl}`);
   if (typeof c.id !== "string" || !c.id) throw new BadRequest("id mancante");
   if (c.op !== "U" && c.op !== "D") throw new BadRequest(`op sconosciuta: ${c.op}`);
@@ -86,8 +124,22 @@ function assertChange(c: Change): void {
   if (c.op === "U" && c.payload === undefined) throw new BadRequest(`payload mancante per ${c.tbl}/${c.id}`);
 }
 
+/** Una riga che ha passato i controlli e va scritta. */
+interface Planned {
+  change: Change;
+  /** Il JSON della riga; `null` per un tombstone. */
+  payload: string | null;
+  /** I blocchi di segmenti, gia' in JSON. Vuoto per tutto quello che non e' una trascrizione con segmenti. */
+  chunks: string[];
+  /** Il `seq` della versione letta, `null` se la riga non c'era: si scrive solo se e' ancora quella. */
+  expectedSeq: number | null;
+  bytes: number;
+}
+
 export async function push(env: Env, ownerId: string, body: PushRequest): Promise<PushResult> {
-  if (!body.deviceId || !body.batchId || !Array.isArray(body.changes)) throw new BadRequest("lotto malformato");
+  if (!body || typeof body !== "object" || typeof body.deviceId !== "string" || !body.deviceId || typeof body.batchId !== "string" || !body.batchId || !Array.isArray(body.changes)) {
+    throw new BadRequest("lotto malformato");
+  }
   body.changes.forEach(assertChange);
   const now = Date.now();
 
@@ -96,87 +148,235 @@ export async function push(env: Env, ownerId: string, body: PushRequest): Promis
   if (seen) return JSON.parse(seen.result) as PushResult;
 
   await env.DB.prepare("INSERT OR IGNORE INTO owners (ownerId, seq, prunedSeq) VALUES (?, 0, 0)").bind(ownerId).run();
-  const owner = await env.DB.prepare("SELECT seq FROM owners WHERE ownerId = ?").bind(ownerId).first<{ seq: number }>();
-  let seq = owner?.seq ?? 0;
 
-  // Quello che c'e' gia' delle righe in arrivo, in una query sola per tabella.
-  const existing = new Map<string, { updatedAt: number; hash: string; op: string }>();
-  for (const tbl of TABLES) {
-    const ids = body.changes.filter((c) => c.tbl === tbl).map((c) => c.id);
-    for (let i = 0; i < ids.length; i += 90) {
-      const slice = ids.slice(i, i + 90);
-      const rows = await env.DB.prepare(
-        `SELECT rowId, updatedAt, hash, op FROM state WHERE ownerId = ? AND tbl = ? AND rowId IN (${slice.map(() => "?").join(",")})`,
-      ).bind(ownerId, tbl, ...slice).all<{ rowId: string; updatedAt: number; hash: string; op: string }>();
-      for (const r of rows.results) existing.set(`${tbl}/${r.rowId}`, { updatedAt: r.updatedAt, hash: r.hash, op: r.op });
-    }
-  }
+  const existing = await currentVersions(env, ownerId, body.changes);
+  // Le trascrizioni che il dispositivo manda uguali a quelle che ci sono, con dei segmenti: se qui
+  // di segmenti non ce ne sono, il lotto di prima e' morto fra la riga e i blocchi (col codice di
+  // prima, che li scriveva in `batch` diversi), e «uguale, si salta» li lascerebbe persi per sempre.
+  const chunkCounts = await segmentChunkCounts(env, ownerId, body.changes.filter((c) => {
+    const current = existing.get(`${c.tbl}/${c.id}`);
+    return c.tbl === "transcripts" && c.op === "U" && Array.isArray(c.segments) && c.segments.length > 0 && current && current.hash === (c.hash ?? "") && current.op === "U";
+  }).map((c) => c.id));
 
-  const statements: D1PreparedStatement[] = [];
   const rejected: PushResult["rejected"] = [];
-  let applied = 0;
+  const planned: Planned[] = [];
 
   for (const change of body.changes) {
+    // Troppo grande per una riga di D1: non ci stara' mai, e un errore di D1 a meta' lotto
+    // fermerebbe anche tutte le altre. Si rifiuta questa, e il resto passa.
+    const payload = change.op === "U" ? JSON.stringify(change.payload) : null;
+    const chunks = change.tbl === "transcripts" && change.op === "U" && Array.isArray(change.segments) ? chunkSegments(change.segments) : [];
+    if ((payload !== null && bytesOf(payload) > MAX_ROW_BYTES) || chunks === null) {
+      rejected.push({ tbl: change.tbl, id: change.id, reason: "too_large" });
+      continue;
+    }
+
     const current = existing.get(`${change.tbl}/${change.id}`);
     if (current) {
-      // Stesso contenuto: niente da fare, e niente `seq` sprecato.
-      if ((change.hash ?? "") === current.hash && change.op === current.op) continue;
-      // Il dispositivo non ha visto la versione che c'e' adesso: si rifiuta, se la riprende col
-      // pull, e il merge decide cosa tenere. Non si guarda l'orologio, di proposito: un telefono
-      // con l'ora indietro che ha letto l'ultima versione e ci ha scritto sopra ha una versione
-      // successiva, non piu' vecchia — e rifiutarla lo lascerebbe fuori per sempre.
-      if ((change.baseHash ?? "") !== current.hash) {
+      if ((change.hash ?? "") === current.hash && change.op === current.op) {
+        // Stesso contenuto: niente da fare, e niente `seq` sprecato — tranne la trascrizione rimasta
+        // senza segmenti, che si riscrive (e prende un `seq` nuovo, cosi' chi l'ha tirata vuota la
+        // riceve di nuovo intera).
+        const repair = change.tbl === "transcripts" && chunks.length > 0 && (chunkCounts.get(change.id) ?? 0) === 0;
+        if (!repair) continue;
+      } else if ((change.baseHash ?? "") !== current.hash) {
+        // Il dispositivo non ha visto la versione che c'e' adesso: si rifiuta, se la riprende col
+        // pull, e il merge decide cosa tenere. Non si guarda l'orologio, di proposito: un telefono
+        // con l'ora indietro che ha letto l'ultima versione e ci ha scritto sopra ha una versione
+        // successiva, non piu' vecchia — e rifiutarla lo lascerebbe fuori per sempre.
         rejected.push({ tbl: change.tbl, id: change.id, reason: "stale" });
         continue;
       }
     }
-    seq += 1;
-    applied += 1;
-    statements.push(
-      env.DB.prepare(
-        `INSERT INTO state (ownerId, tbl, rowId, op, updatedAt, hash, deviceId, receivedAt, payload, seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(ownerId, tbl, rowId) DO UPDATE SET op = excluded.op, updatedAt = excluded.updatedAt, hash = excluded.hash,
-           deviceId = excluded.deviceId, receivedAt = excluded.receivedAt, payload = excluded.payload, seq = excluded.seq`,
-      ).bind(ownerId, change.tbl, change.id, change.op, change.updatedAt, change.hash ?? "", body.deviceId, now, change.op === "U" ? JSON.stringify(change.payload) : null, seq),
-    );
-    if (change.tbl === "transcripts") {
-      statements.push(env.DB.prepare("DELETE FROM segment_chunks WHERE ownerId = ? AND transcriptId = ?").bind(ownerId, change.id));
-      if (change.op === "U" && Array.isArray(change.segments)) {
-        for (let i = 0, chunk = 0; i < change.segments.length; i += SEGMENTS_PER_CHUNK, chunk++) {
-          statements.push(
-            env.DB.prepare("INSERT INTO segment_chunks (ownerId, transcriptId, chunk, payload) VALUES (?, ?, ?, ?)").bind(
-              ownerId, change.id, chunk, JSON.stringify(change.segments.slice(i, i + SEGMENTS_PER_CHUNK)),
-            ),
-          );
-        }
-      }
+    const bytes = (payload ? payload.length : 0) + chunks.reduce((sum, c) => sum + c.length, 0);
+    planned.push({ change, payload, chunks, expectedSeq: current ? current.seq : null, bytes });
+  }
+
+  // Le scritture, a gruppi: ogni gruppo e' una transazione che riserva i suoi `seq` e scrive le
+  // sue righe. Un gruppo confermato resta anche se il successivo fallisce: il lotto si ripete, e
+  // le righe di questo si riconoscono uguali.
+  let applied = 0;
+  let seq = 0;
+  const lost: Planned[] = [];
+  for (const group of groups(planned)) {
+    const outcome = await writeGroup(env, ownerId, body.deviceId, now, group);
+    seq = outcome.seq;
+    group.forEach((p, k) => (outcome.written[k] ? applied++ : lost.push(p)));
+  }
+
+  // Chi ha perso la corsa: qualcun altro ha scritto la stessa riga fra la lettura e la scrittura.
+  // Se ha scritto proprio questo contenuto non c'e' niente da rifiutare; altrimenti e' `stale`, come
+  // se fosse arrivato un attimo dopo.
+  if (lost.length) {
+    const after = await currentVersions(env, ownerId, lost.map((p) => p.change));
+    for (const p of lost) {
+      const current = after.get(`${p.change.tbl}/${p.change.id}`);
+      if (current && current.hash === (p.change.hash ?? "") && current.op === p.change.op) continue;
+      rejected.push({ tbl: p.change.tbl, id: p.change.id, reason: "stale" });
     }
   }
 
+  if (!seq) {
+    const owner = await env.DB.prepare("SELECT seq FROM owners WHERE ownerId = ?").bind(ownerId).first<{ seq: number }>();
+    seq = owner?.seq ?? 0;
+  }
   const result: PushResult = { seq, applied, rejected };
-  statements.push(env.DB.prepare("UPDATE owners SET seq = ? WHERE ownerId = ?").bind(seq, ownerId));
-  statements.push(
+
+  // L'id del lotto per ultimo, e solo adesso che tutte le righe sono dentro. Due copie dello
+  // stesso lotto in volo insieme scrivono tutte e due qui: vince la prima, e la seconda non fa
+  // errore per questo.
+  const retentionMs = Number(env.TOMBSTONE_RETENTION_DAYS ?? "90") * 86_400_000;
+  await env.DB.batch([
     env.DB.prepare(
       "INSERT INTO devices (ownerId, deviceId, name, lastSeenAt) VALUES (?, ?, ?, ?) ON CONFLICT(ownerId, deviceId) DO UPDATE SET name = COALESCE(excluded.name, devices.name), lastSeenAt = excluded.lastSeenAt",
     ).bind(ownerId, body.deviceId, body.deviceName ?? null, now),
-  );
-  statements.push(env.DB.prepare("INSERT INTO batches (ownerId, batchId, seq, result, at) VALUES (?, ?, ?, ?, ?)").bind(ownerId, body.batchId, seq, JSON.stringify(result), now));
-  // Vecchi lotti e vecchi tombstone se ne vanno con lo stesso giro. La potatura dei tombstone
-  // alza `prunedSeq`: chi era rimasto indietro lo scopre al prossimo pull. Si guarda l'orologio
-  // del server e non quello del dispositivo: un telefono con la data sbagliata non deve far
-  // sparire una cancellazione prima che gli altri l'abbiano vista.
-  const retentionMs = Number(env.TOMBSTONE_RETENTION_DAYS ?? "90") * 86_400_000;
-  statements.push(env.DB.prepare("DELETE FROM batches WHERE ownerId = ? AND at < ?").bind(ownerId, now - 7 * 86_400_000));
-  statements.push(
-    env.DB.prepare("UPDATE owners SET prunedSeq = MAX(prunedSeq, COALESCE((SELECT MAX(seq) FROM state WHERE ownerId = ? AND op = 'D' AND receivedAt < ?), 0)) WHERE ownerId = ?").bind(ownerId, now - retentionMs, ownerId),
-  );
-  statements.push(env.DB.prepare("DELETE FROM state WHERE ownerId = ? AND op = 'D' AND receivedAt < ?").bind(ownerId, now - retentionMs));
-
-  // Tutto in un lotto solo: o entra tutto, o niente, e conta come poche query.
-  for (let i = 0; i < statements.length; i += 40) {
-    await env.DB.batch(statements.slice(i, i + 40));
-  }
+    env.DB.prepare("INSERT INTO batches (ownerId, batchId, seq, result, at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(ownerId, batchId) DO NOTHING")
+      .bind(ownerId, body.batchId, seq, JSON.stringify(result), now),
+    // Vecchi lotti e vecchi tombstone se ne vanno con lo stesso giro. La potatura dei tombstone
+    // alza `prunedSeq`: chi era rimasto indietro lo scopre al prossimo pull. Si guarda l'orologio
+    // del server e non quello del dispositivo: un telefono con la data sbagliata non deve far
+    // sparire una cancellazione prima che gli altri l'abbiano vista.
+    env.DB.prepare("DELETE FROM batches WHERE ownerId = ? AND at < ?").bind(ownerId, now - 7 * 86_400_000),
+    env.DB.prepare("UPDATE owners SET prunedSeq = MAX(prunedSeq, COALESCE((SELECT MAX(seq) FROM state WHERE ownerId = ? AND op = 'D' AND receivedAt < ?), 0)) WHERE ownerId = ?")
+      .bind(ownerId, now - retentionMs, ownerId),
+    env.DB.prepare("DELETE FROM state WHERE ownerId = ? AND op = 'D' AND receivedAt < ?").bind(ownerId, now - retentionMs),
+  ]);
   return result;
+}
+
+/** Quello che c'e' gia' delle righe in arrivo, in una query sola per tabella (a fette da novanta, per i cento parametri). */
+async function currentVersions(env: Env, ownerId: string, changes: Change[]): Promise<Map<string, { hash: string; op: string; seq: number }>> {
+  const existing = new Map<string, { hash: string; op: string; seq: number }>();
+  for (const tbl of TABLES) {
+    const ids = [...new Set(changes.filter((c) => c.tbl === tbl).map((c) => c.id))];
+    for (let i = 0; i < ids.length; i += 90) {
+      const slice = ids.slice(i, i + 90);
+      const rows = await env.DB.prepare(
+        `SELECT rowId, hash, op, seq FROM state WHERE ownerId = ? AND tbl = ? AND rowId IN (${slice.map(() => "?").join(",")})`,
+      ).bind(ownerId, tbl, ...slice).all<{ rowId: string; hash: string; op: string; seq: number }>();
+      for (const r of rows.results) existing.set(`${tbl}/${r.rowId}`, { hash: r.hash, op: r.op, seq: r.seq });
+    }
+  }
+  return existing;
+}
+
+async function segmentChunkCounts(env: Env, ownerId: string, transcriptIds: string[]): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  const ids = [...new Set(transcriptIds)];
+  for (let i = 0; i < ids.length; i += 90) {
+    const slice = ids.slice(i, i + 90);
+    const rows = await env.DB.prepare(
+      `SELECT transcriptId, COUNT(*) AS n FROM segment_chunks WHERE ownerId = ? AND transcriptId IN (${slice.map(() => "?").join(",")}) GROUP BY transcriptId`,
+    ).bind(ownerId, ...slice).all<{ transcriptId: string; n: number }>();
+    for (const r of rows.results) counts.set(r.transcriptId, r.n);
+  }
+  return counts;
+}
+
+/**
+ * I segmenti in blocchi: quattrocento per blocco, o meno se sono grossi (una lezione allineata da
+ * WhisperX ha le parole con i tempi dentro ogni segmento). `null` se un segmento da solo non sta in
+ * una riga: la trascrizione non si puo' salvare intera, e salvarla a meta' sarebbe peggio.
+ */
+function chunkSegments(segments: unknown[]): string[] | null {
+  const chunks: string[] = [];
+  let current: string[] = [];
+  let bytes = 2;
+  for (const segment of segments) {
+    const json = JSON.stringify(segment) ?? "null";
+    const size = bytesOf(json) + 1;
+    if (size + 2 > MAX_ROW_BYTES) return null;
+    if (current.length && (current.length >= SEGMENTS_PER_CHUNK || bytes + size > CHUNK_BYTES)) {
+      chunks.push(`[${current.join(",")}]`);
+      current = [];
+      bytes = 2;
+    }
+    current.push(json);
+    bytes += size;
+  }
+  if (current.length) chunks.push(`[${current.join(",")}]`);
+  return chunks;
+}
+
+function statementsOf(p: Planned): number {
+  return 1 + (p.change.tbl === "transcripts" ? 1 + p.chunks.length : 0);
+}
+
+/** Le righe in gruppi da scrivere ognuno in un `batch`, senza mai separare una riga dai suoi blocchi. */
+function groups(planned: Planned[]): Planned[][] {
+  const out: Planned[][] = [];
+  let group: Planned[] = [];
+  let statements = 1;
+  let bytes = 0;
+  for (const p of planned) {
+    const n = statementsOf(p);
+    if (group.length && (statements + n > WRITE_STATEMENTS || bytes + p.bytes > WRITE_BYTES)) {
+      out.push(group);
+      group = [];
+      statements = 1;
+      bytes = 0;
+    }
+    group.push(p);
+    statements += n;
+    bytes += p.bytes;
+  }
+  if (group.length) out.push(group);
+  return out;
+}
+
+/**
+ * Un gruppo di righe in una transazione sola (un `batch` di D1 lo e').
+ *
+ * Il primo statement alza `owners.seq` di quante righe ci sono, e ogni riga prende il suo numero
+ * da li' (`seq` del proprietario meno la sua distanza dalla fine). Riservarli prima, in una
+ * richiesta a parte, non basterebbe: due push riservano 1–10 e 11–20, il secondo scrive per primo,
+ * un pull legge fino a 20 e riparte da li' — e le righe 1–10, confermate un attimo dopo, non le
+ * vede piu' nessuno. Dentro la transazione i numeri diventano visibili nell'ordine in cui si
+ * confermano, che e' l'unico ordine che il pull puo' seguire.
+ *
+ * Ogni riga si scrive solo se e' ancora la versione letta (`state.seq` uguale a quello di allora, o
+ * nessuna riga se non c'era): e' il controllo della base fatto dal database, non da una lettura
+ * di qualche millisecondo prima. I blocchi dei segmenti si scrivono solo se la loro riga e' stata
+ * scritta in questo gruppo. Un numero riservato per una riga che perde la corsa resta un buco
+ * nella sequenza: il pull non ne ha bisogno di contigui.
+ */
+async function writeGroup(env: Env, ownerId: string, deviceId: string, now: number, group: Planned[]): Promise<{ seq: number; written: boolean[] }> {
+  const statements: D1PreparedStatement[] = [
+    env.DB.prepare("UPDATE owners SET seq = seq + ? WHERE ownerId = ? RETURNING seq").bind(group.length, ownerId),
+  ];
+  const upsertAt: number[] = [];
+  const mine = "EXISTS (SELECT 1 FROM state WHERE ownerId = ? AND tbl = 'transcripts' AND rowId = ? AND seq = (SELECT seq FROM owners WHERE ownerId = ?) - ?)";
+
+  group.forEach((p, k) => {
+    const { change } = p;
+    const offset = group.length - 1 - k;
+    upsertAt.push(statements.length);
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO state (ownerId, tbl, rowId, op, updatedAt, hash, deviceId, receivedAt, payload, seq)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT seq FROM owners WHERE ownerId = ?) - ?)
+         ON CONFLICT(ownerId, tbl, rowId) DO UPDATE SET op = excluded.op, updatedAt = excluded.updatedAt, hash = excluded.hash,
+           deviceId = excluded.deviceId, receivedAt = excluded.receivedAt, payload = excluded.payload, seq = excluded.seq
+         WHERE state.seq = ?`,
+      ).bind(ownerId, change.tbl, change.id, change.op, change.updatedAt, change.hash ?? "", deviceId, now, p.payload, ownerId, offset, p.expectedSeq),
+    );
+    if (change.tbl === "transcripts") {
+      statements.push(
+        env.DB.prepare(`DELETE FROM segment_chunks WHERE ownerId = ? AND transcriptId = ? AND ${mine}`).bind(ownerId, change.id, ownerId, change.id, ownerId, offset),
+      );
+      p.chunks.forEach((chunk, i) => {
+        statements.push(
+          env.DB.prepare(`INSERT INTO segment_chunks (ownerId, transcriptId, chunk, payload) SELECT ?, ?, ?, ? WHERE ${mine}`)
+            .bind(ownerId, change.id, i, chunk, ownerId, change.id, ownerId, offset),
+        );
+      });
+    }
+  });
+
+  const results = await env.DB.batch(statements);
+  const top = (results[0].results[0] as { seq: number } | undefined)?.seq;
+  if (typeof top !== "number") throw new Error("proprietario sparito durante il push");
+  return { seq: top, written: upsertAt.map((i) => (results[i].meta.changes ?? 0) > 0) };
 }
 
 export interface PullChange extends Change {
@@ -192,20 +392,60 @@ export interface PullResult {
   rebaseline?: boolean;
 }
 
-export async function pull(env: Env, ownerId: string, deviceId: string, since: number, limit: number): Promise<PullResult> {
+/**
+ * @param includeOwn anche le righe scritte da `deviceId`. Serve al riallineamento completo: chi
+ *   riparte da zero confronta quello che ha con tutto l'indice, e cancella quello che l'indice non
+ *   ha. Senza le sue righe, ogni cosa scritta da lui sembrerebbe sparita, e la cancellerebbe.
+ */
+export async function pull(env: Env, ownerId: string, deviceId: string, since: number, limit: number, includeOwn = false): Promise<PullResult> {
   const owner = await env.DB.prepare("SELECT seq, prunedSeq FROM owners WHERE ownerId = ?").bind(ownerId).first<{ seq: number; prunedSeq: number }>();
   if (!owner) return { changes: [], seq: 0, more: false };
   if (since > 0 && since < owner.prunedSeq) return { changes: [], seq: owner.seq, more: false, rebaseline: true };
 
   const pageSize = Math.max(1, Math.min(limit || MAX_PULL, MAX_PULL));
-  const rows = await env.DB.prepare(
-    "SELECT tbl, rowId, op, updatedAt, hash, deviceId, payload, seq FROM state WHERE ownerId = ? AND seq > ? AND deviceId != ? ORDER BY seq LIMIT ?",
-  ).bind(ownerId, since, deviceId, pageSize + 1).all<{ tbl: Table; rowId: string; op: "U" | "D"; updatedAt: number; hash: string; deviceId: string; payload: string | null; seq: number }>();
+  const exclude = includeOwn ? null : deviceId;
+  const notMine = exclude === null ? "" : " AND deviceId != ?";
+  const mineArgs = exclude === null ? [] : [exclude];
 
-  const more = rows.results.length > pageSize;
-  const page = rows.results.slice(0, pageSize);
-  const lastSeq = page.length ? page[page.length - 1].seq : owner.seq;
-  if (more) page.push(...(await parentsAfter(env, ownerId, deviceId, page, lastSeq)));
+  // Prima le misure, senza il testo: quante righe stanno nella pagina lo decide quanto pesano, e
+  // leggere duecento righe da due megabyte per poi tenerne due sarebbe gia' il danno da evitare.
+  const heads = await env.DB.prepare(
+    `SELECT tbl, rowId, op, seq, COALESCE(length(payload), 0) AS bytes FROM state WHERE ownerId = ? AND seq > ?${notMine} ORDER BY seq LIMIT ?`,
+  ).bind(ownerId, since, ...mineArgs, pageSize + 1).all<{ tbl: Table; rowId: string; op: "U" | "D"; seq: number; bytes: number }>();
+  const segmentBytes = new Map<string, number>();
+  const measured = heads.results.filter((r) => r.tbl === "transcripts" && r.op === "U").map((r) => r.rowId);
+  for (let i = 0; i < measured.length; i += 90) {
+    const slice = measured.slice(i, i + 90);
+    const sizes = await env.DB.prepare(
+      `SELECT transcriptId, SUM(length(payload)) AS bytes FROM segment_chunks WHERE ownerId = ? AND transcriptId IN (${slice.map(() => "?").join(",")}) GROUP BY transcriptId`,
+    ).bind(ownerId, ...slice).all<{ transcriptId: string; bytes: number }>();
+    for (const s of sizes.results) segmentBytes.set(s.transcriptId, s.bytes);
+  }
+
+  // Ci si ferma alla prima riga che sfora, non la si salta: le righe vanno consegnate in ordine di
+  // `seq`, o la ripartenza da `lastSeq` ne perderebbe una. La prima entra sempre, anche da sola
+  // oltre il budget, o una riga grossa fermerebbe il pull per sempre.
+  let taken = 0;
+  let used = 0;
+  for (const head of heads.results) {
+    if (taken >= pageSize) break;
+    const size = head.bytes + (head.tbl === "transcripts" && head.op === "U" ? segmentBytes.get(head.rowId) ?? 0 : 0);
+    if (taken > 0 && used + size > PULL_BYTES) break;
+    used += size;
+    taken++;
+  }
+  const more = taken < heads.results.length;
+  const lastSeq = taken ? heads.results[taken - 1].seq : owner.seq;
+
+  // Poi le righe intere, per intervallo di `seq`: una riga riscritta nel frattempo ha preso un
+  // `seq` piu' alto ed esce dall'intervallo (arrivera' dopo); nessuna puo' entrarci, perche' i
+  // numeri nuovi stanno tutti sopra quelli gia' confermati.
+  const page = taken
+    ? (await env.DB.prepare(
+        `SELECT tbl, rowId, op, updatedAt, hash, deviceId, payload, seq FROM state WHERE ownerId = ? AND seq > ? AND seq <= ?${notMine} ORDER BY seq`,
+      ).bind(ownerId, since, lastSeq, ...mineArgs).all<StateRow>()).results
+    : [];
+  if (more) page.push(...(await parentsAfter(env, ownerId, exclude, page, lastSeq)));
 
   const transcriptIds = page.filter((r) => r.tbl === "transcripts" && r.op === "U").map((r) => r.rowId);
   const segmentsById = new Map<string, unknown[]>();
@@ -268,7 +508,9 @@ function parentOf(row: StateRow): { tbl: Table; id: string } | null {
  * padre prima di figlio) la pagina entra; i padri torneranno nella loro pagina, e riapplicarli non
  * cambia niente. Si risale la catena: parte → sessione → nota → cartella.
  */
-async function parentsAfter(env: Env, ownerId: string, deviceId: string, page: StateRow[], lastSeq: number): Promise<StateRow[]> {
+async function parentsAfter(env: Env, ownerId: string, exclude: string | null, page: StateRow[], lastSeq: number): Promise<StateRow[]> {
+  const notMine = exclude === null ? "" : " AND deviceId != ?";
+  const mineArgs = exclude === null ? [] : [exclude];
   const have = new Set(page.map((r) => `${r.tbl}/${r.rowId}`));
   const extra: StateRow[] = [];
   let frontier = page;
@@ -284,8 +526,8 @@ async function parentsAfter(env: Env, ownerId: string, deviceId: string, page: S
       const slice = list.slice(i, i + 40);
       const where = slice.map(() => "(tbl = ? AND rowId = ?)").join(" OR ");
       const result = await env.DB.prepare(
-        `SELECT tbl, rowId, op, updatedAt, hash, deviceId, payload, seq FROM state WHERE ownerId = ? AND seq > ? AND deviceId != ? AND op = 'U' AND (${where})`,
-      ).bind(ownerId, lastSeq, deviceId, ...slice.flatMap((p) => [p.tbl, p.id])).all<StateRow>();
+        `SELECT tbl, rowId, op, updatedAt, hash, deviceId, payload, seq FROM state WHERE ownerId = ? AND seq > ?${notMine} AND op = 'U' AND (${where})`,
+      ).bind(ownerId, lastSeq, ...mineArgs, ...slice.flatMap((p) => [p.tbl, p.id])).all<StateRow>();
       found.push(...result.results);
     }
     for (const row of found) have.add(`${row.tbl}/${row.rowId}`);

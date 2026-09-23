@@ -30,14 +30,32 @@ rm -rf .wrangler/test-state
 npx wrangler d1 execute pampa-notes --local --persist-to .wrangler/test-state --file=./schema.sql
 npx wrangler dev --local --port 8788 --persist-to .wrangler/test-state
 python test_protocol.py http://127.0.0.1:8788
+python test_pull_parents.py http://127.0.0.1:8788
 python test_share.py http://127.0.0.1:8788
 python test_guests.py http://127.0.0.1:8788
-python test_computer.py http://127.0.0.1:8788 --persist-to .wrangler/test-state
+python test_computer.py http://127.0.0.1:8788 --persist-to .wrangler/test-state --key <COMPUTER_KEY>
 ```
 
-`test_computer.py` vuole anche `COMPUTER_KEY` in `.dev.vars` (32 byte casuali in base64, per esempio
+Ogni script vuole il **suo** stato vuoto (stessi id, `seq` contati dall'uno): conviene un
+`--persist-to` e una porta per script, o almeno uno per `test_protocol` + `test_pull_parents`, uno per
+`test_share`, uno per `test_guests` + `test_computer`. Gli altri, ognuno sul suo:
+
+```
+python test_concurrent_push.py http://127.0.0.1:8788          # push in parallelo: seq unici, una sola base vince
+python test_push_retry.py http://127.0.0.1:8788 --persist-to .wrangler/test-state   # lotto morto a meta' e ripetuto
+python test_pull_limits.py http://127.0.0.1:8788              # includeOwn, pagine a byte, too_large
+python test_computer.py http://127.0.0.1:8789 --no-key        # contro un server senza COMPUTER_KEY: 503
+```
+
+Invece di toccare `.dev.vars` si puo' passare un file a `wrangler dev --env-file`, con
+`AUTH_DEV_TOKENS="dev-alessio:dev-owner-1,dev-amico:dev-owner-2,dev-google:google:12345"` e
+`COMPUTER_KEY`. `test_computer.py` vuole `COMPUTER_KEY` (32 byte casuali in base64, per esempio
 `python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"`): senza, il Worker
-tiene gli indirizzi del computer ma non il token, e il test lo trova.
+tiene gli indirizzi del computer ma non il token, e non firma biglietti. Con `--key` (la stessa) il
+test i biglietti se li fabbrica anche da solo, seguendo il contratto: e' la prova che il formato e'
+quello che il companion si aspetta. Su Windows il `--persist-to` sta meglio dentro `worker/`: un
+percorso lungo (la cartella temporanea) supera i 260 caratteri col nome del file di SQLite, e
+wrangler risponde solo «internal error».
  I token di sviluppo stanno in `wrangler.toml` (`AUTH_DEV_TOKENS`, forma `token:ownerId`):
 nell'app, in *Impostazioni → Sincronizzazione*, l'indirizzo è quello del computer (LAN o
 Tailscale, porta 8787) e il codice è uno di quei token. `test_protocol.py` fa il giro che fa un
@@ -72,17 +90,18 @@ testo di anni di lezioni sono decine di megabyte.
 
 | | |
 |---|---|
-| `POST /v1/sync/push` | Un lotto di righe cambiate (`op` U o D, `updatedAt`, `hash`, `baseHash`, JSON). `baseHash` è l'impronta dell'ultima versione che il dispositivo ha visto: se non è quella che il server ha adesso la riga viene **rifiutata** (`stale`) e il dispositivo se la riprende col pull, dove il merge decide. Non si guarda l'orologio. Il lotto ha un id: ripeterlo non fa danni. |
-| `GET /v1/sync/pull?since=N&deviceId=X` | Le righe con `seq > N`, a pagine da 200, escluse quelle scritte da `X`. Una trascrizione arriva con tutti i suoi segmenti, mai spezzata fra due pagine. |
+| `POST /v1/sync/push` | Un lotto di righe cambiate (`op` U o D, `updatedAt`, `hash`, `baseHash`, JSON). `baseHash` è l'impronta dell'ultima versione che il dispositivo ha visto: se non è quella che il server ha adesso la riga viene **rifiutata** (`stale`) e il dispositivo se la riprende col pull, dove il merge decide. Non si guarda l'orologio, e il controllo lo fa il database al momento di scrivere: due push insieme sulla stessa base, ne passa uno. Una riga che non sta in D1 (più di 1,9 MB, o un segmento da solo) torna `too_large` e il resto entra. Il lotto ha un id, scritto per ultimo: ripeterlo non fa danni, e un lotto morto a metà ripetuto con lo stesso id finisce il lavoro (le righe già entrate si saltano, una trascrizione rimasta senza segmenti si riscrive). |
+| `GET /v1/sync/pull?since=N&deviceId=X[&includeOwn=1]` | Le righe con `seq > N`, a pagine da 200 righe **o** circa 4 MB (almeno una riga sempre), escluse quelle scritte da `X` — tranne con `includeOwn=1`, che serve al riallineamento completo. Una trascrizione arriva con tutti i suoi segmenti, mai spezzata fra due pagine. |
 | `GET /v1/sync/status` | Sequenza, conteggi, dispositivi visti. |
 | `POST /v1/auth/google`, `POST /v1/auth/logout` | Un ID token di Google diventa una sessione (token lungo, per dispositivo); la chiusura la revoca. |
 | `POST /v1/guests`, `GET /v1/guests`, `DELETE /v1/guests/{id}` | Gli ospiti del computer: un token `pg_…` per persona (visibile solo alla creazione), l'elenco con l'uso, la revoca. |
 | `POST /v1/guests/verify`, `POST /v1/guests/usage` | Quello che chiede il companion: «è un ospite di `owner`?» e «ha trascritto N secondi». Senza token del proprietario: il token dell'ospite è la prova. |
 | `GET /v1/account/computer`, `PUT …`, `DELETE …` | Il computer di casa dell'account: indirizzi, nome, modello e il token del companion, cifrato con `COMPUTER_KEY` (AES-GCM). Il `PUT` scrive solo se il suo `updatedAt` e' piu' recente, e risponde sempre con la versione corrente (`accepted`, `stale`); un `token` assente lascia quello di prima, uno vuoto lo cancella. |
+| `POST /v1/computer/ticket`, `POST /v1/computer/verify` | Il biglietto per il PC: l'app lo chiede con la sessione (`pt_<payload>.<firma>`, 12 ore, firmato con una chiave figlia di `COMPUTER_KEY`, senza stato) e lo manda al companion al posto del token del sync; il companion chiede qui se è buono e di chi è (`owner` = email o ownerId del suo `config.json`, la stessa regola degli ospiti). 503 senza `COMPUTER_KEY`. |
 | `GET /health` | Vivo, e con quale versione del protocollo. |
 | `POST /v1/shares`, `GET /v1/shares`, `DELETE /v1/shares/{id}` | Condividere una nota: un link con un token casuale, l'elenco, la revoca (che cancella anche l'audio da R2). |
 | `PUT /v1/shares/{id}/audio/{partId}` e `…/multipart/…` | L'audio della nota condivisa, intero o a blocchi (R2 multipart). `HEAD` dice se c'è già. |
-| `GET /s/{token}`, `…/data`, `…/audio/{partId}` | La pagina che un compagno apre, i suoi dati, l'audio con `Range`. Senza token: il link è la chiave. |
+| `GET /s/{token}`, `…/data`, `…/audio/{partId}` | La pagina che un compagno apre, i suoi dati, l'audio con `Range` (416 per un intervallo che nel file non c'è). Senza token: il link è la chiave, e per questo tutto qui esce con `no-referrer`, `noindex`, `nosniff`, e la pagina con una CSP che le lascia parlare solo con la sua origine. L'audio si serve solo come `audio/*`. |
 
 I tombstone restano novanta giorni, contati sull'orologio del **server**: un dispositivo con la
 data sbagliata non può far sparire una cancellazione. Chi torna dopo più di novanta giorni riceve

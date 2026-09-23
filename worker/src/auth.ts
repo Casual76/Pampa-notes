@@ -62,7 +62,12 @@ export async function ownerOf(request: Request, env: Env): Promise<string> {
 
 function devOwner(token: string, table: string): string | null {
   for (const pair of table.split(",")) {
-    const [t, owner] = pair.split(":").map((s) => s.trim());
+    // Si divide al primo `:` e basta: un ownerId come `google:123` ne ha un altro dentro, e
+    // tagliarlo li' darebbe a un token di sviluppo il proprietario `google`, che non e' nessuno.
+    const at = pair.indexOf(":");
+    if (at < 0) continue;
+    const t = pair.slice(0, at).trim();
+    const owner = pair.slice(at + 1).trim();
     if (t && owner && timingSafeEqual(t, token)) return owner;
   }
   return null;
@@ -172,14 +177,22 @@ async function googleIdentity(idToken: string, clientId: string): Promise<Google
   return { ownerId: `google:${claims.sub}`, email: typeof claims.email === "string" ? claims.email : null, name: typeof claims.name === "string" ? claims.name : null };
 }
 
+async function fetchGoogleKeys(): Promise<JsonWebKey[]> {
+  const response = await fetch(GOOGLE_JWKS);
+  if (!response.ok) throw new Unauthorized("chiavi di Google non disponibili");
+  const body = (await response.json()) as { keys: JsonWebKey[] };
+  jwksCache = { keys: body.keys, fetchedAt: Date.now() };
+  return body.keys;
+}
+
 async function googleKey(kid: string): Promise<JsonWebKey> {
-  if (!jwksCache || Date.now() - jwksCache.fetchedAt > 3_600_000) {
-    const response = await fetch(GOOGLE_JWKS);
-    if (!response.ok) throw new Unauthorized("chiavi di Google non disponibili");
-    const body = (await response.json()) as { keys: JsonWebKey[] };
-    jwksCache = { keys: body.keys, fetchedAt: Date.now() };
-  }
-  const key = jwksCache.keys.find((k) => (k as { kid?: string }).kid === kid);
+  const find = (keys: JsonWebKey[]) => keys.find((k) => (k as { kid?: string }).kid === kid);
+  const keys = !jwksCache || Date.now() - jwksCache.fetchedAt > 3_600_000 ? await fetchGoogleKeys() : jwksCache.keys;
+  let key = find(keys);
+  // Google ruota le chiavi e firma subito con quella nuova: per un'ora, con la cache vecchia, ogni
+  // accesso fallirebbe con «chiave sconosciuta». Si ricarica una volta — ma non piu' di una volta
+  // al minuto, o un token inventato con un `kid` a caso farebbe una richiesta a Google ogni volta.
+  if (!key && jwksCache && Date.now() - jwksCache.fetchedAt > 60_000) key = find(await fetchGoogleKeys());
   if (!key) throw new Unauthorized("chiave sconosciuta");
   return key;
 }
