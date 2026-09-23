@@ -225,23 +225,25 @@ private fun OnboardingLinks(
   linkApplied: Flow<IntentOutcome>,
 ) {
   val notifications = LocalFluidNotificationHostState.current
-  val linkedTitle = stringResource(R.string.settings_endpoint_linked_title)
-  val linkedMessage = stringResource(R.string.settings_endpoint_linked)
   val syncLinkedTitle = stringResource(R.string.sync_linked_title)
   val syncLinkedMessage = stringResource(R.string.sync_linked)
+  val endpointNotice = rememberEndpointLinkedNotice()
   LaunchedEffect(incomingIntents) {
     incomingIntents.collect { intent -> onLinkIntent(intent) }
   }
   LaunchedEffect(linkApplied) {
     linkApplied.collect { outcome ->
-      val (id, title, message) = when (outcome) {
-        is IntentOutcome.EndpointLinked -> Triple("endpoint-linked", linkedTitle, linkedMessage.format(outcome.url))
-        is IntentOutcome.SyncLinked -> Triple("sync-linked", syncLinkedTitle, syncLinkedMessage.format(outcome.url))
+      val notice = when (outcome) {
+        is IntentOutcome.EndpointLinked -> endpointNotice(outcome)
+        is IntentOutcome.SyncLinked -> FluidNotification(
+          id = "sync-linked",
+          title = syncLinkedTitle,
+          message = syncLinkedMessage.format(outcome.url),
+          tone = FluidNotificationTone.Success,
+        )
         else -> return@collect
       }
-      launch {
-        notifications?.show(FluidNotification(id = id, title = title, message = message, tone = FluidNotificationTone.Success))
-      }
+      launch { notifications?.show(notice) }
     }
   }
 }
@@ -310,8 +312,7 @@ private fun AppShell(
     LaunchedEffect(layout.splits) { syncPanes(listNav, detailNav, layout.splits) }
 
     val notifications = LocalFluidNotificationHostState.current
-    val linkedTitle = stringResource(R.string.settings_endpoint_linked_title)
-    val linkedMessage = stringResource(R.string.settings_endpoint_linked)
+    val endpointNotice = rememberEndpointLinkedNotice()
     val syncLinkedTitle = stringResource(R.string.sync_linked_title)
     val syncLinkedMessage = stringResource(R.string.sync_linked)
     LaunchedEffect(listNav, incomingIntents) {
@@ -332,16 +333,7 @@ private fun AppShell(
             // La pagina dei servizi, cosi' si vede cosa e' stato scritto e si prova la connessione subito.
             actions.openSettingsSection(SettingsSection.SERVICES)
             // In un ramo suo: `show` torna solo a scheda mostrata, e intanto non si bloccano gli intent.
-            launch {
-              notifications?.show(
-                FluidNotification(
-                  id = "endpoint-linked",
-                  title = linkedTitle,
-                  message = linkedMessage.format(outcome.url),
-                  tone = FluidNotificationTone.Success,
-                ),
-              )
-            }
+            launch { notifications?.show(endpointNotice(outcome)) }
           }
           is IntentOutcome.SyncLinked -> {
             actions.openSettingsSection(SettingsSection.SYNC)

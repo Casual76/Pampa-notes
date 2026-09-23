@@ -28,6 +28,17 @@ class EndpointLinkTest {
   }
 
   @Test
+  fun `il codice di collegamento viaggia nel link, e uno che non ha la forma giusta si ignora`() {
+    val link = EndpointLink.parse("pampanotes://endpoint?url=http://pc:8765&remote=http://100.64.0.7:8765&bind=Ab3_-xYz0123456789Qw")
+    assertEquals("Ab3_-xYz0123456789Qw", link?.bindCode)
+    assertEquals("http://100.64.0.7:8765", link?.remoteUrl)
+    assertNull(EndpointLink.parse("pampanotes://endpoint?url=http://pc:8765")?.bindCode)
+    assertNull(EndpointLink.parse("pampanotes://endpoint?url=http://pc:8765&bind=corto")?.bindCode)
+    assertNull(EndpointLink.parse("pampanotes://endpoint?url=http://pc:8765&bind=con%20spazi%20dentro%20davvero")?.bindCode)
+    assertEquals("http://pc:8765", EndpointLink.parse("pampanotes://endpoint?url=http://pc:8765&bind=corto")?.url)
+  }
+
+  @Test
   fun `la barra finale se ne va, come fa gia' il campo delle impostazioni`() {
     assertEquals("http://pc:8765", EndpointLink.parse("pampanotes://endpoint?url=http://pc:8765/")?.url)
   }
