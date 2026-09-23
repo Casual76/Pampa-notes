@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import dataclasses
 import gc
 import hashlib
 import json
@@ -237,7 +238,17 @@ class JobProgress:
         self.state_since = now
         self.started: float | None = None
         self.finished: float | None = None
+        # Il pezzo che si sta facendo, da 1, e quanti sono: vedi [transcribe_audio]. Un file intero
+        # e' «1 di 1», e `fraction` vale dentro lo stato del pezzo di adesso.
+        self.chunk = 1
+        self.chunks = 1
         self._lock = threading.Lock()
+
+    def piece(self, chunk: int, chunks: int) -> None:
+        """Comincia il pezzo [chunk] di [chunks]: gli stati che seguono sono i suoi."""
+        with self._lock:
+            self.chunk = max(1, int(chunk))
+            self.chunks = max(self.chunk, int(chunks))
 
     def set(self, state: str, fraction: float = 0.0, detail: str | None = None, now: float | None = None) -> None:
         now = time.time() if now is None else now
@@ -279,6 +290,7 @@ class JobProgress:
         with self._lock:
             state, fraction, detail = self.state, self.fraction, self.detail
             since = self.state_since
+            chunk, chunks = self.chunk, self.chunks
         in_state = max(0.0, now - since)
         # La stima c'e' solo quando dice qualcosa: con il 2% fatto in un secondo verrebbe fuori un
         # numero che cambia di minuti a ogni domanda.
@@ -297,6 +309,8 @@ class JobProgress:
             "processing_s": round(self.processing_s(now), 1),
             "device": self.device,
             "detail": detail,
+            "chunk": chunk,
+            "chunks": chunks,
         }
 
 
@@ -946,6 +960,14 @@ def align_model_for(language: str, device: str | None = None):
     return STATE["align"][language]
 
 
+# * `by_ref`: `source_sha256` trascrive un file gia' nell'archivio, senza che il telefono lo mandi;
+# * `archive_upload`: `archive=1` tiene nell'archivio il file mandato, invece di buttarlo dopo;
+# * `server_chunks`: `max_minutes` divide qui una lezione lunga, invece che sul telefono;
+# * `file_meta`: `GET /v1/files/<sha>/meta`, le date vere di un `.sdocx` o di una registrazione;
+# * `prompt`: il campo `prompt` arriva davvero a Whisper (prima si accettava e si ignorava).
+FEATURES = ("by_ref", "archive_upload", "server_chunks", "file_meta", "prompt")
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     """Quello che l'app chiama per dire «raggiunto» invece di «non risponde». Risponde subito
@@ -982,6 +1004,9 @@ def health() -> dict[str, Any]:
         # stima di quanta ne vuole il companion nel momento peggiore di una lezione.
         "gpu": gpu_status(),
         "vram": public_plan(STATE["vram"]),
+        # Quello che questo companion sa fare in piu' della chiamata di OpenAI. L'app lo legge prima
+        # di ogni lavoro: senza la lista (un companion vecchio) fa tutto da se', come prima.
+        "features": list(FEATURES),
     }
 
 
@@ -1437,40 +1462,112 @@ async def admin_settings_update(request: Request) -> dict[str, Any]:
     return answer
 
 
+def _truthy(value: str) -> bool:
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _positive_int(value: str) -> int | None:
+    """`max_minutes` com'e' arrivato nel form: un intero positivo, o niente (vuoto, zero, sbagliato)."""
+    try:
+        number = int(value.strip())
+    except (AttributeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _upload_chunks(handle: Any) -> Any:
+    """Il file del multipart, gia' arrivato tutto (starlette lo tiene in un temporaneo), a blocchi."""
+    handle.seek(0)
+    while chunk := handle.read(1024 * 1024):
+        yield chunk
+
+
 @app.post("/v1/audio/transcriptions")
 async def transcriptions(
     request: Request,
-    file: UploadFile = File(...),
+    file: UploadFile | None = File(default=None),
     model: str = Form(default=""),
     language: str = Form(default=""),
     prompt: str = Form(default=""),
     temperature: float = Form(default=0.0),
     response_format: str = Form(default="json"),
+    source_sha256: str = Form(default=""),
+    # `archive` e' anche il nome del modulo: qui dentro si chiama in un altro modo.
+    archive_flag: str = Form(default="", alias="archive"),
+    name: str = Form(default=""),
+    max_minutes: str = Form(default=""),
 ):
     """
     La chiamata vera. Multipart come OpenAI, risposta `verbose_json` con i segmenti.
 
     Il campo `model` si ignora di proposito: il modello e' quello scelto all'avvio, e cambiarlo per
     richiesta significherebbe rileggere qualche gigabyte di pesi nel mezzo di una lezione.
+
+    **Il computer lavora, il telefono chiede.** Il telefono preparava l'audio da se': se la
+    registrazione stava solo qui la scaricava per rimandarla indietro, e con un tetto ai pezzi
+    decodificava tutta la lezione, la tagliava e ricodificava ogni pezzo — piu' tempo della
+    trascrizione. Qui c'e' gia' tutto, l'archivio per impronta e ffmpeg, quindi:
+
+      * `source_sha256`: se il file e' nell'archivio si trascrive da li', e `file` non serve. Senza
+        il file e senza il blob: 404 `blob_missing`, e l'app lo manda;
+      * `archive=1` con `file` e `source_sha256`: il file mandato entra nell'archivio (impronta
+        verificata, come un `PUT`) e si trascrive da li'. Senza, resta un temporaneo che se ne va a
+        fine lavoro — e' la strada di chi i file sul computer non li vuole;
+      * `max_minutes`: la divisione in pezzi la fa il computer ([transcribe_audio]).
+
+    Impronta e archivio sono **solo del proprietario**: a un ospite uno `sha256` direbbe se un file
+    e' nell'archivio di un altro. Gli ospiti mandano il file, come sempre.
     """
     caller = caller_of(request)
     who = f"ospite {caller.name}: " if caller.kind == "guest" else ""
     # Registrato da [AuthGate] se l'app ha mandato `X-Pampa-Job`; altrimenti uno che non legge
     # nessuno, cosi' il resto del codice non ha un «se» a ogni passo.
     progress: JobProgress = getattr(request.state, "job", None) or JobProgress()
+    # Il file da cui si trascrive, e — solo se e' un temporaneo — quello da cancellare dopo. Un blob
+    # dell'archivio non si cancella mai: e' l'unica copia che il computer ha.
+    source: Path | None = None
     target: Path | None = None
+    origin = "upload"
+    archived = False
+    sha = source_sha256.strip().lower()
+    keep = _truthy(archive_flag)
     # Il `try` comincia prima del file temporaneo, non dopo: una richiesta annullata mentre si
     # copiava l'audio, o mentre aspettava il suo turno, lasciava il file in %TEMP% per sempre.
     try:
-        suffix = Path(file.filename or "audio").suffix or ".m4a"
-        # Su disco e non in memoria: qui arrivano file da un'ora.
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-            target = Path(tmp.name)
-            while chunk := await file.read(1024 * 1024):
-                tmp.write(chunk)
+        if (sha or keep) and caller.kind != "owner":
+            raise HTTPException(status_code=403, detail="owner_only")
+        if sha and not archive.SHA256.match(sha):
+            raise HTTPException(status_code=400, detail="non e' uno sha256")
+        store = archive.ARCHIVE
+        record = store.get(sha) if sha and store is not None else None
+        label = name.strip() or (file.filename if file is not None else "") or "audio"
 
-        size_mb = target.stat().st_size / (1024 * 1024)
-        log.info("%sricevuto %s (%.1f MB)%s", who, file.filename, size_mb, f", {GATE.waiting} in fila" if GATE.waiting else "")
+        if record is not None:
+            source, origin, archived = record["path"], "archive", True
+            label = name.strip() or record["name"]
+        elif file is None:
+            raise HTTPException(status_code=404 if sha else 400, detail="blob_missing" if sha else "file_missing")
+        elif keep and sha and store is not None:
+            mime = (file.content_type or "application/octet-stream").split(";")[0].strip()
+            try:
+                stored = await archive._run_blocking(store.store, sha, label, mime, _upload_chunks(file.file), file.size)
+            except ValueError as error:
+                raise HTTPException(status_code=400, detail="sha_mismatch") from error
+            source, archived = stored["path"], True
+        else:
+            suffix = Path(label).suffix or Path(file.filename or "").suffix or ".m4a"
+            # Su disco e non in memoria: qui arrivano file da un'ora.
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                target = Path(tmp.name)
+                while chunk := await file.read(1024 * 1024):
+                    tmp.write(chunk)
+            source = target
+
+        size_mb = source.stat().st_size / (1024 * 1024)
+        how = "dall'archivio" if origin == "archive" else ("ricevuto e archiviato" if archived else "ricevuto")
+        log.info("%s%s %s (%.1f MB)%s", who, how, label, size_mb, f", {GATE.waiting} in fila" if GATE.waiting else "")
+        cap = _positive_int(max_minutes)
+        vocabulary = prompt.strip() or None
 
         progress.set("queued")
         # Il proprietario passa davanti agli ospiti in attesa; nessuno interrompe chi sta gia' trascrivendo.
@@ -1482,7 +1579,9 @@ async def transcriptions(
                 # Su un thread anche il caricamento del modello: cosi' `/health` continua a
                 # rispondere durante i minuti del primo avvio, invece di far credere all'app che il
                 # server sia morto.
-                result = await asyncio.to_thread(_transcribe, str(target), language.strip() or None, progress)
+                result = await asyncio.to_thread(
+                    _transcribe, str(source), language.strip() or None, progress, prompt=vocabulary, max_minutes=cap,
+                )
             except Exception as error:  # noqa: BLE001 — qualunque guasto deve tornare come 500 leggibile
                 log.exception("trascrizione fallita")
                 progress.set("failed", detail=str(error)[:300])
@@ -1516,6 +1615,11 @@ async def transcriptions(
     # statistiche («un'ora di lezione in quattro minuti»). I nomi restano questi.
     result["processing_s"] = round(progress.processing_s(), 2)
     result["audio_s"] = round(float(result.get("audio_s") or duration), 2)
+    # Se il file ora sta nell'archivio (c'era gia', o e' entrato adesso: l'app marca la parte come
+    # archiviata), da dove si e' trascritto, e in quanti pezzi.
+    result["archived"] = archived
+    result["source"] = origin
+    result["chunks"] = int(result.get("chunks") or 1)
     if response_format == "text":
         return PlainTextResponse(result["text"])
     return JSONResponse(result)
@@ -1616,6 +1720,31 @@ class Engine:
 CPU_BATCH_SIZE = 4
 
 
+@contextlib.contextmanager
+def initial_prompt(model: Any, prompt: str | None):
+    """
+    Il «Vocabolario» dell'app come `initial_prompt` di Whisper, per una trascrizione sola.
+
+    Il campo `prompt` arrivava e non lo leggeva nessuno. In WhisperX 3.8 il prompt non e' un
+    argomento di `transcribe`: sta nelle `options` della pipeline (un dataclass di faster-whisper,
+    `TranscriptionOptions`), fissate quando il modello si carica, e `generate_segment_batched` lo
+    rilegge a ogni lotto. Quindi si sostituiscono le opzioni per la durata della chiamata e si
+    rimettono com'erano dopo, anche se la chiamata fallisce: il modello resta in memoria per il
+    prossimo, che non deve trovarsi il vocabolario di un altro. Senza lucchetti perche' la fila
+    ([PriorityGate]) fa passare una trascrizione alla volta. Un modello senza `options` (quelli
+    finti delle prove, o un WhisperX che le ha spostate) trascrive senza prompt, come prima.
+    """
+    options = getattr(model, "options", None)
+    if not prompt or options is None or not dataclasses.is_dataclass(options) or not hasattr(options, "initial_prompt"):
+        yield
+        return
+    model.options = dataclasses.replace(options, initial_prompt=prompt)
+    try:
+        yield
+    finally:
+        model.options = options
+
+
 def run_job(
     audio: Any,
     language: str | None,
@@ -1623,6 +1752,7 @@ def run_job(
     batch_size: int,
     device: str,
     progress: JobProgress | None = None,
+    prompt: str | None = None,
 ) -> dict[str, Any]:
     """
     Trascrive e allinea, scendendo dalla scheda alla RAM se la scheda non basta.
@@ -1663,9 +1793,10 @@ def run_job(
     while model is not None:
         try:
             progress.set("transcribing", detail=None if size == batch_size else f"batch {size}")
-            transcription = model.transcribe(
-                audio, batch_size=size, language=language, progress_callback=progress.callback("transcribing"),
-            )
+            with initial_prompt(model, prompt):
+                transcription = model.transcribe(
+                    audio, batch_size=size, language=language, progress_callback=progress.callback("transcribing"),
+                )
             break
         except Exception as error:
             if device != "cuda" or not is_oom(error):
@@ -1684,10 +1815,11 @@ def run_job(
         cpu = engine.cpu_model()
         try:
             progress.set("transcribing", detail="cpu")
-            transcription = cpu.transcribe(
-                audio, batch_size=min(size, CPU_BATCH_SIZE), language=language,
-                progress_callback=progress.callback("transcribing"),
-            )
+            with initial_prompt(cpu, prompt):
+                transcription = cpu.transcribe(
+                    audio, batch_size=min(size, CPU_BATCH_SIZE), language=language,
+                    progress_callback=progress.callback("transcribing"),
+                )
         finally:
             del cpu
             engine.release()
@@ -1724,7 +1856,189 @@ def run_job(
     }
 
 
-def _transcribe(path: str, language: str | None, progress: JobProgress | None = None) -> dict[str, Any]:
+# --- i pezzi, sul computer ------------------------------------------------------------------------
+#
+# Il tetto ai pezzi (`customMaxMinutes` dell'app) e' una scelta di chi preferisce richieste corte.
+# Il telefono la rispettava decodificando tutta la lezione in PCM, tagliandola e ricodificando ogni
+# pezzo in AAC: minuti di lavoro su un telefono per preparare quello che WhisperX rifa' comunque.
+# Qui l'audio e' gia' in memoria come array (`whisperx.load_audio`), e tagliarlo costa una fetta.
+# La regola e' quella di `ChunkPolicy.decide` con la tolleranza del computer, e i tagli quelli di
+# `ChunkPlanner.planEqual`: un port piccolo, perche' la stessa lezione deve venire divisa allo stesso
+# modo da chiunque la divida.
+
+# Fino a dieci minuti oltre il tetto il file va intero: costano solo attesa, un taglio costa contesto.
+COMPUTER_TOLERANCE_S = 10 * 60
+FRAME_MS = 20
+# Quanto il taglio puo' spostarsi dal confine ideale per cadere in un silenzio.
+SEARCH_WINDOW_S = 30.0
+# Il silenzio si cerca a finestre di mezzo secondo: un frame muto capita anche in mezzo a una parola.
+QUIET_WINDOW_MS = 500
+# Sotto il minuto un pezzo non si fa: meglio meno pezzi, un po' piu' lunghi.
+MIN_PIECE_S = 60.0
+
+
+def piece_count(duration_s: float, max_minutes: int | None) -> int:
+    """
+    In quanti pezzi va una registrazione: 1 fino al tetto piu' dieci minuti, poi `ceil(durata/tetto)`.
+
+    Quaranta minuti con un tetto di trenta vanno interi; quarantuno fanno due pezzi da venti e mezzo,
+    mai trenta piu' undici.
+    """
+    if not max_minutes or max_minutes <= 0 or duration_s <= 0:
+        return 1
+    cap = max_minutes * 60.0
+    if duration_s <= cap + COMPUTER_TOLERANCE_S:
+        return 1
+    return max(1, math.ceil(duration_s / cap))
+
+
+def frame_energies(audio: Any, sample_rate: int, frame_ms: int = FRAME_MS) -> Any:
+    """
+    L'energia (RMS) di ogni finestra di [frame_ms], con numpy sull'array che c'e' gia'.
+
+    Il prodotto scalare riga per riga (`einsum`) e non `square` + `mean`: un'ora a 16 kHz sono 230 MB
+    in float32, e `square` ne farebbe una copia intera solo per sommarla.
+    """
+    import numpy as np
+
+    frame = max(1, int(round(sample_rate * frame_ms / 1000)))
+    count = len(audio) // frame
+    if count == 0:
+        return np.zeros(0, dtype=np.float32)
+    frames = np.asarray(audio[: count * frame], dtype=np.float32).reshape(count, frame)
+    return np.sqrt(np.einsum("ij,ij->i", frames, frames) / frame)
+
+
+def quietest_point(energies: Any, frame_s: float, from_s: float, to_s: float, window_ms: int = QUIET_WINDOW_MS) -> float:
+    """Il centro della finestra piu' silenziosa fra due istanti, in secondi. `ChunkPlanner.quietestPoint`."""
+    import numpy as np
+
+    window = max(1, int(round(window_ms / 1000 / frame_s)))
+    last_index = len(energies) - 1
+    first = min(max(int(from_s / frame_s), 0), last_index)
+    last = min(max(int(to_s / frame_s), 0), last_index)
+    if last - first < window:
+        return (from_s + to_s) / 2
+    sums = np.concatenate(([0.0], np.cumsum(energies[first:last], dtype=np.float64)))
+    windows = sums[window:] - sums[:-window]
+    best = first + int(np.argmin(windows))
+    return (best + window // 2) * frame_s
+
+
+def plan_pieces(
+    energies: Any,
+    frame_s: float,
+    total_s: float,
+    pieces: int,
+    search_s: float = SEARCH_WINDOW_S,
+    min_piece_s: float = MIN_PIECE_S,
+) -> list[tuple[float, float]]:
+    """
+    [pieces] pezzi uguali, ognuno tagliato nel silenzio piu' vicino al suo confine: `ChunkPlanner.planEqual`.
+
+    Il confine k-esimo si cerca attorno a `k * totale / pieces`, non alla fine del pezzo prima: gli
+    scarti della ricerca non si sommano, e l'ultimo pezzo non diventa un moncone. Niente
+    sovrapposizione, a differenza del telefono: il taglio cade in un silenzio, e i pezzi si mettono
+    in fila spostando i tempi, senza cucitura da fare.
+    """
+    count = min(pieces, max(1, int(total_s // min_piece_s))) if min_piece_s > 0 else pieces
+    if count <= 1 or len(energies) == 0:
+        return [(0.0, total_s)]
+    cuts: list[float] = []
+    for k in range(1, count):
+        ideal = total_s * k / count
+        previous = cuts[-1] if cuts else 0.0
+        low = max(previous + min_piece_s, ideal - search_s)
+        high = min(total_s - min_piece_s, ideal + search_s)
+        cut = ideal if low >= high else quietest_point(energies, frame_s, low, high)
+        if cut <= previous or cut >= total_s:
+            continue
+        cuts.append(cut)
+    bounds = [0.0, *cuts, total_s]
+    return list(zip(bounds[:-1], bounds[1:]))
+
+
+def _shifted(segment: dict, offset: float) -> dict:
+    """Un segmento di un pezzo, con i tempi (suoi e delle parole) spostati all'inizio del pezzo."""
+    if not offset:
+        return segment
+    moved = dict(segment)
+    for key in ("start", "end"):
+        if isinstance(moved.get(key), (int, float)):
+            moved[key] = moved[key] + offset
+    if moved.get("words"):
+        words = []
+        for word in moved["words"]:
+            word = dict(word)
+            for key in ("start", "end"):
+                if isinstance(word.get(key), (int, float)):
+                    word[key] = word[key] + offset
+            words.append(word)
+        moved["words"] = words
+    return moved
+
+
+def transcribe_audio(
+    audio: Any,
+    sample_rate: int,
+    language: str | None,
+    progress: JobProgress,
+    engine: Engine,
+    max_minutes: int | None = None,
+    prompt: str | None = None,
+) -> dict[str, Any]:
+    """
+    [run_job] sull'audio intero, o su ogni pezzo se [max_minutes] lo chiede ([piece_count]).
+
+    I pezzi sono fette dello stesso array, niente copie ne' file. Ogni pezzo passa da [run_job] per
+    conto suo — il ripiego sul processore vale pezzo per pezzo — con la lingua che il primo ha
+    riconosciuto, cosi' non la si riconosce da capo a ogni pezzo. I tempi di segmenti e parole si
+    spostano dell'inizio del pezzo, e i pezzi si mettono in fila. [progress] dice «pezzo 2 di 3» e,
+    dentro, lo stato di quel pezzo.
+    """
+    total_s = len(audio) / sample_rate
+    count = piece_count(total_s, max_minutes)
+    if count > 1:
+        frame_s = FRAME_MS / 1000
+        bounds = plan_pieces(frame_energies(audio, sample_rate), frame_s, total_s, count)
+    else:
+        bounds = [(0.0, total_s)]
+    if len(bounds) > 1:
+        log.info("divido %.1f min in %d pezzi (tetto %d min)", total_s / 60, len(bounds), max_minutes)
+
+    segments: list[dict] = []
+    detected = language
+    device_used = STATE["device"]
+    alignment = "ok"
+    batch_size = STATE["batch_size"]
+    for index, (start_s, end_s) in enumerate(bounds):
+        progress.piece(index + 1, len(bounds))
+        piece = audio if len(bounds) == 1 else audio[int(round(start_s * sample_rate)) : int(round(end_s * sample_rate))]
+        job = run_job(piece, detected, engine, STATE["batch_size"], STATE["device"], progress, prompt=prompt)
+        detected = detected or job.get("language")
+        segments.extend(_shifted(segment, start_s) for segment in job["segments"])
+        if job.get("device_used") == "cpu":
+            device_used = "cpu"
+        if job.get("alignment", "ok") != "ok" and alignment == "ok":
+            alignment = job["alignment"]
+        batch_size = job.get("batch_size", batch_size)
+    return {
+        "segments": segments,
+        "language": detected or "en",
+        "device_used": device_used,
+        "batch_size": batch_size,
+        "alignment": alignment,
+        "chunks": len(bounds),
+    }
+
+
+def _transcribe(
+    path: str,
+    language: str | None,
+    progress: JobProgress | None = None,
+    prompt: str | None = None,
+    max_minutes: int | None = None,
+) -> dict[str, Any]:
     """Il lavoro vero, su un thread suo: WhisperX blocca, e bloccare il loop ferma anche /health."""
     import whisperx
     from whisperx.audio import SAMPLE_RATE
@@ -1735,17 +2049,18 @@ def _transcribe(path: str, language: str | None, progress: JobProgress | None = 
     audio = whisperx.load_audio(path)
     audio_s = len(audio) / SAMPLE_RATE
     progress.audio_s = audio_s
-    job = run_job(audio, language, Engine(), STATE["batch_size"], STATE["device"], progress)
+    job = transcribe_audio(audio, SAMPLE_RATE, language, progress, Engine(), max_minutes=max_minutes, prompt=prompt)
     STATE["alignment"][job["language"]] = job["alignment"]
 
     out = []
-    for index, segment in enumerate(job["segments"]):
+    for segment in job["segments"]:
         text = (segment.get("text") or "").strip()
         if not text:
             continue
         out.append(
             {
-                "id": index,
+                # Numerati dopo aver messo in fila i pezzi: ogni pezzo ripartirebbe da zero.
+                "id": len(out),
                 "seek": 0,
                 "start": _finite(segment.get("start"), 0.0),
                 "end": _finite(segment.get("end"), 0.0),
@@ -1773,6 +2088,7 @@ def _transcribe(path: str, language: str | None, progress: JobProgress | None = 
         "device_used": job["device_used"],
         # La durata vera del file, non la fine dell'ultimo segmento: un finale muto conta lo stesso.
         "audio_s": audio_s,
+        "chunks": job["chunks"],
     }
 
 

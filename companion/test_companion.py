@@ -13,6 +13,7 @@ un'altra porta a caso, e i modelli sono oggetti che finiscono la memoria quando 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
 import importlib.machinery
 import importlib.util
@@ -515,6 +516,140 @@ class RunJobTest(unittest.TestCase):
         self.assertEqual(progress.device, "cpu")
 
 
+@dataclasses.dataclass
+class FakeOptions:
+    """Come `TranscriptionOptions` di faster-whisper: un dataclass con `initial_prompt`."""
+
+    initial_prompt: str | None = None
+    beam_size: int = 5
+
+
+class PromptedModel(FakeModel):
+    """Un modello con le `options` della pipeline di WhisperX: si ricorda il prompt che ha visto."""
+
+    def __init__(self, error: BaseException | None = None) -> None:
+        super().__init__(fits=99, error=error)
+        self.options = FakeOptions()
+        self.seen: list[str | None] = []
+
+    def transcribe(self, audio: object, batch_size: int, language: str | None, progress_callback=None) -> dict:
+        self.seen.append(self.options.initial_prompt)
+        return super().transcribe(audio, batch_size, language, progress_callback)
+
+
+class InitialPromptTest(unittest.TestCase):
+    def test_prompt_reaches_whisper_and_goes_away(self) -> None:
+        model = PromptedModel()
+        server.run_job(None, "it", FakeEngine(model), 16, "cuda", prompt="Fichte, Schelling, Io puro")
+        self.assertEqual(model.seen, ["Fichte, Schelling, Io puro"])
+        self.assertIsNone(model.options.initial_prompt, "il prossimo lavoro non deve trovarsi il vocabolario di questo")
+        self.assertEqual(model.options.beam_size, 5)
+
+    def test_restored_even_when_it_fails_and_absent_without_prompt(self) -> None:
+        model = PromptedModel(error=ValueError("file rotto"))
+        with self.assertRaises(ValueError):
+            server.run_job(None, "it", FakeEngine(model), 16, "cuda", prompt="Kant")
+        self.assertIsNone(model.options.initial_prompt)
+        plain = PromptedModel()
+        server.run_job(None, "it", FakeEngine(plain), 16, "cuda")
+        self.assertEqual(plain.seen, [None])
+
+    def test_model_without_options_is_left_alone(self) -> None:
+        with server.initial_prompt(object(), "Kant"):
+            pass
+
+
+# --- i pezzi, sul computer ----------------------------------------------------------------------------
+
+
+RATE = 100  # campioni al secondo: 45 minuti sono 270 mila numeri invece di 43 milioni
+
+
+def lecture(minutes: float, quiet_at_s: float | None = None) -> "numpy.ndarray":
+    """Un «parlato» rumoroso lungo [minutes], con due secondi di silenzio a [quiet_at_s]."""
+    import numpy
+
+    generator = numpy.random.default_rng(7)
+    audio = (0.2 + 0.1 * generator.random(int(minutes * 60 * RATE))).astype(numpy.float32)
+    if quiet_at_s is not None:
+        audio[int((quiet_at_s - 1) * RATE) : int((quiet_at_s + 1) * RATE)] = 0.0
+    return audio
+
+
+class PiecesTest(StateMixin, unittest.TestCase):
+    def test_piece_count_follows_chunk_policy(self) -> None:
+        self.assertEqual(server.piece_count(40 * 60, 30), 1, "fino a dieci minuti oltre il tetto, intero")
+        self.assertEqual(server.piece_count(41 * 60, 30), 2)
+        self.assertEqual(server.piece_count(45 * 60, 30), 2)
+        self.assertEqual(server.piece_count(61 * 60, 30), 3)
+        self.assertEqual(server.piece_count(5 * 3600, None), 1)
+        self.assertEqual(server.piece_count(5 * 3600, 0), 1)
+
+    def test_cut_falls_in_the_nearest_silence(self) -> None:
+        audio = lecture(45, quiet_at_s=22.5 * 60 + 17)
+        energies = server.frame_energies(audio, RATE)
+        self.assertEqual(len(energies), len(audio) // 2)
+        bounds = server.plan_pieces(energies, server.FRAME_MS / 1000, len(audio) / RATE, 2)
+        self.assertEqual(len(bounds), 2)
+        # Dentro i due secondi di silenzio, non sul cronometro (22:30).
+        self.assertLessEqual(abs(bounds[0][1] - (22.5 * 60 + 17)), 1.0)
+        self.assertEqual((bounds[0][0], bounds[1][1]), (0.0, 45 * 60.0))
+        self.assertEqual(bounds[0][1], bounds[1][0], "niente sovrapposizione: si mettono in fila e basta")
+
+    def run_pieces(self, audio, max_minutes: int | None):
+        calls: list[tuple[int, str | None, int, int, str | None]] = []
+
+        def fake_run_job(piece, language, engine, batch_size, device, progress=None, prompt=None):
+            calls.append((len(piece), language, progress.chunk, progress.chunks, prompt))
+            progress.set("transcribing")
+            return {
+                "segments": [
+                    {"start": 1.0, "end": 2.5, "text": f"pezzo {len(calls)}",
+                     "words": [{"word": "pezzo", "start": 1.0, "end": 1.4, "score": 0.9}]},
+                ],
+                "language": language or "it",
+                "device_used": "cpu" if len(calls) == 2 else "cuda",
+                "batch_size": 16,
+                "alignment": "ok",
+            }
+
+        server.STATE.update(device="cuda", batch_size=16)
+        progress = RecordingProgress()
+        with mock.patch.object(server, "run_job", fake_run_job):
+            result = server.transcribe_audio(audio, RATE, None, progress, FakeEngine(None), max_minutes=max_minutes, prompt="Fichte")
+        return result, calls, progress
+
+    def test_forty_minutes_with_a_cap_of_thirty_stay_whole(self) -> None:
+        audio = lecture(40)
+        result, calls, progress = self.run_pieces(audio, 30)
+        self.assertEqual(calls, [(len(audio), None, 1, 1, "Fichte")])
+        self.assertEqual(result["chunks"], 1)
+        self.assertEqual(result["segments"][0]["start"], 1.0)
+        self.assertEqual(progress.snapshot()["chunks"], 1)
+
+    def test_forty_five_minutes_become_two_pieces_with_shifted_times(self) -> None:
+        cut = 22 * 60 + 40.0
+        audio = lecture(45, quiet_at_s=cut)
+        result, calls, progress = self.run_pieces(audio, 30)
+        self.assertEqual(result["chunks"], 2)
+        self.assertEqual([call[2:4] for call in calls], [(1, 2), (2, 2)], "«pezzo 1 di 2», poi «2 di 2»")
+        # Il secondo pezzo usa la lingua che il primo ha riconosciuto; il prompt vale per tutti e due.
+        self.assertEqual([call[1] for call in calls], [None, "it"])
+        self.assertEqual([call[4] for call in calls], ["Fichte", "Fichte"])
+        self.assertEqual(sum(call[0] for call in calls), len(audio))
+        first, second = result["segments"]
+        self.assertEqual((first["start"], first["end"]), (1.0, 2.5))
+        offset = calls[0][0] / RATE
+        self.assertLessEqual(abs(offset - cut), 1.0, "il taglio cade nel silenzio")
+        self.assertAlmostEqual(second["start"], offset + 1.0, places=6)
+        self.assertAlmostEqual(second["end"], offset + 2.5, places=6)
+        self.assertAlmostEqual(second["words"][0]["start"], offset + 1.0, places=6)
+        self.assertAlmostEqual(second["words"][0]["end"], offset + 1.4, places=6)
+        self.assertEqual(result["device_used"], "cpu", "un pezzo sul processore vale per la lezione")
+        snap = progress.snapshot()
+        self.assertEqual((snap["chunk"], snap["chunks"]), (2, 2))
+
+
 class WordsTest(unittest.TestCase):
     def test_words_without_times_or_nan_are_dropped(self) -> None:
         segment = {
@@ -892,7 +1027,7 @@ class ServerTest(StateMixin, unittest.TestCase):
         release = threading.Event()
         inside = threading.Event()
 
-        def fake(path: str, language: str | None, progress: server.JobProgress) -> dict:
+        def fake(path: str, language: str | None, progress: server.JobProgress, **_: object) -> dict:
             progress.audio_s = 60.0
             progress.set("transcribing")
             progress.callback("transcribing")(70.0)
@@ -942,7 +1077,7 @@ class ServerTest(StateMixin, unittest.TestCase):
     def test_failed_job_says_so(self) -> None:
         server.JOBS.clear()
 
-        def broken(path: str, language: str | None, progress: server.JobProgress) -> dict:
+        def broken(path: str, language: str | None, progress: server.JobProgress, **_: object) -> dict:
             progress.set("transcribing")
             raise ValueError("file rotto")
 
@@ -968,6 +1103,137 @@ class ServerTest(StateMixin, unittest.TestCase):
         self.assertTrue(json.loads(body)["stored"])
         status, _, got = self.call("GET", f"/v1/files/{sha}", bearer="pt_good")
         self.assertEqual((status, got), (200, data))
+
+    # --- il computer trascrive da se' -------------------------------------------------------------
+
+    @staticmethod
+    def form(fields: dict[str, str], audio: bytes | None = None, filename: str = "voce.m4a") -> tuple[bytes, dict]:
+        """Un multipart coi campi dati e, se c'e', il file."""
+        boundary = "pampaform"
+        body = b""
+        for key, value in fields.items():
+            body += f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n'.encode()
+        if audio is not None:
+            body += (
+                f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+                "Content-Type: audio/mp4\r\n\r\n"
+            ).encode() + audio + b"\r\n"
+        body += f"--{boundary}--\r\n".encode()
+        return body, {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+
+    def transcribe_with(self, fields: dict[str, str], audio: bytes | None = None, bearer: str = "pt_good"):
+        """
+        POST con un `_transcribe` finto che si ricorda da quale file ha letto, se in quel momento il
+        file c'era, e con quali argomenti.
+        """
+        seen: dict = {}
+
+        def fake(path: str, language: str | None, progress: server.JobProgress, **kwargs: object) -> dict:
+            seen.update(path=Path(path), existed=Path(path).exists(), content=Path(path).read_bytes(), **kwargs)
+            return {
+                "task": "transcribe", "language": "it", "duration": 1.0, "text": "ciao",
+                "segments": [{"start": 0.0, "end": 1.0, "text": "ciao"}], "device_used": "cuda", "audio_s": 1.0,
+                "chunks": 1,
+            }
+
+        body, headers = self.form(fields, audio)
+        with mock.patch.object(server, "_transcribe", fake):
+            status, _, raw = self.call("POST", "/v1/audio/transcriptions", bearer=bearer, body=body, headers=headers)
+        return status, json.loads(raw), seen
+
+    def test_health_lists_the_features(self) -> None:
+        data = json.loads(self.call("GET", "/health")[2])
+        self.assertEqual(set(data["features"]), {"by_ref", "archive_upload", "server_chunks", "file_meta", "prompt"})
+
+    def test_by_ref_reads_the_blob_and_keeps_it(self) -> None:
+        data = b"una lezione gia' nell'archivio" * 50
+        sha = hashlib.sha256(data).hexdigest()
+        blob = archive.ARCHIVE.store(sha, "Voce 001.m4a", "audio/mp4", [data])["path"]
+        status, answer, seen = self.transcribe_with({"source_sha256": sha, "language": "it"})
+        self.assertEqual(status, 200, answer)
+        self.assertEqual(seen["path"], blob)
+        self.assertTrue(seen["existed"])
+        self.assertTrue(blob.exists(), "un blob dell'archivio non si cancella mai")
+        self.assertEqual((answer["source"], answer["archived"], answer["chunks"]), ("archive", True, 1))
+        # Mandato anche il file, vince il blob.
+        status, answer, seen = self.transcribe_with({"source_sha256": sha}, audio=b"altro")
+        self.assertEqual((status, seen["path"], answer["source"]), (200, blob, "archive"))
+        self.assertTrue(blob.exists())
+
+    def test_missing_blob_is_a_404_the_app_understands(self) -> None:
+        sha = hashlib.sha256(b"mai arrivato qui").hexdigest()
+        status, answer, seen = self.transcribe_with({"source_sha256": sha})
+        self.assertEqual((status, answer), (404, {"detail": "blob_missing"}))
+        self.assertEqual(seen, {})
+        self.assertEqual(self.transcribe_with({"source_sha256": "non-uno-sha"})[0], 400)
+        self.assertEqual(self.transcribe_with({})[1], {"detail": "file_missing"})
+
+    def test_guest_cannot_use_sha_or_archive(self) -> None:
+        data = b"del proprietario"
+        sha = hashlib.sha256(data).hexdigest()
+        archive.ARCHIVE.store(sha, "x.m4a", "audio/mp4", [data])
+        for fields, audio in (({"source_sha256": sha}, None), ({"source_sha256": sha}, data), ({"archive": "1"}, data)):
+            status, answer, seen = self.transcribe_with(fields, audio, bearer="pg_friend")
+            self.assertEqual((status, answer), (403, {"detail": "owner_only"}), fields)
+            self.assertEqual(seen, {})
+        # Il caricamento normale resta.
+        status, answer, _ = self.transcribe_with({}, b"dell'ospite", bearer="pg_friend")
+        self.assertEqual((status, answer["source"], answer["archived"]), (200, "upload", False))
+
+    def test_archive_upload_stores_then_transcribes_from_the_blob(self) -> None:
+        data = b"una registrazione nuova" * 80
+        sha = hashlib.sha256(data).hexdigest()
+        status, answer, seen = self.transcribe_with({"source_sha256": sha, "archive": "1", "name": "Voce 002.m4a"}, data)
+        self.assertEqual(status, 200, answer)
+        self.assertEqual((answer["archived"], answer["source"]), (True, "upload"))
+        record = archive.ARCHIVE.get(sha)
+        self.assertIsNotNone(record)
+        self.assertEqual((record["name"], record["mime"], record["size"]), ("Voce 002.m4a", "audio/mp4", len(data)))
+        self.assertEqual((seen["path"], seen["content"]), (record["path"], data))
+        self.assertTrue(record["path"].exists())
+        # La seconda volta c'e' gia': non si riscrive, si legge.
+        status, answer, seen = self.transcribe_with({"source_sha256": sha, "archive": "true"}, data)
+        self.assertEqual((status, answer["source"], answer["archived"]), (200, "archive", True))
+
+    def test_archive_upload_with_the_wrong_sha_is_refused(self) -> None:
+        wrong = hashlib.sha256(b"un altro file").hexdigest()
+        status, answer, seen = self.transcribe_with({"source_sha256": wrong, "archive": "1"}, b"questo file")
+        self.assertEqual((status, answer), (400, {"detail": "sha_mismatch"}))
+        self.assertEqual(seen, {})
+        self.assertIsNone(archive.ARCHIVE.get(wrong))
+        self.assertEqual(list((Path(archive.ARCHIVE.root) / "tmp").glob("*.part")), [])
+
+    def test_without_archive_the_upload_is_temporary(self) -> None:
+        data = b"da non tenere" * 40
+        sha = hashlib.sha256(data).hexdigest()
+        status, answer, seen = self.transcribe_with({"source_sha256": sha, "name": "lezione.ogg"}, data)
+        self.assertEqual(status, 200, answer)
+        self.assertEqual((answer["archived"], answer["source"]), (False, "upload"))
+        self.assertTrue(seen["existed"])
+        self.assertEqual(seen["path"].suffix, ".ogg", "l'estensione viene da `name`")
+        self.assertFalse(seen["path"].exists(), "il temporaneo se ne va a fine lavoro")
+        self.assertIsNone(archive.ARCHIVE.get(sha), "niente nell'archivio senza archive=1")
+
+    def test_prompt_and_max_minutes_reach_the_job(self) -> None:
+        status, _, seen = self.transcribe_with({"prompt": "  Fichte, Io puro ", "max_minutes": "30"}, b"audio")
+        self.assertEqual(status, 200)
+        self.assertEqual((seen["prompt"], seen["max_minutes"]), ("Fichte, Io puro", 30))
+        _, _, seen = self.transcribe_with({"max_minutes": "0"}, b"audio")
+        self.assertEqual((seen["prompt"], seen["max_minutes"]), (None, None))
+
+    def test_meta_of_a_real_sdocx(self) -> None:
+        data = (HERE.parent / "core/src/test/resources/sdocx/fichte.sdocx").read_bytes()
+        sha = hashlib.sha256(data).hexdigest()
+        archive.ARCHIVE.store(sha, "Fichte.sdocx", "application/sdoc", [data])
+        status, _, raw = self.call("GET", f"/v1/files/{sha}/meta", bearer="pt_good")
+        self.assertEqual(status, 200, raw)
+        self.assertEqual(
+            json.loads(raw),
+            # 17/09 09:39:43 UTC la creazione, 18/09 09:13:23 l'ultima modifica.
+            {"sha256": sha, "kind": "sdocx", "created_us": 1789637983096228, "modified_us": 1789722803594379, "recorded_us": None},
+        )
+        self.assertEqual(self.call("GET", f"/v1/files/{sha}/meta", bearer="pg_friend")[0], 401)
+        self.assertEqual(self.call("GET", f"/v1/files/{'0' * 64}/meta", bearer="pt_good")[0], 404)
 
     def use_config(self, stored: dict) -> Path:
         """Un config.json temporaneo, letto e messo in uso come farebbe `main`, su una scheda da 12 GB finta."""
@@ -1166,6 +1432,66 @@ class ArchiveTest(unittest.TestCase):
                 self.assertEqual(list((Path(folder) / "tmp").glob("*.part")), [])
             finally:
                 store.db.close()
+
+
+class FileMetaTest(unittest.TestCase):
+    def sdocx(self, folder: str, end_tag: bytes | None, note: bytes | None) -> Path:
+        import zipfile
+
+        path = Path(folder) / "nota.sdocx"
+        with zipfile.ZipFile(path, "w") as bundle:
+            if end_tag is not None:
+                bundle.writestr("end_tag.bin", end_tag)
+            if note is not None:
+                bundle.writestr("note.note", note)
+        return path
+
+    @staticmethod
+    def stamps(size: int, at: dict[int, int]) -> bytes:
+        import struct
+
+        data = bytearray(size)
+        for offset, value in at.items():
+            struct.pack_into("<q", data, offset, value)
+        return bytes(data)
+
+    def test_falls_back_to_note_and_refuses_implausible_dates(self) -> None:
+        created, modified = 1_700_000_000_000_000, 1_700_000_500_000_000
+        now = 1_800_000_000_000_000
+        with tempfile.TemporaryDirectory() as folder:
+            # end_tag con la creazione dopo la modifica: si passa a note.note.
+            path = self.sdocx(folder, self.stamps(148, {8: created, 46: modified}), self.stamps(64, {24: created, 32: modified}))
+            self.assertEqual(archive.sdocx_dates(path, now), (created, modified))
+            # Tutte e due nel futuro, o prima del 2010: niente.
+            future = now + 10 * 86_400_000_000
+            path = self.sdocx(folder, self.stamps(148, {8: future, 46: future}), None)
+            self.assertEqual(archive.sdocx_dates(path, now), (None, None))
+            path = self.sdocx(folder, self.stamps(148, {8: 1_000, 46: 10}), None)
+            self.assertEqual(archive.sdocx_dates(path, now), (None, None))
+            # Non uno zip, o uno zip senza i due file.
+            broken = Path(folder) / "rotto.sdocx"
+            broken.write_bytes(b"non e' uno zip")
+            self.assertEqual(archive.sdocx_dates(broken, now), (None, None))
+            self.assertEqual(archive.sdocx_dates(self.sdocx(folder, None, None), now), (None, None))
+
+    def test_audio_creation_time_via_ffprobe(self) -> None:
+        import shutil
+        import subprocess
+
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg is None or shutil.which("ffprobe") is None:
+            self.skipTest("ffmpeg non installato")
+        with tempfile.TemporaryDirectory() as folder:
+            dated = Path(folder) / "dated.m4a"
+            plain = Path(folder) / "plain.m4a"
+            base = [ffmpeg, "-v", "error", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono", "-t", "1", "-c:a", "aac"]
+            subprocess.run([*base, "-metadata", "creation_time=2025-10-09T08:15:30Z", str(dated)], check=True, timeout=60)
+            subprocess.run([*base, str(plain)], check=True, timeout=60)
+            self.assertEqual(archive.audio_recorded_us(dated), 1_759_997_730_000_000)
+            self.assertIsNone(archive.audio_recorded_us(plain))
+            record = {"sha256": "a" * 64, "name": "x.m4a", "mime": "audio/mp4", "ext": "m4a", "path": dated}
+            self.assertEqual(archive.file_meta(record)["kind"], "audio")
+            self.assertEqual(archive.file_meta(dict(record, path=plain, mime="application/pdf", ext="pdf"))["kind"], "other")
 
 
 def load_avvio():

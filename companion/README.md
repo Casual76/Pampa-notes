@@ -146,7 +146,7 @@ mentre aspetta la risposta, chiede ogni secondo `GET /v1/jobs/<id>`:
 ```json
 {"id": "…", "state": "transcribing", "fraction": 0.7, "position": null, "audio_s": 3600.0,
  "elapsed_s": 95.2, "state_elapsed_s": 60.1, "eta_s": 25.8, "processing_s": 80.3,
- "device": "cuda", "detail": null}
+ "device": "cuda", "detail": null, "chunk": 1, "chunks": 2}
 ```
 
 - `state`: `received` (l'audio sta arrivando), `queued` (in fila: `position` 2 vuol dire «ce n'è una
@@ -158,7 +158,9 @@ mentre aspetta la risposta, chiede ogni secondo `GET /v1/jobs/<id>`:
   quindi la trascrizione avanza a scatti di un lotto;
 - `eta_s` c'è quando c'è abbastanza da dire (almeno il 3% e due secondi nello stato);
 - `detail` dice i ripieghi: `batch 4` (memoria finita, lotto dimezzato), `cpu` (si continua sul
-  processore). Un ripiego ricomincia la sua barra da zero.
+  processore). Un ripiego ricomincia la sua barra da zero;
+- `chunk` e `chunks`: il pezzo di adesso, da 1, e quanti sono, quando la lezione si divide qui
+  (`max_minutes`, sotto). Un file intero è `1` di `1`, e `fraction` vale dentro il pezzo.
 
 Le credenziali sono quelle della trascrizione. Il proprietario vede tutti i lavori; un ospite solo i
 suoi (il bearer con cui è arrivato l'audio resta col lavoro, come impronta), e per quelli degli altri
@@ -169,6 +171,33 @@ un companion vecchio — e con un companion vecchio l'app smette di chiedere dop
 
 La risposta della trascrizione porta anche `processing_s` (quanto ha lavorato il computer, senza la
 fila) e `audio_s` (la durata vera del file).
+
+## Il computer lavora, il telefono chiede
+
+Il telefono preparava l'audio da sé: una registrazione che stava solo qui la scaricava per
+rimandarla indietro, e con un tetto ai pezzi decodificava tutta la lezione, la tagliava e
+ricodificava ogni pezzo. Ci metteva più della trascrizione. Il computer ha già l'archivio e ffmpeg,
+quindi `POST /v1/audio/transcriptions` accetta, oltre ai campi di OpenAI:
+
+- `source_sha256`: se il file è nell'archivio si trascrive da lì, e `file` non serve (e non si
+  cancella mai: è la copia dell'archivio). Senza blob e senza `file`: 404 `{"detail":"blob_missing"}`,
+  e l'app manda il file. Se arrivano tutti e due, il blob vince;
+- `archive=1`, con `file` e `source_sha256`: il file mandato entra nell'archivio (impronta
+  verificata, come un `PUT`; se non torna, 400 `sha_mismatch`) e si trascrive da lì. `name` è il
+  nome originale. Senza `archive` il file resta un temporaneo che se ne va a fine lavoro: è la
+  strada di chi i file sul computer non li vuole;
+- `max_minutes`: la divisione in pezzi la fa il computer, con la regola dell'app — fino al tetto
+  più dieci minuti il file va intero, oltre `ceil(durata / tetto)` pezzi uguali, ognuno tagliato
+  nel mezzo secondo più silenzioso entro trenta secondi dal confine. I pezzi sono fette dell'audio
+  già in memoria; i tempi si spostano dell'inizio del pezzo e si mettono in fila;
+- `prompt` (il «Vocabolario» dell'app): arriva davvero a Whisper come `initial_prompt`, solo per
+  quella richiesta. Prima si accettava e si ignorava.
+
+`source_sha256` e `archive` sono **solo del proprietario** (403 `owner_only` a un ospite): uno sha
+direbbe cosa c'è nell'archivio di un altro. La risposta dice `archived` (il file ora sta
+nell'archivio), `source` (`archive` o `upload`) e `chunks`. `/health` elenca in `features` quello
+che questo companion sa fare (`by_ref`, `archive_upload`, `server_chunks`, `file_meta`, `prompt`):
+senza la lista, l'app fa come prima.
 
 ## Quanta VRAM
 
@@ -293,6 +322,13 @@ gigabyte di audio dentro Drive sono esattamente quello che l'archivio esiste per
 I file si chiamano con il loro hash (`blobs/39/39d2a3….m4a`): lo stesso file mandato dal tablet e
 poi dal telefono occupa una volta sola, e un caricamento interrotto non lascia un file a metà con
 il nome di quello buono. L'indice `archive.db` accanto ricorda il nome originale e il tipo.
+
+`GET /v1/files/<sha>/meta` (solo il proprietario) dice le date vere di un file senza mandarlo:
+`{"sha256", "kind": "sdocx"|"audio"|"other", "created_us", "modified_us", "recorded_us"}`, in
+microsecondi o `null`. Di un `.sdocx` la creazione e l'ultima modifica della nota, lette da
+`end_tag.bin` (o da `note.note`) e scartate se non sono plausibili; di una registrazione il
+`creation_time` del contenitore, letto con `ffprobe`. Serve all'app per le note importate prima,
+il cui originale ora sta solo qui.
 
 I caricamenti scrivono su quattro thread loro, separati da quelli della trascrizione, e un blocco
 che non arriva per due minuti chiude il caricamento (408): un tablet che perde la rete a metà file

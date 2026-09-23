@@ -24,14 +24,21 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
+import datetime
 import hashlib
+import json
 import logging
 import os
 import re
+import shutil
 import sqlite3
+import struct
+import subprocess
 import threading
 import time
 import urllib.parse
+import zipfile
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
@@ -208,6 +215,138 @@ def current() -> Archive:
     return ARCHIVE
 
 
+# --- le date vere di un file -------------------------------------------------------------------------
+#
+# La home dell'app mostrava il giorno dell'import invece di quello in cui la nota era stata scritta.
+# Il telefono le date le legge da se' quando il file ce l'ha; per quelli che stanno solo qui chiede
+# `GET /v1/files/<sha>/meta`, e il computer apre il file al posto suo invece di mandarlo.
+
+# Prima del 2010 Samsung Notes non esisteva: un valore piu' vecchio e' un campo letto male.
+SDOCX_EPOCH_US = 1_262_304_000 * 1_000_000  # 2010-01-01
+# Una registrazione di prima del 2000 e' un contenitore senza data (1904 o 1970): come `RecordingDate`.
+AUDIO_EPOCH_US = 946_684_800 * 1_000_000  # 2000-01-01
+# Un'ora oltre l'orologio di qui, per un tablet un po' avanti; oltre, e' nel futuro.
+FUTURE_SLACK_US = 3600 * 1_000_000
+FFPROBE_TIMEOUT_S = 10
+AUDIO_EXTENSIONS = frozenset({"m4a", "mp3", "wav", "ogg", "opus", "flac", "webm", "aac", "amr", "3gp", "mp4"})
+
+
+def _int64_at(data: bytes, offset: int) -> int | None:
+    if len(data) < offset + 8:
+        return None
+    return struct.unpack_from("<q", data, offset)[0]
+
+
+def _plausible_pair(created: int | None, modified: int | None, now_us: int) -> bool:
+    if created is None or modified is None:
+        return False
+    limit = now_us + FUTURE_SLACK_US
+    return SDOCX_EPOCH_US <= created <= modified <= limit
+
+
+def sdocx_dates(path: Path, now_us: int | None = None) -> tuple[int | None, int | None]:
+    """
+    Creazione e ultima modifica di una nota di Samsung Notes, in microsecondi, o `(None, None)`.
+
+    Decodificato da `fichte.sdocx`: in `end_tag.bin` (148 byte) l'ultima modifica sta a +8 e la
+    creazione a +46, int64 little-endian in microsecondi; gli stessi valori stanno in `note.note` a
+    +24 (creazione) e +32 (modifica), che vale da riserva. Le date dello zip no: quelle dicono quando
+    la nota e' stata condivisa. Una coppia che non torna — prima del 2010, nel futuro, creata dopo
+    l'ultima modifica — e' un formato diverso da quello che si conosce, e non si indovina.
+    """
+    now_us = int(time.time() * 1_000_000) if now_us is None else now_us
+    try:
+        with zipfile.ZipFile(path) as bundle:
+            names = set(bundle.namelist())
+            candidates = []
+            if "end_tag.bin" in names:
+                data = bundle.read("end_tag.bin")
+                candidates.append((_int64_at(data, 46), _int64_at(data, 8)))
+            if "note.note" in names:
+                with bundle.open("note.note") as note:
+                    data = note.read(40)
+                candidates.append((_int64_at(data, 24), _int64_at(data, 32)))
+    except (OSError, zipfile.BadZipFile, KeyError):
+        return None, None
+    for created, modified in candidates:
+        if _plausible_pair(created, modified, now_us):
+            return created, modified
+    return None, None
+
+
+def _parse_creation_time(value: str) -> int | None:
+    try:
+        moment = datetime.datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=datetime.timezone.utc)
+    return int(moment.timestamp() * 1_000_000)
+
+
+def audio_recorded_us(path: Path, now_us: int | None = None) -> int | None:
+    """
+    Quando e' stata fatta una registrazione, dal `creation_time` del contenitore, o None.
+
+    Lo legge ffprobe, che sta accanto a ffmpeg (WhisperX lo chiama per nome, quindi e' nel PATH):
+    legge solo l'intestazione, e dieci secondi bastano anche a un file da un'ora. Senza ffprobe, o
+    senza la data, None: il telefono prova il nome del file, che non chiede di aprire niente.
+    """
+    now_us = int(time.time() * 1_000_000) if now_us is None else now_us
+    probe = shutil.which("ffprobe")
+    if probe is None:
+        log.warning("ffprobe non trovato: la data delle registrazioni resta sconosciuta")
+        return None
+    try:
+        answer = subprocess.run(
+            [probe, "-v", "error", "-print_format", "json", "-show_entries", "format_tags=creation_time:stream_tags=creation_time", str(path)],
+            capture_output=True,
+            timeout=FFPROBE_TIMEOUT_S,
+            # Il server gira spesso senza console (pythonw): senza, ogni domanda aprirebbe una finestra nera.
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        data = json.loads(answer.stdout or b"{}")
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        log.warning("ffprobe non ha risposto su %s: %s", path.name, error)
+        return None
+    tags = [(data.get("format") or {}).get("tags") or {}]
+    tags += [stream.get("tags") or {} for stream in data.get("streams") or []]
+    for entry in tags:
+        value = entry.get("creation_time")
+        if not isinstance(value, str):
+            continue
+        recorded = _parse_creation_time(value)
+        if recorded is not None and AUDIO_EPOCH_US <= recorded <= now_us + FUTURE_SLACK_US:
+            return recorded
+    return None
+
+
+def file_kind(record: dict[str, Any]) -> str:
+    """"sdocx", "audio" o "other": dal contenuto per lo zip, dal tipo per il resto."""
+    path = record["path"]
+    if record["ext"] == "sdocx" or record["mime"] == "application/sdoc" or zipfile.is_zipfile(path):
+        with contextlib.suppress(OSError, zipfile.BadZipFile):
+            with zipfile.ZipFile(path) as bundle:
+                names = set(bundle.namelist())
+            if "note.note" in names or "end_tag.bin" in names:
+                return "sdocx"
+    mime = record["mime"].lower()
+    if mime.startswith("audio/") or record["ext"] in AUDIO_EXTENSIONS:
+        return "audio"
+    return "other"
+
+
+def file_meta(record: dict[str, Any]) -> dict[str, Any]:
+    """La risposta di `GET /v1/files/<sha>/meta`."""
+    kind = file_kind(record)
+    created = modified = recorded = None
+    if kind == "sdocx":
+        created, modified = sdocx_dates(record["path"])
+    elif kind == "audio":
+        recorded = audio_recorded_us(record["path"])
+    return {"sha256": record["sha256"], "kind": kind, "created_us": created, "modified_us": modified, "recorded_us": recorded}
+
+
 def original_name(request: Request) -> str:
     """Il nome originale viaggia in un header, percent-encoded: gli header sono ASCII e i nomi no."""
     raw = request.headers.get("x-pampa-name", "")
@@ -274,6 +413,15 @@ def build_router(check_token: Callable[[Request], None]) -> APIRouter:
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         return {"stored": True, "size": record["size"]}
+
+    @router.get("/{sha256}/meta")
+    def meta(request: Request, sha256: str) -> dict[str, Any]:
+        """Le date vere del file (vedi [file_meta]), senza mandarlo. Solo il proprietario, come il resto."""
+        check_token(request)
+        record = current().get(valid(sha256))
+        if record is None:
+            raise HTTPException(status_code=404, detail="non in archivio")
+        return file_meta(record)
 
     @router.get("/{sha256}")
     def get(request: Request, sha256: str) -> Response:
