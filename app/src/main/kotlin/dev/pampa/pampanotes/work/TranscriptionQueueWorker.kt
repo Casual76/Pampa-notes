@@ -17,6 +17,7 @@ import dev.pampa.pampanotes.core.refinement.RefinementError
 import dev.pampa.pampanotes.core.repo.RefinementRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
+import dev.pampa.pampanotes.core.transcription.EndpointWait
 import dev.pampa.pampanotes.core.transcription.GroqWhisperProvider
 import dev.pampa.pampanotes.core.transcription.JobPhase
 import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
@@ -51,7 +52,8 @@ import kotlinx.coroutines.withTimeout
  *
  * Tre modi in cui un lavoro si ferma a meta', e ognuno ha la sua uscita:
  *  - **l'utente annulla** (la riga diventa `CANCEL_REQUESTED`): il worker la guarda mentre lavora e
- *    interrompe tutto, connessione compresa, e il lavoro si chiude annullato;
+ *    interrompe tutto, connessione compresa — e il computer di casa riceve la `DELETE` che lo ferma
+ *    (`OpenAiCompatProvider.cancelRemote`) — e il lavoro si chiude annullato;
  *  - **il sistema ferma il worker** (vincoli, quota, un aggiornamento): il lavoro torna in fila,
  *    non fallisce, e riparte dai pezzi gia' su disco;
  *  - **il servizio chiede di aspettare ore** (il limite giornaliero di Groq): torna in fila con
@@ -78,6 +80,9 @@ class TranscriptionQueueWorker @AssistedInject constructor(
   /** Il lavoro l'ha annullato chi guardava la riga: l'utente, o la riga che non c'e' piu'. */
   private class JobCancelled : CancellationException("lavoro annullato")
 
+  /** Vero se in questo giro il computer di casa ha risposto almeno una volta. */
+  private var endpointAnswered = false
+
   override suspend fun getForegroundInfo(): ForegroundInfo = foregroundInfo(
     title = applicationContext.getString(dev.pampa.pampanotes.R.string.notification_transcribing),
     text = null,
@@ -98,8 +103,10 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     if (providerId == OpenAiCompatProvider.ID &&
       repository.endpointState() == TranscriptionRepository.EndpointState.UNREACHABLE
     ) {
-      return waitForEndpoint()
+      return waitForEndpoint(providerId)
     }
+    // Il computer ha risposto: se si torna ad aspettarlo, e' un'attesa nuova (vedi [waitForEndpoint]).
+    endpointAnswered = true
 
     // Da Android 12 un servizio in primo piano non parte se l'app e' in background (un tentativo
     // rimandato che scade mentre il telefono e' in tasca): e' un «non adesso», non un guasto. Il
@@ -114,7 +121,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       if (job.provider == OpenAiCompatProvider.ID && job.type == JobType.TRANSCRIBE &&
         repository.endpointState() == TranscriptionRepository.EndpointState.UNREACHABLE
       ) {
-        return waitForEndpoint()
+        return waitForEndpoint(providerId)
       }
       val step = try {
         process(job)
@@ -141,7 +148,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       }
       when (step) {
         Step.Next -> Unit
-        Step.WaitForEndpoint -> return waitForEndpoint()
+        Step.WaitForEndpoint -> return waitForEndpoint(providerId)
         is Step.ResumeAt -> {
           scheduler.kickAfter(providerId, step.atMillis - System.currentTimeMillis())
           return Result.success()
@@ -177,14 +184,24 @@ class TranscriptionQueueWorker @AssistedInject constructor(
    *
    * E' quello che rende possibile «solo il computer di casa» con la trascrizione automatica accesa:
    * una lezione importata a scuola aspetta di essere a casa, invece di fallire con un errore da
-   * ritentare a mano — o, peggio, di finire su Groq. Si riprova con l'attesa che cresce, e una
-   * sonda ogni quarto d'ora ([EndpointWatchWorker]) mette un tetto all'attesa; chi il computer lo
-   * vede rispondere — l'archivio, l'apertura dell'app — sveglia la coda prima.
+   * ritentare a mano — o, peggio, di finire su Groq.
+   *
+   * Si riprova a passo fisso ([EndpointWait]: un minuto per la prima mezz'ora, poi cinque) e non
+   * col `retry` di WorkManager, la cui attesa raddoppia: dopo un riavvio del PC la coda restava
+   * ferma minuti con il companion che rispondeva gia'. Per questo il worker chiude con `success`
+   * dopo aver lasciato in coda il tentativo successivo ([WorkScheduler.retryForEndpoint]), che si
+   * porta dietro da quando si aspetta. Una sonda ogni quarto d'ora ([EndpointWatchWorker]) resta
+   * come rete di sicurezza; chi il computer lo vede rispondere — l'archivio, «Prova», l'apertura
+   * dell'app — sveglia la coda prima.
    */
-  private suspend fun waitForEndpoint(): Result {
+  private suspend fun waitForEndpoint(providerId: String): Result {
     repository.markWaitingForEndpoint(true)
     scheduler.watchEndpoint(true)
-    return Result.retry()
+    val now = System.currentTimeMillis()
+    val carried = if (endpointAnswered) 0L else inputData.getLong(KEY_WAITING_SINCE, 0L)
+    val since = EndpointWait.waitingSince(carried, now)
+    scheduler.retryForEndpoint(providerId, EndpointWait.nextDelayMs(now - since), since)
+    return Result.success()
   }
 
   private suspend fun process(job: JobEntity): Step {
@@ -483,6 +500,9 @@ class TranscriptionQueueWorker @AssistedInject constructor(
 
   companion object {
     const val KEY_PROVIDER = "provider"
+
+    /** Da quando la coda aspetta il computer di casa: passa da un tentativo al successivo. */
+    const val KEY_WAITING_SINCE = "waitingSince"
 
     /** Ogni mezzo secondo: piu' spesso di cosi' la barra non si muove comunque. */
     private const val PUBLISH_EVERY_MS = 500L

@@ -18,22 +18,39 @@ import kotlinx.serialization.json.intOrNull
  * l'app gli ha dato (`X-Pampa-Job`) e lo dice a `GET /v1/jobs/<id>`: questo lo chiede ogni secondo,
  * su una coroutine sua, accanto alla POST.
  *
- * **Non fa mai fallire niente.** E' un di piu': un companion vecchio, o un altro server compatibile
- * OpenAI, risponde 404 e si smette in silenzio; un errore di rete si lascia alla POST, che e' quella
- * che decide se il lavoro e' andato. Due 404 prima della prima risposta buona e non uno: la prima
- * domanda puo' partire un soffio prima che il server abbia registrato il lavoro.
+ * **Di solito non fa fallire niente.** E' un di piu': un companion vecchio, o un altro server
+ * compatibile OpenAI, risponde 404 e si smette in silenzio. Due 404 prima della prima risposta buona
+ * e non uno: la prima domanda puo' partire un soffio prima che il server abbia registrato il lavoro.
+ *
+ * **Tranne quando sa che la POST aspetta per niente**, e allora lancia [RemoteJobLost], che chi lo
+ * usa trasforma in un errore di rete da riprovare:
+ *  - il lavoro l'aveva visto, e adesso il companion risponde 404 due volte di fila: e' ripartito (il
+ *    PC riavviato, il processo morto) e il lavoro non esiste piu'. La POST, se la connessione non e'
+ *    stata chiusa con un reset, restava appesa fino al timeout di lettura — novanta minuti, con la
+ *    coda ferma dietro;
+ *  - da [silenceLimitMs] nessuna domanda riceve una risposta HTTP qualunque: il PC e' spento, o la
+ *    rete fra i due non c'e' piu'. Un 5xx invece e' una risposta: il computer c'e'.
  */
 internal class RemoteJobPoller(
   private val fetch: suspend () -> JsonElement?,
   private val intervalMs: Long = DEFAULT_INTERVAL_MS,
+  /** Un orologio che va solo avanti; i test gli passano il tempo virtuale. */
+  private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
+  private val silenceLimitMs: Long = LOST_AFTER_SILENCE_MS,
   private val onUpdate: (RemoteProgress) -> Unit,
 ) {
 
-  /** @param ready vero quando l'audio e' partito tutto: prima non c'e' niente da chiedere. */
+  /**
+   * @param ready vero quando l'audio e' partito tutto: prima non c'e' niente da chiedere.
+   * @throws RemoteJobLost quando il lavoro sul computer non c'e' piu' (vedi la classe).
+   */
   suspend fun run(ready: () -> Boolean = { true }) {
     var seen = false
     var misses = 0
+    var gone = 0
     var failures = 0
+    // Da quando le domande non ricevono nessuna risposta: null finche' ne arriva una.
+    var silentSince: Long? = null
     while (true) {
       delay(intervalMs)
       if (!ready()) continue
@@ -42,17 +59,29 @@ internal class RemoteJobPoller(
       } catch (cancelled: CancellationException) {
         throw cancelled
       } catch (error: Throwable) {
-        when (val code = httpCode(error)) {
+        val code = httpCode(error)
+        if (code != null) silentSince = null
+        when {
           // Credenziali rifiutate a meta' lavoro: la POST ha gia' le sue, e chiedere ancora non serve.
-          401, 403 -> return
-          // Un 404 dopo una risposta buona e' il lavoro scaduto; prima, un server che non sa di cosa
-          // si parla. In tutti e due i casi non c'e' altro da chiedere.
-          in 400..499 -> if (seen || ++misses >= MAX_MISSES) return
-          // Rete o 5xx: la POST se ne accorgera' per conto suo. Qui si insiste, ma non per sempre.
-          else -> if (++failures >= MAX_FAILURES) return
+          code == 401 || code == 403 -> return
+          // Un 404 dopo una risposta buona: il companion non conosce piu' il lavoro. Uno solo puo'
+          // essere un soffio (il lavoro appena chiuso, la POST che sta per tornare); due di fila no.
+          code == 404 && seen -> if (++gone >= MAX_MISSES) throw RemoteJobLost(RemoteJobLost.Reason.FORGOTTEN)
+          // Prima di una risposta buona, un server che non sa di cosa si parla: si smette.
+          code != null && code in 400..499 -> if (seen || ++misses >= MAX_MISSES) return
+          // 5xx: il computer c'e', e la POST se ne accorgera' per conto suo. Si insiste, non per sempre.
+          code != null -> if (++failures >= MAX_FAILURES) return
+          // Nessuna risposta: rete, PC spento, tempo scaduto. Si conta il tempo e non i tentativi,
+          // perche' un tentativo puo' durare da un millisecondo a quindici secondi.
+          else -> {
+            val now = clock()
+            val since = silentSince ?: now.also { silentSince = it }
+            if (now - since >= silenceLimitMs) throw RemoteJobLost(RemoteJobLost.Reason.SILENT)
+          }
         }
         continue
       }
+      silentSince = null
       val progress = parse(body)
       if (progress == null) {
         // Un 200 che non e' il nostro JSON: un server che a quell'indirizzo risponde altro.
@@ -60,6 +89,7 @@ internal class RemoteJobPoller(
         continue
       }
       seen = true
+      gone = 0
       failures = 0
       onUpdate(progress)
       if (progress.stage.finished) return
@@ -70,6 +100,13 @@ internal class RemoteJobPoller(
     const val DEFAULT_INTERVAL_MS = 1_000L
     const val MAX_MISSES = 2
     const val MAX_FAILURES = 30
+
+    /**
+     * Novanta secondi senza una risposta qualunque e il computer si da' per perso: abbastanza per un
+     * singhiozzo del Wi-Fi o di Tailscale, poco rispetto ai novanta minuti che la POST aspetterebbe
+     * da sola.
+     */
+    const val LOST_AFTER_SILENCE_MS = 90_000L
 
     /** Dal JSON del companion. Null se non e' quello, o se lo stadio e' uno che non conosciamo. */
     fun parse(body: JsonElement?): RemoteProgress? {
@@ -113,4 +150,17 @@ internal class RemoteJobPoller(
     private fun JsonObject.number(key: String): Double? =
       (this[key] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.doubleOrNull
   }
+}
+
+/**
+ * Il lavoro sul computer di casa non c'e' piu', o il computer non risponde piu': la POST che lo
+ * aspetta non tornera' (vedi [RemoteJobPoller]).
+ */
+internal class RemoteJobLost(val reason: Reason) : Exception(
+  when (reason) {
+    Reason.FORGOTTEN -> "il computer di casa non conosce piu' il lavoro: e' stato riavviato?"
+    Reason.SILENT -> "il computer di casa non risponde da ${RemoteJobPoller.LOST_AFTER_SILENCE_MS / 1000} secondi"
+  },
+) {
+  enum class Reason { FORGOTTEN, SILENT }
 }

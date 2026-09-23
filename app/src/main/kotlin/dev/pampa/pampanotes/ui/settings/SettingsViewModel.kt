@@ -107,6 +107,7 @@ class SettingsViewModel @Inject constructor(
   private val scheduler: dev.pampa.pampanotes.work.WorkScheduler,
   private val computerAuth: dev.pampa.pampanotes.core.transcription.ComputerAuth,
   private val companionApi: CompanionSettingsApi,
+  private val transcription: TranscriptionRepository,
 ) : ViewModel() {
 
   companion object {
@@ -265,6 +266,14 @@ class SettingsViewModel @Inject constructor(
           )
         } else {
           it.copy(endpointCheck = CheckState.Failed(health.detail ?: "network"))
+        }
+      }
+      // Il computer ha risposto: una fila che lo aspettava parte adesso, non al suo prossimo
+      // tentativo. Era il «Prova dice che funziona, ma le lezioni restano ferme» dopo un riavvio del
+      // PC. `wake` non tocca un worker che sta gia' trascrivendo.
+      if (health.reachable) {
+        runCatching {
+          if (transcription.queuedCount(OpenAiCompatProvider.ID) > 0) scheduler.wake(OpenAiCompatProvider.ID)
         }
       }
       // «Prova» viene subito dopo aver salvato i campi: a prova finita sono scritti di sicuro.

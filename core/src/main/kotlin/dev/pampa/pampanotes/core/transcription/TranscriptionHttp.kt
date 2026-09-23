@@ -114,6 +114,17 @@ class TranscriptionHttp(
     return connection.cancellable(io) { exchange(connection) { readBody(connection) } }
   }
 
+  /**
+   * Una `DELETE` breve: chi la manda ha fretta (sta annullando) e non puo' aspettare i quindici
+   * secondi di connessione di una richiesta normale, quindi [timeoutMillis] vale per connettersi e
+   * per leggere.
+   */
+  suspend fun delete(url: String, headers: Map<String, String>, timeoutMillis: Int): JsonElement? {
+    val connection = open(url, "DELETE", headers, timeoutMillis.coerceAtLeast(1))
+    connection.connectTimeout = timeoutMillis.coerceAtLeast(1)
+    return connection.cancellable(io) { exchange(connection) { readBody(connection) } }
+  }
+
   /** Un JSON piccolo in andata e in ritorno: il biglietto per il computer di casa, chiesto al Worker. */
   suspend fun postJson(url: String, headers: Map<String, String>, body: String, readTimeoutMillis: Int = 30_000): JsonElement? {
     val connection = open(url, "POST", headers, readTimeoutMillis)

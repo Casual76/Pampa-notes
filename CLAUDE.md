@@ -121,7 +121,9 @@ chiamava nessuno, e la fila restava ferma dietro un «caricamento 98%» per semp
 Tre cose che la coda faceva male e non fa piu':
 - **«Annulla» annulla davvero.** Il progresso si scrive con un `UPDATE … WHERE state !=
   'CANCEL_REQUESTED'` (prima la riga intera, ogni mezzo secondo, sovrascriveva la richiesta) e il
-  worker guarda la riga: se diventa annullata, smette.
+  worker guarda la riga: se diventa annullata, smette. Anche sul PC: una richiesta al companion
+  annullata manda `DELETE /v1/jobs/<id>` con le credenziali della POST (`cancelRemote`, al meglio,
+  quattro secondi al massimo); chiudere il socket non bastava, il companion trascriveva per nessuno.
 - **Una richiesta al PC non resta appesa.** `CancellableConnection` chiude il socket appena la
   coroutine viene annullata, anche mentre aspetta la risposta; i timeout di lettura sono lunghi ma
   finiti (90 minuti per il companion). Una `CancellationException` non diventa mai un errore del
@@ -643,7 +645,10 @@ tempo, ma a scatti di un lotto. Il companion registra il lavoro appena le intest
 l'autenticazione, **prima** di leggere il corpo, o una domanda durante l'invio avrebbe un 404; il
 proprietario vede tutti i lavori, un ospite solo i suoi, e gli altri hanno lo stesso 404 di un id
 che non esiste. Un companion vecchio risponde 404 due volte e l'app smette di chiedere senza far
-fallire niente. La fase finisce nella riga del lavoro in un formato solo, `JobPhase`
+fallire niente. Ma un lavoro **gia' visto** che torna 404 due volte di fila e' un lavoro che il PC
+ha perso (riavviato), e novanta secondi senza nessuna risposta sono un PC spento: in tutti e due i
+casi `RemoteJobLost` annulla la POST — che altrimenti restava appesa fino al timeout di novanta
+minuti, con la coda ferma dietro — e diventa un errore di rete, che si riprova. La fase finisce nella riga del lavoro in un formato solo, `JobPhase`
 (`remote:<stato>:<parte>/<parti>:<percento>…`), e da li' la stessa frase va nella notifica, in Lavori,
 nella nota e nella sessione, con due barre: tutta la lezione (le parti pesate per durata) e il
 passo di adesso, che si anima quando non c'e' niente da misurare.
@@ -688,11 +693,15 @@ Quello che la rende utilizzabile e' che **la coda del computer di casa aspetta i
 `TranscriptionQueueWorker`, prima di ogni lavoro di quella coda, chiede
 `TranscriptionRepository.endpointState()`: `/health` sull'indirizzo scelto, due secondi. Se il
 computer e' configurato ma non risponde, il lavoro resta `QUEUED` con la fase `endpoint` («In
-attesa del computer di casa»), il worker si chiude con `retry` (trenta secondi, poi il doppio) e
-accende la sonda `EndpointWatchWorker`, ogni quarto d'ora finche' la fila non e' vuota. Un errore di
+attesa del computer di casa»), il worker lascia in coda il tentativo dopo a passo fisso
+(`EndpointWait`: un minuto per la prima mezz'ora, poi cinque; `WorkScheduler.retryForEndpoint`) e
+si chiude con `success` — non `retry`, la cui attesa raddoppiava e dopo un riavvio del PC teneva la
+fila ferma minuti con il companion che rispondeva gia' — e accende la sonda `EndpointWatchWorker`,
+ogni quarto d'ora finche' la fila non e' vuota, come rete di sicurezza. Un errore di
 rete a meta' lavoro col computer muto rimette in fila invece di fallire (`requeueForEndpoint`). Chi
-vede il computer rispondere lo sveglia prima: l'archivio dopo un giro andato bene, l'apertura
-dell'app (`WorkScheduler.wake`, che sostituisce un tentativo in attesa ma mai un worker che lavora).
+vede il computer rispondere lo sveglia prima: l'archivio dopo un giro andato bene, «Prova» in
+Impostazioni e nel primo avvio, l'apertura dell'app (`WorkScheduler.wake`, che sostituisce un
+tentativo in attesa ma mai un worker che lavora).
 Attenzione al resolver: con due indirizzi `EndpointResolver.resolve` **restituisce sempre una
 strada**, anche se nessuna delle due risponde — decide *quale*, non *se*. Per sapere se il computer
 c'e' bisogna battere `/health`, ed e' il bug che il primo giro di prova ha trovato («Il servizio non
