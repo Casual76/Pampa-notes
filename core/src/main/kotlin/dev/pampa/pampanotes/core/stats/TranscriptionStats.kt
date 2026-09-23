@@ -44,6 +44,11 @@ data class SpeedStats(
   /** Su cosa ha girato il record: "groq", "cuda", "cpu", o null. */
   val bestDevice: String?,
   val runs: Int,
+  /**
+   * Il dispositivo che ha fatto il record, solo se non e' questo: «record 72× (Tab S9)» dice
+   * qualcosa, «(questo telefono)» no. Null anche per le corse di prima che si dicesse chi le faceva.
+   */
+  val bestElsewhere: String? = null,
 )
 
 data class Pace(val session: TranscribedSessionRow, val wordsPerMinute: Int)
@@ -53,7 +58,7 @@ data class TranscriptionStats(
   val transcribedMs: Long = 0,
   val words: Long = 0,
   val lessons: Int = 0,
-  /** Null finche' questo dispositivo non ha misurato niente. */
+  /** Null finche' nessun dispositivo dell'account ha misurato niente. */
   val speed: SpeedStats? = null,
   /** Chi parla piu' svelto. Null con meno di due lezioni da confrontare. */
   val fastestPace: Pace? = null,
@@ -75,7 +80,11 @@ data class TranscriptionStats(
      */
     const val MAX_PLAUSIBLE_WPM = 400
 
-    fun aggregate(runs: List<TranscriptionRunEntity>, sessions: List<TranscribedSessionRow>): TranscriptionStats {
+    /**
+     * @param runs le corse di tutti i dispositivi dell'account, non solo di questo.
+     * @param thisDevice il nome di questo dispositivo nel sync: un record fatto altrove lo dice.
+     */
+    fun aggregate(runs: List<TranscriptionRunEntity>, sessions: List<TranscribedSessionRow>, thisDevice: String = ""): TranscriptionStats {
       val lessons = sessions.filter { it.words > 0 || it.lessonMs > 0 }
 
       val measured = runs.filter { it.measurable }
@@ -88,6 +97,7 @@ data class TranscriptionStats(
           best = best.audioMs.toDouble() / best.wallMs,
           bestDevice = best.device,
           runs = measured.size,
+          bestElsewhere = best.deviceName.takeIf { it.isNotBlank() && it != thisDevice },
         )
       }
 

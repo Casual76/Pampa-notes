@@ -1167,4 +1167,7 @@
   <string name="home_stats_pace_detail">words a minute, in “%1$s”</string>
   <string name="home_stats_longest_label">Longest lesson</string>
   <string name="home_stats_longest_detail">“%1$s” · %2$s</string>
+  <!-- statsync -->
+  <string name="home_stats_speed_detail_elsewhere">real time on average · record %1$s (%2$s)</string>
+  <string name="home_stats_speed_detail_single_elsewhere">real time, on %1$s</string>
 </resources>

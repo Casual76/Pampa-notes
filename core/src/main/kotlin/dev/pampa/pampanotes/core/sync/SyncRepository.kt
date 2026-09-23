@@ -5,6 +5,7 @@ import dev.pampa.pampanotes.core.db.PampaDatabase
 import dev.pampa.pampanotes.core.db.SyncMetaEntity
 import dev.pampa.pampanotes.core.db.SyncOutboxEntity
 import dev.pampa.pampanotes.core.db.SyncStateEntity
+import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -12,6 +13,13 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+
+/**
+ * Come si chiama questo dispositivo nell'indice: il nome scelto in Impostazioni, o il modello. Lo
+ * stesso nome finisce nelle statistiche ([dev.pampa.pampanotes.core.db.TranscriptionRunEntity.deviceName]),
+ * ed e' da li' che la home capisce se un record e' stato fatto qui o altrove.
+ */
+fun PampaSettings.deviceLabel(): String = syncDeviceName.ifBlank { android.os.Build.MODEL ?: "dispositivo" }
 
 /** Com'e' andato un giro. */
 data class SyncReport(
@@ -83,7 +91,7 @@ class SyncRepository @Inject constructor(
     val url = settings.syncServerUrl.takeIf { it.isNotBlank() } ?: return@withLock failed("server non configurato")
     val token = settingsStore.syncToken() ?: return@withLock failed("accesso non configurato")
     val deviceId = settingsStore.syncDeviceId()
-    val deviceName = settings.syncDeviceName.ifBlank { android.os.Build.MODEL ?: "dispositivo" }
+    val deviceName = settings.deviceLabel()
 
     try {
       val status = api.status(url, token)
@@ -91,6 +99,9 @@ class SyncRepository @Inject constructor(
       // Prima di tutto il resto, computer compreso: niente deve passare da un account all'altro.
       if (!checkAccount(status.ownerId, deviceId)) return@withLock failed(FOREIGN_ACCOUNT, foreignAccount = true)
       val state = ensureIdentity(deviceId)
+      // Le statistiche scritte prima che viaggiassero: prendono il nome di qui, e l'UPDATE le mette
+      // nell'outbox. Dopo la seminatura di un dispositivo nuovo, cosi' non ci si pestano i piedi.
+      db.stats().claimUnnamed(deviceName)
       syncComputer(url, token, deviceId)
       var pulled = pull(url, token, deviceId, deviceName, names, status.ownerId, state.lastPullSeq, countOrphans = true)
       var pushed = push(url, token, deviceId, deviceName)
@@ -218,7 +229,7 @@ class SyncRepository @Inject constructor(
   private suspend fun seedOutbox() {
     val sync = db.sync()
     sync.seedFolders(); sync.seedNotes(); sync.seedSources(); sync.seedSessions()
-    sync.seedAudioParts(); sync.seedTranscripts(); sync.seedExportPresets()
+    sync.seedAudioParts(); sync.seedTranscripts(); sync.seedExportPresets(); sync.seedTranscriptionRuns()
   }
 
   private data class Pushed(val sent: Int = 0, val rejected: Int = 0, val tooLarge: Int = 0) {

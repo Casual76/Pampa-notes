@@ -16,7 +16,7 @@ import javax.inject.Singleton
 /**
  * Il database: entita', DAO e l'indice di ricerca.
  *
- * Versione 6. Le aggiunte di colonna e di tabella passano da `@AutoMigration`; tutto il resto si
+ * Versione 7. Le aggiunte di colonna e di tabella passano da `@AutoMigration`; tutto il resto si
  * scrive a mano in [Migrations] e si prova con `MigrationTest` sugli schemi esportati in
  * `core/schemas`.
  *
@@ -32,6 +32,10 @@ import javax.inject.Singleton
  * 5 -> 6: `transcription_runs`, i numeri di ogni trascrizione finita su questo dispositivo (vedi
  * `StatsEntities.kt`). Una tabella nuova e basta, e fuori dalla sincronizzazione: parte vuota, e le
  * trascrizioni di prima contano lo stesso nella home, che ore e parole le prende da `transcripts`.
+ * 6 -> 7: `deviceName` su `transcription_runs`, che da qui entra nella sincronizzazione: la home
+ * mostra la velocita' di tutti i dispositivi, e ogni corsa dice chi l'ha misurata. Le corse di prima
+ * restano senza nome finche' il primo giro di sync non le rivendica (`StatsDao.claimUnnamed`), ed e'
+ * quell'`UPDATE` a metterle nell'outbox.
  */
 @Database(
   entities = [
@@ -54,9 +58,9 @@ import javax.inject.Singleton
     SyncOriginEntity::class,
     TranscriptionRunEntity::class,
   ],
-  version = 6,
+  version = 7,
   exportSchema = true,
-  autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6)],
+  autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7)],
 )
 abstract class PampaDatabase : RoomDatabase() {
   abstract fun folders(): FolderDao
@@ -76,8 +80,11 @@ abstract class PampaDatabase : RoomDatabase() {
   companion object {
     const val NAME = "pampa_notes.db"
 
-    /** Le tabelle che viaggiano verso l'indice in cloud. `note_tags` no: i tag viaggiano dentro la nota. */
-    val SYNCED_TABLES: List<String> = listOf("folders", "notes", "sessions", "audio_parts", "transcripts", "sources", "export_presets")
+    /**
+     * Le tabelle che viaggiano verso l'indice in cloud. `note_tags` no: i tag viaggiano dentro la
+     * nota. `transcription_runs` dalla versione 7: le statistiche sono dell'account, non del telefono.
+     */
+    val SYNCED_TABLES: List<String> = listOf("folders", "notes", "sessions", "audio_parts", "transcripts", "sources", "export_presets", "transcription_runs")
 
     /**
      * I trigger che riempiono l'outbox della sincronizzazione. Stessa tecnica di [SEARCH_TRIGGERS]:

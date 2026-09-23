@@ -69,8 +69,11 @@ object SyncMerge {
     return if (localNewer) Decision.KEEP_AND_FORK_REMOTE else Decision.APPLY_AND_FORK
   }
 
-  /** L'ordine in cui si applicano le tabelle: un figlio non arriva mai prima del padre. */
-  val APPLY_ORDER: List<String> = listOf("folders", "notes", "sources", "sessions", "audio_parts", "transcripts", "export_presets")
+  /**
+   * L'ordine in cui si applicano le tabelle: un figlio non arriva mai prima del padre. Preset e
+   * statistiche non hanno padri, e stanno in fondo.
+   */
+  val APPLY_ORDER: List<String> = listOf("folders", "notes", "sources", "sessions", "audio_parts", "transcripts", "export_presets", "transcription_runs")
 
   fun orderOf(table: String): Int = APPLY_ORDER.indexOf(table).let { if (it < 0) APPLY_ORDER.size else it }
 }

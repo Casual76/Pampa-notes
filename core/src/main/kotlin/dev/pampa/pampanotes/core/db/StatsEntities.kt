@@ -1,5 +1,6 @@
 package dev.pampa.pampanotes.core.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Entity
 import androidx.room.Index
@@ -7,16 +8,19 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
+import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
+import kotlinx.serialization.Serializable
 
 /*
  * Le statistiche delle trascrizioni: quanto veloce, quanto, su cosa.
  *
- * Una tabella di questo dispositivo, che **non si sincronizza** (non sta in `SYNCED_TABLES`): quanto
- * ci ha messo il telefono a far trascrivere una lezione e' un fatto di questo telefono, e il tablet
- * che riceve la trascrizione dall'indice in cloud non l'ha fatta. Tutto quello che si puo' contare
- * anche su una trascrizione arrivata dal sync — ore, parole, ritmo di chi parla — si conta invece
- * dalle trascrizioni stesse ([StatsDao.observeTranscribedSessions]), non da qui.
+ * Dalla versione 7 la tabella **si sincronizza** (sta in `SYNCED_TABLES`): la home dice la velocita'
+ * e i record di tutti i dispositivi dell'account, e ogni riga dice chi l'ha misurata
+ * ([TranscriptionRunEntity.deviceName]). Prima restava sul telefono che l'aveva scritta, e il tablet
+ * che riceveva la trascrizione dall'indice in cloud non sapeva quanto ci aveva messo il computer di
+ * casa. Quello che si puo' contare dalle trascrizioni stesse — ore, parole, ritmo di chi parla — si
+ * conta ancora da li' ([StatsDao.observeTranscribedSessions]), non da qui.
  */
 
 /**
@@ -25,8 +29,10 @@ import kotlinx.coroutines.flow.Flow
  *
  * Nessuna FK verso la sessione, apposta: cancellare una lezione non cancella il fatto che il
  * computer di casa l'abbia trascritta a cinquanta volte il tempo reale, e la velocita' media della
- * home non deve cambiare perche' si e' fatto ordine.
+ * home non deve cambiare perche' si e' fatto ordine. Per lo stesso motivo nel sync non ha un padre:
+ * una corsa arriva anche se la sua sessione, altrove, non c'e' piu'.
  */
+@Serializable
 @Entity(
   tableName = "transcription_runs",
   indices = [Index(value = ["sessionId", "finishedAt"]), Index("finishedAt")],
@@ -60,6 +66,11 @@ data class TranscriptionRunEntity(
    */
   val resumed: Boolean = false,
   val finishedAt: Long,
+  /**
+   * Il dispositivo che l'ha misurata, col nome che usa nel sync. Vuoto per le corse di prima della
+   * versione 7 finche' il primo giro di sync non le rivendica ([StatsDao.claimUnnamed]).
+   */
+  @ColumnInfo(defaultValue = "") val deviceName: String = "",
 )
 
 /**
@@ -86,6 +97,29 @@ data class SegmentSpan(val count: Int, val endMs: Long)
 interface StatsDao {
   @Insert(onConflict = OnConflictStrategy.IGNORE)
   suspend fun insert(run: TranscriptionRunEntity)
+
+  /** Per il sync: una corsa arrivata da un altro dispositivo. `@Upsert`, mai `REPLACE` (vedi `SYNC_TRIGGERS`). */
+  @Upsert
+  suspend fun upsert(run: TranscriptionRunEntity)
+
+  @Query("SELECT * FROM transcription_runs WHERE id = :id")
+  suspend fun get(id: String): TranscriptionRunEntity?
+
+  @Query("DELETE FROM transcription_runs WHERE id = :id")
+  suspend fun delete(id: String)
+
+  /**
+   * Le corse senza nome e mai concordate con l'indice sono di questo dispositivo: sono quelle scritte
+   * prima della versione 7, quando la tabella non viaggiava e non si diceva chi le aveva fatte. Si
+   * prendono il nome di qui, e l'`UPDATE` fa scattare il trigger dell'outbox: e' cosi' che la storia
+   * di prima sale al primo giro, senza una seminatura a parte. Una corsa gia' arrivata dal sync ha
+   * la sua voce in `sync_meta`, e non si tocca anche se e' senza nome.
+   */
+  @Query(
+    "UPDATE transcription_runs SET deviceName = :deviceName WHERE deviceName = '' " +
+      "AND id NOT IN (SELECT rowId FROM sync_meta WHERE tbl = 'transcription_runs')",
+  )
+  suspend fun claimUnnamed(deviceName: String): Int
 
   @Query("SELECT * FROM transcription_runs ORDER BY finishedAt DESC")
   fun observeRuns(): Flow<List<TranscriptionRunEntity>>

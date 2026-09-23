@@ -344,6 +344,8 @@ class SyncApplier @Inject constructor(
       }
       "sources" -> db.sources().upsert(decode(SourceEntity.serializer(), payload))
       "export_presets" -> db.exportPresets().upsert(decode(ExportPresetEntity.serializer(), payload))
+      // Senza padre da aspettare: il `sessionId` di una corsa non e' una chiave esterna.
+      "transcription_runs" -> db.stats().upsert(RunPayload.decode(payload))
     }
   }
 
@@ -373,6 +375,7 @@ class SyncApplier @Inject constructor(
         db.sources().delete(change.id)
       }
       "export_presets" -> db.exportPresets().delete(change.id)
+      "transcription_runs" -> db.stats().delete(change.id)
     }
   }
 

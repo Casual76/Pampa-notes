@@ -12,6 +12,7 @@ import dev.pampa.pampanotes.core.db.SourceEntity
 import dev.pampa.pampanotes.core.db.SourceKind
 import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.db.TranscriptKind
+import dev.pampa.pampanotes.core.db.TranscriptionRunEntity
 import dev.pampa.pampanotes.core.files.AppFiles
 import java.io.File
 import java.text.SimpleDateFormat
@@ -52,7 +53,7 @@ class SyncApplierTest {
     val payloads = SyncPayloads(
       folders = db.folders(), notes = db.notes(), tags = db.tags(), sessions = db.sessions(),
       audioParts = db.audioParts(), transcripts = db.transcripts(), segments = db.segments(),
-      sources = db.sources(), presets = db.exportPresets(),
+      sources = db.sources(), presets = db.exportPresets(), runs = db.stats(),
     )
     applier = SyncApplier(db, files, payloads)
   }
@@ -174,7 +175,7 @@ class SyncApplierTest {
     db.sessions().upsert(s)
     clean()
     // La versione concordata e' quella di adesso; poi la sessione viene toccata, non cambiata.
-    val encoded = SyncPayloads(db.folders(), db.notes(), db.tags(), db.sessions(), db.audioParts(), db.transcripts(), db.segments(), db.sources(), db.exportPresets()).encode("sessions", "s")!!
+    val encoded = SyncPayloads(db.folders(), db.notes(), db.tags(), db.sessions(), db.audioParts(), db.transcripts(), db.segments(), db.sources(), db.exportPresets(), db.stats()).encode("sessions", "s")!!
     db.sync().upsertMeta(dev.pampa.pampanotes.core.db.SyncMetaEntity("sessions", "s", serverSeq = 1, hash = encoded.hash, updatedAt = 1))
     db.sessions().upsert(s.copy(updatedAt = 99))
 
@@ -208,6 +209,46 @@ class SyncApplierTest {
     assertTrue(File(trash, "p.m4a").exists())
     assertTrue(File(trash, "x.pdf").exists())
     File(trash, "p.m4a").delete(); File(trash, "x.pdf").delete()
+  }
+
+  @Test
+  fun una_corsa_arrivata_da_un_altro_dispositivo_entra_senza_la_sua_sessione_e_non_torna_indietro(): Unit = runBlocking {
+    val run = TranscriptionRunEntity(
+      id = "r", jobId = "j", sessionId = "sparita", provider = "custom", model = "large-v3", device = "cuda",
+      audioMs = 2_400_000, wallMs = 48_000, words = 5214, segments = 300, finishedAt = 5, deviceName = "Tab S9",
+    )
+    val remote = RunPayload.encode(run)
+    val outcome = apply(
+      WireChange("transcription_runs", "r", WireChange.OP_UPSERT, updatedAt = remote.updatedAt, hash = remote.hash, payload = remote.payload, seq = 1, deviceId = "altro"),
+    )
+
+    // Nessun padre da aspettare: il `sessionId` non e' una chiave esterna.
+    assertTrue(outcome.orphans.isEmpty())
+    assertEquals(1, outcome.applied)
+    assertEquals(run, db.stats().get("r"))
+    // Applicata sotto la guardia: non torna nell'outbox, e la base concordata e' la sua impronta.
+    assertNull(db.sync().outboxEntry("transcription_runs", "r"))
+    assertEquals(remote.hash, db.sync().meta("transcription_runs", "r")?.hash)
+    // Gia' concordata col server: il nome non si rivendica, anche se fosse vuoto.
+    assertEquals(0, db.stats().claimUnnamed("questo"))
+
+    apply(del("transcription_runs", "r", seq = 2))
+    assertNull(db.stats().get("r"))
+  }
+
+  @Test
+  fun una_corsa_scritta_qui_va_nell_outbox_e_quelle_senza_nome_si_rivendicano(): Unit = runBlocking {
+    db.stats().insert(
+      TranscriptionRunEntity(id = "vecchia", jobId = "j", sessionId = "s", provider = "groq", model = "whisper", audioMs = 60_000, wallMs = 3_000, words = 100, segments = 5, finishedAt = 1),
+    )
+    assertEquals("U", db.sync().outboxEntry("transcription_runs", "vecchia")?.op)
+    clean()
+
+    assertEquals(1, db.stats().claimUnnamed("questo"))
+    assertEquals("questo", db.stats().get("vecchia")?.deviceName)
+    // L'UPDATE fa scattare il trigger: e' cosi' che le corse di prima della versione 7 salgono.
+    assertEquals("U", db.sync().outboxEntry("transcription_runs", "vecchia")?.op)
+    assertEquals(0, db.stats().claimUnnamed("questo"))
   }
 
   @Test

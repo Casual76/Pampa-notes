@@ -1197,4 +1197,7 @@
   <string name="home_stats_pace_detail">parole al minuto, in «%1$s»</string>
   <string name="home_stats_longest_label">La lezione più lunga</string>
   <string name="home_stats_longest_detail">«%1$s» · %2$s</string>
+  <!-- statsync -->
+  <string name="home_stats_speed_detail_elsewhere">il tempo reale, in media · record %1$s (%2$s)</string>
+  <string name="home_stats_speed_detail_single_elsewhere">il tempo reale, da %1$s</string>
 </resources>
