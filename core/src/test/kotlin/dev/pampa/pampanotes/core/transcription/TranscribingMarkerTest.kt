@@ -35,6 +35,12 @@ class TranscribingMarkerTest {
   }
 
   @Test
+  fun `un orologio un po' avanti vale, uno avanti di un giorno no`() {
+    assertTrue(TranscribingMarker.isElsewhere("Pixel 8", now + 5 * 60_000, me = "Tab S9", now = now))
+    assertFalse(TranscribingMarker.isElsewhere("Pixel 8", now + 24 * hour, me = "Tab S9", now = now))
+  }
+
+  @Test
   fun `senza nome o senza tempo non c'e' segno`() {
     assertFalse(TranscribingMarker.isElsewhere(null, now, me = "Tab S9", now = now))
     assertFalse(TranscribingMarker.isElsewhere("", now, me = "Tab S9", now = now))

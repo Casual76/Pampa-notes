@@ -8,19 +8,12 @@
   <string name="channel_results_detail">Quando una trascrizione finisce o fallisce</string>
 
   <!-- Navigazione -->
-  <string name="tab_notes">Note</string>
-  <string name="tab_search">Cerca</string>
-  <string name="tab_jobs">Lavori</string>
-  <string name="tab_settings">Impostazioni</string>
 
   <!-- Azioni comuni -->
-  <string name="action_back">Indietro</string>
   <string name="action_cancel">Annulla</string>
-  <string name="action_ok">Ok</string>
   <string name="action_save">Salva</string>
   <string name="action_delete">Elimina</string>
   <string name="action_rename">Rinomina</string>
-  <string name="action_create">Crea</string>
   <string name="action_import">Importa</string>
   <string name="action_export">Esporta</string>
   <string name="action_retry">Riprova</string>
@@ -56,18 +49,11 @@
   <!-- Home -->
   <string name="home_title">Pampa Notes</string>
   <string name="home_subtitle">Le tue fonti, pronte per l\'IA</string>
-  <string name="home_hero_title">%1$d note in %2$d cartelle</string>
-  <string name="home_hero_subtitle_idle">Nessun lavoro in corso</string>
-  <plurals name="home_hero_subtitle_jobs">
-    <item quantity="one">%d lavoro in corso</item>
-    <item quantity="other">%d lavori in corso</item>
-  </plurals>
   <string name="home_section_folders">Cartelle</string>
   <string name="home_section_recent">Ultime note</string>
   <string name="home_empty_title">Ancora nessuna nota</string>
   <string name="home_empty_detail">Condividi una nota di Samsung Notes, un PDF o una registrazione con Pampa Notes, o importala da qui: la cartella si sceglie dopo.</string>
   <string name="home_new_folder">Nuova cartella</string>
-  <string name="home_import">Importa</string>
   <plurals name="folder_note_count">
     <item quantity="one">%d nota</item>
     <item quantity="other">%d note</item>
@@ -79,7 +65,6 @@
   <string name="folder_empty_meta">Vuota</string>
 
   <!-- Cartella -->
-  <string name="folder_name_label">Nome della cartella</string>
   <string name="folder_name_placeholder">Storia, Filosofia, Matematica…</string>
   <string name="folder_delete_title">Eliminare «%1$s»?</string>
   <string name="folder_delete_message">Se ne vanno anche le note, gli audio e le trascrizioni che contiene. Non si torna indietro.</string>
@@ -110,7 +95,6 @@
   <string name="settings_section_appearance">Aspetto</string>
   <string name="settings_section_storage">Archiviazione</string>
   <string name="settings_section_about">Informazioni</string>
-  <string name="settings_coming_soon">In arrivo</string>
   <!-- Date -->
   <string name="date_today">oggi</string>
   <string name="date_yesterday">ieri</string>
@@ -147,8 +131,6 @@
   <string name="folder_empty_detail">Crea una nota, oppure importa appunti e registrazioni da un\'altra app.</string>
 
   <!-- Impostazioni: aspetto -->
-  <string name="settings_theme">Tema</string>
-  <string name="settings_theme_detail">Chiaro, scuro o come il sistema</string>
   <string name="settings_dynamic_color">Colori dallo sfondo</string>
   <string name="settings_dynamic_color_detail">Prende l\'accento dal tema del telefono</string>
   <string name="settings_amoled">Nero pieno</string>
@@ -319,11 +301,9 @@
   </plurals>
   <string name="home_hero_description">Pronte da dare a un assistente come fonti.</string>
   <string name="home_metric_folders">Cartelle</string>
-  <string name="home_metric_audio">Audio</string>
   <string name="home_metric_jobs">In corso</string>
   <string name="home_metric_hours">Di lezione</string>
   <string name="home_metric_words">Parole</string>
-  <string name="home_metric_days">Giorni</string>
   <string name="home_fun_words">%1$s parole trascritte: quanto %2$s.</string>
   <plurals name="home_fun_novels">
     <item quantity="one">un romanzo</item>
@@ -446,7 +426,6 @@
 
   <!-- Nota: trascrizione -->
   <string name="note_transcribe">Trascrivi</string>
-  <string name="note_retranscribe">Trascrivi di nuovo</string>
 
   <!-- Impostazioni: servizi -->
   <string name="settings_groq">Groq</string>
@@ -470,7 +449,6 @@
   <string name="settings_endpoint_linked_title">Computer di casa collegato</string>
   <string name="settings_endpoint_linked">%1$s. Da adesso le trascrizioni passano dal tuo computer.</string>
   <string name="settings_test_connection">Prova la connessione</string>
-  <string name="settings_endpoint_ok">Raggiunto in %1$d ms</string>
   <plurals name="settings_endpoint_models">
     <item quantity="one">%d modello</item>
     <item quantity="other">%d modelli</item>
@@ -690,7 +668,6 @@
   <string name="error_no_model">Nessun modello disponibile per il raffinamento.</string>
   <string name="refine_title">Ripulisci la trascrizione</string>
   <string name="refine_action">Ripulisci</string>
-  <string name="refine_redo">Rifai</string>
   <string name="refine_explain">Un modello toglie gli intercalari e mette la punteggiatura. Non riassume e non aggiunge niente, e la versione grezza resta qui accanto.</string>
   <string name="refine_preset_label">Quanto intervenire</string>
   <string name="refine_preset_clean">Pulita</string>
@@ -703,7 +680,6 @@
   <string name="refine_no_key">Serve la chiave di Groq: sta in Impostazioni, Servizi.</string>
   <string name="settings_refinement_model">Modello per il raffinamento</string>
   <string name="settings_refinement_model_detail">Vuoto: sceglie il migliore che Groq offre</string>
-  <string name="settings_refinement_preset">Come ripulire, di default</string>
   <string name="job_phase_refining">Sto ripulendo il pezzo %1$d di %2$d</string>
 
   <!-- Import: la nota di Samsung Notes, il caso di tutti i giorni -->
@@ -876,33 +852,17 @@
   <string name="storage_exports_detail">Nella cache: si possono togliere sempre</string>
   <string name="storage_total">In tutto</string>
   <string name="storage_total_detail">Quello che Pampa Notes occupa sul telefono</string>
-  <string name="storage_cleanup">Fare spazio</string>
   <string name="storage_cleanup_detail">Nessuna delle due tocca una nota o una registrazione che l\'app usa ancora.</string>
   <string name="storage_sweep">Togli i file rimasti indietro</string>
   <string name="storage_clear_exports">Svuota i pacchetti esportati</string>
   <string name="storage_footnote">I file rimasti indietro sono quelli che nessuna riga cita più: succede quando una nota viene cancellata mentre un lavoro era ancora in coda.</string>
-  <string name="storage_archive_header">Archivio sul computer di casa</string>
-  <string name="storage_archive_detail">Registrazioni e originali salgono sul computer di casa, dalla rete di casa o da Tailscale, e lì restano. Qui non si cancella niente.</string>
   <string name="storage_archive_enable">Archivia sul computer</string>
-  <string name="storage_archive_enable_detail">Dopo ogni import e ogni sei ore, quando lo raggiunge</string>
   <string name="storage_archive_unmetered">Solo su Wi-Fi</string>
-  <string name="storage_archive_unmetered_detail">Mai sulla rete dati: un originale può pesare mezzo giga</string>
-  <string name="storage_archived">Già sul computer</string>
-  <string name="storage_pending_archive">Da archiviare</string>
   <string name="storage_archive_now">Archivia adesso</string>
   <string name="storage_archive_running">%1$d di %2$d · %3$s</string>
   <string name="storage_archive_no_endpoint">Serve il computer di casa: si collega in Servizi.</string>
-  <string name="storage_archive_last">Ultimo giro: %1$s</string>
   <string name="storage_archive_result">%1$d caricati, %2$d già presenti, %3$d non riusciti</string>
   <string name="storage_archive_result_error">Ultimo errore: %1$s</string>
-  <string name="storage_remote">Sul computer, non qui</string>
-  <string name="storage_remote_detail">Arrivati dagli altri dispositivi: si scaricano quando servono</string>
-  <string name="storage_evict_header">Qui e anche sul computer</string>
-  <string name="storage_evict_detail">Quello che il computer di casa ha già si può togliere da qui: resta nell\u2019indice, si riscarica quando serve, e finché il computer non risponde si vede come «sul computer di casa».</string>
-  <string name="storage_evict_sources">Originali (PDF, Word, Samsung Notes)</string>
-  <string name="storage_evict_audio">Registrazioni</string>
-  <string name="storage_evict_sources_button">Togli gli originali dal dispositivo</string>
-  <string name="storage_evict_audio_button">Togli le registrazioni dal dispositivo</string>
   <string name="storage_evict_confirm_title">Togliere dal dispositivo?</string>
   <string name="storage_evict_confirm_sources">%1$s in %2$d file. Restano sul computer di casa e nell\u2019indice: per riaprirli o esportarli servirà il computer raggiungibile.</string>
   <string name="storage_evict_confirm_audio">%1$s in %2$d registrazioni. Per ascoltarle bisognerà scaricarle dal computer; le trascrizioni restano qui.</string>
@@ -915,8 +875,6 @@
   <string name="notification_archiving">Archiviazione sul computer</string>
   <string name="notification_fetching">Scarico dal computer</string>
   <string name="storage_mirror">Tieni tutto anche qui</string>
-  <string name="storage_mirror_detail">Registrazioni e originali degli altri dispositivi si scaricano appena arrivano nell\u2019indice, per averli anche senza il computer. Segue «solo su Wi-Fi».</string>
-  <string name="storage_fetch_now">Scarica adesso</string>
   <string name="storage_fetch_result">%1$d scaricati, %2$d non riusciti, %3$s</string>
   <string name="storage_fetch_nothing">Niente da scaricare: è già tutto qui.</string>
   <plurals name="storage_archive_files">

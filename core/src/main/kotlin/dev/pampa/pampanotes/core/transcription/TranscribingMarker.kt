@@ -58,7 +58,9 @@ object TranscribingMarker {
   fun isElsewhere(on: String?, since: Long?, me: String, now: Long): Boolean {
     if (on.isNullOrBlank() || since == null) return false
     if (on == me) return false
-    return now - since < STALE_AFTER_MS
+    // L'ora e' quella di chi l'ha scritto: un orologio avanti di un giorno terrebbe la sessione
+    // «in trascrizione» per un giorno piu' tre ore. Oltre la durata di un segno, nel futuro, non vale.
+    return now - since < STALE_AFTER_MS && since - now < STALE_AFTER_MS
   }
 
   /** Le sessioni che un altro dispositivo sta trascrivendo, per id. */

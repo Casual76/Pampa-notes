@@ -209,6 +209,12 @@ class BackupService @Inject constructor(
       // date vere e delle pagine a mano, e i segni di «fatto» parlavano di quello di prima.
       settings.resetBackfills()
       File(files.root, HandwritingPages.TRIED_DIR).deleteRecursively()
+      // Lo stesso di SyncRepository.afterRestore, qui per non far dipendere il backup dal sync: con
+      // l'id di prima il database ripristinato non si riprenderebbe mai le righe che questo telefono
+      // ha scritto dopo il backup, e il server gli lascerebbe sovrascriverle.
+      settings.forgetSyncDevice()
+      settings.setSyncOrphanAttempts(emptyMap())
+      settings.clearSyncReviveRoots(settings.syncReviveRoots())
       staged.manifest
     } finally {
       staging.deleteRecursively()
