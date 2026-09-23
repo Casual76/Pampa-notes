@@ -431,6 +431,8 @@ def main() -> None:
     # Prima il registro: la decisione sulla VRAM che [server.configure] prende deve finirci dentro.
     log_path = server.setup_file_logging()
     SETTINGS = server.configure(config.load())
+    # WhisperX si importa adesso, fuori da ogni lezione: vedi server.warm_imports.
+    server.warm_imports()
 
     if server.already_running(SETTINGS["port"]):
         # Un secondo doppio clic non deve dare un errore di porta occupata trenta secondi dopo.

@@ -955,6 +955,28 @@ def ensure_model() -> None:
     log.info("pronto in %.0f s (%.1f GB di VRAM)", time.time() - started, vram_gb())
 
 
+def warm_imports() -> None:
+    """
+    Importa WhisperX e i suoi pezzi all'avvio, su un thread suo, invece che dentro la prima lezione.
+
+    All'import pyannote prova torchcodec, fallisce, e tiene da parte l'errore col suo traceback
+    («fix torchcodec installation»). Se l'import avveniva dentro [run_job] — la prima lezione dopo
+    l'avvio — quel traceback teneva in vita i frame fino a `run_job`, e con loro il modello: scaricarlo
+    lasciava 2–4 GB sulla scheda (23/09), e il budget automatico li contava come «altri programmi».
+    Importati qui, il traceback porta solo a questo thread, che non tiene niente.
+    """
+
+    def run() -> None:
+        with contextlib.suppress(Exception):
+            import whisperx  # noqa: F401
+            import whisperx.alignment  # noqa: F401
+            import whisperx.asr  # noqa: F401
+        with contextlib.suppress(Exception):
+            import whisperx.vads.pyannote  # noqa: F401
+
+    threading.Thread(target=run, name="warm-imports", daemon=True).start()
+
+
 def restart_when_idle() -> None:
     """
     Riparte con un processo nuovo, se lo si e' chiesto ([run_job]) e nessuno aspetta.
@@ -2227,6 +2249,10 @@ def run_job(
         alignment = f"errore: {type(error).__name__}: {error}"
         log.warning("allineamento non riuscito per '%s': tengo i tempi originali", detected, exc_info=True)
 
+    # Niente di grande resta nel frame: se qualcuno lo conserva (una libreria che tiene da parte un
+    # errore d'import col suo traceback, vedi [warm_imports]) si porterebbe dietro il modello e
+    # l'audio, e scaricare il modello non restituirebbe piu' la scheda.
+    model = audio = None
     return {
         "segments": segments,
         "language": detected,
@@ -2447,6 +2473,10 @@ def transcribe_audio(
         if job.get("alignment", "ok") != "ok" and alignment == "ok":
             alignment = job["alignment"]
         batch_size = job.get("batch_size", batch_size)
+    # Niente di grande resta nel frame: se qualcuno lo conserva (una libreria che tiene da parte un
+    # errore d'import col suo traceback, vedi [warm_imports]) si porterebbe dietro il modello e
+    # l'audio, e scaricare il modello non restituirebbe piu' la scheda.
+    audio = piece = None
     return {
         "segments": segments,
         "language": detected or "en",
@@ -2508,6 +2538,10 @@ def _transcribe(
         )
 
     gc.collect()
+    # Niente di grande resta nel frame: se qualcuno lo conserva (una libreria che tiene da parte un
+    # errore d'import col suo traceback, vedi [warm_imports]) si porterebbe dietro il modello e
+    # l'audio, e scaricare il modello non restituirebbe piu' la scheda.
+    audio = None
     return {
         "task": "transcribe",
         "language": job["language"],
@@ -2771,6 +2805,7 @@ def main() -> None:
     # Prima il registro, poi [configure]: la decisione sulla VRAM deve finire anche nel file.
     setup_file_logging()
     settings = configure(settings)
+    warm_imports()
 
     if already_running(settings["port"]):
         print()
