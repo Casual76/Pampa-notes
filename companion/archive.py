@@ -22,6 +22,8 @@ questo archivio esiste per evitare.
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import hashlib
 import logging
 import os
@@ -39,6 +41,25 @@ from fastapi.responses import FileResponse
 log = logging.getLogger("pampa")
 
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+# I caricamenti scrivono su thread loro, non su quelli di serie del ciclo di eventi: quelli li usa
+# anche la trascrizione (`asyncio.to_thread`), e un tablet che perde la rete a meta' di un file
+# teneva un thread fermo ad aspettare il blocco dopo. Con abbastanza caricamenti appesi i thread
+# finivano, e la lezione successiva non partiva piu'. Qui ne restano quattro, e sono solo dell'archivio.
+EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="archivio")
+
+# Quanto si aspetta un blocco del corpo prima di dichiarare il caricamento morto. Il telefono manda
+# decine di kilobyte alla volta: due minuti senza niente non sono una rete lenta, sono una rete che
+# non c'e' piu'.
+CHUNK_TIMEOUT_S = 120
+
+# Un `.part` piu' vecchio di cosi' e' di un caricamento che non finira' mai (il processo e' morto a
+# meta'). Piu' giovane, potrebbe essere di un caricamento vivo di un'altra istanza appena partita.
+STALE_PART_S = 3600
+
+
+class StalledUpload(Exception):
+    """Il corpo della richiesta ha smesso di arrivare."""
 
 # L'estensione dal MIME, quando il nome non ne ha una buona. Rispecchia `AppFiles.extensionFor`.
 EXT_BY_MIME = {
@@ -69,6 +90,7 @@ class Archive:
         self.blobs = root / "blobs"
         self.blobs.mkdir(parents=True, exist_ok=True)
         (root / "tmp").mkdir(exist_ok=True)
+        self.sweep_parts()
         # Un lucchetto perche' gli endpoint sincroni girano in un pool di thread, e sqlite vuole
         # una connessione per thread o un lucchetto: il lucchetto e' meno codice.
         self.lock = threading.Lock()
@@ -78,6 +100,28 @@ class Archive:
             "ext TEXT NOT NULL, size INTEGER NOT NULL, added_at REAL NOT NULL)"
         )
         self.db.commit()
+
+    def sweep_parts(self, older_than_s: float = STALE_PART_S) -> int:
+        """
+        Via i `.part` rimasti da caricamenti che non sono finiti.
+
+        Di solito li toglie il `finally` di [store]; restano quando il processo muore a meta' —
+        il computer spento, l'icona chiusa — e senza questo giro restavano per sempre, a volte
+        mezzo giga l'uno. Si tolgono solo quelli vecchi: `tray.py` apre l'archivio prima di
+        guardare se la porta e' occupata, e un file giovane potrebbe essere di un caricamento vivo.
+        """
+        removed = 0
+        now = time.time()
+        for part in (self.root / "tmp").glob("*.part"):
+            try:
+                if now - part.stat().st_mtime > older_than_s:
+                    part.unlink()
+                    removed += 1
+            except OSError:
+                continue
+        if removed:
+            log.info("archivio: tolti %d caricamenti rimasti a meta'", removed)
+        return removed
 
     def path_for(self, sha256: str, ext: str) -> Path:
         return self.blobs / sha256[:2] / f"{sha256}.{ext}"
@@ -174,6 +218,11 @@ def original_name(request: Request) -> str:
 
 
 def build_router(check_token: Callable[[Request], None]) -> APIRouter:
+    """
+    Le rotte dell'archivio. `check_token` qui dice solo «e' il proprietario?»: le credenziali le ha
+    gia' guardate il server prima di leggere il corpo (`AuthGate` in whisperx_server.py), cosi' un
+    `PUT` senza permesso viene rifiutato prima di mezzo giga di upload, non dopo.
+    """
     router = APIRouter(prefix="/v1/files")
 
     def valid(sha256: str) -> str:
@@ -220,6 +269,8 @@ def build_router(check_token: Callable[[Request], None]) -> APIRouter:
         chunks = _sync_chunks(request.stream())
         try:
             record = await _run_blocking(archive.store, sha, name, mime, chunks, int(expected) if expected else None)
+        except StalledUpload as error:
+            raise HTTPException(status_code=408, detail=str(error)) from error
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         return {"stored": True, "size": record["size"]}
@@ -246,26 +297,32 @@ def build_router(check_token: Callable[[Request], None]) -> APIRouter:
     return router
 
 
-def _sync_chunks(stream: AsyncIterator[bytes]) -> Any:
+def _sync_chunks(stream: AsyncIterator[bytes], timeout_s: float | None = None) -> Any:
     """
     Un iteratore sincrono sopra lo stream asincrono della richiesta.
 
     Il lavoro di scrittura gira in un thread (vedi [_run_blocking]) e da un thread non si puo'
     fare `await`: ogni blocco lo si chiede al ciclo di eventi e lo si aspetta. E' un rimbalzo per
     blocco, ma i blocchi sono da decine di kilobyte e il disco e' comunque piu' lento.
-    """
-    import asyncio
 
-    loop = asyncio.get_event_loop()
+    Ogni blocco si aspetta al massimo `timeout_s` (di serie [CHUNK_TIMEOUT_S]): senza, un
+    caricamento rimasto appeso teneva il suo thread per sempre. Scaduto il tempo, la richiesta del
+    blocco si annulla e il caricamento finisce con [StalledUpload]: il `.part` lo toglie [Archive.store].
+    """
+    loop = asyncio.get_running_loop()
     iterator = stream.__aiter__()
+    limit = CHUNK_TIMEOUT_S if timeout_s is None else timeout_s
 
     def generator() -> Any:
         while True:
             future = asyncio.run_coroutine_threadsafe(iterator.__anext__(), loop)
             try:
-                chunk = future.result()
+                chunk = future.result(timeout=limit)
             except StopAsyncIteration:
                 return
+            except concurrent.futures.TimeoutError as error:
+                future.cancel()
+                raise StalledUpload(f"nessun dato da {limit:.0f} s: caricamento interrotto") from error
             if chunk:
                 yield chunk
 
@@ -273,6 +330,4 @@ def _sync_chunks(stream: AsyncIterator[bytes]) -> Any:
 
 
 async def _run_blocking(function: Callable[..., Any], *args: Any) -> Any:
-    import asyncio
-
-    return await asyncio.get_event_loop().run_in_executor(None, function, *args)
+    return await asyncio.get_running_loop().run_in_executor(EXECUTOR, function, *args)

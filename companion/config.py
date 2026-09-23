@@ -55,6 +55,13 @@ DEFAULTS: dict[str, Any] = {
     # e vale solo il token qui sopra.
     "index_url": "",
     "owner": "",
+    # Una richiesta senza credenziali passa lo stesso, come proprietario? Per un config nuovo no:
+    # con `index_url` e `owner` l'app entra con il biglietto dell'account (`pt_…`), e senza con il
+    # token qui sopra. Un config.json che c'era gia' prima di questa chiave la riceve accesa alla
+    # prima lettura (vedi [load]): i dispositivi con l'app vecchia non mandano niente, e spegnerla
+    # d'ufficio li lascerebbe fuori senza dire perche'. Si spegne dal menu dell'icona, quando tutti
+    # i dispositivi sono aggiornati.
+    "accept_anonymous": False,
 }
 
 
@@ -76,12 +83,65 @@ def load(path: Path = CONFIG_PATH) -> dict[str, Any]:
         return settings
     if not isinstance(stored, dict):
         return settings
+    if "accept_anonymous" not in stored:
+        stored["accept_anonymous"] = _migrated_anonymous(stored)
+        _write_back(stored, path)
     # Solo le chiavi che conosciamo: una chiave scritta male resta nel file senza fare danni,
     # e chi lo rilegge la trova ancora li' invece di vedersela sparire.
     for key in DEFAULTS:
         if key in stored:
             settings[key] = stored[key]
     return settings
+
+
+def _migrated_anonymous(stored: dict[str, Any]) -> bool:
+    """
+    Il valore di `accept_anonymous` per un config.json scritto prima che la chiave esistesse.
+
+    Acceso, perche' oggi chi non manda niente passa, e la versione dell'app sul tablet non manda
+    niente. Tranne quando c'e' un token: li' chi non lo mandava era gia' fuori, e accenderla
+    aprirebbe una porta che l'utente aveva chiuso apposta.
+    """
+    return not str(stored.get("token") or "").strip()
+
+
+def _write_back(stored: dict[str, Any], path: Path) -> None:
+    """
+    Riscrive il file com'era, con in piu' la chiave nuova.
+
+    Non passa da [save]: quello tiene solo le chiavi conosciute, e una migrazione che fa sparire una
+    riga scritta a mano (magari da una versione piu' nuova) e' peggio di nessuna migrazione. Se il
+    file non si puo' scrivere si va avanti lo stesso: il valore vale per questa volta, e si riprova
+    alla prossima.
+    """
+    try:
+        _dump(stored, path)
+    except OSError as error:
+        print(f"  config.json non si scrive ({error}): accept_anonymous vale solo per questa volta.")
+
+
+def set_value(key: str, value: Any, path: Path = CONFIG_PATH) -> None:
+    """
+    Cambia una chiave sola nel file, lasciando le altre come stanno.
+
+    Per il menu dell'icona: riscrivere tutto con [save] metterebbe nel file i valori di partenza di
+    ogni chiave che l'utente non aveva mai scritto, e il file che ha aperto a mano non sarebbe piu'
+    quello che ricorda.
+    """
+    stored: dict[str, Any] = {}
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                stored = loaded
+        except (OSError, ValueError):
+            stored = {}
+    stored[key] = value
+    _dump(stored, path)
+
+
+def _dump(stored: dict[str, Any], path: Path) -> None:
+    path.write_text(json.dumps(stored, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def save(settings: dict[str, Any], path: Path = CONFIG_PATH) -> None:

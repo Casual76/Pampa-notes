@@ -3,20 +3,44 @@
 Pampa Notes può mandare le registrazioni a Groq, oppure al tuo computer. Questa cartella contiene
 il secondo: WhisperX dietro le tre chiamate dell'API di OpenAI che l'app conosce.
 
-## Gli ospiti
+## Chi può usarlo
 
-Un amico può trascrivere con questo computer senza avere il tuo token. Nell'app, *Impostazioni →
-Ospiti del computer* crea un invito con un codice `pg_…`; il companion lo verifica chiedendo al
-Worker dell'indice, e per questo in `config.json` servono due righe:
+Il computer riconosce **il tuo account Google**. In `config.json` servono due righe:
 
 ```json
 { "index_url": "https://pampa-notes-sync.<tuo>.workers.dev", "owner": "tu@gmail.com" }
 ```
 
-`owner` è l'account Google con cui fai la sincronizzazione (lo stesso che vedi in *Sincronizzazione*).
-Senza queste due righe gli ospiti non esistono e vale solo il token. Tu passi sempre davanti agli
-ospiti nella fila; l'archivio dei file e lo scarico del modello restano solo tuoi. L'ospite deve
-entrare nella tua rete Tailscale (pannello di Tailscale → *Users → Invite*, o condividi il nodo).
+`owner` è l'account con cui fai la sincronizzazione (lo stesso che vedi in *Sincronizzazione*). Un
+dispositivo in cui sei entrato con Google chiede al Worker un **biglietto per il PC** (`pt_…`, dura
+dodici ore) e lo manda al companion, che chiede al Worker se è davvero tuo e tiene la risposta fino
+alla scadenza — così un'interruzione di internet non ferma il computer. Verso il PC non viaggia mai
+il token della sincronizzazione, che in casa passerebbe in chiaro e aprirebbe tutte le note.
+
+Valgono anche:
+
+- il **codice** (`token` in `config.json`), per i dispositivi senza account e come riserva senza
+  internet. Si scrive a mano nell'app: il QR non lo porta più;
+- gli **ospiti** (`pg_…`), vedi sotto.
+
+Senza credenziali il server risponde 401, tranne `/health` e la pagina del QR. Il controllo avviene
+**prima** di leggere il corpo: un caricamento senza permesso viene rifiutato prima dei suoi
+gigabyte, non dopo.
+
+**L'accesso libero** (`accept_anonymous`) è il ponte per il passaggio: acceso, chi non manda niente
+passa come proprietario, com'era prima. Un `config.json` che c'era già lo trova acceso alla prima
+lettura (spento se aveva un `token`: lì chi non lo mandava era già fuori), così l'app vecchia sul
+tablet continua a funzionare; un config nuovo parte spento. Quando tutti i dispositivi sono
+aggiornati, dal menu dell'icona: **«Accesso libero (spegni quando i dispositivi sono aggiornati)»**.
+`/health` dice come si entra: `"auth": {"account": true, "anonymous": false}`.
+
+## Gli ospiti
+
+Un amico può trascrivere con questo computer senza avere il tuo account né il tuo codice.
+Nell'app, *Impostazioni → Ospiti del computer* crea un invito con un codice `pg_…`; il companion lo
+verifica chiedendo al Worker dell'indice, con le stesse due righe di sopra. Tu passi sempre davanti
+agli ospiti nella fila; l'archivio dei file e lo scarico del modello restano solo tuoi. L'ospite
+deve entrare nella tua rete Tailscale (pannello di Tailscale → *Users → Invite*, o condividi il nodo).
 
 ## Perché, se Groq funziona già
 
@@ -83,6 +107,33 @@ avvia.cmd --preload             # caricalo subito, come prima
 `/health` dice a che punto è: `loaded`, quanta memoria risulta occupata sulla scheda, e fra quanti
 secondi scade.
 
+## Le parole allineate
+
+WhisperX dà i tempi di ogni parola allineandola con un modello fonetico (per l'italiano
+`VOXPOPULI_ASR_BASE_10K_IT` di torchaudio). Prima di allineare divide il testo in frasi con NLTK, e
+NLTK 3.10 rifiuta di aprire un file il cui percorso *risolto* non sta sotto le sue cartelle dati.
+Quando il companion parte da dentro l'app di Claude, Windows sposta le scritture in `%APPDATA%` in
+una copia virtuale (`...\Packages\Claude_…\LocalCache\Roaming`), la cartella e i file dentro si
+risolvono in due posti diversi, e l'allineamento falliva con `Security Violation [pathsec.open]`
+**a ogni lezione**, in silenzio: le parole arrivavano all'app senza tempi, e l'app li stimava.
+`trust_sentence_splitter` aggiunge a NLTK la cartella dove il file sta davvero.
+
+Un allineamento che fallisce non ferma la trascrizione, ma non si nasconde più: il registro ha la
+traccia intera, e `/health` dice per lingua come è andato l'ultimo (`"alignment": {"it": "ok"}`, o
+l'errore). `word_timestamps` è vero solo se sono tutti `ok`.
+
+## Quando la scheda è piena
+
+Se un gioco o un altro programma si è preso la scheda, WhisperX finisce la memoria a metà lezione.
+Invece di un errore:
+
+1. si libera la riserva di torch e si riprova con un lotto grande la metà (`batch_size` 16, 8, 4, 2, 1);
+2. se neanche con 1 entra, quella lezione si fa **sul processore**, con un modello `int8` caricato
+   apposta e poi buttato: più lenta, ma trascritta. La lezione dopo riparte dalla scheda.
+
+L'allineamento, se finisce la memoria, si rifà sul processore. La risposta dice dove si è trascritto
+(`"device_used": "cuda"` o `"cpu"`), e il registro lo scrive.
+
 Per dare un'idea: su una RTX 4070 Ti, `large-v3` fa una lezione di **31 minuti in 45 secondi**.
 
 Poi nell'app: **Altro → Impostazioni → Server personale**, incolli l'indirizzo, tocchi «Prova la
@@ -99,16 +150,22 @@ e da ricordarsi di aprire. Col tasto destro sull'icona:
   adesso, senza aspettare i dieci minuti. Se c'è una trascrizione in corso te lo dice e non lo fa;
 - **«Mostra il QR per i dispositivi»** (anche con un clic sull'icona) — si inquadra con la
   fotocamera del telefono: apre una pagina del server con il bottone «Apri Pampa Notes», e l'app si
-  configura da sola con indirizzi e token. Il QR vale dieci minuti; il link è anche nel registro,
+  configura da sola con gli indirizzi. Il **codice non c'è**: una foto del QR si inoltra e resta
+  nella galleria. Chi ha l'account entra col biglietto; chi no scrive il codice a mano. Il QR vale
+  dieci minuti e la pagina non resta nella cache del browser; il link è anche nel registro,
   per chi preferisce copiarlo. Non contiene direttamente il link `pampanotes://` perché la
   fotocamera riconosce come link solo `http` — il resto lo mostra come testo;
 - **«Avvio automatico»** — un collegamento nella cartella Esecuzione automatica dell'utente, che si
   vede e si spegne anche da Impostazioni → App → Avvio. Non un'attività pianificata, che vorrebbe
   i privilegi di amministratore; non un servizio di Windows, che non può disegnare un'icona. Il
   collegamento lancia `avvio.pyw`, non `tray.py`: aspetta venti secondi dopo l'accesso, avvia
-  l'icona, controlla che `/health` risponda e se no riprova, scrivendo ogni tentativo in
-  `logs/avvio.log` e gli errori in `logs/tray-stderr.log`. Senza, un errore nei primi secondi dopo
-  un riavvio moriva senza traccia, e il tablet a scuola non trovava più il computer;
+  l'icona, controlla che `/health` risponda e, se l'icona si chiude, riprova, scrivendo ogni
+  tentativo in `logs/avvio.log` e gli errori in `logs/tray-stderr.log`. Un'icona viva ma lenta a
+  partire non si uccide: la si aspetta fino a cinque minuti, e poi la si lascia al suo lavoro.
+  Senza, un errore nei primi secondi dopo un riavvio moriva senza traccia, e il tablet a scuola non
+  trovava più il computer;
+- **«Accesso libero»** — vedi [Chi può usarlo](#chi-può-usarlo). La spunta dice se è acceso, e
+  cambiarla la scrive in `config.json`;
 - **«Apri le impostazioni»** e **«Apri i log»**.
 
 Il colore dell'icona dice la stessa cosa a colpo d'occhio: grigia in ascolto a scheda libera, verde
@@ -120,7 +177,7 @@ secondo server: se la porta è già occupata, se ne accorge e si chiude.
 Lo scarico manuale esiste anche come chiamata, per l'app o per chi automatizza:
 
 ```
-POST /v1/admin/unload        (con il token, se c'è)
+POST /v1/admin/unload        (col biglietto dell'account o col codice; non per gli ospiti)
 ```
 
 ## L'archivio dei file
@@ -139,6 +196,11 @@ gigabyte di audio dentro Drive sono esattamente quello che l'archivio esiste per
 I file si chiamano con il loro hash (`blobs/39/39d2a3….m4a`): lo stesso file mandato dal tablet e
 poi dal telefono occupa una volta sola, e un caricamento interrotto non lascia un file a metà con
 il nome di quello buono. L'indice `archive.db` accanto ricorda il nome originale e il tipo.
+
+I caricamenti scrivono su quattro thread loro, separati da quelli della trascrizione, e un blocco
+che non arriva per due minuti chiude il caricamento (408): un tablet che perde la rete a metà file
+non può più tenere fermo il server. I `.part` rimasti da un processo morto a metà si tolgono
+all'avvio.
 
 Sull'app niente cambia: i file **restano anche sul dispositivo**. Questo è un archivio, non uno
 sfratto — si è deciso così, e se un giorno il telefono sarà pieno il pezzo da aggiungere sarà lo
@@ -160,7 +222,10 @@ lì non c'è nessuna riga di comando.
   "token": "",
   "idle_minutes": 10,
   "preload": false,
-  "archive_root": "C:\\Users\\<tu>\\AppData\\Local\\PampaNotes\\archivio"
+  "archive_root": "C:\\Users\\<tu>\\AppData\\Local\\PampaNotes\\archivio",
+  "index_url": "https://pampa-notes-sync.<tuo>.workers.dev",
+  "owner": "tu@gmail.com",
+  "accept_anonymous": false
 }
 ```
 
@@ -215,8 +280,18 @@ sulla rete locale si va diretti, altrimenti si passa da Tailscale. Non c'è nien
 uscendo o rientrando. «Prova la connessione» dice quale dei due ha risposto, così l'indirizzo di
 fuori si può verificare stando a casa.
 
-Con Tailscale la porta resta dentro una rete privata, ma un token è comunque una buona idea: costa
-una riga in `config.json` e si porta dietro col QR.
+Con Tailscale la porta resta dentro una rete privata, ma l'accesso libero va spento appena i
+dispositivi sono aggiornati: da lì in poi entra solo chi ha il tuo account, o il codice.
+
+## Le prove
+
+```
+.venv\Scripts\python.exe -m unittest test_companion -v
+```
+
+Senza GPU e senza modelli: un Worker finto su una porta a caso per biglietti e ospiti, il server
+vero con uvicorn su un'altra, e modelli finti che finiscono la memoria a comando per il ripiego sul
+processore.
 
 ## Non è per forza questo
 

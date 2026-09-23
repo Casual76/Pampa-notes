@@ -137,9 +137,9 @@ def on_qr(icon: pystray.Icon, _: Any) -> None:
     """
     Il QR che l'app legge per configurarsi da sola.
 
-    L'indirizzo del server e il token scritti a mano su un telefono sono due occasioni di
-    sbagliare un carattere e poi cercare il guasto dalla parte del firewall. Lo schema
-    `pampanotes://endpoint` lo dichiara gia' il manifest dell'app.
+    L'indirizzo del server scritto a mano su un telefono e' un'occasione di sbagliare un carattere
+    e poi cercare il guasto dalla parte del firewall. Lo schema `pampanotes://endpoint` lo dichiara
+    gia' il manifest dell'app. Il token non c'e' piu': vedi `pairing_link` nel server.
 
     Si salva come immagine e si apre col visualizzatore di sistema: aprire una finestra vera da
     qui vorrebbe dire un secondo giro di eventi grafico accanto a quello dell'icona, che e' un
@@ -180,6 +180,35 @@ def on_autostart(icon: pystray.Icon, item: Any) -> None:
             icon.notify("Partira' da solo al prossimo accesso.", "Pampa Notes")
         else:
             icon.notify("Non sono riuscito a creare l'attivita' pianificata.", "Pampa Notes")
+    refresh(icon)
+
+
+def anonymous_enabled(_: Any = None) -> bool:
+    return bool(server.STATE["accept_anonymous"])
+
+
+def on_anonymous(icon: pystray.Icon, _: Any) -> None:
+    """
+    Accende o spegne l'accesso senza credenziali, e lo scrive in `config.json`.
+
+    Serve per il passaggio: l'app vecchia non manda niente, quella nuova manda il biglietto
+    dell'account. Finche' c'e' un dispositivo con quella vecchia l'accesso libero resta acceso;
+    quando sono aggiornati tutti si spegne da qui, senza aprire il file a mano.
+    """
+    enabled = not anonymous_enabled()
+    server.STATE["accept_anonymous"] = enabled
+    SETTINGS["accept_anonymous"] = enabled
+    try:
+        config.set_value("accept_anonymous", enabled)
+    except OSError as error:
+        server.log.warning("config.json non si scrive: %s", error)
+        icon.notify("Cambiato solo fino al riavvio: config.json non si scrive.", "Pampa Notes")
+    else:
+        if enabled:
+            icon.notify("Accesso libero: chi raggiunge il computer trascrive senza credenziali.", "Pampa Notes")
+        else:
+            icon.notify("Solo con l'account o con il codice, d'ora in poi.", "Pampa Notes")
+    server.log.info("accesso libero %s dal menu", "acceso" if enabled else "spento")
     refresh(icon)
 
 
@@ -226,18 +255,35 @@ def autostart_enable() -> bool:
     STARTUP_DIR.mkdir(parents=True, exist_ok=True)
     # Il collegamento lo scrive PowerShell: un .lnk e' un formato binario, e l'unico modo comodo
     # di produrlo senza dipendenze e' l'oggetto COM di Windows.
-    command = (
-        f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{SHORTCUT}'); "
-        f"$s.TargetPath = '{runner}'; $s.Arguments = '\"{script}\"'; "
-        f"$s.WorkingDirectory = '{script.parent}'; $s.Description = 'Pampa Notes: il server di trascrizione'; "
-        "$s.Save()"
-    )
+    command = shortcut_command(SHORTCUT, runner, script)
     startup = None
     if os.name == "nt":
         startup = subprocess.STARTUPINFO()
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     result = subprocess.run(["powershell", "-NoProfile", "-Command", command], capture_output=True, text=True, startupinfo=startup, check=False)
     return result.returncode == 0 and SHORTCUT.exists()
+
+
+def ps_quote(value: Any) -> str:
+    """
+    Una stringa PowerShell fra apici singoli: dentro, l'apice si scrive due volte.
+
+    Senza, una cartella come `C:\\Users\\D'Amico` chiudeva la stringa a meta' e il comando falliva
+    (nel caso buono) o eseguiva il resto del percorso come codice (nel caso cattivo).
+    """
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def shortcut_command(shortcut: Path, runner: Path, script: Path) -> str:
+    """Il comando PowerShell che scrive il collegamento, con ogni percorso fra apici come si deve."""
+    # Fra virgolette doppie dentro l'argomento: il percorso dello script ha degli spazi.
+    arguments = '"' + str(script) + '"'
+    return (
+        f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut({ps_quote(shortcut)}); "
+        f"$s.TargetPath = {ps_quote(runner)}; $s.Arguments = {ps_quote(arguments)}; "
+        f"$s.WorkingDirectory = {ps_quote(script.parent)}; $s.Description = 'Pampa Notes: il server di trascrizione'; "
+        "$s.Save()"
+    )
 
 
 def autostart_disable() -> bool:
@@ -301,6 +347,7 @@ def build_menu() -> pystray.Menu:
         pystray.MenuItem("Apri le impostazioni (config.json)", on_config),
         pystray.MenuItem("Apri i log", on_logs),
         pystray.MenuItem("Avvio automatico", on_autostart, checked=autostart_enabled),
+        pystray.MenuItem("Accesso libero (spegni quando i dispositivi sono aggiornati)", on_anonymous, checked=anonymous_enabled),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Esci", on_quit),
     )
