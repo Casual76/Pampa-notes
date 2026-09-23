@@ -111,7 +111,11 @@ qualcuno scrive l'indirizzo di un server. Finche' `onboardingDone` non si sa —
 di benvenuto a ogni apertura.
 
 `JobEntity` è la coda: una riga per lavoro, il worker la porta avanti, la UI la guarda. Una coda per
-provider (`groq`, `custom`), concorrenza 1 dentro ciascuna.
+provider (`groq`, `custom`), concorrenza 1 dentro ciascuna. Un lavoro che all'avvio del processo e'
+ancora «in corso» e' un lavoro il cui processo e' morto (Android l'ha ucciso, un aggiornamento l'ha
+sostituito): `PampaNotesApp.onCreate` lo rimette in coda (`requeueInterrupted`) prima che WorkManager
+possa far partire un worker. Esisteva la query ma non la chiamava nessuno, e la fila restava ferma
+dietro un «caricamento 98%» per sempre.
 
 La ricerca è FTS4 su note e trascrizioni, tenuta in passo da **trigger SQL** (in
 `PampaDatabase.SEARCH_TRIGGERS`), non da Room: un contenuto esterno si aggancia al rowid, e il rowid
@@ -168,6 +172,7 @@ Quattro cose non ovvie, tutte in `core/backup/`:
 | M12 condividere una nota: pagina `/s/<token>` con le parole che si accendono, audio su R2, pannello Condivisioni | fatto |
 | M13 accesso Google (sessioni per dispositivo), Worker pubblicato, ospiti del computer | fatto |
 | M14 aggiornare una nota da un `.sdocx` piu' nuovo, libera spazio, «solo il computer di casa», «tieni tutto anche qui», ritrascrivi, selezione multipla | fatto |
+| M15 export per agenti (una cartella, un file per lezione, file sciolti), pagine scritte a mano come immagini, il computer di casa segue l'account, accesso Google nel primo avvio | fatto |
 
 Dopo M7, il rifacimento dell'interfaccia (engine 1.32–1.35): misura di lettura e pagine intere,
 vetro solo sugli elementi piccoli, tre pannelli sul tablet, la materia che colora l'app, il testo
@@ -198,6 +203,16 @@ Il client sta in `core/sync/`. Cinque cose che reggono tutto:
   (`baseHash`): il server rifiuta (`stale`) quello che non parte dalla versione corrente, **senza
   guardare l'orologio**. Le righe rifiutate restano nell'outbox: e' cosi' che il pull le trova
   sporche e le biforca invece di sovrascriverle.
+- **Un figlio puo' arrivare prima del padre.** Lo stato del Worker tiene una riga per elemento col
+  `seq` della sua *ultima* modifica: una nota ritoccata dopo che le si e' aggiunta una sessione ha il
+  `seq` piu' alto, e con le pagine da 200 la sessione arriva in una pagina e la nota in una dopo. La
+  chiave esterna la rifiutava, la pagina tornava indietro, e il pull falliva sempre nello stesso
+  punto — col push fermo dietro («FOREIGN KEY constraint failed» sul tablet, 23/09). Due difese: il
+  Worker, quando una pagina si ferma a meta', ci mette dentro anche i padri che arriverebbero dopo
+  (`parentsAfter`, provato su una copia del D1 vero: da 24 punti di partenza che fallivano a zero);
+  il client, se un padre manca lo stesso, riporta la riga indietro nel suo savepoint e la ripresenta
+  con la pagina dopo, senza che `lastPullSeq` la scavalchi (`SyncApplier.applyOrPark`). Il push manda
+  prima i padri.
 - **Il testo scritto a mano non si perde mai.** Una nota cambiata da tutte e due le parti: vince la
   piu' recente e l'altra diventa una nota «(conflitto — dispositivo, data)» nella stessa cartella,
   in tutti e due i versi. Per tutto il resto (sessioni, parti, cartelle) vale l'ultimo che ha scritto.
@@ -366,26 +381,49 @@ sotto ha riassunto, sopra ha aggiunto. Non si rifiuta il risultato, si segnala.
 
 ## Export
 
-Il motivo per cui l'app esiste. Un pacchetto ZIP con dentro, in ordine di importanza:
+Il motivo per cui l'app esiste. Tre formati: il **pacchetto** (ZIP), gli stessi **file sciolti** per
+chi non apre gli ZIP (un Progetto di Claude, ChatGPT), e un **file singolo** da incollare.
 
-- `INDEX.md` — l'elenco delle note. Un assistente non apre venti file per rispondere a una domanda:
-  ne apre uno e decide. Senza indice o li apre tutti e finisce il contesto, o ne apre uno a caso.
-- `notes/<cartella>/<nota>.md` — una nota per file, front-matter YAML piu' corpo. **Appunti** e
-  **Trascrizione** stanno sotto due titoli diversi, ed e' la distinzione da cui dipende tutto: un
-  modello che non sa quale delle due sta leggendo tratta un errore di Whisper come una cosa che
-  l'autore ha scritto.
-- `SKILL.md` + `instructions.md` — le regole, nel formato di Claude e in quello di ChatGPT o Gemini.
-  La `description` della skill si costruisce dai titoli veri delle note: e' quello che Claude legge
-  per decidere se aprirla, e una frase generica non viene scelta mai.
-- `README-FOR-AI.md` — bilingue, nella radice, per chi apre lo ZIP senza aver configurato niente.
-- `manifest.json` — gli stessi dati per un programma, con un numero di schema.
+Lo ZIP ha dentro **una cartella sola**, `pampa-notes-<ambito>/`, che e' anche il nome della skill:
+Claude carica una skill cosi' — una cartella con `SKILL.md` — ed estratto non sparge file nella
+cartella di chi lo apre. Dentro, in ordine d'importanza:
 
-I writer (`MarkdownWriter`, `IndexWriter`, `SkillWriter`, `BundleWriter`) sono puri e si provano in
-JVM; `ExportService` e' l'unico pezzo che tocca il database e il SAF. Lo ZIP si scrive in streaming:
-un bundle con le registrazioni di un semestre sono gigabyte, e un telefono che prova a costruirlo in
-memoria viene ucciso dal sistema a meta'. Gli audio entrano `STORED` perche' un m4a e' gia'
-compresso. Una scrittura fallita cancella il file a meta': un archivio rotto e' peggio di nessun
-archivio.
+- `INDEX.md` — per ogni nota le date, le prime parole degli appunti (il «di cosa parla» che un titolo
+  come «Lezione 7» non dice) e **una riga per file** con parole, minuti e, per i pezzi, il tratto di
+  lezione (`41:10–1:22:05`). Un assistente non apre venti file: ne apre uno e decide.
+- `notes/<cartelle>--<nota>.md` — gli **appunti**: front-matter, corpo, le pagine scritte a mano come
+  immagini, e l'elenco delle sessioni coi collegamenti.
+- `notes/<cartelle>--<nota>--AAAA-MM-GG.md` — la **trascrizione** di una lezione, un file per
+  sessione. Sopra le 6000 parole (`TranscriptPieces.MAX_WORDS_PER_FILE`) si divide in pezzi uguali ai
+  confini di paragrafo, `--1di3`, `--2di3`: in un file solo una lezione di due ore un agente la legge
+  troncata. Ogni pezzo si legge da solo: front-matter con nota, giorno, pezzo e tratto, una riga che
+  ricorda che e' testo di una macchina e dove stanno gli appunti, i collegamenti al pezzo prima e dopo.
+  Appunti e trascrizione in **file diversi** e' la distinzione da cui dipende tutto: un modello che
+  non sa quale dei due sta leggendo tratta un errore di Whisper come una cosa che l'autore ha scritto.
+- `images/<nota>/pagina-N.png` — le pagine scritte a mano. Entrano sempre, anche con gli originali
+  spenti: sono appunti, non provenienza.
+- `SKILL.md` + `instructions.md` — le regole. La `description` della skill si costruisce dai titoli
+  veri delle note (una frase generica non viene scelta mai), sotto i 1024 caratteri e senza `<>`, o
+  Claude rifiuta la skill.
+- `README-FOR-AI.md`, bilingue, e `manifest.json` (schema 2, con `files[]` per nota).
+- `audio/`, `sources/` se chiesti, coi nomi resi unici (`2025-10-09-01-Voce 001.m4a`): Samsung Notes
+  chiama «Voce 001» la prima registrazione di ogni nota, e due voci uguali facevano fallire lo ZIP.
+
+`notes/` e' piatta apposta: i nomi sono unici per costruzione (`BundleLayout`, senza distinguere
+maiuscole, coi nomi riservati di Windows evitati), i file di una nota stanno vicini in un elenco
+ordinato, e nel formato sciolto la cartella sparisce senza rompere un collegamento — fra le note i
+collegamenti sono nomi nudi. Indice, manifest e note leggono la stessa mappa dei percorsi.
+
+Provato alla cieca: un agente con in mano solo lo ZIP di «Romanticismo» ha aperto README, INDEX,
+istruzioni e appunti, ha cercato con `grep` nella trascrizione e ha guardato la pagina a mano; ha
+risposto «social catena» — Whisper aveva capito «social casino» — dicendo da dove veniva ciascuna.
+
+I writer (`BundleLayout`, `MarkdownWriter`, `IndexWriter`, `SkillWriter`, `BundleWriter`) sono puri e
+si provano in JVM; `ExportService` e' l'unico pezzo che tocca il database e il SAF. Lo ZIP si scrive
+in streaming, con le voci di cartella esplicite, e audio e immagini `STORED`. Una scrittura fallita
+cancella il file a meta'. I file sciolti si scrivono sempre nella cache e da li' si condividono
+(`ACTION_SEND_MULTIPLE`) o si copiano in una sottocartella di quella scelta. Cambiare «Quale
+trascrizione» nel pannello rifa' la raccolta: si decide leggendo il database, non scrivendo.
 
 Le parole che finiscono dentro il pacchetto passano da `ExportLabels`, riempito dall'app con le
 stringhe della sua lingua: i writer stanno in `:core` e non possono leggere `res/values`.
@@ -418,6 +456,25 @@ Il formato, decodificato da un file vero (`core/src/test/resources/sdocx/fichte.
 
 `SdocxParser` e' tarato su questo file: se non riconosce niente, l'archivio resta come fonte e lo
 dice, invece di importare una nota vuota.
+
+**L'inchiostro diventa immagini.** Una pagina scritta con la S-Pen non ha testo da estrarre, ma
+sono appunti anche quelli, e un assistente li legge con la vista. `SdocxInk` legge i tratti dei
+`<uuid>.page` (formato documentato in [twangodev/sdocx](https://github.com/twangodev/sdocx), che e'
+GPL: riscritto da capo, non copiato): ai livelli `u32` quanti, poi per ognuno intestazione, `u32`
+quanti oggetti, gli oggetti (`u8` tipo, `u16` figli, `u32` lunghezza), 32 byte d'impronta; un
+tratto ha punti compressi (primo in `f64`, poi scarti `u16` col segno nel bit 15 in trentaduesimi),
+pressione, e colore e dimensione nei campi flessibili. `InkLayout` ritaglia sull'inchiostro e taglia
+le pagine lunghe fra le righe (al massimo 1,4 volte la larghezza); sotto i 15 tratti non conta — una
+freccia sopra una foto non e' una pagina di appunti. `InkRenderer` disegna: spessore dalla
+pressione, evidenziatore largo e trasparente **sotto** la penna (disegnato come una penna sembrava
+una riga che barrava la parola), colori veri. Le immagini sono sorgenti `IMAGE` con `derivedFromId`
+verso il `.sdocx` (database 5): seguono sync, archivio, «Libera spazio» ed export, e se ne vanno col
+`.sdocx` quando la nota si aggiorna. Gli id sono deterministici (`.sdocx` + numero di pagina), cosi'
+due dispositivi che le ricavano tutti e due producono le stesse righe. Un giro unico all'avvio le
+ricava dalle note importate prima; «Ricava le pagine a mano» nel menu della nota le rifa'. Nella nota
+stanno nella scheda Testo, sotto gli appunti. I `media/*.spi` sono miniature in un codec proprietario
+e non si usano. Un identificatore interno («0com.samsung») passava il filtro della prosa e diventava
+il testo di una nota scritta tutta a mano: ora si scarta.
 
 **La stessa nota, una versione dopo.** Gli appunti si prendono in Samsung Notes e si ricondividono
 quando crescono: se il titolo e' quello di una nota gia' importata da un `.sdocx`

@@ -112,6 +112,9 @@ class SdocxParserTest {
     assertFalse(SdocxParser.looksLikeProse("........,,,,,,,"))
     assertTrue(SdocxParser.looksLikeProse("Fichte nasce nel 1752 e muore nel 1814 a Berlino."))
     assertTrue(SdocxParser.looksLikeProse("Ελληνικά και latino insieme, va bene."))
+    // In «Romanticismo», scritta tutta a mano, l'unica «frase» era un identificatore di Samsung.
+    assertFalse(SdocxParser.looksLikeProse("0com.samsung"))
+    assertFalse(SdocxParser.looksLikeProse("com.samsung.android.app.notes"))
   }
 
   @Test

@@ -254,6 +254,10 @@ object SdocxParser {
    */
   internal fun looksLikeProse(text: String): Boolean {
     if (text.length < PROSE_MIN_CHARS) return false
+    // Un identificatore di Samsung — «com.samsung.android...», a volte con un byte davanti che si
+    // legge come «0» — ha solo lettere e punti e passa il resto dei controlli. In una nota scritta
+    // tutta a mano era l'unica «frase» trovata, e diventava il testo della nota: «0com.samsung».
+    if (PACKAGE_NAME.containsMatchIn(text)) return false
     var letters = 0
     var acceptable = 0
     for (c in text) {
@@ -283,6 +287,8 @@ object SdocxParser {
   }
 
   private const val PROSE_MIN_CHARS = 8
+
+  private val PACKAGE_NAME = Regex("""^\W*\d*(com|android|samsung)(\.[a-z0-9_]+)+\W*$""", RegexOption.IGNORE_CASE)
   private const val PROSE_MAX_CHARS = 2_000_000
   private const val TITLE_MAX_CHARS = 160
   private const val VOICE_NAME_MAX_CHARS = 80

@@ -6,6 +6,7 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
+import androidx.credentials.exceptions.NoCredentialException
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 
@@ -35,6 +36,9 @@ object GoogleIdentity {
       CredentialManager.create(context).getCredential(context, request)
     } catch (cancelled: GetCredentialCancellationException) {
       throw Cancelled()
+    } catch (none: NoCredentialException) {
+      // Il messaggio di Android e' «No credentials available», in inglese, e non dice cosa fare.
+      throw IllegalStateException("su questo dispositivo non c'e' un account Google: aggiungilo nelle impostazioni di Android e riprova", none)
     } catch (error: GetCredentialException) {
       throw IllegalStateException(error.message ?: error.type, error)
     }

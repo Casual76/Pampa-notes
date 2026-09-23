@@ -44,8 +44,9 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
       append(NL).append("## ").append(labels.handwriting).append(NL).append(NL)
       append('_').append(labels.handwritingDetail).append('_').append(NL).append(NL)
       note.handwriting.forEachIndexed { index, image ->
+        if (index > 0) append(NL)
         append("![").append(labels.page).append(' ').append(image.page).append("](")
-        append(layout.link(files.notes, files.images[index])).append(')').append(NL).append(NL)
+        append(layout.link(files.notes, files.images[index])).append(')').append(NL)
       }
     }
 

@@ -10,6 +10,7 @@ import dev.pampa.pampanotes.core.db.NoteDao
 import dev.pampa.pampanotes.core.importing.HandwritingPages
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
+import dev.pampa.pampanotes.core.transcription.GroqWhisperProvider
 import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
 import dev.pampa.pampanotes.work.AppNotifications
 import dev.pampa.pampanotes.work.WorkScheduler
@@ -18,6 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 /** I flag remoti, dichiarati con il valore con cui la build e' stata provata. */
 object Flags {
@@ -41,6 +43,12 @@ class PampaNotesApp : Application(), Configuration.Provider {
   override fun onCreate() {
     super.onCreate()
     AppNotifications.createChannels(this)
+    // Un lavoro «in corso» all'avvio del processo e' un lavoro il cui processo e' morto: Android
+    // ha ucciso l'app, o un aggiornamento l'ha sostituita a meta' trascrizione. Qui nessun worker
+    // sta ancora girando, quindi torna in coda; senza, restava «in caricamento» per sempre e la
+    // fila si fermava dietro di lui. Si fa prima che WorkManager possa far partire un worker —
+    // dopo, si rischierebbe di rimettere in coda un lavoro vivo — ed e' un UPDATE solo.
+    runBlocking(Dispatchers.IO) { runCatching { transcription.requeueInterrupted() } }
     // Il file di controllo, se la copia in cache e' vecchia. Non blocca niente: finche' non arriva,
     // l'app usa l'ultima risposta valida (o i default compilati).
     applicationScope.launch { runCatching { remoteConfig.refreshIfStale() } }
@@ -56,6 +64,7 @@ class PampaNotesApp : Application(), Configuration.Provider {
         // Una fila che aspetta il computer di casa: aprire l'app e' un buon momento per riprovare,
         // prima del tentativo rimandato. Il worker guarda se risponde, e se no torna ad aspettare.
         if (transcription.queuedCount(OpenAiCompatProvider.ID) > 0) scheduler.wake(OpenAiCompatProvider.ID)
+        if (transcription.queuedCount(GroqWhisperProvider.ID) > 0) scheduler.kick(GroqWhisperProvider.ID)
       }
     }
     // Le pagine scritte a mano delle note importate prima che l'app le sapesse disegnare: una volta

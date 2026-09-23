@@ -400,14 +400,17 @@ class ImportCoordinator @Inject constructor(
     val status = if (body.isEmpty() && extracted.isEmpty() && alreadyThere == 0 && pages == 0) SourceStatus.PARTIAL else SourceStatus.OK
     val detail = when {
       status == SourceStatus.PARTIAL -> "Nella nota non c'era testo battuto, ne' registrazioni, ne' inchiostro da disegnare"
-      replace -> "Aggiornata: ${extracted.size} registrazioni nuove, $alreadyThere gia' presenti" + if (pages > 0) ", $pages pagine scritte a mano" else ""
-      pages > 0 -> "$pages pagine scritte a mano, attaccate alla nota come immagini"
+      replace -> "Aggiornata: ${extracted.size} registrazioni nuove, $alreadyThere gia' presenti" + if (pages > 0) ", ${pagesLabel(pages)}" else ""
+      pages == 1 -> "1 pagina scritta a mano, attaccata alla nota come immagine"
+      pages > 1 -> "$pages pagine scritte a mano, attaccate alla nota come immagini"
       else -> null
     }
     sources.upsert(entity.copy(status = status, detail = detail))
     results.add(0, ImportedItem(candidate.id, doc.title ?: candidate.displayName, SourceKind.SDOCX, status, detail, body.length, sourceId))
     return results
   }
+
+  private fun pagesLabel(pages: Int): String = if (pages == 1) "1 pagina scritta a mano" else "$pages pagine scritte a mano"
 
   /**
    * Il testo estratto, con sopra da dove viene.
