@@ -56,7 +56,9 @@ import dev.pampa.pampanotes.core.db.SourceEntity
 import dev.pampa.pampanotes.core.db.SourceKind
 import dev.pampa.pampanotes.core.db.SourceStatus
 import dev.pampa.pampanotes.ui.common.Formats
+import dev.pampa.pampanotes.ui.common.CloseWhenGone
 import dev.pampa.pampanotes.ui.common.JobProgressBars
+import dev.pampa.pampanotes.ui.common.jobErrorText
 import dev.pampa.pampanotes.ui.common.jobPhaseText
 import dev.pampa.pampanotes.ui.common.MarkdownText
 import dev.pampa.pampanotes.ui.common.OverflowMenuButton
@@ -179,6 +181,8 @@ private fun NoteScreen(
   val addAudioLabel = stringResource(R.string.note_add_audio)
   val retranscribeAllLabel = stringResource(R.string.note_retranscribe_all)
   val chooseSessionsLabel = stringResource(R.string.note_choose_sessions)
+
+  CloseWhenGone(gone = !state.loading && state.note == null, onBack = onBack)
 
   val tabLabels = listOf(tabText, tabAudio, tabSources)
   val selectedLabel = when (tab) {
@@ -527,13 +531,24 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
             )
           }
 
-          else -> FluidButton(
-            text = stringResource(R.string.note_transcribe),
-            onClick = { onTranscribe(sessionId) },
-            style = FluidButtonStyle.Tinted,
-            fillWidth = true,
-            modifier = Modifier.fillMaxWidth(),
-          )
+          else -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // L'ultimo tentativo e' fallito: il perche', e lo stesso tasto che diventa «Riprova».
+            val failed = state.failedJobs[sessionId]
+            if (failed != null) {
+              FluidInlineMessage(
+                title = stringResource(R.string.job_failed_transcribe),
+                message = jobErrorText(failed.errorCode ?: "unknown", failed.errorMessage, failed.provider),
+                tone = FluidTone.Danger,
+              )
+            }
+            FluidButton(
+              text = stringResource(if (failed != null) R.string.job_retry else R.string.note_transcribe),
+              onClick = { onTranscribe(sessionId) },
+              style = FluidButtonStyle.Tinted,
+              fillWidth = true,
+              modifier = Modifier.fillMaxWidth(),
+            )
+          }
         }
       }
     }

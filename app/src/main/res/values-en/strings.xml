@@ -61,8 +61,8 @@
   </plurals>
   <string name="home_section_folders">Folders</string>
   <string name="home_section_recent">Recent notes</string>
-  <string name="home_empty_title">No folders yet</string>
-  <string name="home_empty_detail">Create a folder per subject or topic, then import notes and recordings.</string>
+  <string name="home_empty_title">No notes yet</string>
+  <string name="home_empty_detail">Share a Samsung Notes note, a PDF or a recording with Pampa Notes, or import it from here: you pick the folder afterwards.</string>
   <string name="home_new_folder">New folder</string>
   <string name="home_import">Import</string>
   <plurals name="folder_note_count">
@@ -129,6 +129,7 @@
 
   <string name="folder_loading">Folder</string>
   <string name="folder_new_note">New note</string>
+  <string name="folder_new_note_placeholder">Kant, the Critique of Pure Reason</string>
   <string name="folder_new_subfolder">New subfolder</string>
   <string name="folder_section_notes">Notes</string>
   <string name="folder_search_placeholder">Search this folder</string>
@@ -182,6 +183,8 @@
   <string name="share_open">Open</string>
   <string name="share_copied">Link copied</string>
   <string name="share_revoke">Revoke the link</string>
+  <string name="share_revoke_title">Revoke the link?</string>
+  <string name="share_revoke_message">Whoever has it won’t be able to open the page anymore, and the uploaded recordings are deleted from the cloud. You can share again, with a different link.</string>
   <string name="share_link_hint">The link is the key: anyone who has it can open the page. Revoking it turns it off and deletes the audio from the cloud.</string>
   <string name="share_audio_missing_title">Audio not uploaded</string>
   <string name="share_audio_missing_detail">The link exists, but the recordings have not gone up yet: the page shows only the text.</string>
@@ -397,7 +400,7 @@
   <string name="error_server">The service returned an error. It usually clears on its own.</string>
   <string name="error_network">No network, or the server is unreachable.</string>
   <string name="error_timeout">The service did not answer in time.</string>
-  <string name="error_decode">This audio could not be read. Try the personal server, which accepts more formats.</string>
+  <string name="error_decode">This audio could not be read. Try the home computer, which accepts more formats.</string>
   <string name="error_parse">The service returned something we could not read.</string>
   <string name="error_no_speech">The service found no words in this recording: maybe silence, or noise.</string>
   <string name="error_unknown_model">The chosen model no longer exists on the service.</string>
@@ -422,7 +425,7 @@
   <string name="settings_groq_ok">Works. Model: %1$s</string>
   <string name="settings_verify">Save and verify</string>
   <string name="settings_ok">OK</string>
-  <string name="settings_endpoint">Personal server</string>
+  <string name="settings_endpoint">Home computer</string>
   <string name="settings_endpoint_detail">Your computer with WhisperX: no size limit, and the files never leave the house.</string>
   <string name="settings_endpoint_url">Address at home</string>
   <string name="settings_endpoint_token">Code (only without an account)</string>
@@ -431,7 +434,7 @@
   <string name="settings_endpoint_remote_hint">The Tailscale one. Leave empty if you don\'t use it.</string>
   <string name="settings_endpoint_ok_lan">Reached at home, in %1$d ms</string>
   <string name="settings_endpoint_ok_remote">Reached from outside, in %1$d ms</string>
-  <string name="settings_endpoint_linked_title">Personal server linked</string>
+  <string name="settings_endpoint_linked_title">Home computer linked</string>
   <string name="settings_endpoint_linked">%1$s. From now on, transcriptions go through your computer.</string>
   <string name="settings_test_connection">Test the connection</string>
   <string name="settings_endpoint_ok">Reached in %1$d ms</string>
@@ -440,7 +443,7 @@
     <item quantity="other">%d models</item>
   </plurals>
   <string name="provider_groq">Groq</string>
-  <string name="provider_custom">Personal server</string>
+  <string name="provider_custom">Home computer</string>
 
   <string name="settings_custom_only">Home computer only</string>
   <string name="settings_custom_only_detail">Never Groq, not even automatically: whatever comes in waits for the computer to answer</string>
@@ -512,6 +515,14 @@
   <string name="session_retranscribe">Transcribe again</string>
   <string name="session_retranscribe_title">Transcribe again?</string>
   <string name="session_retranscribe_message">The current transcript and its cleaned-up versions will be replaced by the new one. The recordings stay as they are.</string>
+  <string name="a11y_selected">Selected</string>
+  <string name="a11y_not_selected">Not selected</string>
+  <string name="job_failed_transcribe">The transcription failed</string>
+  <string name="job_failed_refine">The cleaned-up version failed</string>
+  <string name="job_retry">Try again</string>
+  <string name="part_delete">Delete the recording</string>
+  <string name="part_delete_title">Delete this recording?</string>
+  <string name="part_delete_message">“%1$s” (%2$s) goes away with its stretch of the transcript, on your other devices too. If it isn\'t archived on the home computer, this was the only copy.</string>
   <string name="session_delete_title">Delete this session?</string>
   <plurals name="session_delete_message">
     <item quantity="one">It goes, and takes its recording and its transcript with it.</item>
@@ -697,7 +708,7 @@
   <string name="sidebar_all_folders">All folders</string>
   <string name="detail_empty_title">Nothing open</string>
   <string name="detail_empty_detail">Pick a note from the list, or import one.</string>
-  <string name="settings_section_services_detail">Groq key and personal server</string>
+  <string name="settings_section_services_detail">Groq key and home computer</string>
   <string name="settings_section_transcription_detail">Service, language, vocabulary</string>
   <string name="settings_section_refinement_detail">How much to clean up, and with which model</string>
   <string name="settings_section_appearance_detail">Theme, colours, haptics</string>
@@ -711,13 +722,13 @@
   <string name="guests_intro">A friend can transcribe their lectures with your computer: they get their own code, which you can revoke, and here you see how much they use it. You always go first in the queue; their recordings never touch your archive.</string>
   <string name="guests_needs_sync">Guests live in the sync service: set it up in Settings → Sync.</string>
   <string name="guests_no_computer_title">No computer to lend</string>
-  <string name="guests_no_computer_detail">Set up the personal server in Settings → Services: that is what the guest will use.</string>
+  <string name="guests_no_computer_detail">Link the home computer in Settings → Services: that is what the guest will use.</string>
   <string name="guests_new_header">New guest</string>
   <string name="guests_new_name">Name</string>
   <string name="guests_new_name_hint">Marco, Giulia…</string>
   <string name="guests_new_create">Create the invite</string>
   <string name="guests_invite_title">Invite for %1$s</string>
-  <string name="guests_invite_text">You can transcribe your lectures with %1$s\u2019s computer.\n\n1) Install Tailscale and accept the invite to their network.\n2) Install Pampa Notes.\n3) Open Settings → Services → Personal server and enter:\n   address: %2$s\n   code: %3$s\n\nOr paste this link in the browser address bar: %4$s</string>
+  <string name="guests_invite_text">You can transcribe your lectures with %1$s\u2019s computer.\n\n1) Install Tailscale and accept the invite to their network.\n2) Install Pampa Notes.\n3) Open Settings → Services → Home computer and enter:\n   address: %2$s\n   code: %3$s\n\nOr paste this link in the browser address bar: %4$s</string>
   <string name="guests_invite_owner_fallback">a friend</string>
   <string name="guests_invite_send">Send the invite</string>
   <string name="guests_invite_once">The code is shown only now: if they lose it, revoke the guest and create a new one.</string>
@@ -732,6 +743,8 @@
   </plurals>
   <string name="guests_last_used">last %1$s</string>
   <string name="guests_revoke">Revoke the guest</string>
+  <string name="guests_revoke_title">Revoke this guest?</string>
+  <string name="guests_revoke_message">%1$s won’t be able to transcribe with your computer anymore: their code stops working within ten minutes.</string>
   <string name="guests_companion_header">On the computer</string>
   <string name="guests_companion_detail">For the companion to recognise guests, its config.json needs these two lines:</string>
   <string name="guests_tailscale_footnote">The guest must join your Tailscale network: in the Tailscale admin panel, “Users → Invite”, or share the computer with their network.</string>
@@ -778,7 +791,7 @@
   <string name="settings_models_missing">Verify the Groq key under Services to see the models to choose from.</string>
   <string name="settings_subject_accent_detail">With the brand colours, the app takes the colour of the subject you are in. With Material You or a chosen tint, that one stays.</string>
   <string name="note_sources_hint">The files the text came from. Tap a row to reopen the original.</string>
-  <string name="session_words_estimated">Per-word timings are estimated: Groq gives per-sentence times, not per-word. With the personal server they are truly aligned.</string>
+  <string name="session_words_estimated">Per-word timings are estimated: Groq gives per-sentence times, not per-word. With the home computer they are truly aligned.</string>
   <string name="session_remote_title">The recordings are on your home computer</string>
   <plurals name="session_remote_detail">
     <item quantity="one">One file, %2$s. Away from home it comes through Tailscale.</item>
@@ -835,7 +848,7 @@
   <string name="storage_clear_exports">Empty the exported bundles</string>
   <string name="storage_footnote">Left-behind files are the ones no row mentions any more: it happens when a note is deleted while a job was still queued.</string>
   <string name="storage_archive_header">Archive on your home computer</string>
-  <string name="storage_archive_detail">Recordings and originals go up to your personal server, at home or over Tailscale, and stay there. Nothing is deleted here.</string>
+  <string name="storage_archive_detail">Recordings and originals go up to your home computer, over the home network or Tailscale, and stay there. Nothing is deleted here.</string>
   <string name="storage_archive_enable">Archive on the computer</string>
   <string name="storage_archive_enable_detail">After every import and every six hours, when it can reach it</string>
   <string name="storage_archive_unmetered">Wi-Fi only</string>
@@ -844,7 +857,7 @@
   <string name="storage_pending_archive">To archive</string>
   <string name="storage_archive_now">Archive now</string>
   <string name="storage_archive_running">%1$d of %2$d · %3$s</string>
-  <string name="storage_archive_no_endpoint">Needs the personal server: set it up under Services.</string>
+  <string name="storage_archive_no_endpoint">Needs the home computer: link it under Services.</string>
   <string name="storage_archive_last">Last run: %1$s</string>
   <string name="storage_archive_result">%1$d uploaded, %2$d already there, %3$d failed</string>
   <string name="storage_archive_result_error">Last error: %1$s</string>
@@ -911,8 +924,8 @@
   <string name="onboarding_import_picker">From the import button</string>
   <string name="onboarding_import_picker_detail">Under More, or from a folder screen</string>
   <string name="onboarding_provider_title">Who transcribes</string>
-  <string name="onboarding_provider_detail">Groq is in the cloud and wants a free key. The personal server runs on your computer and also gives per-word timings.</string>
-  <string name="onboarding_server_detail">The address of the computer at home, with its port. The server installs from companion/ in the repository.</string>
+  <string name="onboarding_provider_detail">Groq is in the cloud and wants a free key. The home computer transcribes on your PC and also gives per-word timings.</string>
+  <string name="onboarding_server_detail">The address of the computer at home, with its port.</string>
   <string name="onboarding_provider_later">You can leave this for now: the same page lives in Settings, under Services.</string>
   <string name="onboarding_backup_title">A copy kept safe</string>
   <string name="onboarding_backup_detail">A folder for backups and exported bundles. Drive works too: files land there like in any other folder.</string>
@@ -1220,6 +1233,8 @@
   <!-- dates-home -->
   <string name="home_section_todo">To do</string>
   <string name="home_todo_more">First %1$d of %2$d</string>
+  <string name="home_todo_all">Show all %1$d</string>
+  <string name="home_todo_less">Show fewer</string>
   <string name="home_todo_transcribe_all">Transcribe all</string>
   <string name="home_job_progress">%1$s · %2$d%%</string>
   <plurals name="home_session_count">

@@ -24,7 +24,6 @@ import dev.antigravity.fluidengine.ui.fluid.FluidSectionFootnote
 import dev.antigravity.fluidengine.ui.fluid.FluidTextField
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.ui.common.SheetScaffold
-import dev.pampa.pampanotes.core.model.Dates
 import dev.pampa.pampanotes.ui.common.Formats
 import java.time.LocalDate
 
@@ -72,10 +71,10 @@ fun SessionRenameSheet(
           )
           FluidButton(
             text = stringResource(R.string.action_save),
-            onClick = { onConfirm(text, chosen) },
+            onClick = { onConfirm(text, Formats.typedDate(chosen) ?: chosen) },
             // Una data che non si sa leggere non si salva: meglio un tasto spento di una riga di
             // database con dentro "lunedi'".
-            enabled = Dates.parseOrNull(chosen) != null,
+            enabled = Formats.typedDate(chosen) != null,
             modifier = Modifier.weight(1f),
             fillWidth = true,
           )
@@ -100,7 +99,7 @@ fun SessionRenameSheet(
           val iso = Formats.isoDate(candidate)
           FluidChip(
             label = Formats.relativeDate(candidate),
-            selected = iso == chosen,
+            selected = iso == Formats.typedDate(chosen),
             onClick = { chosen = iso },
           )
         }
@@ -110,7 +109,7 @@ fun SessionRenameSheet(
         value = chosen,
         onValueChange = { chosen = it },
         label = stringResource(R.string.session_date_custom),
-        placeholder = "2026-09-17",
+        placeholder = remember { Formats.isoDate(LocalDate.now()) },
         modifier = Modifier.fillMaxWidth(),
       )
 

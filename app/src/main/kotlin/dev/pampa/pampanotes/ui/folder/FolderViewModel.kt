@@ -1,5 +1,6 @@
 package dev.pampa.pampanotes.ui.folder
 
+import dev.pampa.pampanotes.core.db.JobEntity
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -36,6 +37,8 @@ data class FolderUiState(
   val allFolders: List<FolderEntity> = emptyList(),
   /** Le note con lezioni che un altro dispositivo sta trascrivendo: il badge dice dove, non «da trascrivere». */
   val elsewhere: Map<String, NoteTranscribingElsewhere> = emptyMap(),
+  /** I lavori di qui, per nota: il badge dice «In coda» o a che punto e', come nella home. */
+  val jobs: Map<String, JobEntity> = emptyMap(),
   val loading: Boolean = true,
 ) {
   /** Le sessioni senza trascrizione che nessun altro dispositivo sta gia' trascrivendo. */
@@ -74,6 +77,9 @@ class FolderViewModel @Inject constructor(
     path,
     folders.observeAll(),
     transcription.observeElsewhere().map { TranscribingMarker.byNote(it.values) },
+    transcription.observeActive().map { active ->
+      active.mapNotNull { job -> sessions.get(job.sessionId)?.noteId?.let { it to job } }.toMap()
+    },
   ) { values ->
     @Suppress("UNCHECKED_CAST")
     FolderUiState(
@@ -84,6 +90,7 @@ class FolderViewModel @Inject constructor(
       query = values[3] as String,
       allFolders = values[5] as List<FolderEntity>,
       elsewhere = values[6] as Map<String, NoteTranscribingElsewhere>,
+      jobs = values[7] as Map<String, JobEntity>,
       loading = false,
     )
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FolderUiState())

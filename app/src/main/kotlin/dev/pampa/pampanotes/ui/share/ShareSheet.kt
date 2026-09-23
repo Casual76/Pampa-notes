@@ -1,5 +1,9 @@
 package dev.pampa.pampanotes.ui.share
 
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import dev.pampa.pampanotes.ui.common.ConfirmDestructive
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -52,6 +56,16 @@ fun ShareSheet(
   viewModel: ShareViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
+  var revoking by remember { mutableStateOf(false) }
+  if (revoking) {
+    ConfirmDestructive(
+      title = stringResource(R.string.share_revoke_title),
+      message = stringResource(R.string.share_revoke_message),
+      confirmLabel = stringResource(R.string.share_revoke),
+      onConfirm = { viewModel.revoke(noteId) },
+      onDismiss = { revoking = false },
+    )
+  }
   val context = LocalContext.current
   val copied = stringResource(R.string.share_copied)
 
@@ -153,7 +167,7 @@ fun ShareSheet(
             )
             FluidButton(text = stringResource(R.string.share_upload_audio), onClick = { viewModel.share(noteId) }, style = FluidButtonStyle.Tinted, fillWidth = true, modifier = Modifier.fillMaxWidth())
           }
-          FluidButton(text = stringResource(R.string.share_revoke), onClick = { viewModel.revoke(noteId) }, style = FluidButtonStyle.Plain, fillWidth = true, modifier = Modifier.fillMaxWidth())
+          FluidButton(text = stringResource(R.string.share_revoke), onClick = { revoking = true }, style = FluidButtonStyle.Plain, fillWidth = true, modifier = Modifier.fillMaxWidth())
           FluidSectionFootnote(text = stringResource(R.string.share_link_hint))
         }
 

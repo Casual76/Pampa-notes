@@ -16,6 +16,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.pampa.pampanotes.core.db.AudioPartEntity
 import dev.pampa.pampanotes.core.db.JobEntity
+import dev.pampa.pampanotes.core.db.JobState
 import dev.pampa.pampanotes.core.db.NoteEntity
 import dev.pampa.pampanotes.core.db.SegmentEntity
 import dev.pampa.pampanotes.core.db.SessionEntity
@@ -82,6 +83,8 @@ data class SessionUiState(
   val activeTranscript: TranscriptEntity? = null,
   val segments: List<SegmentEntity> = emptyList(),
   val job: JobEntity? = null,
+  /** L'ultimo lavoro di questa sessione, se e' fallito: senza, la sessione tornava a «Trascrivi» senza dire perche'. */
+  val failedJob: JobEntity? = null,
   /** Un altro dispositivo la sta trascrivendo adesso: qui niente «Trascrivi» (vedi `TranscribingMarker`). */
   val elsewhere: RemoteTranscribing? = null,
   /** Le altre sessioni della stessa nota: dove una parte puo' andare. */
@@ -254,6 +257,7 @@ class SessionViewModel @Inject constructor(
         ?: transcripts.firstOrNull { it.kind == TranscriptKind.RAW },
       segments = values[3] as List<SegmentEntity>,
       job = (values[4] as List<JobEntity>).firstOrNull { it.state.isActive },
+      failedJob = (values[4] as List<JobEntity>).firstOrNull()?.takeIf { it.state == JobState.FAILED },
       siblings = values[5] as List<SessionEntity>,
       missing = values[7] as List<AudioPartEntity>?,
       fetch = values[8] as FetchState?,

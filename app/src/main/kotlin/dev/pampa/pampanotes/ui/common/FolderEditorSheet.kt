@@ -50,6 +50,9 @@ fun FolderEditorSheet(
   initialIcon: String?,
   onDismiss: () -> Unit,
   onConfirm: (name: String, tone: String?, icon: String?) -> Unit,
+  // Una nota non ha colore ne' icona: senza, il pannello chiede solo il nome.
+  appearance: Boolean = true,
+  placeholder: String? = null,
 ) {
   // Chiavi sul contenuto: un secondo pannello aperto su un'altra cartella deve ripartire dai suoi
   // valori, non da quelli di prima.
@@ -91,41 +94,46 @@ fun FolderEditorSheet(
         value = name,
         onValueChange = { name = it },
         label = title,
-        placeholder = stringResource(R.string.folder_name_placeholder),
+        placeholder = placeholder ?: stringResource(R.string.folder_name_placeholder),
         modifier = Modifier.fillMaxWidth(),
       )
 
-      FluidSectionFootnote(text = stringResource(R.string.folder_tone_label))
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        selectableTones.forEach { candidate ->
-          FluidColorDot(
-            color = candidate.dotColor(),
-            selected = tone.equals(candidate.name, ignoreCase = true),
-            onClick = { tone = candidate.name },
-            label = candidate.label(),
-          )
-        }
-      }
+      if (appearance) FolderAppearance(tone, { tone = it }, effectiveIcon, { icon = it })
+    }
+  }
+}
 
-      FluidSectionFootnote(text = stringResource(R.string.folder_icon_label))
-      val scroll = rememberScrollState()
-      Row(
-        modifier = Modifier.fillMaxWidth().horizontalScroll(scroll),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-      ) {
-        FolderIcon.entries.forEach { candidate ->
-          IconChoice(
-            candidate = candidate,
-            selected = candidate.key == effectiveIcon,
-            onClick = { icon = candidate.key },
-          )
-        }
-      }
+@Composable
+private fun FolderAppearance(tone: String, onTone: (String) -> Unit, effectiveIcon: String, onIcon: (String) -> Unit) {
+  // Senza contenitore: i figli finiscono nella colonna del pannello, con la sua spaziatura.
+  FluidSectionFootnote(text = stringResource(R.string.folder_tone_label))
+  Row(
+    modifier = Modifier.fillMaxWidth(),
+    horizontalArrangement = Arrangement.spacedBy(10.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    selectableTones.forEach { candidate ->
+      FluidColorDot(
+        color = candidate.dotColor(),
+        selected = tone.equals(candidate.name, ignoreCase = true),
+        onClick = { onTone(candidate.name) },
+        label = candidate.label(),
+      )
+    }
+  }
 
+  FluidSectionFootnote(text = stringResource(R.string.folder_icon_label))
+  val scroll = rememberScrollState()
+  Row(
+    modifier = Modifier.fillMaxWidth().horizontalScroll(scroll),
+    horizontalArrangement = Arrangement.spacedBy(10.dp),
+  ) {
+    FolderIcon.entries.forEach { candidate ->
+      IconChoice(
+        candidate = candidate,
+        selected = candidate.key == effectiveIcon,
+        onClick = { onIcon(candidate.key) },
+      )
     }
   }
 }

@@ -8,7 +8,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import dev.pampa.pampanotes.R
 
 /**
  * Il segno di una riga in selezione multipla: un cerchio vuoto, o pieno e del colore dell'accento.
@@ -21,7 +23,8 @@ fun SelectionMark(selected: Boolean) {
   val scheme = MaterialTheme.colorScheme
   Icon(
     imageVector = if (selected) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
-    contentDescription = null,
+    // Letto insieme alla riga: senza, TalkBack non diceva mai quali erano scelte.
+    contentDescription = stringResource(if (selected) R.string.a11y_selected else R.string.a11y_not_selected),
     tint = if (selected) scheme.primary else scheme.onSurfaceVariant,
     modifier = Modifier.size(24.dp),
   )

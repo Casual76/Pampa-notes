@@ -493,6 +493,16 @@ interface JobDao {
   @Query("SELECT * FROM jobs WHERE sessionId = :sessionId ORDER BY createdAt DESC")
   fun observeBySession(sessionId: String): Flow<List<JobEntity>>
 
+  /**
+   * Le trascrizioni il cui ultimo tentativo e' fallito, una per sessione: la nota lo dice accanto
+   * alla sessione invece di tornare a «Trascrivi» come se non fosse successo niente.
+   */
+  @Query(
+    "SELECT * FROM jobs j WHERE j.type = 'TRANSCRIBE' AND j.state = 'FAILED' AND j.createdAt = " +
+      "(SELECT MAX(createdAt) FROM jobs WHERE sessionId = j.sessionId)"
+  )
+  fun observeLatestFailed(): Flow<List<JobEntity>>
+
   @Query("SELECT * FROM jobs WHERE sessionId = :sessionId AND state IN ('QUEUED','PREPARING','UPLOADING','TRANSCRIBING','STITCHING','CANCEL_REQUESTED') ORDER BY createdAt DESC LIMIT 1")
   suspend fun activeForSession(sessionId: String): JobEntity?
 

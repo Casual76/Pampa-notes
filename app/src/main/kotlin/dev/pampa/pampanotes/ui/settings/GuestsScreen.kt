@@ -1,5 +1,6 @@
 package dev.pampa.pampanotes.ui.settings
 
+import dev.pampa.pampanotes.ui.common.ConfirmDestructive
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -63,6 +64,16 @@ fun GuestsSectionRoute(
   var name by remember { mutableStateOf("") }
   val copied = stringResource(R.string.share_copied)
   val revokeLabel = stringResource(R.string.guests_revoke)
+  var revoking by remember { mutableStateOf<String?>(null) }
+  revoking?.let { guestId ->
+    ConfirmDestructive(
+      title = stringResource(R.string.guests_revoke_title),
+      message = stringResource(R.string.guests_revoke_message, state.guests.firstOrNull { it.guestId == guestId }?.name.orEmpty()),
+      confirmLabel = revokeLabel,
+      onConfirm = { viewModel.revoke(guestId) },
+      onDismiss = { revoking = null },
+    )
+  }
 
   fun inviteText(invite: GuestInvite): String = resources.getString(
     R.string.guests_invite_text,
@@ -162,7 +173,7 @@ fun GuestsSectionRoute(
                   subtitle = guestStatus(guest),
                   eyebrow = stringResource(R.string.shares_created, Formats.relativeDate(guest.createdAt)),
                   contextActions = {
-                    listOf(FluidContextAction(label = revokeLabel, destructive = true) { viewModel.revoke(guest.guestId) })
+                    listOf(FluidContextAction(label = revokeLabel, destructive = true) { revoking = guest.guestId })
                   },
                 )
               }

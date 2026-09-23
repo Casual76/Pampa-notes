@@ -259,9 +259,9 @@ class ImportViewModel @Inject constructor(
     state.copy(grouping = transform(state.grouping ?: AudioGrouping(state.audioInOrder.map { it.id })))
   }
 
-  fun createFolder(name: String) {
+  fun createFolder(name: String, tone: String?, icon: String?) {
     viewModelScope.launch {
-      val folder = folders.create(name, untitled = context.getString(dev.pampa.pampanotes.R.string.import_folder))
+      val folder = folders.create(name, tone = tone, icon = icon, untitled = context.getString(dev.pampa.pampanotes.R.string.import_folder))
       val allFolders = folders.all()
       val paths = allFolders.associate { it.id to folders.parentPathString(it.id) }
       _uiState.update { it.copy(folders = allFolders, folderPaths = paths, selectedFolderId = folder.id, notesInFolder = emptyList()) }
@@ -271,6 +271,8 @@ class ImportViewModel @Inject constructor(
   /** Avanti di un passo, saltando quelli che non hanno niente da chiedere. */
   fun next() {
     val state = _uiState.value
+    // Un secondo tocco prima che la schermata cambi faceva partire un secondo import degli stessi file.
+    if (state.step == ImportStep.RUNNING || state.step == ImportStep.DONE) return
     when (state.step) {
       ImportStep.REVIEW -> _uiState.update {
         it.copy(

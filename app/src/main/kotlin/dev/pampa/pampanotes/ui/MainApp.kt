@@ -285,14 +285,20 @@ private fun AppShell(
     // le azioni lanciano il selettore. Il rimando passa da uno stato perche' i due nascono in
     // ordine e nessuno dei due puo' nascere per primo.
     val launchPicker = remember { mutableStateOf<() -> Unit>({}) }
+    // Scelti da dentro una nota: il wizard si apre sopra di lei invece di prenderne il posto.
+    val pickingInto = remember { mutableStateOf(false) }
     val actions = remember(listNav, detailNav, touchOrigin) {
       PampaNavActions(
         listNav = listNav,
         detailNav = detailNav,
         twoPane = { splits.value },
         touchOrigin = touchOrigin,
-        pickFiles = { launchPicker.value() },
+        pickFiles = {
+          pickingInto.value = false
+          launchPicker.value()
+        },
         pickFilesInto = { noteId ->
+          pickingInto.value = true
           onPickFiles(emptyList(), noteId)
           launchPicker.value()
         },
@@ -302,7 +308,7 @@ private fun AppShell(
     val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
       if (uris.isNotEmpty()) {
         onPickFiles(uris, null)
-        actions.openImport()
+        actions.openImport(fresh = !pickingInto.value)
       } else {
         onPickerCancelled()
       }

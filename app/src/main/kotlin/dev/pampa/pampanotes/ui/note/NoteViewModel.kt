@@ -16,6 +16,7 @@ import dev.pampa.pampanotes.core.db.SessionDao
 import dev.pampa.pampanotes.core.db.SessionWithParts
 import dev.pampa.pampanotes.core.db.SourceDao
 import dev.pampa.pampanotes.core.db.SourceEntity
+import dev.pampa.pampanotes.core.db.JobDao
 import dev.pampa.pampanotes.core.db.JobEntity
 import dev.pampa.pampanotes.core.db.TranscriptDao
 import dev.pampa.pampanotes.core.db.TranscriptEntity
@@ -57,6 +58,8 @@ data class NoteUiState(
   val handwriting: List<SourceEntity> = emptyList(),
   /** I lavori attivi di questa nota, per sessione: la riga mostra a che punto sono. */
   val activeJobs: Map<String, JobEntity> = emptyMap(),
+  /** Le sessioni il cui ultimo tentativo di trascrizione e' fallito, col perche'. */
+  val failedJobs: Map<String, JobEntity> = emptyMap(),
   /**
    * Le sessioni che un altro dispositivo sta trascrivendo adesso, per id: al posto di «Trascrivi»
    * la riga dice dove (vedi `TranscribingMarker`). Quelle di qui stanno in [activeJobs].
@@ -89,6 +92,7 @@ class NoteViewModel @Inject constructor(
   private val files: AppFiles,
   private val fetcher: ArchiveFetcher,
   private val handwriting: HandwritingPages,
+  jobDao: JobDao,
 ) : ViewModel() {
 
   private val noteId: String = savedStateHandle.get<String>("noteId").orEmpty()
@@ -128,6 +132,7 @@ class NoteViewModel @Inject constructor(
     missingSources,
     missingParts,
     transcription.observeElsewhere(),
+    jobDao.observeLatestFailed(),
   ) { values ->
     @Suppress("UNCHECKED_CAST")
     NoteUiState(
@@ -143,6 +148,7 @@ class NoteViewModel @Inject constructor(
       missingSources = values[8] as Set<String>,
       missingParts = values[9] as Set<String>,
       elsewhere = values[10] as Map<String, RemoteTranscribing>,
+      failedJobs = (values[11] as List<JobEntity>).associateBy { it.sessionId },
       loading = false,
     )
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NoteUiState())

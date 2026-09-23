@@ -1,5 +1,7 @@
 package dev.pampa.pampanotes.ui.folder
 
+import dev.pampa.pampanotes.ui.common.jobBadgeLabel
+import dev.pampa.pampanotes.core.db.JobEntity
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
@@ -62,6 +64,7 @@ fun FolderRoute(
   onOpenFolder: (String) -> Unit,
   onOpenNote: (String) -> Unit,
   onImport: () -> Unit,
+  onOpenEditor: (String) -> Unit = {},
   viewModel: FolderViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -73,7 +76,13 @@ fun FolderRoute(
     onImport = onImport,
     onQueryChange = viewModel::setQuery,
     onCreateSubfolder = viewModel::createSubfolder,
-    onCreateNote = { title -> viewModel.createNote(title) { id -> onOpenNote(id) } },
+    // Una nota nuova e' vuota: si apre per scriverci, con la nota sotto per quando si torna indietro.
+    onCreateNote = { title ->
+      viewModel.createNote(title) { id ->
+        onOpenNote(id)
+        onOpenEditor(id)
+      }
+    },
     onUpdateFolder = viewModel::updateFolder,
     onDeleteFolder = viewModel::deleteFolder,
     onDeleteNote = viewModel::deleteNote,
@@ -205,7 +214,7 @@ private fun FolderScreen(
               title = row.note.title,
               subtitle = computerOnly.noteSubtitle(row.note.id, row.note.folderId, noteSubtitle(row)),
               meta = Formats.relativeDate(row.note.updatedAt),
-              badge = noteBadge(state.toTranscribe(row), state.elsewhere[row.note.id]),
+              badge = noteBadge(state.toTranscribe(row), state.elsewhere[row.note.id], state.jobs[row.note.id]),
               tone = if (checked) FluidTone.Primary else FluidTone.Neutral,
               leading = { SelectionMark(checked) },
               onClick = { selected = if (checked) selected - row.note.id else selected + row.note.id },
@@ -266,7 +275,7 @@ private fun FolderScreen(
               subtitle = computerOnly.noteSubtitle(row.note.id, row.note.folderId, noteSubtitle(row)),
               eyebrow = if (row.note.pinned) stringResource(R.string.note_pinned) else null,
               meta = Formats.relativeDate(row.note.updatedAt),
-              badge = noteBadge(state.toTranscribe(row), state.elsewhere[row.note.id]),
+              badge = noteBadge(state.toTranscribe(row), state.elsewhere[row.note.id], state.jobs[row.note.id]),
               onClick = { onOpenNote(row.note.id) },
               contextActions = {
                 listOf(
@@ -329,6 +338,8 @@ private fun FolderScreen(
       initialTone = null,
       initialIcon = null,
       onDismiss = { creatingNote = false },
+      appearance = false,
+      placeholder = stringResource(R.string.folder_new_note_placeholder),
       onConfirm = { name, _, _ ->
         onCreateNote(name)
         creatingNote = false
@@ -465,8 +476,10 @@ private fun noteSubtitle(row: NoteRow): String {
  * sta trascrivendo un altro dispositivo, dove — e' in corso, non da fare.
  */
 @Composable
-private fun noteBadge(toTranscribe: Int, elsewhere: NoteTranscribingElsewhere?): (@Composable () -> Unit)? {
+private fun noteBadge(toTranscribe: Int, elsewhere: NoteTranscribingElsewhere?, job: JobEntity?): (@Composable () -> Unit)? {
   val (label, tone) = when {
+    // Un lavoro in coda o in corso qui: «Da trascrivere» diceva di fare una cosa gia' fatta.
+    job != null -> jobBadgeLabel(job) to dev.antigravity.fluidengine.ui.theme.FluidTone.Primary
     toTranscribe > 0 -> stringResource(R.string.note_to_transcribe) to dev.antigravity.fluidengine.ui.theme.FluidTone.Warning
     elsewhere != null && elsewhere.untranscribed > 0 ->
       stringResource(R.string.transcribing_elsewhere, elsewhere.device) to dev.antigravity.fluidengine.ui.theme.FluidTone.Primary

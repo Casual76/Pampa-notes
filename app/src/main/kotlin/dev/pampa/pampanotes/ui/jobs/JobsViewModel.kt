@@ -9,10 +9,10 @@ import dev.pampa.pampanotes.core.db.SessionDao
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.work.WorkScheduler
 import javax.inject.Inject
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -21,6 +21,8 @@ data class JobRow(
   val job: JobEntity,
   val noteTitle: String,
   val sessionDate: String,
+  /** La sessione c'e' ancora: la riga si apre su di lei. */
+  val sessionExists: Boolean = false,
 )
 
 data class JobsUiState(
@@ -39,13 +41,20 @@ class JobsViewModel @Inject constructor(
   private val scheduler: WorkScheduler,
 ) : ViewModel() {
 
-  /** Cambia quando le note cambiano nome: la riga di un lavoro deve seguirlo. */
-  private val titles = MutableStateFlow<Map<String, Pair<String, String>>>(emptyMap())
-
-  val uiState: StateFlow<JobsUiState> = combine(repository.observeAll(), titles) { jobs, lookup ->
+  /**
+   * I titoli si cercano insieme alle righe, non dopo: prima arrivavano un attimo piu' tardi, e ogni
+   * lavoro mostrava «Nota rimossa» per un istante a ogni apertura.
+   */
+  @OptIn(ExperimentalCoroutinesApi::class)
+  val uiState: StateFlow<JobsUiState> = repository.observeAll().mapLatest { jobs ->
+    val lookup = jobs.map { it.sessionId }.distinct().associateWith { sessionId ->
+      val session = sessions.get(sessionId)
+      val note = session?.let { notes.get(it.noteId) }
+      Triple(note?.title.orEmpty(), session?.date.orEmpty(), session != null)
+    }
     val rows = jobs.map { job ->
-      val (title, date) = lookup[job.sessionId] ?: ("" to "")
-      JobRow(job, title, date)
+      val (title, date, exists) = lookup[job.sessionId] ?: Triple("", "", false)
+      JobRow(job, title, date, exists)
     }
     JobsUiState(
       active = rows.filter { it.job.state.isActive },
@@ -53,19 +62,6 @@ class JobsViewModel @Inject constructor(
       loading = false,
     )
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), JobsUiState())
-
-  init {
-    viewModelScope.launch {
-      repository.observeAll().collect { jobs ->
-        val lookup = jobs.map { it.sessionId }.distinct().associateWith { sessionId ->
-          val session = sessions.get(sessionId)
-          val note = session?.let { notes.get(it.noteId) }
-          (note?.title ?: "") to (session?.date ?: "")
-        }
-        titles.value = lookup
-      }
-    }
-  }
 
   fun cancel(jobId: String) = viewModelScope.launch { repository.requestCancel(jobId) }
 

@@ -36,6 +36,7 @@ import dev.pampa.pampanotes.ui.common.jobStateLabel
 @Composable
 fun JobsRoute(
   onBack: () -> Unit,
+  onOpenSession: (String) -> Unit,
   viewModel: JobsViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -63,7 +64,12 @@ fun JobsRoute(
     if (state.active.isNotEmpty()) {
       item { FluidSectionHeader(title = stringResource(R.string.jobs_section_active)) }
       items(state.active, key = { it.job.id }) { row ->
-        ActiveJobCard(row = row, onCancel = { viewModel.cancel(row.job.id) }, cancelLabel = cancelLabel)
+        ActiveJobCard(
+          row = row,
+          onCancel = { viewModel.cancel(row.job.id) },
+          cancelLabel = cancelLabel,
+          onOpen = { onOpenSession(row.job.sessionId) }.takeIf { row.sessionExists },
+        )
       }
     }
 
@@ -84,6 +90,8 @@ fun JobsRoute(
                 else -> FluidTone.Neutral
               },
               badge = { FluidStatusBadge(label = jobStateLabel(row.job.state), tone = toneOf(row.job.state)) },
+              // Un lavoro fallito si apre sulla sua lezione: e' li' che si capisce quale fosse.
+              onClick = { onOpenSession(row.job.sessionId) }.takeIf { row.sessionExists },
               contextActions = {
                 buildList {
                   if (row.job.state == JobState.FAILED) {
@@ -124,13 +132,14 @@ fun JobsRoute(
 }
 
 @Composable
-private fun ActiveJobCard(row: JobRow, onCancel: () -> Unit, cancelLabel: String) {
+private fun ActiveJobCard(row: JobRow, onCancel: () -> Unit, cancelLabel: String, onOpen: (() -> Unit)?) {
   FluidCard {
     FluidListRow(
       title = row.noteTitle.ifBlank { stringResource(R.string.jobs_unknown_note) },
       subtitle = jobPhaseText(row.job),
       eyebrow = jobStateLabel(row.job.state),
       meta = sessionDateLabel(row.sessionDate),
+      onClick = onOpen,
     )
     // La sessione intera, e sotto il passo in corso: determinata quando il computer dice a che punto
     // e', che scorre quando si sta solo aspettando una risposta — fingere una percentuale mentre il

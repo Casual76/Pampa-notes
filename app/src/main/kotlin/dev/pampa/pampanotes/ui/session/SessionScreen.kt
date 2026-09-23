@@ -63,6 +63,9 @@ import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.ui.common.OverflowMenuButton
 import dev.pampa.pampanotes.core.db.SegmentEntity
+import dev.pampa.pampanotes.core.db.JobEntity
+import dev.pampa.pampanotes.core.db.JobType
+import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.db.TranscriptKind
 import dev.pampa.pampanotes.core.db.TranscriptStatus
 import dev.pampa.pampanotes.core.model.Dates
@@ -70,7 +73,9 @@ import dev.pampa.pampanotes.core.settings.RefinementPreset
 import dev.pampa.pampanotes.player.PlaybackState
 import dev.pampa.pampanotes.ui.common.Formats
 import dev.pampa.pampanotes.ui.common.RunText
+import dev.pampa.pampanotes.ui.common.CloseWhenGone
 import dev.pampa.pampanotes.ui.common.JobProgressBars
+import dev.pampa.pampanotes.ui.common.jobErrorText
 import dev.pampa.pampanotes.ui.common.jobPhaseText
 import dev.pampa.pampanotes.ui.common.MarkdownText
 import androidx.compose.ui.geometry.Rect
@@ -152,6 +157,8 @@ private fun SessionScreen(
   val listState = rememberLazyListState()
   var renaming by remember { mutableStateOf(false) }
   var confirmingDelete by remember { mutableStateOf(false) }
+  // Una registrazione tolta puo' essere l'unica copia: si chiede, come per la sessione intera.
+  var confirmingPartDelete by remember { mutableStateOf<String?>(null) }
   var confirmingRetranscribe by remember { mutableStateOf(false) }
   var refining by remember { mutableStateOf(false) }
   // Dove sta il tasto «altro»: i pop-up di rinomina e ripulitura nascono da li'.
@@ -187,6 +194,7 @@ private fun SessionScreen(
   val mergeLabel = stringResource(R.string.session_merge)
   val deleteLabel = stringResource(R.string.session_delete)
   val moreLabel = stringResource(R.string.action_more)
+  CloseWhenGone(gone = !state.loading && state.session == null, onBack = onBack)
   // La lezione e' della sua materia: l'app prende quel colore.
   ReportSubject(state.folder?.asSubject())
 
@@ -247,9 +255,9 @@ private fun SessionScreen(
       }
     },
   ) {
-    jobItem(state, onCancelJob)
+    jobItem(state, onCancelJob, onRetryJob = { if (it.type == JobType.REFINE) refining = true else onTranscribe() })
     remoteAudioItem(state, onFetchMissing)
-    partsSection(state, onSeek, onMovePart, onMovePartTo, onSplitAt, onDeletePart)
+    partsSection(state, onSeek, onMovePart, onMovePartTo, onSplitAt) { confirmingPartDelete = it }
     transcriptSection(state, onTranscribe, onShowTranscript) {
       onPrepareRefinement()
       refining = true
@@ -303,6 +311,30 @@ private fun SessionScreen(
     )
   }
 
+  confirmingPartDelete?.let { partId ->
+    val part = state.parts.firstOrNull { it.id == partId }
+    FluidAlert(
+      onDismissRequest = { confirmingPartDelete = null },
+      title = stringResource(R.string.part_delete_title),
+      message = stringResource(
+        R.string.part_delete_message,
+        part?.originalName.orEmpty(),
+        Formats.duration(part?.durationMs ?: 0L),
+      ),
+      actions = listOf(
+        FluidAlertAction(
+          label = stringResource(R.string.part_delete),
+          emphasis = FluidAlertAction.Emphasis.Destructive,
+          onClick = {
+            confirmingPartDelete = null
+            onDeletePart(partId)
+          },
+        ),
+        FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = { confirmingPartDelete = null }),
+      ),
+    )
+  }
+
   if (confirmingDelete) {
     FluidAlert(
       onDismissRequest = { confirmingDelete = false },
@@ -327,8 +359,33 @@ private fun SessionScreen(
 // Le sezioni
 // -------------------------------------------------------------------------------------------------
 
-private fun LazyListScope.jobItem(state: SessionUiState, onCancelJob: (String) -> Unit) {
+private fun LazyListScope.jobItem(state: SessionUiState, onCancelJob: (String) -> Unit, onRetryJob: (JobEntity) -> Unit) {
   val job = state.job
+  val failed = state.failedJob
+  if (job == null && failed != null && state.elsewhere == null) {
+    item(key = "job-failed") {
+      FluidCard(highlighted = true) {
+        Text(
+          text = stringResource(if (failed.type == JobType.REFINE) R.string.job_failed_refine else R.string.job_failed_transcribe),
+          style = MaterialTheme.typography.titleSmall,
+          color = MaterialTheme.colorScheme.error,
+        )
+        Text(
+          text = jobErrorText(failed.errorCode ?: "unknown", failed.errorMessage, failed.provider),
+          style = MaterialTheme.typography.bodyMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        FluidButton(
+          text = stringResource(R.string.job_retry),
+          onClick = { onRetryJob(failed) },
+          style = FluidButtonStyle.Plain,
+          fillWidth = true,
+          modifier = Modifier.fillMaxWidth(),
+        )
+      }
+    }
+    return
+  }
   if (job == null) {
     // Il lavoro sta su un altro dispositivo: qui non ci sono barre da mostrare, solo dove, e che
     // il testo arrivera' da solo.
@@ -481,11 +538,13 @@ private fun LazyListScope.transcriptSection(
 ) {
   if (state.transcripts.size > 1) {
     item(key = "versions") {
-      val labels = state.transcripts.map { transcriptLabel(it.kind, it.model) }
-      val selected = state.activeTranscript?.let { transcriptLabel(it.kind, it.model) } ?: labels.first()
+      // Per preset, e unici: due raffinate con lo stesso modello avevano la stessa etichetta, e la
+      // scheda si cercava per etichetta — la seconda non si apriva mai.
+      val labels = distinctLabels(state.transcripts.map { transcriptLabel(it) })
+      val activeIndex = state.transcripts.indexOfFirst { it.id == state.activeTranscript?.id }.coerceAtLeast(0)
       FluidPillTabs(
         options = labels,
-        selected = selected,
+        selected = labels[activeIndex],
         onSelect = { label ->
           val index = labels.indexOf(label)
           state.transcripts.getOrNull(index)?.let { onShowTranscript(it.id) }
@@ -801,7 +860,22 @@ private fun sessionHeading(title: String, date: String): String {
 }
 
 @Composable
-private fun transcriptLabel(kind: TranscriptKind, model: String): String = when (kind) {
+private fun transcriptLabel(transcript: TranscriptEntity): String = when (transcript.kind) {
   TranscriptKind.RAW -> stringResource(R.string.transcript_raw)
-  TranscriptKind.REFINED -> stringResource(R.string.transcript_refined, model)
+  TranscriptKind.REFINED -> when (transcript.preset) {
+    "CLEAN" -> stringResource(R.string.refine_preset_clean)
+    "STRUCTURED" -> stringResource(R.string.refine_preset_structured)
+    "CUSTOM" -> stringResource(R.string.refine_preset_custom)
+    else -> stringResource(R.string.transcript_refined, transcript.model)
+  }
+}
+
+/** «Personalizzata», «Personalizzata 2»: le schede si scelgono per etichetta, e devono essere diverse. */
+private fun distinctLabels(labels: List<String>): List<String> {
+  val seen = mutableMapOf<String, Int>()
+  return labels.map { label ->
+    val count = (seen[label] ?: 0) + 1
+    seen[label] = count
+    if (count == 1) label else "$label $count"
+  }
 }

@@ -65,7 +65,19 @@ class PampaNavActions(
   /** La sessione da «Riprendi ad ascoltare»: si apre e riparte dal punto in cui ci si era fermati. */
   fun resumeSession(id: String) = openDetail(Routes.session(id, play = true), fresh = true)
   fun openEditor(noteId: String) = openDetail(Routes.editor(noteId))
-  fun openImport() = openDetail(Routes.IMPORT, fresh = true)
+  fun openImport(fresh: Boolean = true) = openDetail(Routes.IMPORT, fresh = fresh)
+
+  /**
+   * Il wizard ha finito e apre la nota: se sotto c'e' gia' lei (si stava aggiungendo un file a
+   * questa nota) basta toglierlo, o sul telefono ci sarebbero due volte la stessa nota e servirebbero
+   * due «indietro».
+   */
+  fun finishImport(host: NavHostController, noteId: String) {
+    host.popBackStack()
+    val under = host.currentBackStackEntry
+    if (under?.destination?.route == Routes.NOTE && under.arguments?.getString("noteId") == noteId) return
+    if (host === detailNav) openDetail(Routes.note(noteId)) else navigateExpanding(listNav, Routes.note(noteId))
+  }
   fun openFolder(id: String) = openList(Routes.folder(id))
   fun openSearch() = openList(Routes.SEARCH)
   fun openJobs() = openList(Routes.JOBS)
@@ -240,6 +252,7 @@ fun NavGraphBuilder.listDestinations(actions: PampaNavActions, host: NavHostCont
         onImport = actions.pickFiles,
         onOpenJobs = actions::openJobs,
         onResumeSession = actions::resumeSession,
+        onSearch = actions::openSearch,
       )
     }
   }
@@ -271,7 +284,7 @@ fun NavGraphBuilder.listDestinations(actions: PampaNavActions, host: NavHostCont
     }
   }
   composable(Routes.JOBS) {
-    FluidRouteMotionHost(this@composable) { JobsRoute(onBack = { host.popBackStack() }) }
+    FluidRouteMotionHost(this@composable) { JobsRoute(onBack = { host.popBackStack() }, onOpenSession = actions::openSession) }
   }
   composable(Routes.SETTINGS) {
     FluidRouteMotionHost(this@composable) {
@@ -289,6 +302,7 @@ fun NavGraphBuilder.listDestinations(actions: PampaNavActions, host: NavHostCont
         onOpenFolder = actions::openFolder,
         onOpenNote = actions::openNote,
         onImport = actions.pickFiles,
+        onOpenEditor = actions::openEditor,
       )
     }
   }
@@ -346,7 +360,7 @@ fun NavGraphBuilder.detailDestinations(actions: PampaNavActions, host: NavHostCo
     FluidRouteMotionHost(this@composable) {
       ImportRoute(
         onClose = { host.popBackStack() },
-        onOpenNote = { id -> actions.replaceWith(host, Routes.note(id)) },
+        onOpenNote = { id -> actions.finishImport(host, id) },
       )
     }
   }

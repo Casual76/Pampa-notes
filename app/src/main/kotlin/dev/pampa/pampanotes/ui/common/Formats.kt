@@ -101,6 +101,23 @@ object Formats {
   }
 
   fun isoDate(date: LocalDate): String = date.format(DateTimeFormatter.ISO_LOCAL_DATE)
+
+  /**
+   * Una data scritta a mano, come la scrive chi la scrive: «2025-09-22», ma anche «22/09/2025»,
+   * «22.9.25» o «22-9-2025». Restituisce la forma ISO, o null se non e' una data. Prima si accettava
+   * solo la prima, e «22/09/2025» veniva ignorata senza dire niente.
+   */
+  fun typedDate(text: String): String? {
+    val clean = text.trim()
+    if (clean.isEmpty()) return null
+    runCatching { return isoDate(LocalDate.parse(clean)) }
+    val match = TYPED_DATE.matchEntire(clean) ?: return null
+    val (d, m, y) = match.destructured
+    val year = if (y.length == 2) 2000 + y.toInt() else y.toInt()
+    return runCatching { isoDate(LocalDate.of(year, m.toInt(), d.toInt())) }.getOrNull()
+  }
+
+  private val TYPED_DATE = Regex("""^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2}|\d{4})$""")
 }
 
 /** Il tono di una cartella, salvato per nome. Sconosciuto o assente vuol dire neutro. */

@@ -1,5 +1,9 @@
 package dev.pampa.pampanotes.ui.settings
 
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import dev.pampa.pampanotes.ui.common.ConfirmDestructive
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -48,6 +52,16 @@ fun SharesSectionRoute(
   val sendLabel = stringResource(R.string.share_send)
   val openLabel = stringResource(R.string.share_open)
   val revokeLabel = stringResource(R.string.share_revoke)
+  var revoking by remember { mutableStateOf<String?>(null) }
+  revoking?.let { shareId ->
+    ConfirmDestructive(
+      title = stringResource(R.string.share_revoke_title),
+      message = stringResource(R.string.share_revoke_message),
+      confirmLabel = revokeLabel,
+      onConfirm = { viewModel.revoke(shareId) },
+      onDismiss = { revoking = null },
+    )
+  }
 
   fun copy(url: String) {
     context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("Pampa Notes", url))
@@ -104,7 +118,7 @@ fun SharesSectionRoute(
                   FluidContextAction(label = openLabel) { open(share.url) },
                   FluidContextAction(label = copyLabel) { copy(share.url) },
                   FluidContextAction(label = sendLabel) { send(share.title, share.url) },
-                  FluidContextAction(label = revokeLabel, destructive = true) { viewModel.revoke(share.shareId) },
+                  FluidContextAction(label = revokeLabel, destructive = true) { revoking = share.shareId },
                 )
               },
             )

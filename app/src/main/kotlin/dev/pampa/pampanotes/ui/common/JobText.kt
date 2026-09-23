@@ -125,3 +125,11 @@ fun jobErrorRes(code: String, provider: String? = null): Int = when (code) {
   "cancelled" -> R.string.job_state_cancelled
   else -> R.string.error_generic
 }
+
+/** «In coda», «Trascrizione · 42%»: lo stato, e quanto manca quando lo si sa. */
+@Composable
+fun jobBadgeLabel(job: JobEntity): String {
+  val state = jobStateLabel(job.state)
+  val percent = (job.progress * 100).toInt()
+  return if (job.state.isRunning && percent in 1..99) stringResource(R.string.home_job_progress, state, percent) else state
+}

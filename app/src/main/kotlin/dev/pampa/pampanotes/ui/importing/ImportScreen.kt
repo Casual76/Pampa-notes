@@ -96,7 +96,7 @@ private fun ImportScreen(
   onSelectNote: (String?) -> Unit,
   onTitleChange: (String) -> Unit,
   onUpdateExisting: (Boolean) -> Unit,
-  onCreateFolder: (String) -> Unit,
+  onCreateFolder: (name: String, tone: String?, icon: String?) -> Unit,
   onSelectSession: (String?) -> Unit,
   onSessionDate: (String?) -> Unit,
   onToggleGroupStart: (String) -> Unit,
@@ -188,8 +188,9 @@ private fun ImportScreen(
       initialTone = null,
       initialIcon = null,
       onDismiss = { creatingFolder = false },
-      onConfirm = { name, _, _ ->
-        onCreateFolder(name)
+      // Il colore scelto qui e' quello della materia: si teneva solo il nome.
+      onConfirm = { name, tone, icon ->
+        onCreateFolder(name, tone, icon)
         creatingFolder = false
       },
     )
@@ -635,7 +636,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sessionDateSection(
       onValueChange = { text ->
         typed = text
         // Si prende solo quando e' una data: a meta' battitura resta quella di prima.
-        if (Dates.parseOrNull(text.trim()) != null) onSessionDate(text.trim())
+        Formats.typedDate(text)?.let(onSessionDate)
       },
       label = stringResource(R.string.session_date_custom),
       // Un esempio di oggi: una data di un anno fa suggeriva di scrivere proprio quella.

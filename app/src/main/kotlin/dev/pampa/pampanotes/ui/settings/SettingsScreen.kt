@@ -57,6 +57,7 @@ import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.BuildConfig
 import dev.pampa.pampanotes.R
+import dev.pampa.pampanotes.ui.common.rememberDraft
 import dev.pampa.pampanotes.ui.common.UpdateViewModel
 import dev.pampa.pampanotes.ui.common.updatesSection
 import dev.pampa.pampanotes.update.UpdateUiState
@@ -517,9 +518,10 @@ private fun LazyListScope.transcriptionSection(settings: PampaSettings, companio
   }
 
   item {
+    var vocabulary by rememberDraft(settings.vocabulary, viewModel::setVocabulary)
     FluidTextField(
-      value = settings.vocabulary,
-      onValueChange = viewModel::setVocabulary,
+      value = vocabulary,
+      onValueChange = { vocabulary = it },
       label = stringResource(R.string.settings_vocabulary),
       placeholder = stringResource(R.string.settings_vocabulary_hint),
       singleLine = false,
@@ -819,9 +821,10 @@ private fun LazyListScope.refinementSection(
   if (services.refinementModels.isEmpty()) {
     // Senza catalogo resta il campo libero: e' meglio di niente, e la riga sotto dice come avere l'elenco.
     item {
+      var model by rememberDraft(settings.refinementModel, viewModel::setRefinementModel)
       FluidTextField(
-        value = settings.refinementModel,
-        onValueChange = viewModel::setRefinementModel,
+        value = model,
+        onValueChange = { model = it },
         label = stringResource(R.string.settings_refinement_model),
         placeholder = "openai/gpt-oss-120b",
         modifier = Modifier.fillMaxWidth(),

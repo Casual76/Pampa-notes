@@ -106,6 +106,11 @@ fun OnboardingRoute(
       viewModel.saveEndpoint(endpointUrl, endpointRemoteUrl, endpointToken)
       endpointToken = ""
     }
+    // Anche la chiave di Groq: incollata e lasciata li', andava persa, e la prima lezione falliva.
+    if (step == OnboardingStep.PROVIDER && groqKey.isNotBlank()) {
+      viewModel.saveGroqKey(groqKey)
+      groqKey = ""
+    }
   }
 
   val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->

@@ -34,6 +34,9 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.antigravity.fluidengine.ui.fluid.FluidCapsuleShape
@@ -188,7 +191,16 @@ private fun Scrubber(
     modifier = modifier
       .fillMaxWidth()
       .height(24.dp)
-      .semantics { contentDescription = label }
+      // Per TalkBack e' una barra di avanzamento che si puo' spostare: prima era solo un nome, e
+      // chi non vede non poteva saltare da nessuna parte.
+      .semantics {
+        contentDescription = label
+        progressBarRangeInfo = ProgressBarRangeInfo(shown, 0f..1f)
+        setProgress { target ->
+          onSeek((target.coerceIn(0f, 1f) * durationMs).toLong())
+          true
+        }
+      }
       .onSizeChanged { width = it.width.toFloat().coerceAtLeast(1f) }
       .pointerInput(durationMs) {
         detectTapGestures { offset -> commit(offset.x) }

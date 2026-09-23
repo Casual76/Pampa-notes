@@ -1,5 +1,8 @@
 package dev.pampa.pampanotes.ui.home
 
+import androidx.compose.material.icons.rounded.Search
+import dev.pampa.pampanotes.ui.common.jobBadgeLabel
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -79,6 +82,7 @@ fun HomeRoute(
   onImport: () -> Unit,
   onOpenJobs: () -> Unit,
   onResumeSession: (String) -> Unit,
+  onSearch: () -> Unit = {},
   viewModel: HomeViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -95,6 +99,7 @@ fun HomeRoute(
   val deleteLabel = stringResource(R.string.action_delete)
   val exportLabel = stringResource(R.string.action_export)
   val importLabel = stringResource(R.string.action_import)
+  var todoExpanded by rememberSaveable { mutableStateOf(false) }
   val hideLabel = stringResource(R.string.home_resume_hide)
 
   // Il menu tenendo premuto una nota, uguale in «Da fare» e in «Ultime note».
@@ -118,6 +123,12 @@ fun HomeRoute(
     isRefreshing = pull.isRefreshing,
     onRefresh = pull.onRefresh,
     actions = {
+      // Sul telefono la ricerca stava solo in «Altro»: e' la cosa che si cerca dalla home.
+      FluidBarAction(
+        icon = Icons.Rounded.Search,
+        contentDescription = stringResource(R.string.search_title),
+        onClick = onSearch,
+      )
       FluidBarAction(
         icon = Icons.Rounded.Add,
         contentDescription = importLabel,
@@ -192,11 +203,12 @@ fun HomeRoute(
       }
 
       if (state.todo.isNotEmpty()) {
+        val shownTodo = if (todoExpanded) state.todo + state.todoRest else state.todo
         item(key = "todo-header") {
           FluidSectionHeader(
             title = stringResource(R.string.home_section_todo),
-            detail = if (state.todoCount > state.todo.size) {
-              stringResource(R.string.home_todo_more, state.todo.size, state.todoCount)
+            detail = if (state.todoCount > shownTodo.size) {
+              stringResource(R.string.home_todo_more, shownTodo.size, state.todoCount)
             } else {
               null
             },
@@ -204,7 +216,15 @@ fun HomeRoute(
         }
         item(key = "todo") {
           Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            NoteGroup(notes = state.todo, onOpenNote = onOpenNote, contextActions = noteContextActions)
+            NoteGroup(notes = shownTodo, onOpenNote = onOpenNote, contextActions = noteContextActions)
+            if (state.todoRest.isNotEmpty()) {
+              FluidButton(
+                text = if (todoExpanded) stringResource(R.string.home_todo_less) else stringResource(R.string.home_todo_all, state.todoCount),
+                onClick = { todoExpanded = !todoExpanded },
+                style = FluidButtonStyle.Plain,
+                fillWidth = true,
+              )
+            }
             if (state.canTranscribeAll) {
               FluidButton(
                 text = stringResource(R.string.home_todo_transcribe_all),
@@ -221,7 +241,14 @@ fun HomeRoute(
       if (state.recent.isNotEmpty()) {
         item(key = "recent-header") { FluidSectionHeader(title = stringResource(R.string.home_section_recent)) }
         item(key = "recent") {
-          NoteGroup(notes = state.recent, onOpenNote = onOpenNote, contextActions = noteContextActions)
+          // Aperte tutte le «Da fare», le stesse note non si ripetono sotto.
+          val recent = if (todoExpanded) {
+            val inTodo = state.todoRest.mapTo(HashSet()) { it.row.note.id }
+            state.recent.filterNot { it.row.note.id in inTodo }
+          } else {
+            state.recent
+          }
+          NoteGroup(notes = recent, onOpenNote = onOpenNote, contextActions = noteContextActions)
         }
       }
 
@@ -331,13 +358,6 @@ private fun noteBadge(recent: RecentNote): (@Composable () -> Unit)? {
   return { FluidStatusBadge(label = label, tone = tone) }
 }
 
-/** «In coda», «Trascrizione · 42%»: lo stato, e quanto manca quando lo si sa. */
-@Composable
-private fun jobBadgeLabel(job: JobEntity): String {
-  val state = jobStateLabel(job.state)
-  val percent = (job.progress * 100).toInt()
-  return if (job.state.isRunning && percent in 1..99) stringResource(R.string.home_job_progress, state, percent) else state
-}
 
 /**
  * «Riprendi ad ascoltare»: la nota, il giorno della lezione e il minuto, e quanto ne manca. Un

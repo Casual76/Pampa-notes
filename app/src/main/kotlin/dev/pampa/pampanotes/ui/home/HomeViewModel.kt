@@ -94,6 +94,8 @@ data class HomeUiState(
   val todo: List<RecentNote> = emptyList(),
   /** Quante sono in tutto, anche oltre quelle mostrate. */
   val todoCount: Int = 0,
+  /** Le altre da fare, per «Mostra tutte»: prima oltre le prime cinque non c'era modo di vederle. */
+  val todoRest: List<RecentNote> = emptyList(),
   /** C'e' almeno una sessione da trascrivere che non e' gia' in coda: «Trascrivi tutte» serve. */
   val canTranscribeAll: Boolean = false,
   val resume: ResumeCard? = null,
@@ -188,6 +190,7 @@ class HomeViewModel @Inject constructor(
       recent = recent.filterNot { it.note.id in shownIds }.take(RECENT_SHOWN).map(::wrap),
       todo = shownTodo,
       todoCount = todo.size,
+      todoRest = todo.drop(TODO_SHOWN).take(TODO_EXPANDED - TODO_SHOWN).map(::wrap),
       canTranscribeAll = todo.any { row -> wrap(row).toTranscribe > byNote[row.note.id].orEmpty().size },
       resume = resume?.copy(folder = byId[resume.folderId]),
       folderCount = allFolders.size,
@@ -239,6 +242,7 @@ class HomeViewModel @Inject constructor(
   companion object {
     const val RECENT_SHOWN = 20
     const val TODO_SHOWN = 5
+    const val TODO_EXPANDED = 60
 
     /** Le recenti chieste in piu' di quelle mostrate: le note gia' in «Da fare» si tolgono. */
     private const val RECENT_FETCHED = RECENT_SHOWN + TODO_SHOWN
