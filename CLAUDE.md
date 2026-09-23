@@ -489,7 +489,12 @@ stringhe della sua lingua: i writer stanno in `:core` e non possono leggere `res
 
 ## Import
 
-Gli URI di una condivisione si copiano subito (vedi sopra) e poi si legge la copia. Un tipo per
+Gli URI di una condivisione si copiano subito (vedi sopra) e poi si legge la copia. **La data di una
+registrazione** e' quella in cui e' stata fatta, non quella dell'import (`RecordingDate`): prima la
+data dei metadati del contenitore, poi una data nel nome del file (Registratore Samsung, WhatsApp,
+`20250922_101500`…), poi la data del file dal provider, e solo alla fine oggi; date nel futuro o
+prima del 2000 si scartano. Registrazioni di giorni diversi fanno una sessione per giorno, e il
+wizard dice da dove ha preso la data e la lascia cambiare. Un tipo per
 lettore: `TextExtractor` per testo, PDF (PdfBox) e DOCX (`DocxParser`, SAX su `word/document.xml`,
 puro e provato in JVM). `MimeSniffer` non si fida del MIME dichiarato: guarda l'estensione, poi i
 primi byte, e uno zip lo apre per distinguere `.docx` da `.sdocx`. "Apri con" da un gestore file e'
@@ -569,10 +574,25 @@ Due strade, stessa interfaccia (`TranscriptionProvider`):
   tagliata nei silenzi e ricucita.
 - **Endpoint compatibile OpenAI** (`{base}/v1/audio/transcriptions`): il PC di casa con WhisperX
   dietro il server in `companion/`. Di serie il file va **intero** — piu' contesto per Whisper — e
-  in Impostazioni si puo' mettere un tetto (30, 60, 120 minuti: `customMaxMinutes`) per chi ha poca
-  VRAM; con un tetto si taglia e si ricuce come per Groq. Se la scheda si riempie, il companion
-  dimezza il lotto e alla fine trascrive quella lezione sul processore (`device_used`), invece di
-  fallire.
+  in Impostazioni si puo' mettere un tetto (30, 60, 120 minuti: `customMaxMinutes`).
+
+**Ogni registrazione va da se'.** Le parti di una sessione si trascrivono una per una, anche col
+computer di casa: si concatenano solo nell'ascolto. Il tetto vale per parte, con una tolleranza
+(`ChunkPolicy.decide`): fino a dieci minuti oltre il tetto del computer, due oltre quello di Groq, la
+parte va intera; oltre, si divide in `ceil(durata / tetto)` pezzi **uguali**, tagliati nel silenzio
+piu' vicino (`ChunkPlanner.planEqual`) — quaranta minuti con un tetto di trenta vanno interi,
+quarantuno diventano due da venti e mezzo, mai trenta piu' undici. Per Groq i pezzi aumentano anche
+se, ricodificati, supererebbero il limite in byte.
+
+**La VRAM non la decide la durata.** WhisperX lavora a finestre di trenta secondi: la memoria della
+scheda dipende dal modello, dal tipo di calcolo e dal lotto; una lezione piu' lunga costa tempo e un
+po' di RAM. Il companion misura la scheda (o usa la VRAM indicata a mano, `vram_mode`/`vram_gb`),
+stima quanto userebbe (`estimate_vram_gb`: pesi + lotto + allineamento + contesto CUDA) e sceglie il
+lotto — e se non basta, `int8` o un modello piu' piccolo — per restare sotto l'85%. Su Windows una
+scheda piena non da' «out of memory»: il driver travasa nella RAM condivisa e tutto va sei volte piu'
+lento, quindi la stima e' la protezione vera; il ripiego sul processore resta per gli errori veri.
+Impostazioni → Trascrizione mostra scheda e stima (`/health`) e le cambia sul computer
+(`GET/POST /v1/admin/settings`, `POST /v1/admin/estimate`, solo il proprietario).
 
 **Il PC riconosce l'account.** Verso il companion non viaggia mai il token del sync (in casa e' http
 in chiaro, e apre tutte le note): l'app chiede al Worker un **biglietto per il PC**
