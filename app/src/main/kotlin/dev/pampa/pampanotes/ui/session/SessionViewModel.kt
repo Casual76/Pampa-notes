@@ -257,7 +257,10 @@ class SessionViewModel @Inject constructor(
         ?: transcripts.firstOrNull { it.kind == TranscriptKind.RAW },
       segments = values[3] as List<SegmentEntity>,
       job = (values[4] as List<JobEntity>).firstOrNull { it.state.isActive },
-      failedJob = (values[4] as List<JobEntity>).firstOrNull()?.takeIf { it.state == JobState.FAILED },
+      // Una grezza arrivata dopo il fallimento (dal sync, da un altro dispositivo) lo supera.
+      failedJob = (values[4] as List<JobEntity>).firstOrNull()?.takeIf { failed ->
+        failed.state == JobState.FAILED && transcripts.none { it.kind == TranscriptKind.RAW && it.createdAt > failed.createdAt }
+      },
       siblings = values[5] as List<SessionEntity>,
       missing = values[7] as List<AudioPartEntity>?,
       fetch = values[8] as FetchState?,
