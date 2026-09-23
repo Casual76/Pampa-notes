@@ -19,13 +19,137 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
-/** A che punto siamo, nelle parole che la notifica e la schermata Lavori mostrano. */
+/**
+ * A che punto siamo, nelle parole che la notifica e la schermata Lavori mostrano.
+ *
+ * Gli indici sono da zero per le parti ([partIndex], come `forEachIndexed`) e da uno per i pezzi
+ * ([chunkIndex], «pezzo 1 di 3»), come sono sempre stati. [overall] e' la barra dell'intera
+ * sessione, gia' pesata ([ProgressScale]); null quando l'evento non la sposta.
+ */
 sealed interface TranscriptionProgress {
-  data class Preparing(val partIndex: Int, val partCount: Int, val fraction: Float) : TranscriptionProgress
-  data class Uploading(val chunkIndex: Int, val chunkCount: Int, val fraction: Float) : TranscriptionProgress
-  data class Transcribing(val chunkIndex: Int, val chunkCount: Int) : TranscriptionProgress
-  data class Waiting(val seconds: Int, val reason: String) : TranscriptionProgress
-  data object Stitching : TranscriptionProgress
+  val overall: Float?
+
+  data class Preparing(
+    val partIndex: Int,
+    val partCount: Int,
+    val fraction: Float,
+    override val overall: Float? = null,
+  ) : TranscriptionProgress
+
+  data class Uploading(
+    val chunkIndex: Int,
+    val chunkCount: Int,
+    val fraction: Float,
+    val partIndex: Int = 0,
+    val partCount: Int = 1,
+    override val overall: Float? = null,
+  ) : TranscriptionProgress
+
+  /** Un pezzo finito: [chunkIndex] e' l'ultimo arrivato. */
+  data class Transcribing(
+    val chunkIndex: Int,
+    val chunkCount: Int,
+    val partIndex: Int = 0,
+    val partCount: Int = 1,
+    override val overall: Float? = null,
+  ) : TranscriptionProgress
+
+  /** Il computer di casa racconta cosa sta facendo col pezzo [chunkIndex] della parte [partIndex]. */
+  data class Remote(
+    val remote: RemoteProgress,
+    val chunkIndex: Int,
+    val chunkCount: Int,
+    val partIndex: Int,
+    val partCount: Int,
+    override val overall: Float? = null,
+  ) : TranscriptionProgress
+
+  data class Waiting(val seconds: Int, val reason: String) : TranscriptionProgress {
+    override val overall: Float? get() = null
+  }
+
+  data object Stitching : TranscriptionProgress {
+    override val overall: Float get() = ProgressScale.MAX
+  }
+}
+
+/**
+ * La barra dell'intera sessione.
+ *
+ * Le parti pesano per durata: con una registrazione da un'ora e una da cinque minuti, finire la
+ * seconda non e' «meta' fatto». Dentro una parte, se va tagliata, un decimo e' la decodifica e il
+ * resto si divide fra i pezzi in parti uguali; dentro un pezzo una quota e' il caricamento
+ * ([uploadShare]) e il resto il lavoro del servizio, che il computer di casa racconta in due
+ * stadi: la trascrizione, che e' la parte lunga, e l'allineamento delle parole.
+ *
+ * Il massimo e' [MAX] e non 1: l'ultimo tratto e' salvare, e una barra piena con l'app che ancora
+ * lavora e' una barra che mente.
+ */
+class ProgressScale(durationsMs: List<Long>, private val uploadShare: Float) {
+
+  private val weights: List<Float> = run {
+    val total = durationsMs.sumOf { it.coerceAtLeast(0) }
+    if (durationsMs.isEmpty()) {
+      emptyList()
+    } else if (total <= 0) {
+      // Durate sconosciute (righe arrivate dal sync senza metadati): tutte uguali.
+      List(durationsMs.size) { 1f / durationsMs.size }
+    } else {
+      durationsMs.map { it.coerceAtLeast(0).toFloat() / total }
+    }
+  }
+
+  /** La sessione intera, da una parte e da quanto di quella parte e' fatto. */
+  fun overall(partIndex: Int, withinPart: Float): Float {
+    if (weights.isEmpty()) return 0f
+    val index = partIndex.coerceIn(0, weights.lastIndex)
+    val before = weights.take(index).sum()
+    return ((before + weights[index] * withinPart.coerceIn(0f, 1f)) * MAX).coerceIn(0f, MAX)
+  }
+
+  /** La decodifica di una parte che va tagliata. */
+  fun preparing(fraction: Float): Float = PREPARE_SHARE * fraction.coerceIn(0f, 1f)
+
+  /**
+   * Un pezzo a meta': [chunkIndex] da uno, [withinChunk] quanto del pezzo e' fatto.
+   * [chunked] dice se la parte e' stata tagliata, e quindi se c'e' la decodifica prima.
+   */
+  fun chunk(chunkIndex: Int, chunkCount: Int, withinChunk: Float, chunked: Boolean): Float {
+    val count = chunkCount.coerceAtLeast(1)
+    val done = (chunkIndex - 1).coerceIn(0, count)
+    val share = (done + withinChunk.coerceIn(0f, 1f)) / count
+    return if (chunked) PREPARE_SHARE + (1f - PREPARE_SHARE) * share else share
+  }
+
+  fun uploading(fraction: Float): Float = uploadShare * fraction.coerceIn(0f, 1f)
+
+  /** Il lavoro del servizio, dopo il caricamento. */
+  fun remote(progress: RemoteProgress): Float = uploadShare + (1f - uploadShare) * remoteFraction(progress)
+
+  companion object {
+    const val MAX = 0.98f
+    const val PREPARE_SHARE = 0.1f
+
+    /** Groq risponde in secondi: il caricamento e' meta' dell'attesa. */
+    const val GROQ_UPLOAD_SHARE = 0.5f
+
+    /** Il computer di casa lavora minuti: il caricamento in casa ne e' una frazione piccola. */
+    const val COMPUTER_UPLOAD_SHARE = 0.15f
+
+    /**
+     * Quanto del lavoro del computer e' la trascrizione, e quanto l'allineamento. Sulla scheda con
+     * large-v3 la trascrizione e' quasi tutto; sul processore con un modello piccolo le due cose si
+     * avvicinano (un minuto di lezione: sette secondi contro cinque). Tre quarti sta in mezzo.
+     */
+    const val TRANSCRIBE_SHARE = 0.75f
+
+    fun remoteFraction(progress: RemoteProgress): Float = when (progress.stage) {
+      RemoteStage.RECEIVED, RemoteStage.QUEUED, RemoteStage.DECODING, RemoteStage.LOADING_MODEL, RemoteStage.FAILED -> 0f
+      RemoteStage.TRANSCRIBING -> TRANSCRIBE_SHARE * progress.fraction
+      RemoteStage.ALIGNING -> TRANSCRIBE_SHARE + (1f - TRANSCRIBE_SHARE) * progress.fraction
+      RemoteStage.DONE -> 1f
+    }
+  }
 }
 
 /** Una parte trascritta, con i suoi segmenti gia' collocati nel tempo della parte. */
@@ -128,8 +252,13 @@ class TranscriptionRunner @Inject constructor(
     require(parts.isNotEmpty()) { "una sessione senza parti non si trascrive" }
     val workDir = files.jobDir(jobId)
     val transcripts = mutableListOf<PartTranscript>()
+    val sorted = parts.sortedBy { it.position }
+    val scale = ProgressScale(
+      durationsMs = sorted.map { it.durationMs },
+      uploadShare = if (provider.id == GroqWhisperProvider.ID) ProgressScale.GROQ_UPLOAD_SHARE else ProgressScale.COMPUTER_UPLOAD_SHARE,
+    )
 
-    parts.sortedBy { it.position }.forEachIndexed { index, part ->
+    sorted.forEachIndexed { index, part ->
       currentCoroutineContext().ensureActive()
       val partDir = File(workDir, "part-${part.id}").apply { mkdirs() }
       transcripts += transcribePart(
@@ -140,6 +269,7 @@ class TranscriptionRunner @Inject constructor(
         provider = provider,
         request = request,
         chunkMinutes = chunkMinutes,
+        scale = scale,
         onProgress = onProgress,
       )
     }
@@ -160,6 +290,7 @@ class TranscriptionRunner @Inject constructor(
     provider: TranscriptionProvider,
     request: TranscribeRequest,
     chunkMinutes: Int,
+    scale: ProgressScale,
     onProgress: (TranscriptionProgress) -> Unit,
   ): PartTranscript {
     val source = files.audioFile(part.fileName)
@@ -167,7 +298,7 @@ class TranscriptionRunner @Inject constructor(
       // Registrata su un altro dispositivo: se il computer di casa ce l'ha, si prende da li' e la
       // coda va avanti da sola. Altrimenti e' rimasta dov'e' nata, e qui non c'e' niente da trascrivere.
       if (part.archivedAt <= 0) throw TranscriptionError.Decode("«${part.originalName}» non e' su questo dispositivo")
-      onProgress(TranscriptionProgress.Preparing(partIndex, partCount, 0f))
+      onProgress(TranscriptionProgress.Preparing(partIndex, partCount, 0f, scale.overall(partIndex, 0f)))
       runCatching { fetcher.fetchPart(part) }.getOrElse {
         if (it is kotlinx.coroutines.CancellationException) throw it
         throw TranscriptionError.Decode("«${part.originalName}» sta sul computer di casa e non sono riuscito a prenderlo: ${it.message}")
@@ -175,18 +306,44 @@ class TranscriptionRunner @Inject constructor(
     }
 
     val decision = chunkDecision(provider.capabilities, source.name, source.length(), part.durationMs, chunkMinutes)
+    val chunked = decision != ChunkDecision.Whole
+
+    // Gli eventi di un pezzo, con la barra della sessione gia' fatta: il pezzo sa solo quanto di se'
+    // e' fatto, la scala sa quanto pesa lui dentro la parte e la parte dentro la sessione.
+    fun overall(chunkIndex: Int, chunkCount: Int, withinChunk: Float) =
+      scale.overall(partIndex, scale.chunk(chunkIndex, chunkCount, withinChunk, chunked))
+
+    fun uploading(chunkIndex: Int, chunkCount: Int): (UploadProgress) -> Unit = { progress ->
+      onProgress(
+        TranscriptionProgress.Uploading(
+          chunkIndex, chunkCount, progress.fraction, partIndex, partCount,
+          overall(chunkIndex, chunkCount, scale.uploading(progress.fraction)),
+        ),
+      )
+    }
+
+    fun remote(chunkIndex: Int, chunkCount: Int): (RemoteProgress) -> Unit = { remote ->
+      onProgress(
+        TranscriptionProgress.Remote(
+          remote, chunkIndex, chunkCount, partIndex, partCount,
+          overall(chunkIndex, chunkCount, scale.remote(remote)),
+        ),
+      )
+    }
+
+    fun finished(chunkIndex: Int, chunkCount: Int) = onProgress(
+      TranscriptionProgress.Transcribing(chunkIndex, chunkCount, partIndex, partCount, overall(chunkIndex, chunkCount, 1f)),
+    )
 
     // La via breve: il file ci sta intero. Niente decodifica, niente ricodifica, niente cuciture —
     // ed e' anche l'unica che conserva la qualita' originale dell'audio.
-    if (decision == ChunkDecision.Whole) {
+    if (!chunked) {
       val result = try {
-        sendWithRetry(provider, source, part.mime, request, waitingReporter(onProgress)) { progress ->
-          onProgress(TranscriptionProgress.Uploading(0, 1, progress.fraction))
-        }
+        sendWithRetry(provider, source, part.mime, request, waitingReporter(onProgress), remote(1, 1), uploading(1, 1))
       } catch (silent: TranscriptionError.NoSpeech) {
         return PartTranscript(part, "", emptyList(), null)
       }
-      onProgress(TranscriptionProgress.Transcribing(0, 1))
+      finished(1, 1)
       val stitched = TranscriptStitcher.stitch(
         listOf(ChunkTranscript(ChunkSpec(0, 0, part.durationMs), result.segments)),
       )
@@ -200,32 +357,37 @@ class TranscriptionRunner @Inject constructor(
     // mancare (0) o essere quella stimata dal contenitore, e un conto sbagliato qui e' un pezzo che
     // sfora il limite di Groq.
     val plan = preparePlan(source, pcm, workDir, { totalMs -> piecesFor(provider.capabilities, totalMs, chunkMinutes) }) { fraction ->
-      onProgress(TranscriptionProgress.Preparing(partIndex, partCount, fraction))
+      onProgress(
+        TranscriptionProgress.Preparing(partIndex, partCount, fraction, scale.overall(partIndex, scale.preparing(fraction))),
+      )
     }
 
     val chunkTranscripts = mutableListOf<ChunkTranscript>()
+    val chunkCount = plan.chunks.size
     plan.chunks.forEach { spec ->
       currentCoroutineContext().ensureActive()
+      val chunkIndex = spec.index + 1
 
       // Gia' fatto in un giro precedente: si rilegge e si va avanti.
       readStoredChunk(workDir, spec)?.let {
         chunkTranscripts += it
-        onProgress(TranscriptionProgress.Transcribing(spec.index + 1, plan.chunks.size))
+        finished(chunkIndex, chunkCount)
         return@forEach
       }
 
       val encoded = ChunkEncoder.encode(pcm, PcmDecoder.TARGET_SAMPLE_RATE, spec, workDir)
       try {
         val segments = try {
-          sendWithRetry(provider, encoded.file, encoded.mime, request, waitingReporter(onProgress)) { progress ->
-            onProgress(TranscriptionProgress.Uploading(spec.index + 1, plan.chunks.size, progress.fraction))
-          }.segments
+          sendWithRetry(
+            provider, encoded.file, encoded.mime, request, waitingReporter(onProgress),
+            remote(chunkIndex, chunkCount), uploading(chunkIndex, chunkCount),
+          ).segments
         } catch (silent: TranscriptionError.NoSpeech) {
           // Dieci minuti di intervallo, o la classe che esce: un pezzo muto e' un pezzo vuoto, non
           // una lezione fallita. Si salva vuoto, cosi' una ripresa non lo rimanda.
           emptyList()
         }
-        onProgress(TranscriptionProgress.Transcribing(spec.index + 1, plan.chunks.size))
+        finished(chunkIndex, chunkCount)
         val chunk = ChunkTranscript(spec, segments)
         // Prima su disco, poi in memoria: un processo ucciso fra le due cose deve poter ripartire
         // da qui, non dal pezzo precedente.
@@ -292,13 +454,14 @@ class TranscriptionRunner @Inject constructor(
     mime: String,
     request: TranscribeRequest,
     onWaiting: (seconds: Int) -> Unit,
+    onRemote: (RemoteProgress) -> Unit,
     onProgress: (UploadProgress) -> Unit,
   ): TranscriptResult {
     var attempt = 0
     while (true) {
       currentCoroutineContext().ensureActive()
       try {
-        return provider.transcribe(file, mime, request, onProgress)
+        return provider.transcribe(file, mime, request, onProgress, onRemote)
       } catch (error: Throwable) {
         // Una cancellazione resta una cancellazione: tradotta in un errore, il worker la scambiava
         // per un guasto e segnava fallito un lavoro che l'utente — o il sistema — aveva fermato.

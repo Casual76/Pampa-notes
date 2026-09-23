@@ -18,6 +18,7 @@ import dev.pampa.pampanotes.core.repo.RefinementRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.transcription.GroqWhisperProvider
+import dev.pampa.pampanotes.core.transcription.JobPhase
 import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
 import dev.pampa.pampanotes.core.transcription.TranscriptionError
 import dev.pampa.pampanotes.core.transcription.TranscriptionProgress
@@ -397,9 +398,9 @@ class TranscriptionQueueWorker @AssistedInject constructor(
               chunkDone = progress.chunkIndex,
               progress = if (progress.chunkCount <= 0) 0f else progress.chunkIndex.toFloat() / progress.chunkCount,
               phase = if (progress.waitingSeconds > 0) {
-                "waiting:${progress.waitingSeconds}"
+                JobPhase.Waiting(progress.waitingSeconds).encode()
               } else {
-                "refining:${progress.chunkIndex + 1}/${progress.chunkCount}"
+                JobPhase.Refining(progress.chunkIndex + 1, progress.chunkCount).encode()
               },
             )
           }
@@ -489,45 +490,61 @@ class TranscriptionQueueWorker @AssistedInject constructor(
   }
 }
 
-/** Dal progresso del motore allo stato che la riga del lavoro mostra. */
-private fun JobEntity.applyProgress(progress: TranscriptionProgress): JobEntity = when (progress) {
-  is TranscriptionProgress.Preparing -> copy(
-    state = JobState.PREPARING,
-    progress = progress.fraction * 0.25f,
-    phase = "preparing:${progress.partIndex + 1}/${progress.partCount}:${(progress.fraction * 100).toInt()}",
-  )
-
-  is TranscriptionProgress.Uploading -> copy(
-    state = JobState.UPLOADING,
-    chunkTotal = progress.chunkCount,
-    chunkDone = (progress.chunkIndex - 1).coerceAtLeast(0),
-    progress = chunkFraction(progress.chunkIndex, progress.chunkCount, progress.fraction),
-    phase = "uploading:${progress.chunkIndex}/${progress.chunkCount}:${(progress.fraction * 100).toInt()}",
-  )
-
-  is TranscriptionProgress.Transcribing -> copy(
-    state = JobState.TRANSCRIBING,
-    chunkTotal = progress.chunkCount,
-    chunkDone = progress.chunkIndex,
-    progress = chunkFraction(progress.chunkIndex, progress.chunkCount, 1f),
-    phase = "transcribing:${progress.chunkIndex}/${progress.chunkCount}",
-  )
-
-  is TranscriptionProgress.Waiting -> copy(
-    phase = "waiting:${progress.seconds}",
-  )
-
-  TranscriptionProgress.Stitching -> copy(state = JobState.STITCHING, progress = 0.98f, phase = "stitching")
-}
-
 /**
- * Il quarto iniziale e' la preparazione, il resto sono i pezzi.
+ * Dal progresso del motore allo stato che la riga del lavoro mostra.
  *
- * Una barra che sta ferma sul venticinque per cento mentre decodifica e poi salta a cento e' una
- * barra che non dice niente: la decodifica di un'ora dura quanto un paio di richieste.
+ * `progress` e' la barra dell'intera sessione, gia' pesata dal motore (`ProgressScale`: le parti per
+ * durata, dentro una parte il caricamento e il lavoro del computer); la fase porta il passo in
+ * corso col suo percento, per la seconda barra e per la frase. Qui si scrive in memoria: sul
+ * database ci va il publisher, ogni mezzo secondo, con l'UPDATE che rispetta un «annulla».
  */
-private fun chunkFraction(chunkIndex: Int, chunkCount: Int, within: Float): Float {
-  if (chunkCount <= 0) return 0.25f
-  val done = (chunkIndex - 1).coerceAtLeast(0)
-  return (0.25f + 0.73f * ((done + within) / chunkCount)).coerceIn(0f, 0.98f)
+private fun JobEntity.applyProgress(event: TranscriptionProgress): JobEntity {
+  val overall = event.overall ?: progress
+  return when (event) {
+    is TranscriptionProgress.Preparing -> copy(
+      state = JobState.PREPARING,
+      progress = overall,
+      phase = JobPhase.Preparing(event.partIndex + 1, event.partCount, JobPhase.percent(event.fraction)).encode(),
+    )
+
+    is TranscriptionProgress.Uploading -> copy(
+      state = JobState.UPLOADING,
+      chunkTotal = event.chunkCount,
+      chunkDone = (event.chunkIndex - 1).coerceAtLeast(0),
+      progress = overall,
+      phase = JobPhase.Uploading(
+        event.chunkIndex, event.chunkCount, JobPhase.percent(event.fraction), event.partIndex + 1, event.partCount,
+      ).encode(),
+    )
+
+    is TranscriptionProgress.Remote -> copy(
+      state = JobState.TRANSCRIBING,
+      chunkTotal = event.chunkCount,
+      chunkDone = (event.chunkIndex - 1).coerceAtLeast(0),
+      progress = overall,
+      phase = JobPhase.Remote(
+        stage = event.remote.stage,
+        part = event.partIndex + 1,
+        parts = event.partCount,
+        percent = JobPhase.percent(event.remote.fraction),
+        position = event.remote.position,
+        chunk = event.chunkIndex,
+        chunks = event.chunkCount,
+        etaSeconds = event.remote.etaSeconds?.let { kotlin.math.ceil(it).toInt() },
+        device = event.remote.device,
+      ).encode(),
+    )
+
+    is TranscriptionProgress.Transcribing -> copy(
+      state = JobState.TRANSCRIBING,
+      chunkTotal = event.chunkCount,
+      chunkDone = event.chunkIndex,
+      progress = overall,
+      phase = JobPhase.Transcribing(event.chunkIndex, event.chunkCount, event.partIndex + 1, event.partCount).encode(),
+    )
+
+    is TranscriptionProgress.Waiting -> copy(phase = JobPhase.Waiting(event.seconds).encode())
+
+    TranscriptionProgress.Stitching -> copy(state = JobState.STITCHING, progress = overall, phase = JobPhase.Stitching.encode())
+  }
 }

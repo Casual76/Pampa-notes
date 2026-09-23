@@ -29,10 +29,12 @@ import argparse
 import asyncio
 import contextlib
 import gc
+import hashlib
 import json
 import logging
 import math
 import os
+import re
 import secrets
 import socket
 import tempfile
@@ -132,14 +134,18 @@ class PriorityGate:
         self._busy = False
         self._waiting: list[tuple[int, int]] = []
         self._seq = 0
+        # Chi aspetta, per nome: e' quello che fa dire all'app «sei il 2°» invece di «in coda».
+        self._keys: dict[tuple[int, int], str] = {}
 
     @contextlib.asynccontextmanager
-    async def slot(self, priority: int):
+    async def slot(self, priority: int, key: str | None = None):
         async with self._cond:
             self._seq += 1
             me = (priority, self._seq)
             self._waiting.append(me)
             self._waiting.sort()
+            if key:
+                self._keys[me] = key
             # Chi smette di aspettare (la richiesta annullata, il server che si chiude) deve uscire
             # dalla fila. Senza, restava primo per sempre: nessun altro vedeva `_waiting[0] == me`,
             # e il computer smetteva di trascrivere per chiunque finche' non lo si riavviava.
@@ -149,6 +155,7 @@ class PriorityGate:
                 admitted = True
             finally:
                 self._waiting.remove(me)
+                self._keys.pop(me, None)
                 if admitted:
                     self._busy = True
                 else:
@@ -165,8 +172,199 @@ class PriorityGate:
     def waiting(self) -> int:
         return len(self._waiting)
 
+    def position(self, key: str) -> int | None:
+        """
+        Il posto in fila di [key], contando anche chi sta trascrivendo adesso: 2 vuol dire «ce n'e'
+        uno davanti», che e' quello che chi aspetta vuole sapere. None se non sta aspettando.
+
+        Si legge dal ciclo di eventi, lo stesso che tocca la fila: niente lucchetto.
+        """
+        for index, me in enumerate(self._waiting):
+            if self._keys.get(me) == key:
+                return index + 1 + (1 if self._busy else 0)
+        return None
+
 
 GATE = PriorityGate()
+
+
+# --- a che punto e' una trascrizione -------------------------------------------------------------
+#
+# Dal telefono una lezione mandata al computer era un'attesa muta: la barra arrivava al 100% del
+# caricamento e poi niente, per dieci minuti o per un'ora, senza sapere se il PC stava caricando il
+# modello, era in fila dietro un ospite o era a meta'. L'app ora manda un suo identificativo
+# (`X-Pampa-Job`) insieme all'audio e, mentre aspetta la risposta, chiede `GET /v1/jobs/<id>`.
+# Le percentuali sono vere: vengono dai callback di WhisperX (un passo per segmento della VAD in
+# trascrizione, uno per segmento in allineamento), non da una stima sul tempo.
+
+JOB_STATES = ("received", "queued", "decoding", "loading_model", "transcribing", "aligning", "done", "failed")
+JOB_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{8,64}")
+# Dopo la fine un lavoro resta leggibile dieci minuti: l'app lo chiede fino all'ultima risposta, e
+# una risposta persa per strada non deve trasformarsi in un 404 che sembra un companion vecchio.
+JOB_KEEP_S = 10 * 60
+# Uno che non finisce mai (il telefono sparito a meta' caricamento) se ne va comunque.
+JOB_STALE_S = 6 * 3600
+JOB_LIMIT = 256
+ACTIVE_JOB_STATES = ("decoding", "loading_model", "transcribing", "aligning")
+
+
+def bearer_hash(bearer: str) -> str:
+    """Il bearer non si tiene in chiaro nemmeno in memoria: basta poterlo riconoscere."""
+    return hashlib.sha256(bearer.encode("utf-8")).hexdigest()
+
+
+class JobProgress:
+    """
+    Lo stato di una trascrizione, scritto dal thread che lavora e letto dal ciclo di eventi.
+
+    `fraction` vale dentro lo stato corrente (0..1 della trascrizione, poi di nuovo 0..1
+    dell'allineamento): e' l'app che sa quante registrazioni ci sono e quanto pesa ognuna, e fa
+    lei il conto complessivo. Un lucchetto perche' uno scatto a meta' di [set] direbbe lo stato
+    nuovo con la percentuale del vecchio.
+    """
+
+    def __init__(self, job_id: str = "", owner: str = "", guest: bool = False, now: float | None = None) -> None:
+        now = time.time() if now is None else now
+        self.id = job_id
+        self.bearer_hash = owner
+        self.guest = guest
+        self.state = "received"
+        self.fraction = 0.0
+        self.detail: str | None = None
+        self.device: str | None = None
+        self.audio_s: float | None = None
+        self.created = now
+        self.state_since = now
+        self.started: float | None = None
+        self.finished: float | None = None
+        self._lock = threading.Lock()
+
+    def set(self, state: str, fraction: float = 0.0, detail: str | None = None, now: float | None = None) -> None:
+        now = time.time() if now is None else now
+        with self._lock:
+            self.state = state
+            self.fraction = min(1.0, max(0.0, float(fraction)))
+            self.detail = detail
+            self.state_since = now
+            if state in ("done", "failed"):
+                self.finished = now
+
+    def admitted(self, now: float | None = None) -> None:
+        """Il turno e' arrivato: da qui si conta `processing_s`, la coda non e' lavoro."""
+        self.started = time.time() if now is None else now
+
+    def advance(self, fraction: float, state: str) -> None:
+        """
+        Dal callback di WhisperX. Solo se lo stato e' ancora quello per cui il callback e' nato:
+        dopo un ripiego (memoria finita, lotto dimezzato) l'ultimo scatto del giro abbandonato non
+        deve riportare su la barra del giro nuovo.
+        """
+        with self._lock:
+            if self.state != state:
+                return
+            self.fraction = max(self.fraction, min(1.0, max(0.0, float(fraction))))
+
+    def callback(self, state: str) -> Callable[[float], None]:
+        """Il `progress_callback` di WhisperX parla in percento."""
+        return lambda percent: self.advance(float(percent) / 100.0, state)
+
+    def processing_s(self, now: float | None = None) -> float:
+        if self.started is None:
+            return 0.0
+        end = self.finished if self.finished is not None else (time.time() if now is None else now)
+        return max(0.0, end - self.started)
+
+    def snapshot(self, position: int | None = None, now: float | None = None) -> dict[str, Any]:
+        now = time.time() if now is None else now
+        with self._lock:
+            state, fraction, detail = self.state, self.fraction, self.detail
+            since = self.state_since
+        in_state = max(0.0, now - since)
+        # La stima c'e' solo quando dice qualcosa: con il 2% fatto in un secondo verrebbe fuori un
+        # numero che cambia di minuti a ogni domanda.
+        eta = None
+        if state in ("transcribing", "aligning") and 0.03 <= fraction < 1.0 and in_state >= 2.0:
+            eta = round(in_state * (1.0 - fraction) / fraction, 1)
+        return {
+            "id": self.id,
+            "state": state,
+            "fraction": round(fraction, 4),
+            "position": position if state == "queued" else None,
+            "audio_s": round(self.audio_s, 2) if self.audio_s is not None else None,
+            "elapsed_s": round(max(0.0, (self.finished or now) - self.created), 1),
+            "state_elapsed_s": round(in_state, 1),
+            "eta_s": eta,
+            "processing_s": round(self.processing_s(now), 1),
+            "device": self.device,
+            "detail": detail,
+        }
+
+
+class JobRegistry:
+    """
+    I lavori di cui si puo' chiedere, al massimo `limit`, ognuno per dieci minuti dopo la fine.
+
+    L'id lo sceglie l'app, quindi chiunque abbia accesso potrebbe provare a indovinarne uno: il
+    bearer con cui e' arrivato l'audio resta con il lavoro (come impronta), e un ospite legge solo i
+    suoi. Il proprietario li legge tutti: il computer e' suo.
+    """
+
+    def __init__(self, limit: int = JOB_LIMIT, keep_s: float = JOB_KEEP_S) -> None:
+        self.limit = limit
+        self.keep_s = keep_s
+        self._items: OrderedDict[str, JobProgress] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def open(self, job_id: str, caller: "Caller", now: float | None = None) -> JobProgress | None:
+        if not job_id or not JOB_ID_PATTERN.fullmatch(job_id):
+            return None
+        now = time.time() if now is None else now
+        owner = bearer_hash(caller.bearer)
+        with self._lock:
+            self._prune(now)
+            existing = self._items.get(job_id)
+            # Lo stesso id da un altro bearer non si prende il posto di quello che c'e': sarebbe il
+            # modo di leggere, o cancellare, il lavoro di un altro.
+            if existing is not None and not secrets.compare_digest(existing.bearer_hash, owner):
+                return None
+            job = JobProgress(job_id, owner, caller.kind == "guest", now)
+            self._items[job_id] = job
+            self._items.move_to_end(job_id)
+            while len(self._items) > self.limit:
+                finished = next((key for key, item in self._items.items() if item.finished is not None), None)
+                self._items.pop(finished if finished is not None else next(iter(self._items)))
+            return job
+
+    def get(self, job_id: str, now: float | None = None) -> JobProgress | None:
+        now = time.time() if now is None else now
+        with self._lock:
+            self._prune(now)
+            return self._items.get(job_id)
+
+    @staticmethod
+    def visible_to(job: JobProgress, caller: "Caller") -> bool:
+        if caller.kind == "owner":
+            return True
+        return secrets.compare_digest(job.bearer_hash, bearer_hash(caller.bearer))
+
+    def _prune(self, now: float) -> None:
+        gone = [
+            key
+            for key, item in self._items.items()
+            if (item.finished is not None and now - item.finished > self.keep_s) or now - item.created > JOB_STALE_S
+        ]
+        for key in gone:
+            del self._items[key]
+
+    def clear(self) -> None:
+        with self._lock:
+            self._items.clear()
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+
+JOBS = JobRegistry()
 
 
 class BoundedCache:
@@ -939,6 +1137,7 @@ def identify(authorization: str) -> Caller:
 
 # Le uniche strade aperte a tutti: «ci sei?» e la pagina del QR, che ha la sua chiave.
 OPEN_PATHS = frozenset({"/health", "/pair"})
+TRANSCRIPTIONS_PATH = "/v1/audio/transcriptions"
 
 
 class AuthGate:
@@ -961,14 +1160,23 @@ class AuthGate:
         if scope["type"] != "http" or scope.get("path") in OPEN_PATHS:
             await self.app(scope, receive, send)
             return
-        authorization = Headers(scope=scope).get("authorization", "")
+        headers = Headers(scope=scope)
+        authorization = headers.get("authorization", "")
         try:
             caller = await asyncio.to_thread(identify, authorization)
         except AuthError as error:
             response = JSONResponse({"detail": str(error)}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
             await response(scope, receive, send)
             return
-        scope.setdefault("state", {})["caller"] = caller
+        state = scope.setdefault("state", {})
+        state["caller"] = caller
+        # Il lavoro si registra qui, con i soli header, e non nell'endpoint: FastAPI chiama
+        # l'endpoint solo dopo aver letto tutto il multipart, e fino ad allora chi chiedeva a che
+        # punto fosse si sarebbe sentito dire 404, cioe' «companion vecchio, smetti di chiedere».
+        if scope.get("method") == "POST" and scope.get("path") == TRANSCRIPTIONS_PATH:
+            job = JOBS.open(headers.get("x-pampa-job", ""), caller)
+            if job is not None:
+                state["job"] = job
         await self.app(scope, receive, send)
 
 
@@ -1247,6 +1455,9 @@ async def transcriptions(
     """
     caller = caller_of(request)
     who = f"ospite {caller.name}: " if caller.kind == "guest" else ""
+    # Registrato da [AuthGate] se l'app ha mandato `X-Pampa-Job`; altrimenti uno che non legge
+    # nessuno, cosi' il resto del codice non ha un «se» a ogni passo.
+    progress: JobProgress = getattr(request.state, "job", None) or JobProgress()
     target: Path | None = None
     # Il `try` comincia prima del file temporaneo, non dopo: una richiesta annullata mentre si
     # copiava l'audio, o mentre aspettava il suo turno, lasciava il file in %TEMP% per sempre.
@@ -1261,26 +1472,36 @@ async def transcriptions(
         size_mb = target.stat().st_size / (1024 * 1024)
         log.info("%sricevuto %s (%.1f MB)%s", who, file.filename, size_mb, f", {GATE.waiting} in fila" if GATE.waiting else "")
 
+        progress.set("queued")
         # Il proprietario passa davanti agli ospiti in attesa; nessuno interrompe chi sta gia' trascrivendo.
-        async with GATE.slot(0 if caller.kind == "owner" else 1):
+        async with GATE.slot(0 if caller.kind == "owner" else 1, key=progress.id or None):
             STATE["busy"] = True
+            progress.admitted()
             started = time.time()
             try:
                 # Su un thread anche il caricamento del modello: cosi' `/health` continua a
                 # rispondere durante i minuti del primo avvio, invece di far credere all'app che il
                 # server sia morto.
-                result = await asyncio.to_thread(_transcribe, str(target), language.strip() or None)
+                result = await asyncio.to_thread(_transcribe, str(target), language.strip() or None, progress)
             except Exception as error:  # noqa: BLE001 — qualunque guasto deve tornare come 500 leggibile
                 log.exception("trascrizione fallita")
+                progress.set("failed", detail=str(error)[:300])
                 raise HTTPException(status_code=500, detail=str(error)) from error
             finally:
                 STATE["busy"] = False
                 STATE["last_used"] = time.time()
+    except BaseException:
+        # Annullata mentre arrivava o aspettava il turno: chi chiede deve leggere che e' finita,
+        # non vederla ferma in fila per sempre.
+        if progress.state not in ("done", "failed"):
+            progress.set("failed", detail="interrotta")
+        raise
     finally:
         if target is not None:
             with contextlib.suppress(OSError):
                 target.unlink(missing_ok=True)
 
+    progress.set("done", 1.0)
     elapsed = time.time() - started
     duration = result["segments"][-1]["end"] if result["segments"] else 0.0
     speed = duration / elapsed if elapsed > 0 else 0
@@ -1291,9 +1512,30 @@ async def transcriptions(
     if STATE["idle_seconds"]:
         log.info("tengo il modello in memoria per %d minuti", STATE["idle_seconds"] // 60)
 
+    # Quanto ha lavorato il computer (senza la fila) e quanto era lungo l'audio: l'app ne fa le
+    # statistiche («un'ora di lezione in quattro minuti»). I nomi restano questi.
+    result["processing_s"] = round(progress.processing_s(), 2)
+    result["audio_s"] = round(float(result.get("audio_s") or duration), 2)
     if response_format == "text":
         return PlainTextResponse(result["text"])
     return JSONResponse(result)
+
+
+@app.get("/v1/jobs/{job_id}")
+async def job_status(job_id: str, request: Request) -> dict[str, Any]:
+    """
+    A che punto e' una trascrizione, per chi l'ha mandata (o per il proprietario del computer).
+
+    Un ospite che chiede l'id di un altro riceve lo stesso 404 di un id che non esiste: dire
+    «esiste ma non e' tuo» direbbe gia' troppo. Gira sul ciclo di eventi, lo stesso della fila,
+    cosi' il posto in coda si legge senza lucchetti.
+    """
+    caller = caller_of(request)
+    job = JOBS.get(job_id)
+    if job is None or not JOBS.visible_to(job, caller):
+        raise HTTPException(status_code=404, detail="lavoro sconosciuto")
+    position = GATE.position(job.id) if job.state == "queued" else None
+    return job.snapshot(position=position)
 
 
 # --- il lavoro ---------------------------------------------------------------------------------
@@ -1332,17 +1574,32 @@ class Engine:
         ensure_model()
         return STATE["model"]
 
+    def needs_load(self) -> bool:
+        """[main_model] dovra' leggere i pesi dal disco? E' il «carico il modello» che l'app mostra."""
+        wanted = (STATE["name"], STATE["device"], STATE["compute_type"])
+        return STATE["model"] is None or STATE["loaded_as"] not in (None, wanted)
+
     def cpu_model(self) -> Any:
         import whisperx
 
         log.warning("carico %s sul processore (int8) per questa lezione: sara' piu' lenta", STATE["name"])
         return whisperx.load_model(STATE["name"], device="cpu", compute_type="int8")
 
-    def align(self, segments: list[dict], language: str, audio: Any, device: str) -> list[dict]:
+    def align(
+        self,
+        segments: list[dict],
+        language: str,
+        audio: Any,
+        device: str,
+        progress_callback: Callable[[float], None] | None = None,
+    ) -> list[dict]:
         import whisperx
 
         model, metadata = align_model_for(language, device)
-        aligned = whisperx.align(segments, model, metadata, audio, device, return_char_alignments=False)
+        aligned = whisperx.align(
+            segments, model, metadata, audio, device,
+            return_char_alignments=False, progress_callback=progress_callback,
+        )
         return aligned.get("segments", segments)
 
     def release(self) -> None:
@@ -1359,7 +1616,14 @@ class Engine:
 CPU_BATCH_SIZE = 4
 
 
-def run_job(audio: Any, language: str | None, engine: Engine, batch_size: int, device: str) -> dict[str, Any]:
+def run_job(
+    audio: Any,
+    language: str | None,
+    engine: Engine,
+    batch_size: int,
+    device: str,
+    progress: JobProgress | None = None,
+) -> dict[str, Any]:
     """
     Trascrive e allinea, scendendo dalla scheda alla RAM se la scheda non basta.
 
@@ -1373,12 +1637,21 @@ def run_job(audio: Any, language: str | None, engine: Engine, batch_size: int, d
     L'allineamento, se finisce la memoria, si rifa' sul processore: il suo modello e' piccolo.
 
     Torna i segmenti, la lingua, dove si e' trascritto (`device_used`) e l'esito dell'allineamento.
+
+    Ogni passo lo dice a [progress] (vedi [JobProgress]): il caricamento solo come stato, la
+    trascrizione e l'allineamento con i callback di WhisperX, che scattano una volta per segmento.
+    Un ripiego ricomincia la sua barra da zero e lo dice in `detail`: tornare indietro e' meglio
+    che restare fermi al 60% mentre la lezione riparte da capo sul processore.
     """
+    progress = progress or JobProgress()
     device_used = device
+    progress.device = device
     size = max(1, int(batch_size))
     transcription: dict[str, Any] | None = None
 
     try:
+        if engine.needs_load():
+            progress.set("loading_model")
         model = engine.main_model()
     except Exception as error:
         if device != "cuda" or not is_oom(error):
@@ -1389,7 +1662,10 @@ def run_job(audio: Any, language: str | None, engine: Engine, batch_size: int, d
 
     while model is not None:
         try:
-            transcription = model.transcribe(audio, batch_size=size, language=language)
+            progress.set("transcribing", detail=None if size == batch_size else f"batch {size}")
+            transcription = model.transcribe(
+                audio, batch_size=size, language=language, progress_callback=progress.callback("transcribing"),
+            )
             break
         except Exception as error:
             if device != "cuda" or not is_oom(error):
@@ -1403,9 +1679,15 @@ def run_job(audio: Any, language: str | None, engine: Engine, batch_size: int, d
 
     if transcription is None:
         device_used = "cpu"
+        progress.device = "cpu"
+        progress.set("loading_model", detail="cpu")
         cpu = engine.cpu_model()
         try:
-            transcription = cpu.transcribe(audio, batch_size=min(size, CPU_BATCH_SIZE), language=language)
+            progress.set("transcribing", detail="cpu")
+            transcription = cpu.transcribe(
+                audio, batch_size=min(size, CPU_BATCH_SIZE), language=language,
+                progress_callback=progress.callback("transcribing"),
+            )
         finally:
             del cpu
             engine.release()
@@ -1417,13 +1699,15 @@ def run_job(audio: Any, language: str | None, engine: Engine, batch_size: int, d
     try:
         align_device = device_used
         try:
-            segments = engine.align(segments, detected, audio, align_device)
+            progress.set("aligning")
+            segments = engine.align(segments, detected, audio, align_device, progress_callback=progress.callback("aligning"))
         except Exception as error:
             if align_device != "cuda" or not is_oom(error):
                 raise
             engine.release()
             log.warning("allineamento: memoria della scheda finita, lo rifaccio sul processore")
-            segments = engine.align(segments, detected, audio, "cpu")
+            progress.set("aligning", detail="cpu")
+            segments = engine.align(segments, detected, audio, "cpu", progress_callback=progress.callback("aligning"))
     except Exception as error:  # noqa: BLE001
         # Senza allineamento i tempi restano quelli di Whisper: meno precisi, ma una trascrizione
         # con tempi approssimativi vale piu' di un errore. Con la traccia, pero': senza, l'errore di
@@ -1440,12 +1724,18 @@ def run_job(audio: Any, language: str | None, engine: Engine, batch_size: int, d
     }
 
 
-def _transcribe(path: str, language: str | None) -> dict[str, Any]:
+def _transcribe(path: str, language: str | None, progress: JobProgress | None = None) -> dict[str, Any]:
     """Il lavoro vero, su un thread suo: WhisperX blocca, e bloccare il loop ferma anche /health."""
     import whisperx
+    from whisperx.audio import SAMPLE_RATE
 
+    progress = progress or JobProgress()
+    # ffmpeg che decodifica un'ora di m4a sono secondi veri: meglio dirlo che restare «in coda».
+    progress.set("decoding")
     audio = whisperx.load_audio(path)
-    job = run_job(audio, language, Engine(), STATE["batch_size"], STATE["device"])
+    audio_s = len(audio) / SAMPLE_RATE
+    progress.audio_s = audio_s
+    job = run_job(audio, language, Engine(), STATE["batch_size"], STATE["device"], progress)
     STATE["alignment"][job["language"]] = job["alignment"]
 
     out = []
@@ -1481,6 +1771,8 @@ def _transcribe(path: str, language: str | None) -> dict[str, Any]:
         "segments": out,
         # «cuda» o «cpu»: l'app lo usa per dire «trascritta sulla RAM, piu' lenta».
         "device_used": job["device_used"],
+        # La durata vera del file, non la fine dell'ultimo segmento: un finale muto conta lo stesso.
+        "audio_s": audio_s,
     }
 
 

@@ -1,11 +1,22 @@
 package dev.pampa.pampanotes.ui.common
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import dev.antigravity.fluidengine.ui.fluid.FluidIndeterminateBar
+import dev.antigravity.fluidengine.ui.fluid.FluidProgressBar
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.db.JobEntity
 import dev.pampa.pampanotes.core.db.JobState
+import dev.pampa.pampanotes.core.transcription.JobPhase
+import dev.pampa.pampanotes.core.transcription.RemoteStage
 import dev.pampa.pampanotes.work.JobPhaseText
 
 /**
@@ -30,53 +41,56 @@ fun jobStateLabel(state: JobState): String = stringResource(
   },
 )
 
-/** La riga che dice a che punto e': "Pezzo 2 di 6", "Preparazione 40%". */
+/**
+ * La riga che dice a che punto e': «Registrazione 2 di 6 · trascrivo · 70%», «In coda sul
+ * computer: sei il 2°». La lettura e' una sola, in [JobPhaseText], condivisa con la notifica.
+ */
 @Composable
 fun jobPhaseText(job: JobEntity): String {
-  val phase = job.phase ?: return jobStateLabel(job.state)
-  val parts = phase.split(':')
-  return when (parts.firstOrNull()) {
-    "preparing" -> {
-      val percent = parts.getOrNull(2)?.toIntOrNull() ?: 0
-      stringResource(R.string.job_phase_preparing, percent)
-    }
+  // Letta per ricomporre quando cambia la lingua, come fa `stringResource`.
+  LocalConfiguration.current
+  return JobPhaseText.describe(LocalContext.current, job)
+}
 
-    "uploading" -> {
-      val position = parts.getOrNull(1).orEmpty().split('/')
-      stringResource(
-        R.string.job_phase_uploading,
-        position.getOrNull(0)?.toIntOrNull() ?: 1,
-        position.getOrNull(1)?.toIntOrNull() ?: 1,
-        parts.getOrNull(2)?.toIntOrNull() ?: 0,
+/**
+ * Le barre di un lavoro in corso: sopra l'intera sessione, sotto il passo che si sta facendo.
+ *
+ * Il passo ha una barra sua perche' la barra della sessione, su sei registrazioni, si muove di un
+ * sesto per registrazione: «trascrivo 70%» con la barra grande ferma sembrava un'app bloccata. Dove
+ * il passo non si misura — il computer carica il modello, e' in fila, Groq sta rispondendo — la
+ * seconda barra scorre invece di fingere un numero. Nessuna seconda barra per un lavoro che non e'
+ * ancora partito o che aspetta ore: li' non sta succedendo niente.
+ */
+@Composable
+fun JobProgressBars(job: JobEntity, modifier: Modifier = Modifier) {
+  val phase = JobPhase.parse(job.phase)
+  val step = phase?.stepPercent
+  val running = job.state in RUNNING_STATES
+  Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    FluidProgressBar(progress = { job.progress }, modifier = Modifier.fillMaxWidth())
+    when {
+      !running -> Unit
+      step != null -> FluidProgressBar(
+        progress = { step / 100f },
+        color = MaterialTheme.colorScheme.tertiary,
+        modifier = Modifier.fillMaxWidth(),
+      )
+      phase.isUnmeasuredWork() -> FluidIndeterminateBar(
+        color = MaterialTheme.colorScheme.tertiary,
+        modifier = Modifier.fillMaxWidth(),
       )
     }
-
-    "transcribing" -> {
-      val position = parts.getOrNull(1).orEmpty().split('/')
-      stringResource(
-        R.string.job_phase_transcribing,
-        position.getOrNull(0)?.toIntOrNull() ?: 1,
-        position.getOrNull(1)?.toIntOrNull() ?: 1,
-      )
-    }
-
-    "refining" -> {
-      val position = parts.getOrNull(1).orEmpty().split('/')
-      stringResource(
-        R.string.job_phase_refining,
-        position.getOrNull(0)?.toIntOrNull() ?: 1,
-        position.getOrNull(1)?.toIntOrNull() ?: 1,
-      )
-    }
-
-    "waiting" -> stringResource(R.string.job_phase_waiting, parts.getOrNull(1)?.toIntOrNull() ?: 0)
-    "endpoint" -> stringResource(R.string.job_phase_endpoint)
-    // Groq ha chiesto di aspettare piu' di quanto valga la pena tenere il lavoro aperto: e' tornato
-    // in coda, e riparte da solo a quell'ora.
-    "until" -> JobPhaseText.untilText(LocalContext.current, parts.getOrNull(1)?.toLongOrNull()) ?: jobStateLabel(job.state)
-    "stitching" -> stringResource(R.string.job_state_stitching)
-    else -> jobStateLabel(job.state)
   }
+}
+
+private val RUNNING_STATES = setOf(JobState.PREPARING, JobState.UPLOADING, JobState.TRANSCRIBING, JobState.STITCHING)
+
+/** Qualcuno sta lavorando, ma non dice quanto manca. */
+private fun JobPhase?.isUnmeasuredWork(): Boolean = when (this) {
+  is JobPhase.Uploading -> awaiting
+  is JobPhase.Remote -> stage in setOf(RemoteStage.RECEIVED, RemoteStage.QUEUED, RemoteStage.DECODING, RemoteStage.LOADING_MODEL, RemoteStage.DONE)
+  is JobPhase.Transcribing, JobPhase.Stitching -> true
+  else -> false
 }
 
 /**

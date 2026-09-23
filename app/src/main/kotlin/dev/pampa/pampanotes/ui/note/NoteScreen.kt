@@ -38,7 +38,6 @@ import dev.antigravity.fluidengine.ui.fluid.FluidHeroTone
 import dev.antigravity.fluidengine.ui.fluid.FluidContextAction
 import dev.antigravity.fluidengine.ui.fluid.FluidButton
 import dev.antigravity.fluidengine.ui.fluid.FluidButtonStyle
-import dev.antigravity.fluidengine.ui.fluid.FluidProgressBar
 import dev.antigravity.fluidengine.ui.fluid.FluidScreen
 import dev.antigravity.fluidengine.ui.theme.FluidCard
 import dev.antigravity.fluidengine.ui.theme.FluidEmptyState
@@ -56,6 +55,8 @@ import dev.pampa.pampanotes.core.db.SourceEntity
 import dev.pampa.pampanotes.core.db.SourceKind
 import dev.pampa.pampanotes.core.db.SourceStatus
 import dev.pampa.pampanotes.ui.common.Formats
+import dev.pampa.pampanotes.ui.common.JobProgressBars
+import dev.pampa.pampanotes.ui.common.jobPhaseText
 import dev.pampa.pampanotes.ui.common.MarkdownText
 import dev.pampa.pampanotes.ui.common.OverflowMenuButton
 import androidx.compose.ui.platform.LocalContext
@@ -457,7 +458,15 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
 
         when {
           job != null -> {
-            FluidProgressBar(progress = { job.progress }, modifier = Modifier.fillMaxWidth())
+            // Cosa sta succedendo, in parole, sopra le barre: la barra da sola non distingueva «il
+            // computer carica il modello» da «il computer si e' spento».
+            Text(
+              text = jobPhaseText(job),
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              modifier = Modifier.padding(start = 4.dp),
+            )
+            JobProgressBars(job)
             FluidButton(
               text = stringResource(R.string.action_cancel),
               onClick = { onCancelJob(job.id) },

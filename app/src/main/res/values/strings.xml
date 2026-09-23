@@ -388,11 +388,32 @@
   <string name="job_state_failed">Fallito</string>
   <string name="job_state_cancelled">Annullato</string>
   <string name="job_state_cancelling">Sto annullando</string>
-  <string name="job_phase_preparing">Preparazione dell\'audio, %1$d%%</string>
-  <string name="job_phase_uploading">Invio del pezzo %1$d di %2$d, %3$d%%</string>
-  <string name="job_phase_transcribing">Pezzo %1$d di %2$d</string>
   <string name="job_phase_waiting">In attesa del limite, %1$d s</string>
   <string name="job_phase_endpoint">In attesa del computer di casa</string>
+  <string name="job_phase_part">Registrazione %1$d di %2$d</string>
+  <string name="job_phase_chunk">pezzo %1$d di %2$d</string>
+  <string name="job_phase_percent">%1$d%%</string>
+  <string name="job_phase_step_preparing">preparo l\'audio · %1$d%%</string>
+  <string name="job_phase_step_chunk_done">pezzo %1$d di %2$d fatto</string>
+  <string name="job_phase_step_part_done">trascritta</string>
+  <string name="job_phase_upload_part">Carico la registrazione %1$d di %2$d</string>
+  <string name="job_phase_upload_chunk">Carico il pezzo %1$d di %2$d</string>
+  <string name="job_phase_upload_audio">Carico l\'audio</string>
+  <string name="job_phase_awaiting_groq">Groq trascrive</string>
+  <string name="job_phase_awaiting_computer">il computer trascrive</string>
+  <string name="job_phase_remote_received">il computer riceve l\'audio</string>
+  <string name="job_phase_remote_queued">in coda sul computer</string>
+  <string name="job_phase_remote_queued_position">in coda sul computer: sei il %1$d°</string>
+  <string name="job_phase_remote_decoding">il computer apre l\'audio</string>
+  <string name="job_phase_remote_loading">il computer carica il modello</string>
+  <string name="job_phase_remote_transcribing">trascrivo · %1$d%%</string>
+  <string name="job_phase_remote_aligning">allineo le parole · %1$d%%</string>
+  <string name="job_phase_remote_done">il computer ha finito, arriva il testo</string>
+  <string name="job_phase_remote_failed">il computer si è fermato</string>
+  <string name="job_phase_remote_cpu">sul processore</string>
+  <string name="job_phase_eta_seconds">ancora %1$d s</string>
+  <string name="job_phase_eta_minutes">ancora %1$d min</string>
+  <string name="job_phase_stitching">Ricompongo il testo</string>
 
   <!-- Errori -->
   <string name="error_unauthorized">Chiave non valida. Rimettila nelle impostazioni.</string>

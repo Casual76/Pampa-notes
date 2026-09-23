@@ -1,6 +1,14 @@
 package dev.pampa.pampanotes.core.transcription
 
 import java.io.File
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Whisper su Groq, con la chiave dell'utente.
@@ -57,6 +65,7 @@ class GroqWhisperProvider(
     mime: String,
     request: TranscribeRequest,
     onProgress: (UploadProgress) -> Unit,
+    onRemote: (RemoteProgress) -> Unit,
   ): TranscriptResult {
     val limit = capabilities.maxUploadBytes
     if (limit != null && file.length() > limit) {
@@ -136,6 +145,8 @@ class OpenAiCompatProvider(
   private val readTimeoutMillis: Int = READ_TIMEOUT_MS,
   /** Null: il file va intero. Altrimenti la durata massima di un pezzo, in minuti. */
   maxChunkMinutes: Int? = null,
+  /** Ogni quanto chiedere a che punto e' il lavoro (vedi [RemoteJobPoller]); i test lo accorciano. */
+  private val pollIntervalMs: Long = RemoteJobPoller.DEFAULT_INTERVAL_MS,
 ) : TranscriptionProvider {
 
   /** Normalizzato una volta: chi digita l'indirizzo mette o non mette la barra e il `/v1`. */
@@ -182,6 +193,7 @@ class OpenAiCompatProvider(
     mime: String,
     request: TranscribeRequest,
     onProgress: (UploadProgress) -> Unit,
+    onRemote: (RemoteProgress) -> Unit,
   ): TranscriptResult {
     val fields = linkedMapOf(
       "model" to request.model,
@@ -193,16 +205,43 @@ class OpenAiCompatProvider(
     request.language?.takeIf { it.isNotBlank() }?.let { fields["language"] = it }
     request.prompt?.takeIf { it.isNotBlank() }?.let { fields["prompt"] = it }
 
-    val body = authorized { headers ->
-      http.postAudio(
-        url = "$base/audio/transcriptions",
-        headers = headers,
-        fields = fields,
-        file = file,
-        fileMime = mime,
-        readTimeoutMillis = readTimeoutMillis,
-        onProgress = onProgress,
-      )
+    // Un id per richiesta, scelto qui: e' con questo che si chiede al companion a che punto e'. Lo
+    // stesso anche se [authorized] rimanda la POST con un biglietto nuovo — il primo tentativo e'
+    // stato rifiutato prima di arrivare al lavoro, e il companion lo registra solo se passa.
+    val jobId = UUID.randomUUID().toString()
+    val uploaded = AtomicBoolean(false)
+    val body = coroutineScope {
+      val poller = launch {
+        runCatching {
+          RemoteJobPoller(
+            fetch = { http.getJson("$base/jobs/$jobId", headers(auth.bearer()), readTimeoutMillis = POLL_TIMEOUT_MS) },
+            intervalMs = pollIntervalMs,
+            onUpdate = onRemote,
+          ).run(ready = { uploaded.get() })
+        }.onFailure { if (it is CancellationException) throw it }
+      }
+      try {
+        authorized { headers ->
+          http.postAudio(
+            url = "$base/audio/transcriptions",
+            headers = headers + (JOB_HEADER to jobId),
+            fields = fields,
+            file = file,
+            fileMime = mime,
+            readTimeoutMillis = readTimeoutMillis,
+            onProgress = { progress ->
+              // Solo dopo l'ultimo byte: prima il telefono sa gia' tutto da solo, e le domande
+              // si metterebbero in fila sulla stessa rete lenta che sta portando l'audio.
+              if (progress.totalBytes > 0 && progress.sentBytes >= progress.totalBytes) uploaded.set(true)
+              onProgress(progress)
+            },
+          )
+        }
+      } finally {
+        // Aspettato, non solo annullato: una risposta di stato arrivata dopo la fine riscriverebbe
+        // «trascrivo 90%» sopra il pezzo gia' finito.
+        withContext(NonCancellable) { poller.cancelAndJoin() }
+      }
     }
     return VerboseJson.parse(body)
   }
@@ -224,6 +263,12 @@ class OpenAiCompatProvider(
      * restava aperta per sempre verso un computer spento a meta' lavoro.
      */
     const val READ_TIMEOUT_MS = 90 * 60_000
+
+    /** L'intestazione con cui il companion riconosce il lavoro (vedi [RemoteJobPoller]). */
+    const val JOB_HEADER = "X-Pampa-Job"
+
+    /** Una domanda sullo stato risponde subito, o non serve: la prossima parte fra un secondo. */
+    const val POLL_TIMEOUT_MS = 5_000
 
     /**
      * Da quello che si scrive nel campo a un indirizzo che funziona.

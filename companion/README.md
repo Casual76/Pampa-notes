@@ -136,6 +136,40 @@ L'allineamento, se finisce la memoria, si rifà sul processore. La risposta dice
 
 Per dare un'idea: su una RTX 4070 Ti, `large-v3` fa una lezione di **31 minuti in 45 secondi**.
 
+## A che punto è
+
+Finito il caricamento, dal telefono una trascrizione era un'attesa muta: la barra ferma al 100% per
+dieci minuti o per un'ora, senza sapere se il computer stava caricando il modello, era in fila dietro
+un ospite o era a metà. Ora l'app manda con l'audio un suo identificativo (`X-Pampa-Job: <uuid>`) e,
+mentre aspetta la risposta, chiede ogni secondo `GET /v1/jobs/<id>`:
+
+```json
+{"id": "…", "state": "transcribing", "fraction": 0.7, "position": null, "audio_s": 3600.0,
+ "elapsed_s": 95.2, "state_elapsed_s": 60.1, "eta_s": 25.8, "processing_s": 80.3,
+ "device": "cuda", "detail": null}
+```
+
+- `state`: `received` (l'audio sta arrivando), `queued` (in fila: `position` 2 vuol dire «ce n'è una
+  davanti», quella che il computer sta facendo), `decoding` (ffmpeg apre il file), `loading_model`,
+  `transcribing`, `aligning`, `done`, `failed` (con il motivo in `detail`);
+- `fraction` vale **dentro lo stato**: la trascrizione da 0 a 1, poi l'allineamento da 0 a 1. Sono i
+  callback di WhisperX (`progress_callback`), uno per segmento della VAD in trascrizione e uno per
+  segmento in allineamento: niente stime sul tempo. Con un lotto grande i segmenti escono a gruppi,
+  quindi la trascrizione avanza a scatti di un lotto;
+- `eta_s` c'è quando c'è abbastanza da dire (almeno il 3% e due secondi nello stato);
+- `detail` dice i ripieghi: `batch 4` (memoria finita, lotto dimezzato), `cpu` (si continua sul
+  processore). Un ripiego ricomincia la sua barra da zero.
+
+Le credenziali sono quelle della trascrizione. Il proprietario vede tutti i lavori; un ospite solo i
+suoi (il bearer con cui è arrivato l'audio resta col lavoro, come impronta), e per quelli degli altri
+riceve lo stesso 404 di un id che non esiste. Un lavoro resta leggibile **dieci minuti** dopo la fine;
+se ne tengono al massimo 256. Il lavoro si registra appena arrivano gli header, prima di leggere
+l'audio: chi chiede durante il caricamento legge `received`, non un 404 che l'app scambierebbe per
+un companion vecchio — e con un companion vecchio l'app smette di chiedere dopo due 404.
+
+La risposta della trascrizione porta anche `processing_s` (quanto ha lavorato il computer, senza la
+fila) e `audio_s` (la durata vera del file).
+
 ## Quanta VRAM
 
 La memoria che WhisperX chiede alla scheda dipende da tre cose: **il modello, il `compute_type` e il

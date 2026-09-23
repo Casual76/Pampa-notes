@@ -14,8 +14,6 @@ import dev.antigravity.fluidengine.ui.fluid.FluidButtonStyle
 import dev.antigravity.fluidengine.ui.fluid.FluidContextAction
 import dev.antigravity.fluidengine.ui.fluid.FluidHeroMotif
 import dev.antigravity.fluidengine.ui.fluid.FluidHeroTone
-import dev.antigravity.fluidengine.ui.fluid.FluidIndeterminateBar
-import dev.antigravity.fluidengine.ui.fluid.FluidProgressBar
 import dev.antigravity.fluidengine.ui.fluid.FluidScreen
 import dev.antigravity.fluidengine.ui.fluid.FluidSectionHeader
 import dev.antigravity.fluidengine.ui.theme.FluidCard
@@ -29,6 +27,7 @@ import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.db.JobState
 import dev.pampa.pampanotes.core.model.Dates
 import dev.pampa.pampanotes.ui.common.Formats
+import dev.pampa.pampanotes.ui.common.JobProgressBars
 import dev.pampa.pampanotes.ui.common.jobErrorText
 import dev.pampa.pampanotes.ui.common.jobPhaseText
 import dev.pampa.pampanotes.ui.common.jobStateLabel
@@ -133,14 +132,10 @@ private fun ActiveJobCard(row: JobRow, onCancel: () -> Unit, cancelLabel: String
       eyebrow = jobStateLabel(row.job.state),
       meta = sessionDateLabel(row.sessionDate),
     )
-    // Una barra determinata quando il progresso significa qualcosa, indeterminata quando si sta
-    // solo aspettando una risposta: fingere una percentuale mentre il server pensa e' peggio che
-    // non mostrarla.
-    if (row.job.state == JobState.TRANSCRIBING || row.job.state == JobState.STITCHING) {
-      FluidIndeterminateBar(modifier = Modifier.fillMaxWidth())
-    } else {
-      FluidProgressBar(progress = { row.job.progress }, modifier = Modifier.fillMaxWidth())
-    }
+    // La sessione intera, e sotto il passo in corso: determinata quando il computer dice a che punto
+    // e', che scorre quando si sta solo aspettando una risposta — fingere una percentuale mentre il
+    // server pensa e' peggio che non mostrarla.
+    JobProgressBars(row.job)
     FluidButton(
       text = cancelLabel,
       onClick = onCancel,
