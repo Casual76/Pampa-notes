@@ -185,11 +185,18 @@ export async function push(env: Env, ownerId: string, body: PushRequest): Promis
         // riceve di nuovo intera).
         const repair = change.tbl === "transcripts" && chunks.length > 0 && (chunkCounts.get(change.id) ?? 0) === 0;
         if (!repair) continue;
-      } else if ((change.baseHash ?? "") !== current.hash) {
+      } else if ((change.baseHash ?? "") !== current.hash && current.deviceId !== body.deviceId) {
         // Il dispositivo non ha visto la versione che c'e' adesso: si rifiuta, se la riprende col
         // pull, e il merge decide cosa tenere. Non si guarda l'orologio, di proposito: un telefono
         // con l'ora indietro che ha letto l'ultima versione e ci ha scritto sopra ha una versione
         // successiva, non piu' vecchia — e rifiutarla lo lascerebbe fuori per sempre.
+        //
+        // Tranne quando la versione che c'e' adesso l'ha scritta lui: e' la risposta di un push
+        // persa per strada (il server ha scritto, il telefono non l'ha saputo e dichiara ancora la
+        // base di prima). Quello che manda adesso viene da quello che aveva scritto, e il pull non
+        // gliela riporterebbe mai — non rimanda a nessuno le sue righe —: rifiutarla voleva dire
+        // tenerla ferma nell'outbox per sempre. Chi ripristina un backup cambia id apposta
+        // (`SyncRepository.afterRestore`), perche' li' «quello che aveva scritto» e' piu' nuovo.
         rejected.push({ tbl: change.tbl, id: change.id, reason: "stale" });
         continue;
       }
@@ -250,17 +257,19 @@ export async function push(env: Env, ownerId: string, body: PushRequest): Promis
   return result;
 }
 
+type Current = { hash: string; op: string; seq: number; deviceId: string };
+
 /** Quello che c'e' gia' delle righe in arrivo, in una query sola per tabella (a fette da novanta, per i cento parametri). */
-async function currentVersions(env: Env, ownerId: string, changes: Change[]): Promise<Map<string, { hash: string; op: string; seq: number }>> {
-  const existing = new Map<string, { hash: string; op: string; seq: number }>();
+async function currentVersions(env: Env, ownerId: string, changes: Change[]): Promise<Map<string, Current>> {
+  const existing = new Map<string, Current>();
   for (const tbl of TABLES) {
     const ids = [...new Set(changes.filter((c) => c.tbl === tbl).map((c) => c.id))];
     for (let i = 0; i < ids.length; i += 90) {
       const slice = ids.slice(i, i + 90);
       const rows = await env.DB.prepare(
-        `SELECT rowId, hash, op, seq FROM state WHERE ownerId = ? AND tbl = ? AND rowId IN (${slice.map(() => "?").join(",")})`,
-      ).bind(ownerId, tbl, ...slice).all<{ rowId: string; hash: string; op: string; seq: number }>();
-      for (const r of rows.results) existing.set(`${tbl}/${r.rowId}`, { hash: r.hash, op: r.op, seq: r.seq });
+        `SELECT rowId, hash, op, seq, deviceId FROM state WHERE ownerId = ? AND tbl = ? AND rowId IN (${slice.map(() => "?").join(",")})`,
+      ).bind(ownerId, tbl, ...slice).all<{ rowId: string } & Current>();
+      for (const r of rows.results) existing.set(`${tbl}/${r.rowId}`, { hash: r.hash, op: r.op, seq: r.seq, deviceId: r.deviceId });
     }
   }
   return existing;
@@ -480,8 +489,11 @@ export async function pull(env: Env, ownerId: string, deviceId: string, since: n
   }));
 
   // La pagina si ferma all'ultimo `seq` consegnato: il prossimo pull riparte da li'. Se non c'e'
-  // altro, si dice il `seq` del proprietario, cosi' il client sa di essere in pari.
-  return { changes, seq: more ? lastSeq : owner.seq, more };
+  // altro, si dice il `seq` del proprietario, cosi' il client sa di essere in pari. Ma `owner` e'
+  // stato letto prima delle righe, e un push confermato nel mezzo puo' aver messo nella pagina
+  // righe con un `seq` piu' alto: dire quello di prima gliele farebbe riscaricare al giro dopo
+  // (e una riga riscaricata dopo una modifica fatta li' sembrava un conflitto).
+  return { changes, seq: more ? lastSeq : Math.max(owner.seq, lastSeq), more };
 }
 
 type StateRow = { tbl: Table; rowId: string; op: "U" | "D"; updatedAt: number; hash: string; deviceId: string; payload: string | null; seq: number };

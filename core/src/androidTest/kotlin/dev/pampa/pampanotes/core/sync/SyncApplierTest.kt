@@ -355,4 +355,58 @@ class SyncApplierTest {
     assertNull(db.notes().get("n"))
     assertNull(db.sessions().get("s"))
   }
+
+  // --- cancellata qui, cambiata altrove ---
+
+  @Test
+  fun una_sessione_cancellata_qui_resta_cancellata_se_altrove_c_e_solo_il_segno(): Unit = runBlocking {
+    db.folders().upsert(folder("f"))
+    db.notes().upsert(note("n", folderId = "f"))
+    db.sessions().upsert(session("s", noteId = "n"))
+    clean()
+    val base = SyncPayloads.encode(SessionEntity.serializer(), session("s", noteId = "n"), 1).hash
+    db.sync().upsertMeta(SyncMetaEntity("sessions", "s", serverSeq = 2, hash = base, updatedAt = 1))
+    db.sessions().delete("s")
+
+    val remote = upSession(session("s", noteId = "n").copy(transcribingOn = "Tab S9", transcribingSince = 5), seq = 3)
+    val outcome = apply(remote)
+    assertNull(db.sessions().get("s"))
+    assertTrue(outcome.revived.isEmpty())
+    // Il tombstone resta, con la versione remota come base: salira' senza essere rifiutato.
+    assertEquals("D", db.sync().outboxEntry("sessions", "s")?.op)
+    assertEquals(remote.hash, db.sync().meta("sessions", "s")?.hash)
+  }
+
+  @Test
+  fun una_nota_cancellata_qui_e_cambiata_altrove_rinasce_e_i_figli_tornano_senza_tombstone(): Unit = runBlocking {
+    db.folders().upsert(folder("f"))
+    db.notes().upsert(note("n", folderId = "f"))
+    db.sessions().upsert(session("s", noteId = "n"))
+    db.audioParts().upsert(part("p", sessionId = "s"))
+    clean()
+    listOf("notes" to "n", "sessions" to "s", "audio_parts" to "p").forEach { (tbl, id) ->
+      db.sync().upsertMeta(SyncMetaEntity(tbl, id, serverSeq = 1, hash = "concordata-$id", updatedAt = 1))
+    }
+    db.notes().delete("n")
+    // La cascata ha lasciato un tombstone per ognuno.
+    assertEquals("D", db.sync().outboxEntry("sessions", "s")?.op)
+    assertEquals("D", db.sync().outboxEntry("audio_parts", "p")?.op)
+
+    // Altrove il testo e' cambiato: la nota rinasce, e chiede i suoi figli.
+    val outcome = apply(upNote(note("n", folderId = "f").copy(body = "scritto sul tablet"), seq = 5))
+    assertEquals("scritto sul tablet", db.notes().get("n")?.body)
+    assertEquals(listOf("notes/n"), outcome.revived)
+    assertNull(db.sync().outboxEntry("notes", "n"))
+
+    // Il riallineamento dei figli: tornano, e i loro tombstone non salgono piu'.
+    val children = listOf(
+      upSession(session("s", noteId = "n"), seq = 1),
+      up("audio_parts", "p", 1, AudioPartEntity.serializer(), part("p", sessionId = "s")),
+    )
+    runBlocking { applier.apply(children, ownerId = "me", deviceName = "questo", revive = setOf("sessions/s", "audio_parts/p")) }
+    assertNotNull(db.sessions().get("s"))
+    assertNotNull(db.audioParts().get("p"))
+    assertNull(db.sync().outboxEntry("sessions", "s"))
+    assertNull(db.sync().outboxEntry("audio_parts", "p"))
+  }
 }

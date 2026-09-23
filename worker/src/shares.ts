@@ -82,6 +82,22 @@ async function liveShare(env: ShareEnv, ownerId: string, shareId: string): Promi
   return row;
 }
 
+/**
+ * La condivisione viva, e `partId` e' una registrazione della nota condivisa: una parte nell'indice
+ * la cui sessione sta sotto quella nota. Senza, il caricamento accettava qualunque nome, e un token
+ * del proprietario bastava a mettere in R2 — sotto un link pubblico — un file che con la nota non
+ * c'entra. La pagina, del resto, mostra solo le parti che l'indice le dice.
+ */
+async function liveSharePart(env: ShareEnv, ownerId: string, shareId: string, partId: string): Promise<ShareRow> {
+  const share = await liveShare(env, ownerId, shareId);
+  const part = await env.DB.prepare(
+    `SELECT 1 AS ok FROM state p JOIN state s ON s.ownerId = p.ownerId AND s.tbl = 'sessions' AND s.op = 'U' AND s.rowId = json_extract(p.payload, '$.sessionId')
+     WHERE p.ownerId = ? AND p.tbl = 'audio_parts' AND p.rowId = ? AND p.op = 'U' AND json_extract(s.payload, '$.noteId') = ?`,
+  ).bind(ownerId, partId, share.noteId).first<{ ok: number }>();
+  if (!part) throw new NotFound("registrazione inesistente in questa nota");
+  return share;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Il proprietario: crea, elenca, revoca, carica l'audio
 // ---------------------------------------------------------------------------------------------
@@ -166,7 +182,7 @@ function audioMime(declared: string | null | undefined): string {
 
 /** Un file intero in una richiesta: va bene fino a qualche decina di megabyte. */
 export async function putAudio(env: ShareEnv, ownerId: string, shareId: string, partId: string, request: Request): Promise<{ bytes: number }> {
-  await liveShare(env, ownerId, shareId);
+  await liveSharePart(env, ownerId, shareId, partId);
   const mime = audioMime(request.headers.get("content-type"));
   const key = audioKey(ownerId, shareId, partId);
   const before = await env.AUDIO.head(key);
@@ -176,7 +192,7 @@ export async function putAudio(env: ShareEnv, ownerId: string, shareId: string, 
 }
 
 export async function beginMultipart(env: ShareEnv, ownerId: string, shareId: string, partId: string, mime: string): Promise<{ uploadId: string }> {
-  await liveShare(env, ownerId, shareId);
+  await liveSharePart(env, ownerId, shareId, partId);
   const upload = await env.AUDIO.createMultipartUpload(audioKey(ownerId, shareId, partId), { httpMetadata: { contentType: audioMime(mime) } });
   return { uploadId: upload.uploadId };
 }
@@ -194,7 +210,7 @@ export async function putMultipartPart(
 export async function completeMultipart(
   env: ShareEnv, ownerId: string, shareId: string, partId: string, uploadId: string, parts: { partNumber: number; etag: string }[],
 ): Promise<{ bytes: number }> {
-  await liveShare(env, ownerId, shareId);
+  await liveSharePart(env, ownerId, shareId, partId);
   if (!Array.isArray(parts) || !parts.length) throw new BadRequest("parti mancanti");
   const key = audioKey(ownerId, shareId, partId);
   const before = await env.AUDIO.head(key);

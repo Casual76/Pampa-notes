@@ -51,6 +51,24 @@ object SyncPlan {
     }
   }
 
+  /** La chiave di una riga fuori dal database: `tbl/id`, come le usano [OrphanLedger] e le radici da riallineare. */
+  fun key(tbl: String, id: String): String = "$tbl/$id"
+
+  /**
+   * [row] sta sotto una delle [roots], risalendo i padri ([parents]: chiave -> chiave del padre).
+   * La radice stessa no: e' gia' rinata, e' dei suoi figli che si chiede. Un ciclo nei payload
+   * (non dovrebbe esserci, ma arrivano da fuori) si ferma invece di girare per sempre.
+   */
+  fun descendsFrom(row: String, roots: Set<String>, parents: Map<String, String>): Boolean {
+    val seen = mutableSetOf(row)
+    var current = parents[row]
+    while (current != null && seen.add(current)) {
+      if (current in roots) return true
+      current = parents[current]
+    }
+    return false
+  }
+
   private fun JsonObject.string(key: String): String? =
     (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
 }
@@ -76,7 +94,7 @@ object OrphanLedger {
     val resumeFrom: Long,
   )
 
-  fun key(change: WireChange): String = "${change.tbl}/${change.id}"
+  fun key(change: WireChange): String = SyncPlan.key(change.tbl, change.id)
 
   /**
    * @param count se questo giro conta. Il secondo pull dello stesso giro di sync (quello dopo un push

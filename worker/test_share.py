@@ -169,6 +169,24 @@ def main() -> None:
     assert code == 404 and "content-security-policy" in {k.lower() for k in h}, h
     print("intestazioni: nosniff, no-referrer, noindex su pagina, dati e audio; CSP sulla pagina; \\d nella regex"); ok += 1
 
+    # 5b-bis. si carica solo l'audio delle registrazioni della nota condivisa: un nome qualunque, o
+    #         una parte di un'altra nota, non entra in R2 sotto il link
+    code, _, _ = call("PUT", f"/v1/shares/{sid}/audio/inventata", b"x", headers={"Content-Type": "audio/mp4"})
+    assert code == 404, code
+    r = push("tablet", [
+        change("notes", "n2", {"note": {"id": "n2", "folderId": "f1", "title": "Altra", "body": "", "pinned": False, "createdAt": NOW, "updatedAt": NOW}, "tags": []}),
+        change("sessions", "s2", {"id": "s2", "noteId": "n2", "position": 0, "title": "Altra lezione", "date": "2026-09-22", "activeTranscriptId": None, "createdAt": NOW, "updatedAt": NOW}),
+        change("audio_parts", "p9", {"id": "p9", "sessionId": "s2", "position": 0, "fileName": "p9.m4a", "originalName": "Voce 009.m4a", "mime": "audio/mp4", "sizeBytes": 3, "durationMs": 1000, "sha256": "d" * 64, "createdAt": NOW, "archivedAt": NOW}),
+        change("audio_parts", "p3", {"id": "p3", "sessionId": "s1", "position": 2, "fileName": "p3.m4a", "originalName": "Voce 003.m4a", "mime": "audio/mp4", "sizeBytes": 3, "durationMs": 1000, "sha256": "e" * 64, "createdAt": NOW, "archivedAt": NOW}),
+        change("audio_parts", "p4", {"id": "p4", "sessionId": "s1", "position": 3, "fileName": "p4.m4a", "originalName": "Voce 004.m4a", "mime": "audio/mp4", "sizeBytes": 6, "durationMs": 1000, "sha256": "f" * 64, "createdAt": NOW, "archivedAt": NOW}),
+    ])
+    assert r["applied"] == 5, r
+    code, _, _ = call("PUT", f"/v1/shares/{sid}/audio/p9", b"x", headers={"Content-Type": "audio/mp4"})
+    assert code == 404, code
+    code, _, _ = call("POST", f"/v1/shares/{sid}/audio/p9/multipart", {"mime": "audio/mp4"})
+    assert code == 404, code
+    print("audio: 404 per una parte inventata o di un'altra nota, intero e a blocchi"); ok += 1
+
     # 5c. un «audio» caricato come pagina si serve come audio
     code, _, raw = call("PUT", f"/v1/shares/{sid}/audio/p3", b"<script>alert(1)</script>", headers={"Content-Type": "text/html"})
     assert code == 200, (code, raw)

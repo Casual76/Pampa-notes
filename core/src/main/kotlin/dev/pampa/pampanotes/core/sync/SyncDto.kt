@@ -177,6 +177,18 @@ object SyncCodec {
   fun hash(payload: JsonElement): String = Hashing.sha256(json.encodeToString(JsonElement.serializer(), strip(payload)))
 
   /**
+   * L'impronta del payload come sarebbe **senza** il segno «in trascrizione su»: quella di una
+   * sessione su cui nessuno sta lavorando. E' come il merge riconosce una riga diversa dalla
+   * versione concordata solo per il segno — che non e' una modifica (vedi `TranscribingMarker`) e
+   * non deve contare ne' come «cambiata qui» ne' come «cambiata altrove».
+   */
+  fun bareHash(payload: JsonElement): String {
+    val obj = payload as? JsonObject ?: return hash(payload)
+    if (TRANSCRIBING_KEYS.none { it in obj }) return hash(payload)
+    return hash(JsonObject(obj.mapValues { (key, value) -> if (key in TRANSCRIBING_KEYS) JsonNull else value }))
+  }
+
+  /**
    * L'impronta di una trascrizione: il suo payload **e i suoi segmenti**.
    *
    * Prima c'era solo il payload, e i segmenti viaggiavano accanto senza contare: riordinare le parti

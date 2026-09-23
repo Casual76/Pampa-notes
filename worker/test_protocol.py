@@ -174,6 +174,20 @@ def main() -> None:
     assert code == 200 and s["rows"] >= 253 and s["tombstones"] == 1 and {d["deviceId"] for d in s["devices"]} >= {"tablet", "telefono"}, s
     print(f"status: {s['rows']} righe, {s['tombstones']} tombstone, dispositivi {[d['deviceId'] for d in s['devices']]}"); ok += 1
 
+    # 11. la risposta di un push persa per strada: il telefono non sa che la sua versione e' entrata,
+    #     ci scrive sopra e dichiara ancora la base di prima. E' la sua ultima versione, e passa; il
+    #     pull non gliela riporterebbe mai. Un altro dispositivo con la stessa base invece e' stale.
+    r = push("telefono", [change("notes", "persa", 5000)])
+    assert r["applied"] == 1, r
+    r = push("telefono", [change("notes", "persa", 5001)])   # base vuota, come prima del primo push
+    assert r["applied"] == 1 and r["rejected"] == [], r
+    r = push("tablet", [change("notes", "persa", 5002)])
+    assert r["rejected"] == [{"tbl": "notes", "id": "persa", "reason": "stale"}], r
+    p = pull("tablet", s["seq"])
+    got = [c for c in p["changes"] if c["id"] == "persa"]
+    assert got and got[-1]["hash"] == f"h{NOW + 5001}", got
+    print("push: chi riscrive sopra la sua ultima versione passa anche con la base vecchia; gli altri no"); ok += 1
+
     print(f"\n{ok} verifiche passate")
 
 

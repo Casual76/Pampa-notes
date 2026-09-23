@@ -176,19 +176,39 @@ class WorkScheduler @Inject constructor(
    * fallito resta in coda ad aspettare il suo tentativo successivo (un minuto, poi due, poi
    * quattro), e con `KEEP` il tocco su «Sincronizza adesso» — o l'accesso appena fatto — verrebbe
    * ignorato in silenzio finche' quel tentativo non scade: e' successo. Chi chiede con [force] lo
-   * sostituisce e parte subito; interrompere un giro a meta' non fa danni, ogni pagina e' una
-   * transazione e ogni lotto ha il suo id.
+   * sostituisce e parte subito.
+   *
+   * Sostituisce solo un giro **in attesa**, pero'. Uno che sta girando non si annulla: tirare giu'
+   * una pagina due volte, o toccare «Sincronizza adesso» durante il giro dell'apertura, lo
+   * interrompeva a meta' push — il server aveva scritto il lotto, il telefono non aveva letto la
+   * risposta, e la riga restava nell'outbox con una base vecchia. Con un giro al lavoro se ne accoda
+   * uno dopo di lui, come fa [syncSoon]: chi ha chiesto vede quello che c'e' dopo la sua richiesta.
    */
   fun syncNow(force: Boolean = false): UUID {
+    val manager = WorkManager.getInstance(context)
     val request = OneTimeWorkRequestBuilder<SyncWorker>()
       .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
       .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
       .addTag(TAG_SYNC)
       .build()
-    WorkManager.getInstance(context).enqueueUniqueWork(SYNC_NOW, if (force) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP, request)
+    val policy = when {
+      !force -> ExistingWorkPolicy.KEEP
+      syncNowRunning(manager) -> ExistingWorkPolicy.APPEND_OR_REPLACE
+      else -> ExistingWorkPolicy.REPLACE
+    }
+    manager.enqueueUniqueWork(SYNC_NOW, policy, request)
     // Con [force] e' il giro che partira' davvero; senza, un `KEEP` puo' aver tenuto quello di prima.
     return request.id
   }
+
+  /**
+   * Il giro di [syncNow] sta lavorando adesso. Una lettura bloccante, ma breve e con un tetto: chi
+   * chiama non e' sospendibile (il tasto e il primo accesso), e sbagliare per difetto vuol dire solo
+   * il `REPLACE` di prima.
+   */
+  private fun syncNowRunning(manager: WorkManager): Boolean = runCatching {
+    manager.getWorkInfosForUniqueWork(SYNC_NOW).get(1, TimeUnit.SECONDS).any { it.state == WorkInfo.State.RUNNING }
+  }.getOrDefault(false)
 
   /**
    * Un giro fra qualche secondo, per una cosa che gli altri dispositivi devono sapere presto: il

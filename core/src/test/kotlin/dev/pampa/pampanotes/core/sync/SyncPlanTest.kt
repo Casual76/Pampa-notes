@@ -68,6 +68,36 @@ class SyncPlanTest {
     assertNull(SyncPlan.parentOf("notes", null))
   }
 
+  // --- i figli di una riga rinata ---
+
+  @Test
+  fun `sotto una nota rinata ci sono le sue sessioni, le loro parti e trascrizioni, non la nota stessa`() {
+    val parents = mapOf(
+      "notes/n" to "folders/f",
+      "sessions/s" to "notes/n",
+      "audio_parts/p" to "sessions/s",
+      "transcripts/t" to "sessions/s",
+      "sources/x" to "notes/n",
+      "sessions/altra" to "notes/m",
+      "audio_parts/q" to "sessions/altra",
+    )
+    val roots = setOf("notes/n")
+    listOf("sessions/s", "audio_parts/p", "transcripts/t", "sources/x").forEach {
+      assertTrue(it, SyncPlan.descendsFrom(it, roots, parents))
+    }
+    listOf("notes/n", "folders/f", "sessions/altra", "audio_parts/q", "notes/sconosciuta").forEach {
+      assertTrue(it, !SyncPlan.descendsFrom(it, roots, parents))
+    }
+  }
+
+  @Test
+  fun `una cartella rinata porta con se' sottocartelle e note, e un ciclo nei payload non gira per sempre`() {
+    val parents = mapOf("folders/sotto" to "folders/f", "notes/n" to "folders/sotto", "sessions/s" to "notes/n", "folders/a" to "folders/b", "folders/b" to "folders/a")
+    assertTrue(SyncPlan.descendsFrom("sessions/s", setOf("folders/f"), parents))
+    assertTrue(!SyncPlan.descendsFrom("folders/a", setOf("folders/f"), parents))
+    assertEquals("notes/n", SyncPlan.key("notes", "n"))
+  }
+
   // --- gli orfani in fondo al pull ---
 
   @Test
