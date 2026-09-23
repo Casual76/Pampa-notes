@@ -172,11 +172,15 @@ class ImportCoordinator @Inject constructor(
 
     val sdocx = if (kind == SourceKind.SDOCX) runCatching { SdocxParser.parse(temp) }.getOrNull() else null
     // Una nota Samsung con lo stesso titolo di una gia' importata da Samsung Notes: quasi sempre
-    // e' la stessa nota, aggiornata. Si propone di aggiornarla, non si decide.
+    // e' la stessa nota, aggiornata. Si propone di aggiornarla, non si decide. Si segna anche quale
+    // dei suoi `.sdocx` e' la versione vecchia: e' lui solo che l'aggiornamento sostituisce.
+    var updateOfSource: SourceEntity? = null
     val updateOf = sdocx?.title?.trim()?.takeIf { it.isNotEmpty() }?.let { title ->
-      noteDao.byTitle(title, 10)
-        .filter { it.title.trim().equals(title, ignoreCase = true) }
-        .firstOrNull { note -> sources.byNote(note.id).any { it.kind == SourceKind.SDOCX } }
+      noteDao.byExactTitle(title).firstOrNull { note ->
+        val noteSources = sources.byNote(note.id)
+        updateOfSource = previousVersion(noteSources, title)
+        noteSources.any { it.kind == SourceKind.SDOCX }
+      }
     }
 
     // Per l'audio, durata e giorno della registrazione in una lettura sola. La data di modifica si
@@ -203,10 +207,23 @@ class ImportCoordinator @Inject constructor(
       sdocx = sdocx,
       updateOfNoteId = updateOf?.id,
       updateOfNoteTitle = updateOf?.title,
+      updateOfSourceId = updateOf?.let { updateOfSource?.id },
       recordedOn = recordedOn,
       recordedAtMillis = recordedAt,
     )
   }
+
+  /**
+   * Il `.sdocx` fra [noteSources] di cui [title] e' la versione nuova ([SdocxUpdate.pick]), o null
+   * se non se ne riconosce uno. Il titolo si rilegge dal file quando e' qui; quando sta solo sul
+   * computer resta il nome del file.
+   */
+  private fun previousVersion(noteSources: List<SourceEntity>, title: String): SourceEntity? =
+    SdocxUpdate.pick(noteSources, title) { source -> textOf(source)?.first ?: SdocxUpdate.titleFromName(source.originalName) }
+
+  /** Titolo e testo di un `.sdocx` gia' importato, se il file e' su questo dispositivo. */
+  private fun textOf(source: SourceEntity): Pair<String?, String>? =
+    source.storedFileName?.let { files.sourceFile(it) }?.takeIf { it.exists() }?.let { SdocxParser.readText(it) }
 
   /**
    * Scrive davvero.
@@ -358,8 +375,8 @@ class ImportCoordinator @Inject constructor(
    *
    * Le registrazioni si tirano fuori dallo ZIP una alla volta in un file temporaneo e passano per
    * [AudioImporter] come qualsiasi altro audio, con il nome che Samsung Notes gli dava — «Voce
-   * 001» — e nell'ordine in cui sono state fatte. La sessione prende la data della prima
-   * registrazione, che e' il giorno della lezione, non il giorno dell'import.
+   * 001» — e nell'ordine in cui sono state fatte. Una sessione per giorno di registrazione, datata
+   * col giorno della lezione e non con quello dell'import.
    */
   private suspend fun importSamsungNote(
     candidate: ImportCandidate,
@@ -380,7 +397,19 @@ class ImportCoordinator @Inject constructor(
     val stored = files.sourceFile(storedName)
     temp.copyTo(stored, overwrite = true)
     temp.delete()
-    val oldSdocx = if (replace) sources.byNote(noteId).filter { it.kind == SourceKind.SDOCX } else emptyList()
+    // In un aggiornamento se ne va **un** `.sdocx`: quello riconosciuto all'ispezione, o — se nel
+    // frattempo non c'e' piu' — quello con lo stesso titolo. Gli altri della nota, arrivati con
+    // «Importa qui», restano con le loro pagine e il loro testo; se non se ne riconosce nessuno non
+    // se ne va niente, e il testo nuovo si aggiunge. Si guarda prima di scrivere la riga nuova, che
+    // sarebbe altrimenti la piu' recente fra le candidate.
+    val noteSources = if (replace) sources.byNote(noteId) else emptyList()
+    val old: SourceEntity? = if (replace) {
+      noteSources.firstOrNull { it.id == candidate.updateOfSourceId && it.kind == SourceKind.SDOCX }
+        ?: previousVersion(noteSources, doc.title ?: candidate.displayName.substringBeforeLast('.'))
+    } else {
+      null
+    }
+    val oldText = old?.let { textOf(it) }
     val body = doc.body.trim()
     val entity = SourceEntity(
       id = sourceId,
@@ -398,9 +427,13 @@ class ImportCoordinator @Inject constructor(
     sources.upsert(entity)
 
     // 2. Il testo. In un aggiornamento si sostituisce, non si accoda: gli appunti si prendono in
-    //    Samsung Notes, e la versione nuova del file *e'* la nota.
+    //    Samsung Notes, e la versione nuova del file *e'* la nota — tutta, se quel `.sdocx` era
+    //    l'unico a darle del testo; altrimenti solo il pezzo che aveva portato ([SdocxUpdate.mergeBody]).
     if (replace) {
-      notes.setBody(noteId, body)
+      val current = noteDao.get(noteId)?.body.orEmpty()
+      val onlySource = SdocxUpdate.onlyTextSource(noteSources, old?.id.orEmpty())
+      SdocxUpdate.mergeBody(current, oldText?.second, oldText?.first ?: doc.title, body, onlySource)
+        ?.let { notes.setBody(noteId, it) }
     } else if (body.isNotEmpty()) {
       val hadBody = !noteDao.get(noteId)?.body.isNullOrBlank()
       notes.appendBody(noteId, if (hadBody) "## ${doc.title ?: candidate.displayName}\n\n$body" else body)
@@ -410,7 +443,6 @@ class ImportCoordinator @Inject constructor(
     //    con le loro trascrizioni; entrano solo le nuove, una sessione per giorno di registrazione.
     val known: Set<String> = if (replace) sessions.byNote(noteId).flatMap { it.parts }.map { it.sha256 }.toSet() else emptySet()
     var alreadyThere = 0
-    val recordedOn = mutableMapOf<String, String>()
     val extracted = mutableListOf<ImportCandidate>()
     java.util.zip.ZipFile(stored).use { zip ->
       doc.recordings.forEachIndexed { index, recording ->
@@ -426,10 +458,8 @@ class ImportCoordinator @Inject constructor(
         // Un nome che ordina come Samsung Notes: «Voce 001» viene prima di «Voce 002» anche
         // quando i file dentro lo ZIP si chiamano al contrario.
         val name = recording.title ?: "Registrazione ${"%02d".format(index + 1)}"
-        val candidateId = Ids.newId()
-        recording.createdAtMillis?.let { recordedOn[candidateId] = Dates.fromMillis(it) }
         extracted += ImportCandidate(
-          id = candidateId,
+          id = Ids.newId(),
           uri = null,
           file = audioTemp,
           displayName = "$name.$extension",
@@ -438,24 +468,31 @@ class ImportCoordinator @Inject constructor(
           sizeBytes = size,
           sha256 = sha,
           durationMs = audioImporter.probeDuration(audioTemp).takeIf { it > 0 } ?: recording.durationMs,
+          // Il giorno in cui e' stata fatta, dal record di `mediaInfo.dat`: e' quello che divide le
+          // registrazioni in lezioni ([RecordingDate.groupByDay]).
+          recordedOn = recording.createdAtMillis
+            ?.let { Dates.parseOrNull(Dates.fromMillis(it)) }
+            ?.let { RecordedOn(it, RecordingDateSource.METADATA) },
         )
       }
     }
 
     if (extracted.isNotEmpty() && replace) {
-      // Le lezioni nuove, una sessione per giorno: e' cosi' che si leggono in Samsung Notes.
-      extracted.groupBy { recordedOn[it.id] ?: Dates.today() }.toSortedMap().forEach { (date, group) ->
-        results += audioImporter.importAll(group, noteId, AudioPlacement.NewSession(date = date))
+      // Le lezioni nuove, una per giorno: e' cosi' che si leggono in Samsung Notes. Un giorno che
+      // la nota ha gia' e' la stessa lezione, ripresa dopo l'ultima condivisione: la registrazione
+      // va in coda a quella sessione, non in una seconda con la stessa data.
+      val existing = sessions.byNote(noteId).map { it.session }
+      RecordingDate.groupByDay(extracted, { it.recordedOn?.date }).forEach { (day, group) ->
+        val sameDay = existing.filter { it.date == day.toString() }.maxByOrNull { it.position }
+        val where = sameDay?.let { AudioPlacement.Append(it.id) } ?: AudioPlacement.NewSession(date = day.toString())
+        results += audioImporter.importAll(group, noteId, where)
       }
     } else if (extracted.isNotEmpty()) {
-      val sessionPlacement = when (placement) {
-        is AudioPlacement.Append -> placement
-        is AudioPlacement.NewSession -> AudioPlacement.NewSession(
-          date = doc.recordings.firstNotNullOfOrNull { it.createdAtMillis }?.let { Dates.fromMillis(it) } ?: placement.date ?: Dates.today(),
-          title = placement.title,
-        )
-      }
-      results += audioImporter.importAll(extracted, noteId, sessionPlacement)
+      // Una nota nuova: senza un giorno scelto a mano, una sessione per giorno di registrazione
+      // (e' [AudioImporter] a dividerle, dai [ImportCandidate.recordedOn] scritti qui sopra). Prima
+      // finivano tutte nel giorno della prima, e le lezioni di una settimana erano una lezione sola.
+      // Un giorno scelto nel wizard vale per tutte, come per qualunque audio.
+      results += audioImporter.importAll(extracted, noteId, placement)
     }
 
     // 4. L'inchiostro: le pagine scritte a mano diventano immagini attaccate alla nota. Prima di
@@ -467,9 +504,9 @@ class ImportCoordinator @Inject constructor(
     //    dispositivi, che mettono il loro file in quarantena. Le richieste al computer si fanno
     //    tutte alla fine, quando le righe sono gia' a posto: sono rete, e possono non rispondere.
     val forgetOnComputer = mutableListOf<String>()
-    oldSdocx.filter { it.id != sourceId }.forEach { old ->
+    old?.takeIf { it.id != sourceId }?.let { old ->
       // Le pagine scritte a mano del file vecchio se ne vanno con lui: quelle del nuovo le
-      // contengono gia', e magari piu' lunghe.
+      // contengono gia', e magari piu' lunghe. Quelle degli altri `.sdocx` della nota restano.
       forgetOnComputer += handwriting.forgetPages(old.id)
       old.storedFileName?.let { files.sourceFile(it).delete() }
       sources.delete(old.id)

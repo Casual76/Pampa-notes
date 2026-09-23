@@ -11,6 +11,7 @@ import dev.pampa.pampanotes.core.model.Ids
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -107,9 +108,11 @@ class AudioImporter @Inject constructor(
       val partId = Ids.newId()
       val fileName = files.newAudioName(partId, candidate.displayName, candidate.mime)
       val stored = files.audioFile(fileName)
-      runCatching {
+      // La copia temporanea se ne va solo quando la riga e' scritta: se il database rifiuta la riga,
+      // la copia buona se ne va (nessuna riga la cita) e resta la temporanea, invece di perderle
+      // tutte e due. Un annullamento non e' un import fallito: si rilancia.
+      try {
         temp.copyTo(stored, overwrite = true)
-        temp.delete()
         val duration = candidate.durationMs.takeIf { it > 0 } ?: probeDuration(stored)
         parts.upsert(
           AudioPartEntity(
@@ -125,8 +128,13 @@ class AudioImporter @Inject constructor(
             createdAt = System.currentTimeMillis(),
           ),
         )
+        temp.delete()
         results += ImportedItem(candidate.id, candidate.displayName, candidate.kind, SourceStatus.OK)
-      }.onFailure { error ->
+      } catch (cancelled: CancellationException) {
+        // La copia resta: la riga potrebbe essere gia' scritta (l'annullamento arriva anche dopo il
+        // commit), e se non lo e' ci pensa `sweepOrphans`.
+        throw cancelled
+      } catch (error: Throwable) {
         stored.delete()
         results += ImportedItem(candidate.id, candidate.displayName, candidate.kind, SourceStatus.FAILED, error.message)
       }

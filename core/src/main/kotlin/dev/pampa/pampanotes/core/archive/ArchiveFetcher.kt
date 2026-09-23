@@ -77,7 +77,7 @@ class ArchiveFetcher @Inject constructor(
     val target = files.audioFile(part.fileName)
     if (target.exists()) return@withLock target
     if (part.archivedAt <= 0) throw ArchiveMissing(part.originalName)
-    fetch(part.sha256, target, onProgress)
+    fetchOrForget(part.sha256, target, part.originalName, onProgress) { audioParts.markArchived(part.id, 0L) }
   }
 
   suspend fun fetchSource(source: SourceEntity, onProgress: (received: Long, total: Long) -> Unit = { _, _ -> }): File = oneAtATime.withLock {
@@ -85,8 +85,23 @@ class ArchiveFetcher @Inject constructor(
     val target = files.sourceFile(stored)
     if (target.exists()) return@withLock target
     if (source.archivedAt <= 0) throw ArchiveMissing(source.originalName)
-    fetch(source.sha256, target, onProgress)
+    fetchOrForget(source.sha256, target, source.originalName, onProgress) { sources.markArchived(source.id, 0L) }
   }
+
+  /**
+   * Scarica, e se il computer risponde che il file non ce l'ha (404) la riga smette di dirlo: torna
+   * «da archiviare», cosi' il dispositivo che ha il file lo rimanda al prossimo giro, e intanto qui
+   * si vede «registrata su un altro dispositivo» invece di un «Scarica» che fallisce sempre. Chi
+   * chiama riceve [ArchiveMissing], come per una riga mai archiviata.
+   */
+  private suspend fun fetchOrForget(sha256: String, target: File, name: String, onProgress: (Long, Long) -> Unit, lost: suspend () -> Unit): File =
+    try {
+      fetch(sha256, target, onProgress)
+    } catch (error: ArchiveException) {
+      if (error.code != 404) throw error
+      lost()
+      throw ArchiveMissing(name)
+    }
 
   /** Piu' parti in fila, con il progresso sull'intero giro. Si ferma al primo errore: e' lo stesso server per tutte. */
   suspend fun fetchParts(parts: List<AudioPartEntity>, onProgress: (FetchProgress) -> Unit = {}): Int {

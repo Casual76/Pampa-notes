@@ -1080,6 +1080,7 @@
   <string name="storage_free_footnote">Handwritten pages always stay: they weigh little and live inside the note. A recording with a transcription in progress stays until it finishes.</string>
   <string name="storage_free_nothing">Nothing to free: what is here isn\'t on the computer yet.</string>
   <string name="storage_cleanup_header">Clean-up</string>
+  <string name="backup_failure_incomplete">The backup is incomplete: the file stops halfway (an unfinished copy or upload). Nothing has been restored.</string>
   <string name="export_where_title">Where will you use it?</string>
   <string name="export_target_chat">Claude or ChatGPT chat</string>
   <string name="export_target_chat_detail">A light ZIP: text and handwritten pages. Attach it to the chat and ask.</string>

@@ -20,6 +20,7 @@ import dev.pampa.pampanotes.core.db.SourceDao
 import dev.pampa.pampanotes.core.db.TranscriptDao
 import dev.pampa.pampanotes.core.db.TranscriptKind
 import dev.pampa.pampanotes.core.files.AppFiles
+import dev.pampa.pampanotes.core.files.FilesInUse
 import dev.pampa.pampanotes.core.model.slugify
 import dev.pampa.pampanotes.core.repo.FolderRepository
 import java.io.File
@@ -123,6 +124,7 @@ class ExportService @Inject constructor(
   private val audioParts: AudioPartDao,
   private val files: AppFiles,
   private val fetcher: ArchiveFetcher,
+  private val inUse: FilesInUse,
 ) {
 
   private val io = Dispatchers.IO
@@ -186,8 +188,21 @@ class ExportService @Inject constructor(
     ExportFileKind.SOURCE, ExportFileKind.PAGE -> files.sourceFile(file.fileName).exists()
   }
 
-  /** Quali file chiesti mancano qui, e quali di questi il computer di casa puo' dare. */
+  /** Il nome su disco con cui [FilesInUse] tiene un file dell'export. */
+  private fun heldName(file: ExportFileRef): String = when (file.kind) {
+    ExportFileKind.AUDIO -> FilesInUse.audio(file.fileName)
+    ExportFileKind.SOURCE, ExportFileKind.PAGE -> FilesInUse.source(file.fileName)
+  }
+
+  /**
+   * Quali file chiesti mancano qui, e quali di questi il computer di casa puo' dare.
+   *
+   * Da qui all'export i file chiesti sono tenuti ([FilesInUse]): fra lo scarico e «Esporta senza»
+   * possono passare minuti, e un giro d'archivio in background toglieva di nuovo quello che si era
+   * appena scaricato. La presa scade da sola se il pannello si chiude senza esportare.
+   */
   suspend fun plan(set: ExportSet, options: ExportOptions): ExportFetchPlan = withContext(io) {
+    inUse.hold(ExportFiles.wanted(set, options).map(::heldName), PLAN_HOLD_MS)
     ExportFiles.plan(set, options, ::isPresent)
   }
 
@@ -249,13 +264,19 @@ class ExportService @Inject constructor(
     labels: ExportLabels = ExportLabels(),
     onProgress: (Float) -> Unit = {},
   ): ExportResult = withContext(io) {
-    val result = write(
-      set = ExportFiles.withoutMissingPages(set) { files.sourceFile(it.storedFileName).exists() },
-      options = options,
-      destination = destination,
-      labels = labels,
-      onProgress = onProgress,
-    )
+    val held = ExportFiles.wanted(set, options).map(::heldName)
+    inUse.hold(held, WRITE_HOLD_MS)
+    val result = try {
+      write(
+        set = ExportFiles.withoutMissingPages(set) { files.sourceFile(it.storedFileName).exists() },
+        options = options,
+        destination = destination,
+        labels = labels,
+        onProgress = onProgress,
+      )
+    } finally {
+      inUse.release(held)
+    }
     // Quello che e' dentro davvero, contato adesso che e' scritto: la schermata dice questo, non
     // quello che si era chiesto.
     val wanted = ExportFiles.wanted(set, options)
@@ -513,6 +534,12 @@ class ExportService @Inject constructor(
 
   companion object {
     private val stamp: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd-HHmm", Locale.ROOT)
+
+    /** Quanto un pannello aperto tiene i suoi file: abbastanza per decidere, non per sempre. */
+    private const val PLAN_HOLD_MS = 30 * 60_000L
+
+    /** Durante la scrittura: si rilasciano alla fine, e la scadenza e' solo una rete sotto. */
+    private const val WRITE_HOLD_MS = 2 * 60 * 60_000L
 
     /**
      * `pampa-notes-storia-20260917-1830.zip`: si riconosce e si ordina da solo. Il formato sciolto e'

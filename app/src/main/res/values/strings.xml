@@ -1110,6 +1110,7 @@
   <string name="storage_free_footnote">Le pagine scritte a mano restano sempre: pesano poco e stanno dentro la nota. Una registrazione con una trascrizione in corso resta fino alla fine.</string>
   <string name="storage_free_nothing">Niente da liberare: quello che è qui non è ancora sul computer.</string>
   <string name="storage_cleanup_header">Pulizia</string>
+  <string name="backup_failure_incomplete">Il backup è incompleto: il file si è interrotto a metà (una copia o un caricamento non finiti). Non è stato ripristinato niente.</string>
   <string name="export_where_title">Dove lo usi?</string>
   <string name="export_target_chat">Chat di Claude o ChatGPT</string>
   <string name="export_target_chat_detail">Uno ZIP leggero: testo e pagine a mano. Lo alleghi alla chat e chiedi.</string>

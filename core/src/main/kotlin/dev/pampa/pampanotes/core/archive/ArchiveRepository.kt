@@ -198,6 +198,35 @@ class ArchiveRepository @Inject constructor(
     }
   }
 
+  /**
+   * Quali di queste impronte il computer di casa ha **adesso**: vero se risponde 200, falso se
+   * risponde 404. Chi non c'e' nella mappa e' senza risposta — computer spento, credenziali
+   * rifiutate, un errore del server — e va trattato come «non si sa».
+   *
+   * Serve a chi toglie file da qui: `archivedAt > 0` dice che un giorno *un* computer li ha
+   * ricevuti, e viaggia col sync senza mai tornare a zero. Un PC nuovo, o un archivio cancellato,
+   * e il telefono toglieva l'unica copia di una lezione. Al primo «non risponde» ci si ferma: gli
+   * altri aspetterebbero ognuno il suo timeout per fallire uguale.
+   */
+  suspend fun presence(shas: Collection<String>): Map<String, Boolean> = withContext(Dispatchers.IO) {
+    val wanted = shas.distinct()
+    if (wanted.isEmpty()) return@withContext emptyMap()
+    val settings = settingsStore.current()
+    val endpoint = resolver.resolve(settings.endpointUrl, settings.endpointRemoteUrl) ?: return@withContext emptyMap()
+    val base = OpenAiCompatProvider.normalize(endpoint.url)
+    val answers = mutableMapOf<String, Boolean>()
+    for (sha in wanted) {
+      try {
+        answers[sha] = authorized { bearer -> http.exists("$base/files/$sha", bearer) }
+      } catch (cancelled: CancellationException) {
+        throw cancelled
+      } catch (error: Exception) {
+        if (isUnreachable(error) || (error is ArchiveException && error.code == 401)) break
+      }
+    }
+    answers
+  }
+
   companion object {
     /** Dopo tre rifiuti di fila un file si salta... */
     const val MAX_FILE_FAILURES = 3

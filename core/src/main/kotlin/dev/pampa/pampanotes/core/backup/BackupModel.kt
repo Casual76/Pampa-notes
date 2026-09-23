@@ -80,6 +80,13 @@ data class BackupManifest(
   val databaseBytes: Long = 0,
   val counts: BackupCounts = BackupCounts(),
   val settings: BackupSettings? = null,
+  /**
+   * L'archivio finisce con [BackupEntries.TRAILER], che dice cosa e' stato scritto davvero. Uno zip
+   * troncato fra una voce e l'altra si legge senza errori — finisce e basta — e senza la chiusura
+   * un backup a meta' su Drive sostituiva registrazioni vere con la meta' di quelle. I backup di
+   * prima non ce l'hanno, e per loro vale il controllo che si puo' fare (il database).
+   */
+  val sealed: Boolean = false,
 ) {
   val totalBytes: Long get() = databaseBytes + audioBytes + sourceBytes
 
@@ -95,7 +102,26 @@ object BackupEntries {
   const val DATABASE = "database/pampa_notes.db"
   const val AUDIO_DIR = "files/audio/"
   const val SOURCES_DIR = "files/sources/"
+
+  /** L'ultima voce: [BackupTrailer]. */
+  const val TRAILER = "end.json"
 }
+
+/**
+ * La chiusura dell'archivio, l'ultima voce: quanti file e quanti byte sono entrati davvero.
+ *
+ * Il manifesto sta davanti e si scrive prima dei file, quindi dice quello che si voleva mettere; un
+ * file tolto a meta' backup (una «Libera spazio», un cestino) non c'e', e chi ripristina controlla
+ * contro questa, non contro il manifesto.
+ */
+@Serializable
+data class BackupTrailer(
+  val databaseBytes: Long = 0,
+  val audioFiles: Int = 0,
+  val audioBytes: Long = 0,
+  val sourceFiles: Int = 0,
+  val sourceBytes: Long = 0,
+)
 
 /** Dalle preferenze vive a quelle che si portano via. I segreti restano dove sono. */
 fun PampaSettings.toBackup(): BackupSettings = BackupSettings(

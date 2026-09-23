@@ -146,6 +146,65 @@ class BackupArchiveTest {
   }
 
   @Test
+  fun `un file sparito a meta' backup si salta, e la chiusura dice cosa e' entrato`() {
+    val db = file("pampa.db", "database")
+    val voice = file("p-1.m4a", "audio")
+    val gone = File(temp.root, "p-2.m4a")
+    val out = ByteArrayOutputStream()
+    val trailer = BackupArchive.write(out, card(), db, audio = listOf(voice, gone))
+    assertEquals(1, trailer.audioFiles)
+    assertEquals(5L, trailer.audioBytes)
+
+    val staged = BackupArchive.extract(ByteArrayInputStream(out.toByteArray()), temp.newFolder("vanished"))
+    assertTrue(staged.manifest.sealed)
+    assertTrue(File(staged.audio, "p-1.m4a").exists())
+    assertFalse(File(staged.audio, "p-2.m4a").exists())
+  }
+
+  @Test
+  fun `uno zip troncato fra due voci si rifiuta prima di toccare niente`() {
+    val db = file("pampa.db", "database")
+    val voices = (1..3).map { file("p-$it.m4a", "audio $it") }
+    val out = ByteArrayOutputStream()
+    BackupArchive.write(out, card(), db, audio = voices)
+    val whole = out.toByteArray()
+
+    // Si riscrive lo stesso archivio fermandosi dopo la seconda registrazione: per ZipInputStream e'
+    // un archivio che finisce li', senza errori.
+    val truncated = ByteArrayOutputStream()
+    java.util.zip.ZipInputStream(ByteArrayInputStream(whole)).use { input ->
+      ZipOutputStream(truncated).use { zip ->
+        var entry = input.nextEntry
+        while (entry != null && entry.name != BackupEntries.AUDIO_DIR + "p-3.m4a") {
+          zip.putNextEntry(ZipEntry(entry.name))
+          zip.write(input.readBytes())
+          zip.closeEntry()
+          entry = input.nextEntry
+        }
+      }
+    }
+    val failure = runCatching { BackupArchive.extract(ByteArrayInputStream(truncated.toByteArray()), temp.newFolder("cut")) }
+    assertEquals(BackupFailure.Reason.INCOMPLETE, (failure.exceptionOrNull() as? BackupFailure)?.reason)
+  }
+
+  @Test
+  fun `un backup di prima, senza chiusura, si controlla sul database`() {
+    val out = ByteArrayOutputStream()
+    ZipOutputStream(out).use { zip ->
+      zip.putNextEntry(ZipEntry(BackupEntries.MANIFEST))
+      zip.write(
+        """{"schema":1,"createdAt":1,"app":"t","databaseVersion":2,"databaseBytes":10}""".toByteArray(Charsets.UTF_8),
+      )
+      zip.closeEntry()
+      zip.putNextEntry(ZipEntry(BackupEntries.DATABASE))
+      zip.write("corto".toByteArray())
+      zip.closeEntry()
+    }
+    val failure = runCatching { BackupArchive.extract(ByteArrayInputStream(out.toByteArray()), temp.newFolder("old")) }
+    assertEquals(BackupFailure.Reason.INCOMPLETE, (failure.exceptionOrNull() as? BackupFailure)?.reason)
+  }
+
+  @Test
   fun `il nome del file porta la data, cosi' i backup si ordinano da soli`() {
     val name = backupFileName(1_789_740_000_000)
     assertTrue(name.startsWith("pampa-notes-backup-"))
