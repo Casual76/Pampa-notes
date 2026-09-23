@@ -25,6 +25,7 @@ captures/
 # Companion server
 companion/.venv/
 companion/__pycache__/
+worker/__pycache__/
 # Del companion: il registro e' roba di runtime, e config.json puo' contenere il token del server.
 companion/logs/
 companion/config.json
