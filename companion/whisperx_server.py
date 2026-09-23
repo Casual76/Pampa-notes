@@ -91,6 +91,18 @@ STATE: dict[str, Any] = {
     "last_used": 0.0,
     # Dopo quanti secondi di silenzio si libera la VRAM. 0 = mai.
     "idle_seconds": config.DEFAULTS["idle_minutes"] * 60,
+    # Quello che l'utente ha scelto (modello, lotto massimo, modo della VRAM...), com'e' scritto in
+    # config.json: `name`, `compute_type` e `batch_size` qui sopra sono invece quello che si usa,
+    # dopo che [decide_vram] ha fatto i conti con la scheda. Vedi [configure].
+    "tunables": {},
+    # La decisione di [decide_vram] (il `vram` di /health) e la scheda vista all'avvio.
+    "vram": None,
+    "gpu": None,
+    # Il file da cui vengono le impostazioni: /v1/admin/settings ci riscrive.
+    "config_path": config.CONFIG_PATH,
+    # Con quali impostazioni e' stato caricato il modello in memoria: se cambiano, [ensure_model]
+    # lo ricarica invece di usare quello vecchio.
+    "loaded_as": None,
 }
 
 # Il ciclo di eventi del server, messo da parte appena parte. Serve a [request_unload]: l'icona
@@ -236,6 +248,308 @@ def vram_gb() -> float:
         return 0.0
 
 
+# --- quanta VRAM -------------------------------------------------------------------------------
+#
+# La memoria che WhisperX chiede alla scheda dipende da tre cose: il modello, il `compute_type` e il
+# `batch_size`. **Non dalla durata della lezione**: l'audio si lavora a finestre di trenta secondi, e
+# un'ora sono solo piu' finestre in fila — costano tempo e RAM, non VRAM. Il lotto e' quante finestre
+# passano insieme, ed e' l'unica manopola che la VRAM sente davvero dopo il modello.
+#
+# Perche' serve saperlo prima. Su Windows la scheda che si riempie non da' quasi mai «out of memory»:
+# il driver sposta quello che non ci sta nella RAM condivisa, e la lezione esce lo stesso, sei volte
+# piu' lenta. E' successo il 23/09 alle 13:56: un altro programma teneva quasi quattro gigabyte, e
+# lezioni che di solito vanno a 50–100 volte il tempo reale sono andate a 12–18. Il ripiego di
+# [run_job] non scatta, perche' non c'e' nessun errore da prendere: l'unica difesa e' non chiedere
+# piu' di quello che c'e'.
+#
+# I numeri sono **stime**, tarate su questo computer (RTX 4070 Ti, 12 GB, large-v3 float16):
+#   * pesi: quelli del modello in float16; in int8 poco piu' della meta';
+#   * per elemento del lotto: la ricerca a fasci tiene per ogni finestra, per ogni fascio e per ogni
+#     strato del decoder le chiavi dell'attenzione sull'audio. Misurato con `small` float16: 0,08 GB
+#     in piu' per ogni elemento (da lotto 1 a 16, lineare). Per large si scala con strati e
+#     larghezza del decoder, e il registro dice dove cade: con lotto 16 la lezione va veloce quando
+#     la scheda e' libera (picco sotto i ~10,5 GB che restano oltre il desktop) e rallenta quando un
+#     altro programma tiene 3,7 GB (picco sopra i ~7). 0,25 GB a elemento sta in mezzo;
+#   * l'allineamento (wav2vec2 base, uno per lingua) circa 0,4 GB;
+#   * il contesto CUDA, il VAD e gli spazi di lavoro di cuBLAS circa 0,7 GB.
+# Il totale e' la memoria di *questo* processo: il desktop e gli altri programmi stanno fuori, ed e'
+# per loro che la scelta automatica si ferma all'85% della scheda.
+
+# I pesi in float16, in GB.
+MODEL_WEIGHTS_GB: dict[str, float] = {
+    "tiny": 0.08,
+    "base": 0.15,
+    "small": 0.5,
+    "medium": 1.5,
+    "large-v1": 3.1,
+    "large-v2": 3.1,
+    "large-v3": 3.1,
+    "large": 3.1,
+    "large-v3-turbo": 1.6,
+    "turbo": 1.6,
+    "distil-large-v3": 1.5,
+}
+
+# Quanto pesa un elemento del lotto rispetto a large. Il costo sta nel decoder (strati per
+# larghezza): turbo e distil hanno l'encoder di large ma quattro e due strati di decoder.
+MODEL_BATCH_SCALE: dict[str, float] = {
+    "tiny": 0.06,
+    "base": 0.12,
+    "small": 0.32,
+    "medium": 0.6,
+    "large-v1": 1.0,
+    "large-v2": 1.0,
+    "large-v3": 1.0,
+    "large": 1.0,
+    "large-v3-turbo": 0.3,
+    "turbo": 0.3,
+    "distil-large-v3": 0.25,
+}
+
+# I pesi per tipo di calcolo, rispetto a float16. Le attivazioni restano in float16 con
+# `int8_float16`; con `int8` e `float32` sulla scheda il resto del calcolo e' in float32.
+COMPUTE_WEIGHT_FACTOR: dict[str, float] = {
+    "float16": 1.0,
+    "bfloat16": 1.0,
+    "float32": 2.0,
+    "int8_float16": 0.55,
+    "int8_bfloat16": 0.55,
+    "int8_float32": 0.55,
+    "int8": 0.55,
+}
+COMPUTE_BATCH_FACTOR: dict[str, float] = {"float32": 2.0, "int8_float32": 2.0, "int8": 2.0}
+
+BATCH_ITEM_GB = 0.25  # large-v3 float16, per elemento del lotto
+ALIGN_GB = 0.4
+CONTEXT_GB = 0.7
+# Quanto della VRAM che c'e' si da' al companion. Il resto e' per il desktop e per chi altro c'e'.
+HEADROOM = 0.85
+# Sotto questo lotto conviene un modello piu' leggero: large in int8 con lotto 9 fa lo stesso testo
+# di large in float16 con lotto 3 (la differenza fra i due non si sente), e lo fa prima.
+MIN_USEFUL_BATCH = 4
+# I modelli verso cui si scende quando quello scelto non ci sta, dal piu' grande.
+SMALLER_MODELS = ("medium", "small", "base", "tiny")
+VRAM_MODES = ("auto", "manual")
+
+
+def model_family(model: str) -> str:
+    """
+    La voce della tabella per un nome di modello.
+
+    Un nome che non si conosce (un percorso, `Systran/faster-whisper-large-v3`) si riconosce da
+    quello che contiene; se non contiene niente di noto vale come large, perche' una stima che
+    sbaglia per eccesso toglie un po' di velocita', una che sbaglia per difetto la toglie tutta.
+    """
+    name = (model or "").strip().lower()
+    if name in MODEL_WEIGHTS_GB:
+        return name
+    base = name.rsplit("/", 1)[-1].removeprefix("faster-whisper-").removeprefix("faster-")
+    if base in MODEL_WEIGHTS_GB:
+        return base
+    for key in ("turbo", "distil", "large", "medium", "small", "base", "tiny"):
+        if key in base:
+            return {"turbo": "large-v3-turbo", "distil": "distil-large-v3", "large": "large-v3"}.get(key, key)
+    return "large-v3"
+
+
+def vram_breakdown(model: str, compute_type: str, batch_size: int, align: bool = True) -> dict[str, float]:
+    """La stima divisa nelle sue voci, in GB. Per l'app, che puo' dire dove va la memoria."""
+    return {key: round(value, 2) for key, value in _vram_parts(model, compute_type, batch_size, align).items()}
+
+
+def _vram_parts(model: str, compute_type: str, batch_size: int, align: bool = True) -> dict[str, float]:
+    """[vram_breakdown] senza arrotondare: i conti del piano si fanno su questi."""
+    family = model_family(model)
+    compute = compute_type or "float16"
+    weights = MODEL_WEIGHTS_GB[family] * COMPUTE_WEIGHT_FACTOR.get(compute, 1.0)
+    per_item = BATCH_ITEM_GB * MODEL_BATCH_SCALE[family] * COMPUTE_BATCH_FACTOR.get(compute, 1.0)
+    batch = per_item * max(0, int(batch_size))
+    parts = {
+        "weights": weights,
+        "batch": batch,
+        "align": ALIGN_GB if align else 0.0,
+        "context": CONTEXT_GB,
+    }
+    parts["total"] = sum(parts.values())
+    parts["per_batch_item"] = per_item
+    return parts
+
+
+def estimate_vram_gb(model: str, compute_type: str, batch_size: int, align: bool = True) -> float:
+    """Quanta VRAM chiede il companion con queste impostazioni, in GB. Una stima: vedi sopra."""
+    return vram_breakdown(model, compute_type, batch_size, align)["total"]
+
+
+def downgrade_chain(model: str, compute_type: str) -> list[tuple[str, str]]:
+    """
+    Le combinazioni da provare, dalla scelta dell'utente in giu'.
+
+    Prima si toglie precisione ai pesi (float16 → int8_float16: meta' memoria, lo stesso testo),
+    poi si scende di modello. Mai in su: chi ha scelto medium l'ha scelto.
+    """
+    compute = compute_type or "float16"
+    chain = [(model, compute)]
+    if not compute.startswith("int8"):
+        chain.append((model, "int8_float16"))
+    weight = MODEL_WEIGHTS_GB[model_family(model)]
+    for smaller in SMALLER_MODELS:
+        if MODEL_WEIGHTS_GB[smaller] < weight:
+            chain.append((smaller, "int8_float16"))
+    return chain
+
+
+def plan_vram(model: str, compute_type: str, batch_max: int, budget_gb: float) -> dict[str, Any]:
+    """
+    Modello, calcolo e lotto che stanno nell'85% di `budget_gb`, senza superare `batch_max`.
+
+    Si tiene la prima combinazione della catena ([downgrade_chain]) che ci sta con un lotto di
+    almeno [MIN_USEFUL_BATCH]; se nessuna arriva a tanto, la prima che ci sta con qualunque lotto;
+    se non ci sta niente, l'ultima con lotto 1 e `fits` falso — a quel punto decide il ripiego sul
+    processore di [run_job]. Pura: la chiamano [configure], l'anteprima dell'app e le prove.
+    """
+    compute = compute_type or "float16"
+    batch_max = max(1, int(batch_max))
+    usable = float(budget_gb) * HEADROOM
+    chain = downgrade_chain(model, compute)
+    want = min(MIN_USEFUL_BATCH, batch_max)
+    chosen: tuple[str, str, int] | None = None
+    fallback: tuple[str, str, int] | None = None
+    for candidate, kind in chain:
+        parts = _vram_parts(candidate, kind, 0)
+        room = (usable - parts["total"]) / parts["per_batch_item"]
+        # Il piccolo epsilon: 10.2 - 4.2 diviso 0.25 non deve fare 23.999999.
+        batch = min(batch_max, math.floor(room + 1e-9))
+        if batch >= want:
+            chosen = (candidate, kind, batch)
+            break
+        if batch >= 1 and fallback is None:
+            fallback = (candidate, kind, batch)
+    fits = True
+    if chosen is None:
+        chosen = fallback
+    if chosen is None:
+        fits = False
+        chosen = (chain[-1][0], chain[-1][1], 1)
+    name, kind, batch = chosen
+    breakdown = vram_breakdown(name, kind, batch)
+    return {
+        "budget_gb": round(float(budget_gb), 1),
+        "usable_gb": round(usable, 1),
+        "estimate_gb": breakdown["total"],
+        "batch_size": batch,
+        "model": name,
+        "compute_type": kind,
+        "fits": fits,
+        "downgraded": (name, kind) != (model, compute),
+        "requested": {"model": model, "compute_type": compute, "batch_size_max": batch_max},
+        "breakdown": breakdown,
+    }
+
+
+def detect_gpu() -> dict[str, Any] | None:
+    """Nome e memoria totale della scheda, o None se torch non ne vede una."""
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return None
+        props = torch.cuda.get_device_properties(0)
+        return {"name": props.name, "total_gb": round(props.total_memory / 1024**3, 1)}
+    except Exception:  # noqa: BLE001 — una scheda che non si lascia leggere e' una scheda che non c'e'
+        return None
+
+
+def gpu_status() -> dict[str, Any] | None:
+    """La scheda vista da /health: nome, totale e quanta ne resta libera adesso (tutti i processi)."""
+    gpu = STATE.get("gpu")
+    if STATE["device"] != "cuda" or not gpu:
+        return None
+    free: float | None = None
+    try:
+        import torch
+
+        free = round(torch.cuda.mem_get_info()[0] / 1024**3, 1)
+    except Exception:  # noqa: BLE001
+        free = None
+    return {"name": gpu["name"], "total_gb": gpu["total_gb"], "free_gb": free}
+
+
+def decide_vram(tunables: dict[str, Any], device: str, gpu: dict[str, Any] | None) -> dict[str, Any]:
+    """
+    Dalle impostazioni a quello che si usa davvero: il `vram` di /health.
+
+    `auto`: il budget e' la memoria totale della scheda. `manual`: e' `vram_gb`, «la VRAM che ho» —
+    per chi divide la scheda con altro e vuole lasciarne una parte, o per chi vuole provare il conto
+    senza fidarsi di torch. Sul processore non c'e' niente da decidere: il modello e' quello scelto,
+    e il lotto pure. Una scheda che torch non sa misurare in `auto` tiene le impostazioni com'erano.
+    """
+    mode = tunables["vram_mode"] if tunables.get("vram_mode") in VRAM_MODES else "auto"
+    model = tunables["model"]
+    compute = tunables.get("compute_type") or ""
+    batch_max = max(1, int(tunables["batch_size_max"]))
+    if device != "cuda":
+        return {
+            "mode": mode,
+            "device": device,
+            "budget_gb": None,
+            "usable_gb": None,
+            "estimate_gb": None,
+            "batch_size": batch_max,
+            "model": model,
+            "compute_type": compute or "int8",
+            "fits": True,
+            "downgraded": False,
+            "requested": {"model": model, "compute_type": compute or "int8", "batch_size_max": batch_max},
+            "breakdown": None,
+        }
+    budget: float | None = None
+    if mode == "manual" and tunables.get("vram_gb"):
+        budget = float(tunables["vram_gb"])
+    elif gpu:
+        budget = float(gpu["total_gb"])
+    if budget is None:
+        breakdown = vram_breakdown(model, compute, batch_max)
+        plan = {
+            "budget_gb": None,
+            "usable_gb": None,
+            "estimate_gb": breakdown["total"],
+            "batch_size": batch_max,
+            "model": model,
+            "compute_type": compute or "float16",
+            "fits": True,
+            "downgraded": False,
+            "requested": {"model": model, "compute_type": compute or "float16", "batch_size_max": batch_max},
+            "breakdown": breakdown,
+        }
+    else:
+        plan = plan_vram(model, compute, batch_max, budget)
+    return {"mode": mode, "device": device, **plan}
+
+
+def describe_plan(plan: dict[str, Any]) -> str:
+    """Una riga per il registro: cosa si e' deciso e perche'."""
+    if plan["device"] != "cuda":
+        return f"sul processore: {plan['model']} {plan['compute_type']}, lotto {plan['batch_size']}"
+    budget = f"{plan['budget_gb']:.1f} GB ({plan['mode']})" if plan["budget_gb"] is not None else "scheda non misurata"
+    line = f"VRAM {budget}: stima {plan['estimate_gb']:.1f} GB con {plan['model']} {plan['compute_type']}, lotto {plan['batch_size']}"
+    asked = plan["requested"]
+    if plan["downgraded"]:
+        line += f" (chiesto {asked['model']} {asked['compute_type']}: non ci stava)"
+    elif plan["batch_size"] < asked["batch_size_max"]:
+        line += f" (massimo {asked['batch_size_max']})"
+    if not plan["fits"]:
+        line += " — non ci sta niente: decidera' il ripiego sul processore"
+    return line
+
+
+def apply_plan(plan: dict[str, Any]) -> None:
+    """Il piano diventa quello che il prossimo lavoro usa. Il modello caricato lo guarda [ensure_model]."""
+    STATE["vram"] = plan
+    STATE["name"] = plan["model"]
+    STATE["compute_type"] = plan["compute_type"]
+    STATE["batch_size"] = plan["batch_size"]
+
+
 def ensure_model() -> None:
     """
     Carica il modello se non c'e'. Chiamato dalla richiesta, non dall'avvio.
@@ -245,9 +559,17 @@ def ensure_model() -> None:
     (e dall'app si legge come «server non raggiungibile», che manda a cercare il problema dalla
     parte sbagliata), e qualche gigabyte di VRAM tenuti occupati anche quando il computer sta
     facendo altro. Ora l'attesa la paga la prima trascrizione, che tanto e' gia' un'attesa.
+
+    Se nel frattempo le impostazioni sono cambiate (un altro modello da /v1/admin/settings, arrivato
+    mentre si trascriveva), quello in memoria se ne va e si carica quello giusto. Qui e non nella
+    richiesta che cambia le impostazioni perche' questa gira dentro il turno della fila: il modello
+    non sparisce mai sotto una lezione a meta'.
     """
+    wanted = (STATE["name"], STATE["device"], STATE["compute_type"])
     if STATE["model"] is not None:
-        return
+        if STATE["loaded_as"] in (None, wanted):
+            return
+        unload_model("impostazioni cambiate")
     import whisperx
 
     started = time.time()
@@ -257,6 +579,7 @@ def ensure_model() -> None:
         device=STATE["device"],
         compute_type=STATE["compute_type"],
     )
+    STATE["loaded_as"] = wanted
     log.info("pronto in %.0f s (%.1f GB di VRAM)", time.time() - started, vram_gb())
 
 
@@ -273,6 +596,7 @@ def unload_model(reason: str) -> None:
         return
     before = vram_gb()
     STATE["model"] = None
+    STATE["loaded_as"] = None
     # Anche gli allineatori stanno sulla scheda, uno per lingua.
     STATE["align"].clear()
     gc.collect()
@@ -455,7 +779,19 @@ def health() -> dict[str, Any]:
             "account": bool(STATE["index_url"] and STATE["owner"]),
             "anonymous": bool(STATE["accept_anonymous"]),
         },
+        # La scheda (None sul processore) e quanta ne chiedono le impostazioni di adesso: vedi
+        # [decide_vram]. `vram_gb` qui sopra e' quanta ne risulta occupata, da tutti; questa e' una
+        # stima di quanta ne vuole il companion nel momento peggiore di una lezione.
+        "gpu": gpu_status(),
+        "vram": public_plan(STATE["vram"]),
     }
+
+
+def public_plan(plan: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Il piano senza la scomposizione, che serve alla pagina delle impostazioni e non a /health."""
+    if plan is None:
+        return None
+    return {key: value for key, value in plan.items() if key != "breakdown"}
 
 
 def pairing_link(port: int) -> str:
@@ -745,6 +1081,152 @@ async def admin_unload(request: Request) -> dict[str, Any]:
     require_owner(request)
     freed = await unload_now("richiesta")
     return {"unloaded": freed, "busy": STATE["busy"], "vram_gb": round(vram_gb(), 1)}
+
+
+# --- le impostazioni dall'app ------------------------------------------------------------------
+#
+# Il config.json si apre dal menu dell'icona, ma l'icona sta sul computer e le lezioni si guardano
+# dal telefono: la pagina del computer nell'app legge e cambia da qui le sei impostazioni che
+# contano per la VRAM e per il tempo in cui il modello resta in memoria. Solo il proprietario: un
+# ospite che cambia il modello cambia il computer di un altro.
+
+# Le chiavi che l'app puo' cambiare, e dove stanno in config.json. `batch_size_max` e' la vecchia
+# `batch_size`: con la VRAM decisa dal companion e' diventata il tetto, non il valore.
+TUNABLE_KEYS: dict[str, str] = {
+    "model": "model",
+    "compute_type": "compute_type",
+    "vram_mode": "vram_mode",
+    "vram_gb": "vram_gb",
+    "batch_size_max": "batch_size",
+    "idle_minutes": "idle_minutes",
+}
+BATCH_MAX_LIMIT = 64
+IDLE_MAX_MINUTES = 24 * 60
+
+
+def tunables_of(settings: dict[str, Any]) -> dict[str, Any]:
+    """Dalle impostazioni di config.py alle sei chiavi che l'app vede."""
+    return {public: settings.get(stored, config.DEFAULTS.get(stored)) for public, stored in TUNABLE_KEYS.items()}
+
+
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def validate_tunables(changes: Any, current: dict[str, Any]) -> dict[str, Any]:
+    """
+    Le modifiche chieste, controllate, sopra a quelle di adesso. [ValueError] col motivo se no.
+
+    Un valore sbagliato non deve arrivare a config.json: il server lo rileggerebbe al prossimo avvio,
+    e un modello che non esiste e' un computer che non trascrive piu' finche' qualcuno non apre il file.
+    """
+    if not isinstance(changes, dict):
+        raise ValueError("serve un oggetto JSON")
+    unknown = sorted(set(changes) - set(TUNABLE_KEYS))
+    if unknown:
+        raise ValueError(f"chiavi sconosciute: {', '.join(unknown)}")
+    merged = dict(current)
+    for key, value in changes.items():
+        if key == "model":
+            if not isinstance(value, str) or value not in MODEL_WEIGHTS_GB:
+                raise ValueError(f"modello sconosciuto: {value!r} (vanno bene {', '.join(MODEL_WEIGHTS_GB)})")
+        elif key == "compute_type":
+            if not isinstance(value, str) or (value and value not in COMPUTE_WEIGHT_FACTOR):
+                raise ValueError(f"compute_type sconosciuto: {value!r}")
+        elif key == "vram_mode":
+            if value not in VRAM_MODES:
+                raise ValueError("vram_mode e' «auto» o «manual»")
+        elif key == "vram_gb":
+            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not 1 <= value <= 256):
+                raise ValueError("vram_gb e' un numero fra 1 e 256, o null")
+            value = None if value is None else round(float(value), 1)
+        elif key == "batch_size_max":
+            if not _is_int(value) or not 1 <= value <= BATCH_MAX_LIMIT:
+                raise ValueError(f"batch_size_max e' un intero fra 1 e {BATCH_MAX_LIMIT}")
+        elif key == "idle_minutes":
+            if not _is_int(value) or not 0 <= value <= IDLE_MAX_MINUTES:
+                raise ValueError(f"idle_minutes e' un intero fra 0 e {IDLE_MAX_MINUTES}")
+        merged[key] = value
+    if merged.get("vram_mode") == "manual" and not merged.get("vram_gb"):
+        raise ValueError("con vram_mode «manual» serve vram_gb: quanta VRAM ha la scheda")
+    return merged
+
+
+def settings_answer(tunables: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
+    """La stessa forma per le tre chiamate: cosa e' scelto, cosa si usa, la scheda, le scelte possibili."""
+    return {
+        "settings": tunables,
+        "vram": plan,
+        "gpu": gpu_status(),
+        "device": STATE["device"],
+        "models": list(MODEL_WEIGHTS_GB),
+        "compute_types": ["", *COMPUTE_WEIGHT_FACTOR],
+    }
+
+
+async def _json_body(request: Request) -> Any:
+    try:
+        return await request.json()
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail="il corpo non e' JSON") from error
+
+
+@app.get("/v1/admin/settings")
+def admin_settings(request: Request) -> dict[str, Any]:
+    """Le impostazioni di adesso e la stima della VRAM che ne viene."""
+    require_owner(request)
+    return settings_answer(dict(STATE["tunables"]), STATE["vram"])
+
+
+@app.post("/v1/admin/estimate")
+async def admin_estimate(request: Request) -> dict[str, Any]:
+    """
+    La stima per impostazioni che non ci sono ancora, senza salvare niente.
+
+    Serve all'anteprima: l'app sposta il cursore del lotto o sceglie un altro modello, e la pagina
+    dice subito «stima 6,7 GB» — o «in auto diventa large-v3 int8, lotto 9» — prima che si tocchi
+    «Salva».
+    """
+    require_owner(request)
+    try:
+        merged = validate_tunables(await _json_body(request), STATE["tunables"])
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return settings_answer(merged, decide_vram(merged, STATE["device"], STATE["gpu"]))
+
+
+@app.post("/v1/admin/settings")
+async def admin_settings_update(request: Request) -> dict[str, Any]:
+    """
+    Cambia le impostazioni, le scrive in config.json e le mette in uso.
+
+    Si scrivono solo le chiavi cambiate, con [config.set_value]: il resto del file resta com'e',
+    comprese le righe scritte a mano. Se cambiano modello o calcolo il modello in memoria se ne va
+    subito, se non sta trascrivendo; se sta trascrivendo finisce la lezione, e il prossimo lavoro
+    carica quello nuovo ([ensure_model]).
+    """
+    require_owner(request)
+    changes = await _json_body(request)
+    try:
+        merged = validate_tunables(changes, STATE["tunables"])
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    try:
+        config.set_values({TUNABLE_KEYS[key]: merged[key] for key in changes}, STATE["config_path"])
+    except OSError as error:
+        raise HTTPException(status_code=500, detail=f"config.json non si scrive: {error}") from error
+    STATE["tunables"] = merged
+    STATE["idle_seconds"] = max(0, int(merged["idle_minutes"])) * 60
+    before = (STATE["name"], STATE["compute_type"])
+    plan = decide_vram(merged, STATE["device"], STATE["gpu"])
+    apply_plan(plan)
+    log.info("impostazioni cambiate dall'app: %s", describe_plan(plan))
+    unloaded = False
+    if (plan["model"], plan["compute_type"]) != before and STATE["model"] is not None:
+        unloaded = await unload_now("impostazioni cambiate")
+    answer = settings_answer(dict(merged), plan)
+    answer["unloaded"] = unloaded
+    return answer
 
 
 @app.post("/v1/audio/transcriptions")
@@ -1121,21 +1603,37 @@ def _is_tailscale(address: str) -> bool:
     return len(parts) == 4 and parts[0] == "100" and 64 <= int(parts[1]) <= 127
 
 
-def configure(settings: dict[str, Any]) -> dict[str, Any]:
+def configure(settings: dict[str, Any], path: Path | None = None) -> dict[str, Any]:
     """
     Da impostazioni a [STATE]. La chiamano sia `main` sia l'icona nell'area di notifica.
 
-    Torna le impostazioni con `device` e `compute_type` risolti davvero, perche' chi le ha passate
-    puo' aver scritto `auto` e vuole sapere com'e' finita.
+    Torna le impostazioni con `device`, `model`, `compute_type` e `batch_size` risolti davvero —
+    cioe' dopo i conti della VRAM ([decide_vram]) — perche' chi le ha passate puo' aver scritto
+    `auto` e vuole sapere com'e' finita. `path` e' il config.json da cui vengono, dove
+    /v1/admin/settings riscrive: quello accanto al server se non si dice altro.
     """
     resolved = dict(settings)
     resolved["device"] = config.resolve_device(settings["device"])
-    resolved["compute_type"] = settings["compute_type"] or ("float16" if resolved["device"] == "cuda" else "int8")
+    tunables = tunables_of(settings)
+    if tunables["vram_mode"] not in VRAM_MODES or (tunables["vram_mode"] == "manual" and not tunables["vram_gb"]):
+        log.warning("vram_mode %r senza una vram_gb valida: faccio i conti in automatico", tunables["vram_mode"])
+        tunables["vram_mode"] = "auto"
+    gpu = detect_gpu() if resolved["device"] == "cuda" else None
+    plan = decide_vram(tunables, resolved["device"], gpu)
+    resolved["model"] = plan["model"]
+    resolved["compute_type"] = plan["compute_type"]
+    resolved["batch_size"] = plan["batch_size"]
 
-    STATE["name"] = resolved["model"]
+    STATE["config_path"] = path or config.CONFIG_PATH
+    STATE["tunables"] = tunables
+    STATE["gpu"] = gpu
     STATE["device"] = resolved["device"]
-    STATE["compute_type"] = resolved["compute_type"]
-    STATE["batch_size"] = resolved["batch_size"]
+    apply_plan(plan)
+    if gpu:
+        log.info("scheda: %s, %.1f GB", gpu["name"], gpu["total_gb"])
+    elif resolved["device"] == "cuda":
+        log.warning("torch non sa dire quanta memoria ha la scheda: uso le impostazioni come sono")
+    log.info("%s", describe_plan(plan))
     STATE["port"] = resolved["port"]
     # La variabile d'ambiente resta valida: era l'unico modo di dare un token senza scriverlo in
     # un file, e chi la usa non deve scoprire che ha smesso di funzionare.
@@ -1213,6 +1711,7 @@ def banner(settings: dict[str, Any]) -> None:
         print(f"  Entra chi ha fatto l'accesso nell'app con {STATE['owner']}.")
     if STATE["accept_anonymous"]:
         print("  Accesso libero acceso: si trascrive anche senza credenziali (accept_anonymous in config.json).")
+    print(f"  {describe_plan(STATE['vram'])}.")
     if STATE["idle_seconds"]:
         print(f"  Il modello si carica alla prima registrazione e se ne va dopo {settings['idle_minutes']} minuti di silenzio.")
     else:
@@ -1229,8 +1728,9 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = config.apply_cli(config.load(), args)
-    settings = configure(settings)
+    # Prima il registro, poi [configure]: la decisione sulla VRAM deve finire anche nel file.
     setup_file_logging()
+    settings = configure(settings)
 
     if already_running(settings["port"]):
         print()

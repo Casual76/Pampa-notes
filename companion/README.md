@@ -136,6 +136,69 @@ L'allineamento, se finisce la memoria, si rifà sul processore. La risposta dice
 
 Per dare un'idea: su una RTX 4070 Ti, `large-v3` fa una lezione di **31 minuti in 45 secondi**.
 
+## Quanta VRAM
+
+La memoria che WhisperX chiede alla scheda dipende da tre cose: **il modello, il `compute_type` e il
+lotto** (`batch_size`). Non dalla durata: l'audio si lavora a finestre di trenta secondi, e un'ora
+sono solo più finestre in fila — costa tempo e RAM, non VRAM. Il lotto è quante finestre passano
+insieme, ed è l'unica manopola che conta dopo il modello.
+
+Saperlo prima serve perché su Windows la scheda piena di solito **non dà errore**: il driver sposta
+quello che non ci sta nella RAM condivisa e la lezione esce lo stesso, sei volte più lenta (è
+successo: con un altro programma che teneva 3,7 GB, lezioni che vanno a 50–100 volte il tempo reale
+sono andate a 12–18). Il ripiego di [Quando la scheda è piena](#quando-la-scheda-è-piena) non
+scatta, perché non c'è un errore da prendere.
+
+La stima, per *questo* processo (il desktop e gli altri programmi stanno fuori):
+
+| voce | GB |
+|---|---|
+| pesi, float16 | large-v3 3,1 · medium 1,5 · small 0,5 · turbo 1,6 · base/tiny meno di 0,2 |
+| pesi, `int8_float16` | poco più della metà: large-v3 1,7 · medium 0,8 |
+| ogni elemento del lotto | 0,25 con large; medium 0,15, small 0,08 (misurato), in proporzione al decoder |
+| allineamento (wav2vec2, uno per lingua) | 0,4 |
+| contesto CUDA, VAD, spazi di lavoro | 0,7 |
+
+`large-v3` float16 con lotto 16 fa **8,2 GB**. Sono stime: il costo per elemento è misurato con
+`small` e scalato, e per large sta in mezzo a quello che il registro di questo computer dice (lotto
+16 veloce a scheda libera, lento con 3,7 GB presi da altro).
+
+**`vram_mode`** in `config.json`:
+
+- **`"auto"`** (di serie): legge la scheda con torch e sceglie il lotto più grande — fino a
+  `batch_size`, che ora è il **tetto** — perché la stima stia nell'**85%** della memoria. Se con
+  il modello scelto il lotto scenderebbe sotto 4, passa a `int8_float16` (metà dei pesi, lo stesso
+  testo) e poi a un modello più piccolo: su 12 GB `large-v3` float16 lotto 16; su 8 GB lotto 10; su
+  4 GB `medium` int8 lotto 9. Mai in su;
+- **`"manual"`**, con **`"vram_gb": 6`**: lo stesso conto, ma sulla VRAM scritta lì — «la VRAM che
+  ho», o quella che vuoi lasciare al companion mentre il resto della scheda serve ad altro. Con 6 GB:
+  `large-v3` int8 lotto 9.
+
+La decisione si legge nel registro all'avvio, nel menu dell'icona (**«VRAM: stima 8.2 / 12.0 GB
+(batch 16)»**) e in `/health`:
+
+```json
+"gpu":  { "name": "NVIDIA GeForce RTX 4070 Ti", "total_gb": 12.0, "free_gb": 6.8 },
+"vram": { "mode": "auto", "device": "cuda", "budget_gb": 12.0, "usable_gb": 10.2, "estimate_gb": 8.2,
+          "batch_size": 16, "model": "large-v3", "compute_type": "float16", "fits": true, "downgraded": false,
+          "requested": { "model": "large-v3", "compute_type": "float16", "batch_size_max": 16 } }
+```
+
+Il ripiego resta dov'era: se la stima sbaglia per difetto e arriva un «out of memory», il lotto si
+dimezza e alla fine si va sul processore.
+
+Dall'app, solo per il proprietario (biglietto dell'account, codice, o accesso libero; mai gli ospiti):
+
+```
+GET  /v1/admin/settings     le impostazioni, la stima, la scheda
+POST /v1/admin/settings     {"vram_mode": "manual", "vram_gb": 6} — si scrive in config.json e vale subito
+POST /v1/admin/estimate     la stessa cosa senza salvare, per l'anteprima
+```
+
+Le chiavi sono `model`, `compute_type`, `vram_mode`, `vram_gb`, `batch_size_max` (in `config.json` è
+`batch_size`) e `idle_minutes`. Se cambiano modello o calcolo, il modello in memoria se ne va
+subito — o, se sta trascrivendo, alla fine della lezione.
+
 Poi nell'app: **Altro → Impostazioni → Server personale**, incolli l'indirizzo, tocchi «Prova la
 connessione». Se risponde, in Trascrizione scegli «Server personale» e da lì in poi le lezioni
 passano di qui.
@@ -218,6 +281,8 @@ lì non c'è nessuna riga di comando.
   "device": "auto",
   "compute_type": "",
   "batch_size": 16,
+  "vram_mode": "auto",
+  "vram_gb": null,
   "port": 8765,
   "token": "",
   "idle_minutes": 10,
@@ -236,7 +301,7 @@ trattino è singolo per `run.ps1` e doppio per `avvia.cmd`:
 .\run.ps1 -Model medium        # più veloce, un po' meno preciso
 .\run.ps1 -Device cpu          # senza GPU: lento, ma funziona
 .\run.ps1 -Port 9000
-.\run.ps1 -BatchSize 8         # se la GPU va in esaurimento di memoria
+.\run.ps1 -BatchSize 8         # il tetto del lotto (quello vero lo sceglie la VRAM)
 .\run.ps1 -IdleMinutes 30      # quanto tenere il modello dopo l'ultima lezione
 .\run.ps1 -Token unaparola     # se il computer è raggiungibile da fuori casa
 ```

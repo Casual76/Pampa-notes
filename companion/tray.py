@@ -92,6 +92,24 @@ def vram_line(_: Any = None) -> str:
     return f"Scheda video: {server.vram_gb():.1f} GB occupati"
 
 
+def estimate_line(_: Any = None) -> str:
+    """
+    Quanta VRAM chiedono le impostazioni di adesso, sulla VRAM che c'e'. Una stima, ed e' scritto.
+
+    La riga sopra dice quanta ne e' occupata adesso, da tutti; questa quanta ne vorra' il companion
+    nel momento peggiore di una lezione. Sono due domande diverse: la prima e' «la scheda e' libera?»,
+    la seconda «ci sta?».
+    """
+    plan = server.STATE.get("vram")
+    if not plan or plan.get("device") != "cuda" or plan.get("estimate_gb") is None:
+        return "VRAM: non serve (sul processore)"
+    budget = f" / {plan['budget_gb']:.1f}" if plan.get("budget_gb") is not None else ""
+    line = f"VRAM: stima {plan['estimate_gb']:.1f}{budget} GB (batch {plan['batch_size']})"
+    if plan.get("downgraded"):
+        line += f" - {plan['model']} {plan['compute_type']}"
+    return line
+
+
 def address_line(_: Any = None) -> str:
     addresses = server.local_addresses(SETTINGS["port"])
     return addresses[0] if addresses else f"http://localhost:{SETTINGS['port']}"
@@ -167,7 +185,9 @@ def on_config(_: pystray.Icon = None, __: Any = None) -> None:
     """Apre `config.json`, creandolo dai valori attuali se non c'era: modificarlo a mano e'
     l'unico modo di cambiare modello o token adesso che non c'e' piu' una riga di comando."""
     if not config.CONFIG_PATH.exists():
-        config.save(SETTINGS)
+        # I valori di partenza, non `SETTINGS`: li' ci sono modello e lotto *dopo* i conti della
+        # VRAM, e scriverli come scelta dell'utente farebbe del lotto di oggi il tetto di domani.
+        config.save(config.load())
     open_path(config.CONFIG_PATH)
 
 
@@ -334,6 +354,7 @@ def build_menu() -> pystray.Menu:
     return pystray.Menu(
         pystray.MenuItem(status_line, nothing, enabled=False),
         pystray.MenuItem(vram_line, nothing, enabled=False),
+        pystray.MenuItem(estimate_line, nothing, enabled=False),
         pystray.MenuItem(address_line, nothing, enabled=False),
         pystray.MenuItem(remote_line, nothing, enabled=False),
         pystray.MenuItem(archive_line, nothing, enabled=False),
@@ -356,8 +377,9 @@ def build_menu() -> pystray.Menu:
 def main() -> None:
     global SETTINGS, SERVER
 
-    SETTINGS = server.configure(config.load())
+    # Prima il registro: la decisione sulla VRAM che [server.configure] prende deve finirci dentro.
     log_path = server.setup_file_logging()
+    SETTINGS = server.configure(config.load())
 
     if server.already_running(SETTINGS["port"]):
         # Un secondo doppio clic non deve dare un errore di porta occupata trenta secondi dopo.
