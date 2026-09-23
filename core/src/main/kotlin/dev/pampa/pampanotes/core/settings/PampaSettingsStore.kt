@@ -268,6 +268,23 @@ class PampaSettingsStore(
 
   suspend fun setHandwritingBackfillDone() = edit { it[HandwritingBackfillDone] = true }
 
+  // --- date vere e «Riprendi ad ascoltare» -------------------------------------------------------
+
+  /** L'ultima sessione ascoltata qui, o null. Vedi [LastListened]. */
+  val lastListened: Flow<LastListened?> = store.data.map { LastListened.decode(it[LastListenedKey]) }
+
+  suspend fun setLastListened(value: LastListened) = edit { it[LastListenedKey] = value.encode() }
+
+  suspend fun clearLastListened() = edit { it.remove(LastListenedKey) }
+
+  /**
+   * Il giro che rida' le date vere alle note gia' importate: null finche' non e' mai passato su
+   * tutto, poi le voci rimaste in attesa (il computer di casa spento). Vuoto: finito.
+   */
+  suspend fun realDatesPending(): Set<String>? = store.data.first()[RealDatesPending]
+
+  suspend fun setRealDatesPending(keys: Set<String>) = edit { it[RealDatesPending] = keys }
+
   suspend fun syncDeviceId(): String {
     val existing = store.data.first()[SyncDeviceId]
     if (!existing.isNullOrBlank()) return existing
@@ -509,6 +526,10 @@ class PampaSettingsStore(
     val CustomMaxMinutes = intPreferencesKey("custom_max_minutes")
     val NotificationPermissionAsked = booleanPreferencesKey("notification_permission_asked")
     val ArchiveFailures = stringSetPreferencesKey("archive_failures")
+
+    // Date vere e «Riprendi ad ascoltare».
+    val LastListenedKey = stringPreferencesKey("last_listened")
+    val RealDatesPending = stringSetPreferencesKey("real_dates_pending")
   }
 }
 

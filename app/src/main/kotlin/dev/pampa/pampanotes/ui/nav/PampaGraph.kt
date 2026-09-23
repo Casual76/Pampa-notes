@@ -61,6 +61,9 @@ class PampaNavActions(
 ) {
   fun openNote(id: String, tab: String? = null) = openDetail(Routes.note(id, tab), fresh = true)
   fun openSession(id: String) = openDetail(Routes.session(id))
+
+  /** La sessione da «Riprendi ad ascoltare»: si apre e riparte dal punto in cui ci si era fermati. */
+  fun resumeSession(id: String) = openDetail(Routes.session(id, play = true), fresh = true)
   fun openEditor(noteId: String) = openDetail(Routes.editor(noteId))
   fun openImport() = openDetail(Routes.IMPORT, fresh = true)
   fun openFolder(id: String) = openList(Routes.folder(id))
@@ -236,6 +239,7 @@ fun NavGraphBuilder.listDestinations(actions: PampaNavActions, host: NavHostCont
         onOpenNote = actions::openNote,
         onImport = actions.pickFiles,
         onOpenJobs = actions::openJobs,
+        onResumeSession = actions::resumeSession,
       )
     }
   }
@@ -315,7 +319,10 @@ fun NavGraphBuilder.detailDestinations(actions: PampaNavActions, host: NavHostCo
   }
   composable(
     route = Routes.SESSION,
-    arguments = listOf(navArgument("sessionId") { type = NavType.StringType }),
+    arguments = listOf(
+      navArgument("sessionId") { type = NavType.StringType },
+      navArgument("play") { nullable = true; defaultValue = null },
+    ),
   ) {
     FluidRouteMotionHost(this@composable) {
       SessionRoute(

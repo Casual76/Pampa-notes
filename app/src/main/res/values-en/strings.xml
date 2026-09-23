@@ -1167,4 +1167,20 @@
   <string name="home_stats_pace_detail">words a minute, in “%1$s”</string>
   <string name="home_stats_longest_label">Longest lesson</string>
   <string name="home_stats_longest_detail">“%1$s” · %2$s</string>
+
+  <!-- dates-home -->
+  <string name="home_section_todo">To do</string>
+  <string name="home_todo_more">First %1$d of %2$d</string>
+  <string name="home_todo_transcribe_all">Transcribe all</string>
+  <string name="home_job_progress">%1$s · %2$d%%</string>
+  <plurals name="home_session_count">
+    <item quantity="one">%d lesson</item>
+    <item quantity="other">%d lessons</item>
+  </plurals>
+  <string name="home_resume_section">Pick up where you left off</string>
+  <string name="home_resume_position">%1$s · at %2$s</string>
+  <string name="home_resume_left">%1$s left</string>
+  <string name="home_resume_listened">last played %1$s</string>
+  <string name="home_resume_play">Resume</string>
+  <string name="home_resume_hide">Hide</string>
 </resources>

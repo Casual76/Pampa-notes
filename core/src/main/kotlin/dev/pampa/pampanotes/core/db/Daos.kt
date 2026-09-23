@@ -98,11 +98,35 @@ interface NoteDao {
       (SELECT COUNT(*) FROM sessions s WHERE s.noteId = n.id AND s.activeTranscriptId IS NULL
          AND EXISTS (SELECT 1 FROM audio_parts p WHERE p.sessionId = s.id)) AS untranscribedSessions
     FROM notes n
-    ORDER BY n.updatedAt DESC
+    ORDER BY n.pinned DESC, n.updatedAt DESC
     LIMIT :limit
     """,
   )
   fun observeRecent(limit: Int): Flow<List<NoteRow>>
+
+  /**
+   * Le note con qualcosa da fare: una sessione con l'audio e senza trascrizione, o un lavoro in
+   * corso. La sezione «Da fare» della home.
+   */
+  @Query(
+    """
+    SELECT n.*,
+      (SELECT COUNT(*) FROM sessions s WHERE s.noteId = n.id) AS sessionCount,
+      (SELECT COUNT(*) FROM audio_parts p JOIN sessions s ON p.sessionId = s.id WHERE s.noteId = n.id) AS audioCount,
+      (SELECT COALESCE(SUM(p.durationMs), 0) FROM audio_parts p JOIN sessions s ON p.sessionId = s.id WHERE s.noteId = n.id) AS audioDurationMs,
+      (SELECT COUNT(*) FROM sources src WHERE src.noteId = n.id) AS sourceCount,
+      (SELECT COUNT(*) FROM sessions s WHERE s.noteId = n.id AND s.activeTranscriptId IS NULL
+         AND EXISTS (SELECT 1 FROM audio_parts p WHERE p.sessionId = s.id)) AS untranscribedSessions
+    FROM notes n
+    WHERE EXISTS (SELECT 1 FROM sessions s WHERE s.noteId = n.id AND s.activeTranscriptId IS NULL
+                    AND EXISTS (SELECT 1 FROM audio_parts p WHERE p.sessionId = s.id))
+       OR EXISTS (SELECT 1 FROM jobs j JOIN sessions s ON j.sessionId = s.id WHERE s.noteId = n.id
+                    AND j.state IN ('QUEUED','PREPARING','UPLOADING','TRANSCRIBING','STITCHING','CANCEL_REQUESTED'))
+    ORDER BY n.updatedAt DESC
+    LIMIT :limit
+    """,
+  )
+  fun observeTodo(limit: Int): Flow<List<NoteRow>>
 
   @Query("SELECT * FROM notes WHERE id = :id")
   suspend fun get(id: String): NoteEntity?
@@ -142,6 +166,10 @@ interface NoteDao {
 
   @Query("UPDATE notes SET updatedAt = :updatedAt WHERE id = :id")
   suspend fun touch(id: String, updatedAt: Long)
+
+  /** Le date vere di una nota importata: quelle di dove e' stata scritta (vedi `NoteDates`). */
+  @Query("UPDATE notes SET createdAt = :createdAt, updatedAt = :updatedAt WHERE id = :id")
+  suspend fun setDates(id: String, createdAt: Long, updatedAt: Long)
 
   @Query("DELETE FROM notes WHERE id = :id")
   suspend fun delete(id: String)

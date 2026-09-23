@@ -9,6 +9,7 @@ import dev.antigravity.fluidengine.foundation.EngineFlag
 import dev.pampa.pampanotes.core.db.NoteDao
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.importing.HandwritingPages
+import dev.pampa.pampanotes.core.importing.RealDatesBackfill
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.transcription.GroqWhisperProvider
@@ -37,6 +38,7 @@ class PampaNotesApp : Application(), Configuration.Provider {
   @Inject lateinit var handwriting: HandwritingPages
   @Inject lateinit var notes: NoteDao
   @Inject lateinit var files: AppFiles
+  @Inject lateinit var realDates: RealDatesBackfill
 
   /** Vive quanto il processo: niente di quello che parte qui ha qualcosa da cui essere cancellato. */
   private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -84,6 +86,15 @@ class PampaNotesApp : Application(), Configuration.Provider {
           if (settingsStore.current().syncEnabled) scheduler.syncNow()
         }
       }
+    }
+    // Le date vere delle note importate prima che l'app le sapesse leggere: quella del `.sdocx` e
+    // delle registrazioni invece del giorno dell'import. Si ripete ai prossimi avvii solo per
+    // quello che aspettava il computer di casa spento; un errore su una nota non ferma le altre.
+    applicationScope.launch {
+      runCatching {
+        val summary = realDates.run()
+        if (summary.changed && settingsStore.current().syncEnabled) scheduler.syncNow()
+      }.onFailure { android.util.Log.w("PampaNotes", "date vere: giro fallito", it) }
     }
   }
 

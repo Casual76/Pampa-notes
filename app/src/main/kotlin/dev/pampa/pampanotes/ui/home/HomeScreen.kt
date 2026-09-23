@@ -1,38 +1,24 @@
 package dev.pampa.pampanotes.ui.home
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.lazy.LazyListScope
-import dev.antigravity.fluidengine.ui.theme.FluidMetricTile
-import dev.pampa.pampanotes.core.stats.StatsFormat
-import dev.pampa.pampanotes.core.stats.TranscriptionStats
-import dev.pampa.pampanotes.core.stats.displayTitle
-import dev.pampa.pampanotes.core.stats.lessonMs
-import java.time.LocalDate
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -40,40 +26,54 @@ import dev.antigravity.fluidengine.ui.fluid.FluidAlert
 import dev.antigravity.fluidengine.ui.fluid.FluidAlertAction
 import dev.antigravity.fluidengine.ui.fluid.FluidAmbient
 import dev.antigravity.fluidengine.ui.fluid.FluidBarAction
-import dev.antigravity.fluidengine.ui.fluid.ContinuousCornerShape
+import dev.antigravity.fluidengine.ui.fluid.FluidButton
+import dev.antigravity.fluidengine.ui.fluid.FluidButtonStyle
 import dev.antigravity.fluidengine.ui.fluid.FluidContextAction
-import dev.antigravity.fluidengine.ui.fluid.FluidRadius
-import dev.antigravity.fluidengine.ui.fluid.fluidContextMenu
 import dev.antigravity.fluidengine.ui.fluid.FluidHero
 import dev.antigravity.fluidengine.ui.fluid.FluidHeroMetric
 import dev.antigravity.fluidengine.ui.fluid.FluidHeroMotif
 import dev.antigravity.fluidengine.ui.fluid.FluidHeroTone
 import dev.antigravity.fluidengine.ui.fluid.FluidScreen
 import dev.antigravity.fluidengine.ui.fluid.FluidSectionHeader
-import dev.antigravity.fluidengine.ui.theme.FluidCard
 import dev.antigravity.fluidengine.ui.theme.FluidEmptyState
+import dev.antigravity.fluidengine.ui.theme.FluidListDivider
+import dev.antigravity.fluidengine.ui.theme.FluidListGroup
+import dev.antigravity.fluidengine.ui.theme.FluidListRow
+import dev.antigravity.fluidengine.ui.theme.FluidMetricTile
 import dev.antigravity.fluidengine.ui.theme.FluidQuickAction
 import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
+import dev.pampa.pampanotes.core.db.JobEntity
+import dev.pampa.pampanotes.core.db.NoteRow
+import dev.pampa.pampanotes.core.export.ExportScope
+import dev.pampa.pampanotes.core.model.Dates
+import dev.pampa.pampanotes.core.stats.StatsFormat
+import dev.pampa.pampanotes.core.stats.TranscriptionStats
+import dev.pampa.pampanotes.core.stats.displayTitle
+import dev.pampa.pampanotes.core.stats.lessonMs
 import dev.pampa.pampanotes.ui.common.Formats
 import dev.pampa.pampanotes.ui.common.folderIconOf
-import dev.pampa.pampanotes.ui.common.folderVividColors
+import dev.pampa.pampanotes.ui.common.jobStateLabel
 import dev.pampa.pampanotes.ui.common.toneFromName
-import dev.pampa.pampanotes.core.export.ExportScope
 import dev.pampa.pampanotes.ui.export.ExportSheet
+import java.time.LocalDate
 
 /**
- * La Home: quello che hai caricato per ultimo, in ordine di tempo.
+ * La Home: prima quello che c'e' da fare, poi quello che hai scritto per ultimo.
  *
  * Non e' l'indice delle cartelle — quello e' la scheda accanto — ma il punto in cui si riprende in
- * mano l'ultima cosa importata, che e' quasi sempre quella che si stava cercando.
+ * mano il lavoro: la lezione che si stava ascoltando, le registrazioni ancora da trascrivere, e le
+ * note in ordine di quando sono state scritte davvero (vedi `NoteDates`), non di quando sono
+ * arrivate. Le righe sono quelle compatte di una lista raggruppata: venti note si scorrono con un
+ * pollice, venti card con due righe d'anteprima no.
  */
 @Composable
 fun HomeRoute(
   onOpenNote: (String) -> Unit,
   onImport: () -> Unit,
   onOpenJobs: () -> Unit,
+  onResumeSession: (String) -> Unit,
   viewModel: HomeViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -85,6 +85,18 @@ fun HomeRoute(
   val deleteLabel = stringResource(R.string.action_delete)
   val exportLabel = stringResource(R.string.action_export)
   val importLabel = stringResource(R.string.action_import)
+  val hideLabel = stringResource(R.string.home_resume_hide)
+
+  // Il menu tenendo premuto una nota, uguale in «Da fare» e in «Ultime note».
+  val noteContextActions: (RecentNote) -> List<FluidContextAction> = { recent ->
+    listOf(
+      FluidContextAction(label = if (recent.row.note.pinned) unpinLabel else pinLabel) {
+        viewModel.togglePinned(recent.row.note.id, !recent.row.note.pinned)
+      },
+      FluidContextAction(label = exportLabel) { exporting = recent },
+      FluidContextAction(label = deleteLabel, destructive = true) { pendingDelete = recent },
+    )
+  }
 
   FluidScreen(
     title = stringResource(R.string.home_title),
@@ -150,23 +162,52 @@ fun HomeRoute(
         )
       }
     } else {
-      transcriptionStatsSection(state.stats.transcription)
-      item { FluidSectionHeader(title = stringResource(R.string.home_section_recent)) }
-      items(state.recent, key = { it.row.note.id }) { recent ->
-        RecentNoteCard(
-          recent = recent,
-          onClick = { onOpenNote(recent.row.note.id) },
-          contextActions = {
-            listOf(
-              FluidContextAction(label = if (recent.row.note.pinned) unpinLabel else pinLabel) {
-                viewModel.togglePinned(recent.row.note.id, !recent.row.note.pinned)
-              },
-              FluidContextAction(label = exportLabel) { exporting = recent },
-              FluidContextAction(label = deleteLabel, destructive = true) { pendingDelete = recent },
-            )
-          },
-        )
+      state.resume?.let { card ->
+        item(key = "resume-header") { FluidSectionHeader(title = stringResource(R.string.home_resume_section)) }
+        item(key = "resume") {
+          ResumeRow(
+            card = card,
+            onClick = { onResumeSession(card.sessionId) },
+            contextActions = { listOf(FluidContextAction(label = hideLabel) { viewModel.dismissResume() }) },
+          )
+        }
       }
+
+      if (state.todo.isNotEmpty()) {
+        item(key = "todo-header") {
+          FluidSectionHeader(
+            title = stringResource(R.string.home_section_todo),
+            detail = if (state.todoCount > state.todo.size) {
+              stringResource(R.string.home_todo_more, state.todo.size, state.todoCount)
+            } else {
+              null
+            },
+          )
+        }
+        item(key = "todo") {
+          Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            NoteGroup(notes = state.todo, onOpenNote = onOpenNote, contextActions = noteContextActions)
+            if (state.canTranscribeAll) {
+              FluidButton(
+                text = stringResource(R.string.home_todo_transcribe_all),
+                onClick = viewModel::transcribeAll,
+                style = FluidButtonStyle.Tinted,
+                fillWidth = true,
+                leading = { Icon(Icons.Rounded.Mic, contentDescription = null) },
+              )
+            }
+          }
+        }
+      }
+
+      if (state.recent.isNotEmpty()) {
+        item(key = "recent-header") { FluidSectionHeader(title = stringResource(R.string.home_section_recent)) }
+        item(key = "recent") {
+          NoteGroup(notes = state.recent, onOpenNote = onOpenNote, contextActions = noteContextActions)
+        }
+      }
+
+      transcriptionStatsSection(state.stats.transcription)
     }
   }
 
@@ -195,94 +236,111 @@ fun HomeRoute(
 }
 
 /**
- * Una nota recente: la piastrella colorata della sua cartella, il titolo, due righe di testo.
- *
- * Il colore sta sulla piastrella, non sulla card: e' la stessa regola delle liste raggruppate, e
- * vale anche qui, perche' una colonna di card tutte sature diventa un patchwork.
+ * Un gruppo di note, una riga ciascuna: la materia nel suo colore sopra il titolo, una riga di
+ * contenuto, la data vera, e a destra quello che conta adesso — il lavoro in corso, «Da
+ * trascrivere», o quanto dura.
  */
 @Composable
-private fun RecentNoteCard(
-  recent: RecentNote,
+private fun NoteGroup(
+  notes: List<RecentNote>,
+  onOpenNote: (String) -> Unit,
+  contextActions: (RecentNote) -> List<FluidContextAction>,
+) {
+  val pinned = stringResource(R.string.note_pinned)
+  FluidListGroup {
+    notes.forEachIndexed { index, recent ->
+      if (index > 0) FluidListDivider()
+      val note = recent.row.note
+      val date = Formats.relativeDate(note.updatedAt)
+      FluidListRow(
+        title = note.title,
+        subtitle = noteSubtitle(recent.row),
+        eyebrow = recent.folder?.name,
+        meta = if (note.pinned) "$pinned · $date" else date,
+        tone = toneFromName(recent.folder?.tone),
+        badge = noteBadge(recent),
+        leading = { Icon(imageVector = folderIconOf(recent.folder?.icon), contentDescription = null) },
+        onClick = { onOpenNote(note.id) },
+        contextActions = { contextActions(recent) },
+      )
+    }
+  }
+}
+
+/**
+ * La riga di contenuto: quante lezioni e quante fonti, o le prime parole per una nota di solo testo.
+ * Una riga sola — l'anteprima di due righe era quello che rendeva la home lunga il doppio.
+ */
+@Composable
+private fun noteSubtitle(row: NoteRow): String {
+  val parts = buildList {
+    if (row.sessionCount > 0) add(pluralStringResource(R.plurals.home_session_count, row.sessionCount, row.sessionCount))
+    if (row.sourceCount > 0) add(pluralStringResource(R.plurals.note_source_count, row.sourceCount, row.sourceCount))
+  }
+  if (parts.isNotEmpty()) return parts.joinToString(" · ")
+  return firstWords(row.note.body) ?: stringResource(R.string.note_text_only)
+}
+
+/** Le prime parole del corpo, senza i titoli Markdown, tagliate a una parola intera. */
+private fun firstWords(body: String, maxChars: Int = 60): String? {
+  val line = body.lineSequence().firstOrNull { it.isNotBlank() && !it.trimStart().startsWith("#") }?.trim() ?: return null
+  if (line.length <= maxChars) return line
+  val cut = line.take(maxChars).substringBeforeLast(' ').ifBlank { line.take(maxChars) }
+  return "$cut…"
+}
+
+@Composable
+private fun noteBadge(recent: RecentNote): (@Composable () -> Unit)? {
+  val job = recent.job
+  val row = recent.row
+  val (label, tone) = when {
+    job != null -> jobBadgeLabel(job) to FluidTone.Primary
+    row.untranscribedSessions > 0 -> stringResource(R.string.note_to_transcribe) to FluidTone.Warning
+    row.audioCount > 0 -> Formats.durationShort(row.audioDurationMs) to FluidTone.Neutral
+    else -> return null
+  }
+  return { FluidStatusBadge(label = label, tone = tone) }
+}
+
+/** «In coda», «Trascrizione · 42%»: lo stato, e quanto manca quando lo si sa. */
+@Composable
+private fun jobBadgeLabel(job: JobEntity): String {
+  val state = jobStateLabel(job.state)
+  val percent = (job.progress * 100).toInt()
+  return if (job.state.isRunning && percent in 1..99) stringResource(R.string.home_job_progress, state, percent) else state
+}
+
+/**
+ * «Riprendi ad ascoltare»: la nota, il giorno della lezione e il minuto, e quanto ne manca. Un
+ * tocco apre la sessione e riparte da li'; tenendo premuto la si toglie.
+ */
+@Composable
+private fun ResumeRow(
+  card: ResumeCard,
   onClick: () -> Unit,
   contextActions: () -> List<FluidContextAction>,
 ) {
-  val tone = toneFromName(recent.folder?.tone)
-  val vivid = folderVividColors(tone)
-  val note = recent.row.note
-
-  FluidCard(
-    onClick = onClick,
-    modifier = Modifier.fluidContextMenu(contextActions),
-  ) {
-    Row(
-      modifier = Modifier.fillMaxWidth(),
-      horizontalArrangement = Arrangement.spacedBy(14.dp),
-      verticalAlignment = Alignment.Top,
-    ) {
-      Box(
-        modifier = Modifier
-          .size(44.dp)
-          .clip(ContinuousCornerShape(FluidRadius.Control))
-          .background(vivid.start.copy(alpha = 0.16f)),
-        contentAlignment = Alignment.Center,
-      ) {
-        Icon(
-          imageVector = folderIconOf(recent.folder?.icon),
-          contentDescription = null,
-          tint = vivid.start,
-          modifier = Modifier.size(22.dp),
-        )
-      }
-
-      Column(
-        modifier = Modifier.weight(1f),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-      ) {
-        recent.folder?.let { folder ->
-          Text(
-            text = folder.name.uppercase(),
-            style = MaterialTheme.typography.labelSmall,
-            color = vivid.start,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-          )
-        }
-        Text(
-          text = note.title,
-          style = MaterialTheme.typography.titleMedium,
-          color = MaterialTheme.colorScheme.onSurface,
-          maxLines = 2,
-          overflow = TextOverflow.Ellipsis,
-        )
-        val preview = note.body.lineSequence().firstOrNull { it.isNotBlank() && !it.trimStart().startsWith("#") }?.trim()
-        if (!preview.isNullOrBlank()) {
-          Text(
-            text = preview,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-          )
-        }
-        Row(
-          modifier = Modifier.padding(top = 2.dp),
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
-          verticalAlignment = Alignment.CenterVertically,
-        ) {
-          Text(
-            text = Formats.relativeDate(note.updatedAt),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
-          if (recent.row.audioCount > 0) {
-            FluidStatusBadge(label = Formats.durationShort(recent.row.audioDurationMs), tone = FluidTone.Info)
-          }
-          if (recent.row.untranscribedSessions > 0) {
-            FluidStatusBadge(label = stringResource(R.string.note_to_transcribe), tone = FluidTone.Warning)
-          }
-        }
-      }
-    }
+  val day = Dates.parseOrNull(card.sessionDate)?.let { Formats.relativeDate(it) } ?: card.sessionDate
+  val lesson = if (card.sessionTitle.isBlank()) day else "${card.sessionTitle} · $day"
+  val remaining = (card.durationMs - card.positionMs).coerceAtLeast(0)
+  val remainingLabel = stringResource(R.string.home_resume_left, Formats.durationShort(remaining))
+  val resumeLabel = stringResource(R.string.home_resume_play)
+  FluidListGroup {
+    FluidListRow(
+      title = card.noteTitle,
+      subtitle = stringResource(R.string.home_resume_position, lesson, Formats.duration(card.positionMs)),
+      eyebrow = card.folder?.name,
+      meta = stringResource(R.string.home_resume_listened, Formats.relativeDate(card.at)),
+      tone = toneFromName(card.folder?.tone),
+      badge = if (card.durationMs > 0) {
+        { FluidStatusBadge(label = remainingLabel, tone = FluidTone.Info) }
+      } else {
+        null
+      },
+      leading = { Icon(imageVector = Icons.Rounded.PlayArrow, contentDescription = resumeLabel) },
+      onClick = onClick,
+      contextActions = contextActions,
+    )
   }
 }
 

@@ -133,6 +133,9 @@ class SessionPlayer(
 
   fun pause() = player.pause()
 
+  /** Parte, se non sta gia' suonando: «Riprendi ad ascoltare» dalla home. */
+  fun play() = player.play()
+
   /** Salta al millisecondo della sessione: la parte giusta e il punto giusto dentro di lei. */
   fun seekTo(sessionMs: Long) {
     val target = SessionAssembler.locate(parts, sessionMs) ?: return
