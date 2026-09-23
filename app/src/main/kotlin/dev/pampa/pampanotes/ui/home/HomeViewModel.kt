@@ -13,6 +13,8 @@ import dev.pampa.pampanotes.core.db.SubjectMinutes
 import dev.pampa.pampanotes.core.db.TranscriptDao
 import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.repo.NoteRepository
+import dev.pampa.pampanotes.core.repo.StatsRepository
+import dev.pampa.pampanotes.core.stats.TranscriptionStats
 import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -40,6 +42,8 @@ data class HomeStats(
   /** In quanti giorni distinti si e' stati a lezione. */
   val lessonDays: Int = 0,
   val topSubject: SubjectMinutes? = null,
+  /** Velocita', ritmo, record: la sezione «Le tue trascrizioni». Vedi [TranscriptionStats.aggregate]. */
+  val transcription: TranscriptionStats = TranscriptionStats(),
 )
 
 data class HomeUiState(
@@ -62,6 +66,7 @@ class HomeViewModel @Inject constructor(
   transcripts: TranscriptDao,
   sessions: SessionDao,
   folderDao: FolderDao,
+  transcriptionStats: StatsRepository,
 ) : ViewModel() {
 
   private val stats = combine(
@@ -69,7 +74,10 @@ class HomeViewModel @Inject constructor(
     transcripts.observeWordTotal(),
     sessions.observeLessonDays(),
     folderDao.observeTopSubject(),
-  ) { audioMs, words, days, top -> HomeStats(audioMs = audioMs, words = words, lessonDays = days, topSubject = top) }
+    transcriptionStats.observe(),
+  ) { audioMs, words, days, top, transcription ->
+    HomeStats(audioMs = audioMs, words = words, lessonDays = days, topSubject = top, transcription = transcription)
+  }
 
   val uiState: StateFlow<HomeUiState> = combine(
     notes.observeRecent(12),

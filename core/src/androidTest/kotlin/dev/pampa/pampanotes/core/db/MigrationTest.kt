@@ -6,6 +6,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -109,6 +110,42 @@ class MigrationTest {
           cursor.moveToFirst()
           assertEquals(table, 0, cursor.getInt(0))
         }
+      }
+    }
+  }
+
+  @Test
+  fun migrazione5a6_aggiunge_le_statistiche_vuote_e_lascia_le_trascrizioni() {
+    helper.createDatabase(NAME, 5).use { db ->
+      db.execSQL("INSERT INTO folders (id, name, sortOrder, createdAt, updatedAt) VALUES ('f', 'Storia', 0, 1, 1)")
+      db.execSQL("INSERT INTO notes (id, folderId, title, body, pinned, createdAt, updatedAt) VALUES ('n', 'f', 'Lezione', '', 0, 1, 1)")
+      db.execSQL("INSERT INTO sessions (id, noteId, title, date, position, createdAt, updatedAt) VALUES ('s', 'n', '', '2026-09-18', 0, 1, 1)")
+      db.execSQL(
+        "INSERT INTO transcripts (id, sessionId, kind, provider, model, text, wordCount, status, createdAt) " +
+          "VALUES ('t', 's', 'RAW', 'custom', 'large-v3', 'ciao mondo', 2, 'OK', 1)",
+      )
+    }
+
+    helper.runMigrationsAndValidate(NAME, 6, true).use { db ->
+      // Le trascrizioni di prima restano: la home le conta da li', non dalla tabella nuova.
+      db.query("SELECT wordCount FROM transcripts").use { cursor ->
+        assertEquals(1, cursor.count)
+        cursor.moveToFirst()
+        assertEquals(2, cursor.getInt(0))
+      }
+      db.query("SELECT COUNT(*) FROM transcription_runs").use { cursor ->
+        cursor.moveToFirst()
+        assertEquals(0, cursor.getInt(0))
+      }
+      db.execSQL(
+        "INSERT INTO transcription_runs (id, jobId, sessionId, provider, model, audioMs, wallMs, words, segments, resumed, finishedAt) " +
+          "VALUES ('r', 'j', 's', 'custom', 'large-v3', 2400000, 48000, 5214, 300, 0, 2)",
+      )
+      db.query("SELECT device, processingMs, noteId FROM transcription_runs").use { cursor ->
+        cursor.moveToFirst()
+        assertNull(cursor.getString(0))
+        assertTrue(cursor.isNull(1))
+        assertNull(cursor.getString(2))
       }
     }
   }

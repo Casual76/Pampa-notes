@@ -1,6 +1,13 @@
 package dev.pampa.pampanotes.ui.home
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.lazy.LazyListScope
+import dev.antigravity.fluidengine.ui.theme.FluidMetricTile
+import dev.pampa.pampanotes.core.stats.StatsFormat
+import dev.pampa.pampanotes.core.stats.TranscriptionStats
+import dev.pampa.pampanotes.core.stats.displayTitle
+import dev.pampa.pampanotes.core.stats.lessonMs
+import java.time.LocalDate
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Box
@@ -143,6 +150,7 @@ fun HomeRoute(
         )
       }
     } else {
+      transcriptionStatsSection(state.stats.transcription)
       item { FluidSectionHeader(title = stringResource(R.string.home_section_recent)) }
       items(state.recent, key = { it.row.note.id }) { recent ->
         RecentNoteCard(
@@ -305,4 +313,93 @@ private fun funDescription(stats: HomeStats): String {
     if (size < 2 && stats.lessonDays >= 2) add(stringResource(R.string.home_fun_days, stats.lessonDays))
   }
   return sentences.take(2).joinToString(" ").ifEmpty { stringResource(R.string.home_hero_description) }
+}
+
+/** Una tessera della sezione «Le tue trascrizioni», gia' scritta. */
+private data class StatTile(val label: String, val value: String, val detail: String, val tone: FluidTone = FluidTone.Neutral)
+
+/**
+ * «Le tue trascrizioni»: quante ore, quanto svelto, chi parla piu' veloce, la lezione piu' lunga.
+ *
+ * Quattro tessere al massimo, due per riga, e ognuna c'e' solo se ha qualcosa di vero da dire: la
+ * velocita' finche' questo dispositivo non ha misurato niente non c'e', i record con una lezione
+ * sola nemmeno. Una sezione senza tessere non ha neanche il titolo.
+ */
+private fun LazyListScope.transcriptionStatsSection(stats: TranscriptionStats) {
+  if (stats.isEmpty) return
+  item(key = "stats-header") { FluidSectionHeader(title = stringResource(R.string.home_stats_section)) }
+  item(key = "stats-tiles") {
+    val tiles = transcriptionTiles(stats)
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+      tiles.chunked(2).forEach { row ->
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+          row.forEach { tile ->
+            FluidMetricTile(
+              label = tile.label,
+              value = tile.value,
+              detail = tile.detail,
+              tone = tile.tone,
+              glass = true,
+              modifier = Modifier.weight(1f),
+            )
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun transcriptionTiles(stats: TranscriptionStats): List<StatTile> = buildList {
+  // Sempre, quando c'e' almeno una lezione: e' la tessera che fa esistere la sezione (vedi
+  // [TranscriptionStats.isEmpty]), e un titolo senza tessere sotto sarebbe una promessa vuota.
+  if (stats.lessons > 0) {
+    add(
+      StatTile(
+        label = stringResource(R.string.home_stats_transcribed_label),
+        value = Formats.durationShort(stats.transcribedMs),
+        detail = pluralStringResource(
+          R.plurals.home_stats_transcribed_detail,
+          stats.lessons,
+          StatsFormat.count(stats.words),
+          stats.lessons,
+        ),
+      ),
+    )
+  }
+  stats.speed?.let { speed ->
+    add(
+      StatTile(
+        label = stringResource(R.string.home_stats_speed_label),
+        value = StatsFormat.factor(speed.average),
+        detail = if (speed.runs > 1) {
+          stringResource(R.string.home_stats_speed_detail, StatsFormat.factor(speed.best))
+        } else {
+          stringResource(R.string.home_stats_speed_detail_single)
+        },
+        // La tessera della velocita' prende l'accento: e' il numero che la home non aveva.
+        tone = FluidTone.Primary,
+      ),
+    )
+  }
+  stats.fastestPace?.let { pace ->
+    add(
+      StatTile(
+        label = stringResource(R.string.home_stats_pace_label),
+        value = stringResource(R.string.home_stats_pace_value, pace.wordsPerMinute),
+        detail = stringResource(R.string.home_stats_pace_detail, pace.session.displayTitle),
+      ),
+    )
+  }
+  stats.longest?.let { lesson ->
+    val date = runCatching { LocalDate.parse(lesson.sessionDate) }.getOrNull()
+    add(
+      StatTile(
+        label = stringResource(R.string.home_stats_longest_label),
+        value = Formats.durationShort(lesson.lessonMs),
+        detail = date?.let { stringResource(R.string.home_stats_longest_detail, lesson.displayTitle, Formats.relativeDate(it)) }
+          ?: lesson.displayTitle,
+      ),
+    )
+  }
 }

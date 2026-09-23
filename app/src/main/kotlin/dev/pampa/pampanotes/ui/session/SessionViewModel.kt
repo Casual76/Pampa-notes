@@ -18,6 +18,10 @@ import dev.pampa.pampanotes.core.db.SessionEntity
 import dev.pampa.pampanotes.core.db.SessionWithParts
 import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.db.TranscriptKind
+import dev.pampa.pampanotes.core.db.TranscriptionRunEntity
+import dev.pampa.pampanotes.core.repo.StatsRepository
+import dev.pampa.pampanotes.core.stats.TranscriptionStats
+import dev.pampa.pampanotes.core.stats.wordsPerMinute
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.antigravity.fluidengine.ai.keys.AiKeyStore
 import dev.antigravity.fluidengine.ai.provider.ProviderId
@@ -81,6 +85,8 @@ data class SessionUiState(
    */
   val missing: List<AudioPartEntity>? = null,
   val fetch: FetchState? = null,
+  /** L'ultima trascrizione fatta da questo dispositivo per questa sessione, coi suoi numeri. */
+  val lastRun: TranscriptionRunEntity? = null,
   val loading: Boolean = true,
 ) {
   val durationMs: Long get() = parts.sumOf { it.durationMs }
@@ -101,6 +107,33 @@ data class SessionUiState(
     }
 
   val canMerge: Boolean get() = session != null && siblings.any { it.position < session.position }
+
+  /**
+   * I numeri della grezza che si vede, se e' nata qui. Una grezza arrivata dopo — ritrascritta da un
+   * altro dispositivo e scesa col sync — e' piu' recente dell'ultima corsa, e quei numeri non sono
+   * suoi.
+   */
+  val runOfRaw: TranscriptionRunEntity?
+    get() {
+      val raw = raw ?: return null
+      return lastRun?.takeIf { it.finishedAt >= raw.createdAt }
+    }
+
+  /**
+   * Le parole al minuto della lezione, sull'audio che la trascrizione copre. Dalla trascrizione e
+   * non dalle statistiche: vale anche per una lezione trascritta altrove.
+   */
+  val pace: Int?
+    get() {
+      val raw = raw ?: return null
+      if (segments.isEmpty()) return null
+      val covered = segments.mapTo(mutableSetOf()) { it.partId }
+      val ms = parts.filter { it.id in covered }.sumOf { it.durationMs }.takeIf { it > 0 }
+        ?: segments.maxOf { it.sessionEndMs }
+      // Sotto il minuto il ritmo e' una frase sola, e una frase sola non ha un ritmo.
+      if (ms < 60_000) return null
+      return wordsPerMinute(raw.wordCount, ms)?.takeIf { it <= TranscriptionStats.MAX_PLAUSIBLE_WPM }
+    }
 }
 
 @HiltViewModel
@@ -117,6 +150,7 @@ class SessionViewModel @Inject constructor(
   private val scheduler: WorkScheduler,
   private val files: AppFiles,
   private val fetcher: ArchiveFetcher,
+  private val stats: StatsRepository,
 ) : ViewModel() {
 
   private val sessionId: String = savedStateHandle.get<String>("sessionId").orEmpty()
@@ -181,6 +215,7 @@ class SessionViewModel @Inject constructor(
     folderFlow,
     _missing,
     _fetch,
+    stats.observeLatest(sessionId),
   ) { values ->
     @Suppress("UNCHECKED_CAST")
     val withParts = values[0] as SessionWithParts?
@@ -199,6 +234,7 @@ class SessionViewModel @Inject constructor(
       siblings = values[5] as List<SessionEntity>,
       missing = values[7] as List<AudioPartEntity>?,
       fetch = values[8] as FetchState?,
+      lastRun = values[9] as TranscriptionRunEntity?,
       loading = false,
     )
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SessionUiState())

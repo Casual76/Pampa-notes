@@ -1150,4 +1150,29 @@
     <item quantity="one">%d pagina a mano</item>
     <item quantity="other">%d pagine a mano</item>
   </plurals>
+  <!-- Statistiche delle trascrizioni: notifica, sessione, home -->
+  <string name="stats_run_timing">%1$s in %2$s</string>
+  <string name="stats_run_timing_cpu">%1$s in %2$s sul processore</string>
+  <string name="stats_run_factor">%1$s il tempo reale</string>
+  <plurals name="stats_words">
+    <item quantity="one">%1$s parola</item>
+    <item quantity="other">%1$s parole</item>
+  </plurals>
+  <string name="session_run_summary">Trascritta in %1$s: %2$s il tempo reale</string>
+  <string name="session_run_summary_cpu">Trascritta in %1$s sul processore: %2$s il tempo reale</string>
+  <string name="session_pace">si parla a %1$d parole al minuto</string>
+  <string name="home_stats_section">Le tue trascrizioni</string>
+  <string name="home_stats_transcribed_label">Trascritte</string>
+  <plurals name="home_stats_transcribed_detail">
+    <item quantity="one">%1$s parole in una lezione</item>
+    <item quantity="other">%1$s parole in %2$d lezioni</item>
+  </plurals>
+  <string name="home_stats_speed_label">Velocità</string>
+  <string name="home_stats_speed_detail_single">il tempo reale</string>
+  <string name="home_stats_speed_detail">il tempo reale, in media · record %1$s</string>
+  <string name="home_stats_pace_label">Chi parla più svelto</string>
+  <string name="home_stats_pace_value">%1$d/min</string>
+  <string name="home_stats_pace_detail">parole al minuto, in «%1$s»</string>
+  <string name="home_stats_longest_label">La lezione più lunga</string>
+  <string name="home_stats_longest_detail">«%1$s» · %2$s</string>
 </resources>

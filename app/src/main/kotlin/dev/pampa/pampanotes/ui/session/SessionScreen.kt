@@ -25,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -68,6 +69,7 @@ import dev.pampa.pampanotes.core.model.Dates
 import dev.pampa.pampanotes.core.settings.RefinementPreset
 import dev.pampa.pampanotes.player.PlaybackState
 import dev.pampa.pampanotes.ui.common.Formats
+import dev.pampa.pampanotes.ui.common.RunText
 import dev.pampa.pampanotes.ui.common.jobPhaseText
 import dev.pampa.pampanotes.ui.common.MarkdownText
 import androidx.compose.ui.geometry.Rect
@@ -155,6 +157,10 @@ private fun SessionScreen(
   var moreOrigin by remember { mutableStateOf<Rect?>(null) }
 
   val paragraphs = remember(state.segments) { paragraphsOf(state.segments) }
+  val resources = LocalContext.current.resources
+  val runSummary = remember(resources, state.runOfRaw, state.raw, state.segments, state.parts) {
+    RunText.sessionLine(resources, state.runOfRaw, state.pace)
+  }
   // Quale paragrafo si sta ascoltando: l'ultimo cominciato.
   //
   // Derivato dallo stato della posizione, letto dentro il calcolo: la pagina si ricompone quando
@@ -247,7 +253,7 @@ private fun SessionScreen(
       onPrepareRefinement()
       refining = true
     }
-    transcriptBody(state, paragraphs, activeParagraph, { playback.value.positionMs }, onSeek)
+    transcriptBody(state, paragraphs, activeParagraph, { playback.value.positionMs }, onSeek, runSummary)
   }
 
   if (renaming && state.session != null) {
@@ -536,6 +542,7 @@ private fun LazyListScope.transcriptBody(
   activeParagraph: Int,
   positionMs: () -> Long,
   onSeek: (Long) -> Unit,
+  runSummary: String?,
 ) {
   val active = state.activeTranscript ?: return
 
@@ -548,6 +555,12 @@ private fun LazyListScope.transcriptBody(
       }
     }
     return
+  }
+
+  // Com'e' andata la trascrizione e quanto svelto si parla: una riga, sotto le schede e sopra il
+  // testo, dove si guarda una volta e poi si legge.
+  runSummary?.let { line ->
+    item(key = "run-summary") { FluidSectionFootnote(text = line) }
   }
 
   // Stimati anche quando le parole non ci sono affatto: una trascrizione di prima che il database

@@ -17,6 +17,7 @@ import dev.pampa.pampanotes.core.db.TranscriptDao
 import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.db.TranscriptKind
 import dev.pampa.pampanotes.core.db.TranscriptStatus
+import dev.pampa.pampanotes.core.db.TranscriptionRunEntity
 import dev.pampa.pampanotes.core.model.Ids
 import dev.pampa.pampanotes.core.model.wordCount
 import dev.pampa.pampanotes.core.settings.PampaSettings
@@ -59,6 +60,7 @@ class TranscriptionRepository @Inject constructor(
   private val resolver: EndpointResolver,
   private val db: PampaDatabase,
   private val computerAuth: ComputerAuth,
+  private val stats: StatsRepository,
 ) {
 
   fun observeAll(): Flow<List<JobEntity>> = jobs.observeAll()
@@ -439,6 +441,14 @@ class TranscriptionRepository @Inject constructor(
     sessions.get(sessionId)?.let { notes.touch(it.noteId, now) }
     return transcript
   }
+
+  /**
+   * I numeri di una trascrizione appena salvata: quanto audio, in quanto tempo, su cosa. Li scrive
+   * [StatsRepository] e li restituisce per la notifica; null se non si e' riusciti, e non lancia —
+   * il lavoro a questo punto e' gia' riuscito.
+   */
+  suspend fun recordRun(job: JobEntity, startedAt: Long, transcript: TranscriptEntity): TranscriptionRunEntity? =
+    stats.recordTranscription(job, startedAt, transcript)
 
   suspend fun rawFor(sessionId: String): TranscriptEntity? = transcripts.rawForSession(sessionId)
 

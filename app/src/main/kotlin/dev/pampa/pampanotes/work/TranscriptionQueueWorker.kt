@@ -221,6 +221,8 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     // Annullato o tolto mentre si sceglieva il modello: non si parte.
     if (repository.get(job.id)?.state != JobState.QUEUED) return Step.Next
     repository.update(job.copy(state = JobState.PREPARING, model = model, attempts = job.attempts + 1, phase = null, errorCode = null, errorMessage = null))
+    // Da qui si misura la velocita' della trascrizione: l'attesa in fila non e' lentezza di nessuno.
+    val startedAt = System.currentTimeMillis()
 
     // Lo stato piu' recente, aggiornato dal motore; a scriverlo ci pensa un'altra coroutine.
     //
@@ -264,7 +266,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
         ),
       )
       runner.cleanUp(job.id)
-      AppNotifications.notifyDone(applicationContext, job.id, transcript.wordCount)
+      AppNotifications.notifyDone(applicationContext, job.id, transcript.wordCount, repository.recordRun(job, startedAt, transcript))
     } catch (timeout: TimeoutCancellationException) {
       if (job.provider == OpenAiCompatProvider.ID && repository.endpointState() == TranscriptionRepository.EndpointState.UNREACHABLE) {
         repository.requeueForEndpoint(job.id)

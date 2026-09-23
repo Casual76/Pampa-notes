@@ -1120,4 +1120,29 @@
     <item quantity="one">%d handwritten page</item>
     <item quantity="other">%d handwritten pages</item>
   </plurals>
+  <!-- Transcription statistics: notification, session, home -->
+  <string name="stats_run_timing">%1$s in %2$s</string>
+  <string name="stats_run_timing_cpu">%1$s in %2$s on the CPU</string>
+  <string name="stats_run_factor">%1$s real time</string>
+  <plurals name="stats_words">
+    <item quantity="one">%1$s word</item>
+    <item quantity="other">%1$s words</item>
+  </plurals>
+  <string name="session_run_summary">Transcribed in %1$s: %2$s real time</string>
+  <string name="session_run_summary_cpu">Transcribed in %1$s on the CPU: %2$s real time</string>
+  <string name="session_pace">spoken at %1$d words a minute</string>
+  <string name="home_stats_section">Your transcriptions</string>
+  <string name="home_stats_transcribed_label">Transcribed</string>
+  <plurals name="home_stats_transcribed_detail">
+    <item quantity="one">%1$s words in one lesson</item>
+    <item quantity="other">%1$s words in %2$d lessons</item>
+  </plurals>
+  <string name="home_stats_speed_label">Speed</string>
+  <string name="home_stats_speed_detail_single">real time</string>
+  <string name="home_stats_speed_detail">real time on average · record %1$s</string>
+  <string name="home_stats_pace_label">Fastest talker</string>
+  <string name="home_stats_pace_value">%1$d/min</string>
+  <string name="home_stats_pace_detail">words a minute, in “%1$s”</string>
+  <string name="home_stats_longest_label">Longest lesson</string>
+  <string name="home_stats_longest_detail">“%1$s” · %2$s</string>
 </resources>
