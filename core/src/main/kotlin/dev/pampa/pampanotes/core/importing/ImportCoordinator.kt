@@ -182,7 +182,9 @@ class ImportCoordinator @Inject constructor(
     // Per l'audio, durata e giorno della registrazione in una lettura sola. La data di modifica si
     // chiede adesso al provider: dopo, l'unico file che resta e' la copia nostra, che e' di oggi.
     val probe = if (kind == SourceKind.AUDIO) audioImporter.probe(temp) else null
-    val recordedOn = probe?.let { RecordingDate.resolve(it.metadataDate, displayName, queryLastModified(uri)) }
+    val lastModified = if (probe != null) queryLastModified(uri) else null
+    val recordedOn = probe?.let { RecordingDate.resolve(it.metadataDate, displayName, lastModified) }
+    val recordedAt = recordedOn?.let { RecordingDate.momentOf(it, probe?.metadataDate, lastModified) }
 
     return ImportCandidate(
       id = Ids.newId(),
@@ -202,6 +204,7 @@ class ImportCoordinator @Inject constructor(
       updateOfNoteId = updateOf?.id,
       updateOfNoteTitle = updateOf?.title,
       recordedOn = recordedOn,
+      recordedAtMillis = recordedAt,
     )
   }
 
@@ -245,8 +248,41 @@ class ImportCoordinator @Inject constructor(
     }
 
     onProgress(candidates.size, candidates.size, "")
-    notes.touch(noteId)
+    applyDates(noteId, target, candidates, audioPlacement)
     ImportOutcome(noteId = noteId, imported = results)
+  }
+
+  /**
+   * Le date della nota a import finito: quelle di dove e' stata scritta, non l'ora dell'import.
+   *
+   * Una nota nuova, o aggiornata da un `.sdocx` piu' nuovo, prende la nascita del `.sdocx` e come
+   * ultima modifica la piu' recente fra la sua e l'ultima registrazione ([NoteDates.choose]); una
+   * nota fatta solo di audio, i momenti delle registrazioni. Una nota che c'era gia' e riceve
+   * qualcosa invece e' una nota cambiata adesso, e un PDF o un testo non portano una data di cui
+   * fidarsi: in quei casi resta «adesso», come prima.
+   */
+  private suspend fun applyDates(noteId: String, target: ImportTarget, candidates: List<ImportCandidate>, placement: AudioPlacement) {
+    val note = noteDao.get(noteId) ?: return
+    val datable = target !is ImportTarget.ExistingNote && candidates.isNotEmpty() && candidates.all { it.isAudio || it.isSamsungNote }
+    if (!datable) {
+      notes.touch(noteId)
+      return
+    }
+    val now = System.currentTimeMillis()
+    val samsung = candidates.mapNotNull { candidate -> candidate.sdocx?.takeIf { candidate.isSamsungNote } }
+    // Un giorno scelto a mano nel wizard vale anche qui: chi l'ha scelto ha corretto la registrazione.
+    val chosenDay = (placement as? AudioPlacement.NewSession)?.date?.let { Dates.parseOrNull(it) }
+    val recordings = samsung.flatMap { doc -> doc.recordings.mapNotNull { it.createdAtMillis } } +
+      candidates.filter { it.isAudio }.mapNotNull { audio -> chosenDay?.let { RecordingDate.noonOf(it) } ?: audio.recordedAtMillis }
+    val choice = NoteDates.choose(
+      created = samsung.mapNotNull { it.dates?.createdAtMillis }.minOrNull(),
+      modified = samsung.mapNotNull { it.dates?.modifiedAtMillis }.maxOrNull(),
+      recordings = recordings,
+      fallbackCreated = note.createdAt,
+      fallbackUpdated = now,
+      now = now,
+    )
+    noteDao.setDates(noteId, choice.createdAt, choice.updatedAt)
   }
 
   private suspend fun importDocument(candidate: ImportCandidate, noteId: String): ImportedItem {

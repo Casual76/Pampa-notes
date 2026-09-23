@@ -18,6 +18,15 @@ data class SdocxRecording(
   val createdAtMillis: Long?,
 )
 
+/**
+ * Quando una nota di Samsung Notes e' nata e quando e' stata cambiata l'ultima volta, in
+ * millisecondi epoch. Uno dei due puo' mancare, se il file lo dice in un modo che non torna.
+ */
+data class SdocxDates(
+  val createdAtMillis: Long?,
+  val modifiedAtMillis: Long?,
+)
+
 /** Quello che si e' riusciti a leggere da un `.sdocx`. */
 data class SdocxDocument(
   val title: String?,
@@ -29,6 +38,11 @@ data class SdocxDocument(
    * Si conta all'ispezione, per dirlo nel wizard prima di importare.
    */
   val handwrittenPages: Int = 0,
+  /**
+   * Quando la nota e' nata e quando e' stata cambiata l'ultima volta in Samsung Notes ([SdocxDates]).
+   * Null se il file non lo dice in un modo credibile: allora vale il momento dell'import.
+   */
+  val dates: SdocxDates? = null,
 ) {
   /** In Samsung Notes ogni riga e' un paragrafo: fra due non c'e' sempre una riga vuota. */
   val paragraphCount: Int get() = body.lineSequence().count { it.isNotBlank() }
@@ -85,7 +99,84 @@ object SdocxParser {
     // Solo il conto: le pagine si leggono una alla volta e si buttano, e un inchiostro che non si
     // legge vale zero pagine invece di far fallire l'ispezione di una nota che ha anche del testo.
     val handwritten = SdocxInk.countSlices(zip)
-    return SdocxDocument(title = title, body = body, recordings = pairRecordings(media, voices, audioEntries), handwrittenPages = handwritten)
+    return SdocxDocument(
+      title = title,
+      body = body,
+      recordings = pairRecordings(media, voices, audioEntries),
+      handwrittenPages = handwritten,
+      dates = readDates(zip, note),
+    )
+  }
+
+  // -----------------------------------------------------------------------------------------------
+  // Le date della nota
+  // -----------------------------------------------------------------------------------------------
+
+  /**
+   * Solo le date, senza leggere il resto: il giro sulle note gia' importate le chiede a decine di
+   * archivi, e `end_tag.bin` sono 148 byte che `ZipFile` raggiunge senza passare per i tratti di
+   * penna. Null se il file non si apre o non ha date credibili.
+   */
+  fun readDates(file: File, now: Long = System.currentTimeMillis()): SdocxDates? =
+    runCatching { ZipFile(file).use { zip -> readDates(zip, note = null, now = now) } }.getOrNull()
+
+  /**
+   * `end_tag.bin` prima, `note.note` se quello manca o dice cose impossibili. [note] e' il
+   * `note.note` gia' letto, quando chi chiama ce l'ha: rileggerlo sarebbero quaranta kilobyte per
+   * sedici byte.
+   */
+  private fun readDates(zip: ZipFile, note: ByteArray?, now: Long = System.currentTimeMillis()): SdocxDates? {
+    val endTag = zip.getEntry(END_TAG_ENTRY)?.let { entry -> zip.getInputStream(entry).use { it.readBytes() } }
+    endTag?.let { parseEndTag(it, now) }?.let { return it }
+    val header = note ?: zip.getEntry(NOTE_ENTRY)?.let { entry ->
+      zip.getInputStream(entry).use { input -> readPrefix(input, NOTE_HEADER_BYTES) }
+    }
+    return header?.let { parseNoteHeader(it, now) }
+  }
+
+  /** I primi [count] byte, o meno se il file e' piu' corto. `readNBytes` c'e' solo da Android 13. */
+  private fun readPrefix(input: java.io.InputStream, count: Int): ByteArray {
+    val buffer = ByteArray(count)
+    var filled = 0
+    while (filled < count) {
+      val read = input.read(buffer, filled, count - filled)
+      if (read < 0) break
+      filled += read
+    }
+    return if (filled == count) buffer else buffer.copyOf(filled)
+  }
+
+  /**
+   * `end_tag.bin`: 148 byte che chiudono l'archivio. A +8 l'ultima modifica, a +46 la creazione,
+   * int64 little-endian in **micro**secondi. Decodificato da `fichte.sdocx`, dove le date dello
+   * ZIP dicono invece il momento della condivisione — che e' proprio quello che non serve.
+   */
+  internal fun parseEndTag(bytes: ByteArray, now: Long = System.currentTimeMillis()): SdocxDates? {
+    if (bytes.size < END_TAG_CREATED_AT + 8) return null
+    val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+    return plausibleDates(created = buffer.getLong(END_TAG_CREATED_AT), modified = buffer.getLong(END_TAG_MODIFIED_AT), now = now)
+  }
+
+  /** Gli stessi due valori stanno in testa a `note.note`: creazione a +24, modifica a +32. */
+  internal fun parseNoteHeader(bytes: ByteArray, now: Long = System.currentTimeMillis()): SdocxDates? {
+    if (bytes.size < NOTE_MODIFIED_AT + 8) return null
+    val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+    return plausibleDates(created = buffer.getLong(NOTE_CREATED_AT), modified = buffer.getLong(NOTE_MODIFIED_AT), now = now)
+  }
+
+  /**
+   * Due microsecondi letti da un formato senza specifica, accettati solo se sembrano un orologio:
+   * dopo il 2010, non nel futuro (con cinque minuti di margine per l'orologio di chi ha scritto), e
+   * la creazione non dopo la modifica. Se uno dei due e' impossibile vale l'altro da solo; se sono
+   * tutti e due possibili ma al contrario, gli offset non erano quelli giusti e non vale nessuno.
+   */
+  internal fun plausibleDates(created: Long, modified: Long, now: Long): SdocxDates? {
+    val latest = now + FUTURE_SLACK_MS
+    val createdMs = (created / 1000).takeIf { it in EPOCH_2010_MS..latest }
+    val modifiedMs = (modified / 1000).takeIf { it in EPOCH_2010_MS..latest }
+    if (createdMs != null && modifiedMs != null && createdMs > modifiedMs) return null
+    if (createdMs == null && modifiedMs == null) return null
+    return SdocxDates(createdAtMillis = createdMs, modifiedAtMillis = modifiedMs)
   }
 
   // -----------------------------------------------------------------------------------------------
@@ -289,6 +380,14 @@ object SdocxParser {
   }
 
   private const val PROSE_MIN_CHARS = 8
+
+  private const val END_TAG_ENTRY = "end_tag.bin"
+  private const val END_TAG_MODIFIED_AT = 8
+  private const val END_TAG_CREATED_AT = 46
+  private const val NOTE_CREATED_AT = 24
+  private const val NOTE_MODIFIED_AT = 32
+  private const val NOTE_HEADER_BYTES = 64
+  private const val FUTURE_SLACK_MS = 5 * 60_000L
 
   private val PACKAGE_NAME = Regex("""^\W*\d*(com|android|samsung)(\.[a-z0-9_]+)+\W*$""", RegexOption.IGNORE_CASE)
   private const val PROSE_MAX_CHARS = 2_000_000

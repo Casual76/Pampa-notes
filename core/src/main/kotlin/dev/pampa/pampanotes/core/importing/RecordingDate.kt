@@ -110,6 +110,49 @@ object RecordingDate {
     return null
   }
 
+  /**
+   * L'istante dei metadati, quando c'e' anche l'ora: serve alle date della nota, che ordinano la
+   * home e dentro lo stesso giorno hanno bisogno di un'ora. Senza fuso, e' l'ora locale di chi ha
+   * registrato.
+   */
+  fun parseMetadataInstant(raw: String?, zone: ZoneId = ZoneId.systemDefault()): Long? {
+    val value = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val match = METADATA_DATE_TIME.matchEntire(value) ?: return null
+    val (y, mo, d, h, mi, s) = match.destructured
+    val local = runCatching { LocalDateTime.of(y.toInt(), mo.toInt(), d.toInt(), h.toInt(), mi.toInt(), s.toInt()) }.getOrNull() ?: return null
+    val offset = match.groupValues[7]
+    val zoned = when {
+      offset.isEmpty() -> local.atZone(zone)
+      offset.equals("Z", ignoreCase = true) -> local.atOffset(ZoneOffset.UTC).atZoneSameInstant(zone)
+      else -> runCatching { local.atOffset(ZoneOffset.of(offset.normalizeOffset())).atZoneSameInstant(zone) }.getOrNull() ?: local.atZone(zone)
+    }
+    return zoned.toInstant().toEpochMilli()
+  }
+
+  /** Mezzogiorno di un giorno nel fuso del telefono: l'istante di una data che non ha un'ora. */
+  fun noonOf(date: LocalDate, zone: ZoneId = ZoneId.systemDefault()): Long =
+    date.atTime(12, 0).atZone(zone).toInstant().toEpochMilli()
+
+  /**
+   * L'istante di una registrazione, per le date della nota che la contiene.
+   *
+   * Il giorno lo decide [resolve]; qui gli si da' un'ora, dalla stessa fonte: quella dei metadati se
+   * c'e', la modifica del file se il giorno veniva da li', mezzogiorno per un giorno letto nel nome.
+   * Null quando non si sa niente ([RecordingDateSource.TODAY]): la nota resta col momento
+   * dell'import, invece di un mezzogiorno inventato.
+   */
+  fun momentOf(
+    recorded: RecordedOn,
+    metadataDate: String?,
+    lastModifiedMillis: Long?,
+    zone: ZoneId = ZoneId.systemDefault(),
+  ): Long? = when (recorded.source) {
+    RecordingDateSource.METADATA -> parseMetadataInstant(metadataDate, zone) ?: noonOf(recorded.date, zone)
+    RecordingDateSource.FILE_NAME -> noonOf(recorded.date, zone)
+    RecordingDateSource.FILE_MODIFIED -> lastModifiedMillis?.takeIf { it > 0 } ?: noonOf(recorded.date, zone)
+    RecordingDateSource.TODAY -> null
+  }
+
   private fun String.normalizeOffset(): String = if (length == 5 && this[3] != ':') substring(0, 3) + ":" + substring(3) else this
 
   // --- Nome del file ----------------------------------------------------------------------------

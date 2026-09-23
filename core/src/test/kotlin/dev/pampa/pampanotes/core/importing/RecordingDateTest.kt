@@ -118,6 +118,36 @@ class RecordingDateTest {
     assertEquals(listOf(today to listOf("a", "b")), groups)
   }
 
+  // --- il momento, per le date della nota ---
+
+  @Test
+  fun `i metadati danno anche l'ora`() {
+    val utc = java.time.Instant.parse("2025-09-22T10:15:00Z").toEpochMilli()
+    assertEquals(utc, RecordingDate.parseMetadataInstant("20250922T101500.000Z", rome))
+    assertEquals(utc, RecordingDate.parseMetadataInstant("2025-09-22T12:15:00+02:00", rome))
+    // Senza fuso e' l'ora di chi ha registrato: a Roma, in settembre, due ore avanti.
+    assertEquals(utc, RecordingDate.parseMetadataInstant("20250922T121500", rome))
+    // Solo il giorno: niente ora da dare.
+    assertNull(RecordingDate.parseMetadataInstant("2025 09 22", rome))
+  }
+
+  @Test
+  fun `il momento viene dalla stessa fonte del giorno`() {
+    val metadata = RecordingDate.resolve("20250922T101500.000Z", "Voce 001.m4a", null, today, rome)
+    assertEquals(java.time.Instant.parse("2025-09-22T10:15:00Z").toEpochMilli(), RecordingDate.momentOf(metadata, "20250922T101500.000Z", null, rome))
+
+    val fromName = RecordingDate.resolve(null, "Registrazione_20250922_101500.m4a", null, today, rome)
+    assertEquals(millis(2025, 9, 22), RecordingDate.momentOf(fromName, null, null, rome))
+
+    val modified = millis(2025, 9, 30) + 3_600_000
+    val fromModified = RecordingDate.resolve(null, "audio.m4a", modified, today, rome)
+    assertEquals(modified, RecordingDate.momentOf(fromModified, null, modified, rome))
+
+    // Niente di vero: nessun momento, la nota resta col momento dell'import.
+    val nothing = RecordingDate.resolve(null, "audio.m4a", null, today, rome)
+    assertNull(RecordingDate.momentOf(nothing, null, null, rome))
+  }
+
   private fun millis(year: Int, month: Int, day: Int): Long =
     LocalDate.of(year, month, day).atTime(12, 0).atZone(rome).toInstant().toEpochMilli()
 }

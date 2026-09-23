@@ -15,7 +15,8 @@ object Routes {
   const val FOLDER = "folder/{folderId}"
   const val NOTE = "note/{noteId}?tab={tab}"
   const val EDITOR = "editor/{noteId}"
-  const val SESSION = "session/{sessionId}"
+  /** `play=1`: aperta da «Riprendi ad ascoltare», riparte dal punto salvato. */
+  const val SESSION = "session/{sessionId}?play={play}"
   const val SETTINGS_SECTION = "settings/{section}"
 
   /**
@@ -48,7 +49,7 @@ object Routes {
   fun folder(id: String) = "folder/${Uri.encode(id)}"
   fun note(id: String, tab: String? = null) = "note/${Uri.encode(id)}" + (tab?.let { "?tab=${Uri.encode(it)}" } ?: "")
   fun editor(noteId: String) = "editor/${Uri.encode(noteId)}"
-  fun session(id: String) = "session/${Uri.encode(id)}"
+  fun session(id: String, play: Boolean = false) = "session/${Uri.encode(id)}" + if (play) "?play=1" else ""
   fun settingsSection(section: String) = "settings/${Uri.encode(section)}"
 
   /**

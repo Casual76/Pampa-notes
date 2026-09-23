@@ -9,6 +9,7 @@ import dev.antigravity.fluidengine.foundation.EngineFlag
 import dev.pampa.pampanotes.core.db.NoteDao
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.importing.HandwritingPages
+import dev.pampa.pampanotes.core.importing.RealDatesBackfill
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.transcription.GroqWhisperProvider
@@ -19,6 +20,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /** I flag remoti, dichiarati con il valore con cui la build e' stata provata. */
@@ -37,6 +39,8 @@ class PampaNotesApp : Application(), Configuration.Provider {
   @Inject lateinit var handwriting: HandwritingPages
   @Inject lateinit var notes: NoteDao
   @Inject lateinit var files: AppFiles
+  @Inject lateinit var realDates: RealDatesBackfill
+  @Inject lateinit var storage: dev.pampa.pampanotes.core.repo.StorageRepository
 
   /** Vive quanto il processo: niente di quello che parte qui ha qualcosa da cui essere cancellato. */
   private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -44,6 +48,12 @@ class PampaNotesApp : Application(), Configuration.Provider {
   override fun onCreate() {
     super.onCreate()
     AppNotifications.createChannels(this)
+    // «Solo sul computer» non toglie la lezione che si sta ascoltando: chi la riapre dal «Riprendi»
+    // della home si aspetta di ritrovarla qui, non di riscaricarla.
+    storage.protectedSessionIds = {
+      val last = settingsStore.lastListened.first()
+      if (last != null && System.currentTimeMillis() - last.at < PROTECT_LISTENED_MS) setOf(last.sessionId) else emptySet()
+    }
     // Il file di controllo, se la copia in cache e' vecchia. Non blocca niente: finche' non arriva,
     // l'app usa l'ultima risposta valida (o i default compilati).
     applicationScope.launch { runCatching { remoteConfig.refreshIfStale() } }
@@ -85,10 +95,24 @@ class PampaNotesApp : Application(), Configuration.Provider {
         }
       }
     }
+    // Le date vere delle note importate prima che l'app le sapesse leggere: quella del `.sdocx` e
+    // delle registrazioni invece del giorno dell'import. Si ripete ai prossimi avvii solo per
+    // quello che aspettava il computer di casa spento; un errore su una nota non ferma le altre.
+    applicationScope.launch {
+      runCatching {
+        val summary = realDates.run()
+        if (summary.changed && settingsStore.current().syncEnabled) scheduler.syncNow()
+      }.onFailure { android.util.Log.w("PampaNotes", "date vere: giro fallito", it) }
+    }
   }
 
   override val workManagerConfiguration: Configuration
     get() = Configuration.Builder()
       .setWorkerFactory(workerFactory)
       .build()
+
+  private companion object {
+    /** Un giorno: abbastanza per finire di ascoltare, non tanto da tenere una lezione per sempre. */
+    const val PROTECT_LISTENED_MS = 24L * 60 * 60 * 1000
+  }
 }

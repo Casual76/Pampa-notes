@@ -1,8 +1,12 @@
 package dev.pampa.pampanotes.ui.session
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
+import dev.pampa.pampanotes.core.settings.LastListened
 import dev.pampa.pampanotes.core.archive.ArchiveFetcher
 import android.content.Context
 import androidx.lifecycle.SavedStateHandle
@@ -162,6 +166,14 @@ class SessionViewModel @Inject constructor(
 
   private val sessionId: String = savedStateHandle.get<String>("sessionId").orEmpty()
 
+  private val savedState = savedStateHandle
+
+  /** Aperta da «Riprendi ad ascoltare»: si riparte dal punto salvato ([resumeIfAsked]). */
+  private val resumeRequested: Boolean = savedStateHandle.get<String>("play") == "1"
+
+  /** Si e' ascoltato qualcosa in questa pagina: solo allora l'uscita salva il punto. */
+  @Volatile private var listened = false
+
   private val player = SessionPlayer(context, viewModelScope)
 
   val playback: StateFlow<PlaybackState> = player.state
@@ -262,7 +274,47 @@ class SessionViewModel @Inject constructor(
         player.load(
           state.parts.map { PlayablePart(id = it.id, file = files.audioFile(it.fileName), durationMs = it.durationMs) },
         )
+        resumeIfAsked()
       }
+    }
+    viewModelScope.launch { rememberListening() }
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Riprendi ad ascoltare
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Aperta dalla scheda «Riprendi ad ascoltare» della home: si torna dove ci si era fermati e si
+   * riparte. Una volta sola — la rotta porta il segno anche dopo una rotazione, e ripartire a ogni
+   * ricreazione della pagina sarebbe un lettore che non si lascia mettere in pausa.
+   */
+  private suspend fun resumeIfAsked() {
+    if (!resumeRequested || savedState.get<Boolean>(RESUME_CONSUMED) == true) return
+    savedState[RESUME_CONSUMED] = true
+    val last = settingsStore.lastListened.first()?.takeIf { it.sessionId == sessionId && !it.finished } ?: return
+    player.seekTo(last.positionMs)
+    player.play()
+  }
+
+  /**
+   * Il punto in cui si e' arrivati, per la home: alla pausa, ogni quindici secondi mentre suona, e
+   * all'uscita dalla pagina ([onCleared]). Il lettore pubblica la posizione cinque volte al secondo;
+   * qui si scrive solo quando serve, perche' ogni scrittura e' un file di DataStore riscritto.
+   */
+  private suspend fun rememberListening() {
+    var wasPlaying = false
+    var lastSaved = 0L
+    playback.collect { state ->
+      val now = System.currentTimeMillis()
+      val due = state.playing && now - lastSaved >= SAVE_EVERY_MS
+      val paused = !state.playing && wasPlaying
+      if (state.playing) listened = true
+      if ((due || paused) && state.durationMs > 0) {
+        lastSaved = now
+        settingsStore.setLastListened(LastListened(sessionId, state.positionMs, now, state.durationMs))
+      }
+      wasPlaying = state.playing
     }
   }
 
@@ -378,7 +430,22 @@ class SessionViewModel @Inject constructor(
   }
 
   override fun onCleared() {
+    // L'ultimo punto, prima che il lettore se ne vada: lo scope del ViewModel e' gia' chiuso, e
+    // la scrittura va su uno che le sopravvive.
+    if (listened) {
+      val state = playback.value
+      if (state.durationMs > 0) {
+        val last = LastListened(sessionId, state.positionMs, System.currentTimeMillis(), state.durationMs)
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { runCatching { settingsStore.setLastListened(last) } }
+      }
+    }
     player.release()
     super.onCleared()
+  }
+
+  private companion object {
+    /** Ogni quanto si salva il punto mentre suona: abbastanza da non perdere piu' di una frase. */
+    const val SAVE_EVERY_MS = 15_000L
+    const val RESUME_CONSUMED = "resumeConsumed"
   }
 }

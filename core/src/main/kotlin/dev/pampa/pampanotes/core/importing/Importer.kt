@@ -48,6 +48,11 @@ data class ImportCandidate(
    * del file la sa solo chi lo condivide, e la copia nostra e' di adesso. Vedi [RecordingDate].
    */
   val recordedOn: RecordedOn? = null,
+  /**
+   * Il momento della registrazione, con l'ora quando la si sa ([RecordingDate.momentOf]): e' quello
+   * che diventa la data della nota. Null quando del giorno non si sa niente.
+   */
+  val recordedAtMillis: Long? = null,
 ) {
   val isAudio: Boolean get() = kind == SourceKind.AUDIO
 

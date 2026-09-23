@@ -1244,4 +1244,20 @@
   <string name="computer_only_rule_note">Nota</string>
   <string name="computer_only_keep_title">Tieni anche qui «%1$s»?</string>
   <string name="computer_only_keep_message">Le registrazioni e gli originali torneranno qui quando servono, o subito se «Tieni tutto anche qui» è acceso.</string>
+
+  <!-- dates-home -->
+  <string name="home_section_todo">Da fare</string>
+  <string name="home_todo_more">Le prime %1$d di %2$d</string>
+  <string name="home_todo_transcribe_all">Trascrivi tutte</string>
+  <string name="home_job_progress">%1$s · %2$d%%</string>
+  <plurals name="home_session_count">
+    <item quantity="one">%d lezione</item>
+    <item quantity="other">%d lezioni</item>
+  </plurals>
+  <string name="home_resume_section">Riprendi ad ascoltare</string>
+  <string name="home_resume_position">%1$s · al minuto %2$s</string>
+  <string name="home_resume_left">mancano %1$s</string>
+  <string name="home_resume_listened">ascoltata %1$s</string>
+  <string name="home_resume_play">Riprendi</string>
+  <string name="home_resume_hide">Nascondi</string>
 </resources>

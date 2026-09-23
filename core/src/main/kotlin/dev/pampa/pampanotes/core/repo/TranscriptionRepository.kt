@@ -404,7 +404,8 @@ class TranscriptionRepository @Inject constructor(
       },
     )
     sessions.setActiveTranscript(sessionId, transcript.id, now)
-    sessions.get(sessionId)?.let { notes.touch(it.noteId, now) }
+    // La nota non si tocca: una trascrizione finita non e' una modifica di chi l'ha scritta, e la
+    // data della nota e' quella vera (vedi `NoteDates`), non l'ora in cui il computer ha finito.
     transcript
   }
 
@@ -444,7 +445,6 @@ class TranscriptionRepository @Inject constructor(
       .forEach { transcripts.delete(it.id) }
     transcripts.upsert(transcript)
     sessions.setActiveTranscript(sessionId, transcript.id, now)
-    sessions.get(sessionId)?.let { notes.touch(it.noteId, now) }
     return transcript
   }
 

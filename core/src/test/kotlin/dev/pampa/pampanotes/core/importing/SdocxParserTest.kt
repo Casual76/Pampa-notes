@@ -126,6 +126,70 @@ class SdocxParserTest {
     assertTrue(SdocxParser.readMediaInfo(junk).isEmpty())
   }
 
+  // --- Le date della nota -------------------------------------------------------------------------
+
+  /** Il 23 settembre 2026 a mezzogiorno UTC: dopo le date della fixture, e fisso. */
+  private val now = 1_790_164_800_000L
+
+  @Test
+  fun `le date vengono da end_tag, non dallo zip`() {
+    val dates = SdocxParser.readDates(fixture(), now)!!
+
+    // 17/09/2026 09:39:43 UTC la creazione, 18/09/2026 09:13:23 UTC l'ultima modifica; le date
+    // dello ZIP dicono invece il 18 alle 13:17, cioe' la condivisione.
+    assertEquals(1_789_637_983_096L, dates.createdAtMillis)
+    assertEquals(1_789_722_803_594L, dates.modifiedAtMillis)
+  }
+
+  @Test
+  fun `parse porta le date insieme al resto`() {
+    val doc = SdocxParser.parse(fixture())
+
+    assertEquals(1_789_637_983_096L, doc.dates?.createdAtMillis)
+    assertEquals(1_789_722_803_594L, doc.dates?.modifiedAtMillis)
+  }
+
+  @Test
+  fun `senza end_tag le date si leggono in testa a note_note`() {
+    val file = temp.newFile("senza-end-tag.sdocx")
+    val header = java.nio.ByteBuffer.allocate(64).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+      .putLong(24, 1_789_637_983_096_228L)
+      .putLong(32, 1_789_722_803_594_379L)
+      .array()
+    java.util.zip.ZipOutputStream(file.outputStream()).use { zip ->
+      zip.putNextEntry(java.util.zip.ZipEntry("note.note"))
+      zip.write(header)
+      zip.closeEntry()
+    }
+
+    val dates = SdocxParser.readDates(file, now)!!
+
+    assertEquals(1_789_637_983_096L, dates.createdAtMillis)
+    assertEquals(1_789_722_803_594L, dates.modifiedAtMillis)
+  }
+
+  @Test
+  fun `date impossibili non passano`() {
+    // Prima del 2010, e nel futuro: niente.
+    assertNull(SdocxParser.plausibleDates(created = 1_000_000L, modified = (now + 86_400_000L) * 1000, now = now))
+    // Creazione dopo la modifica: gli offset non erano quelli giusti, e non vale nessuna delle due.
+    assertNull(SdocxParser.plausibleDates(created = 1_789_722_803_594_379L, modified = 1_789_637_983_096_228L, now = now))
+    // Una sola buona: resta quella.
+    val onlyModified = SdocxParser.plausibleDates(created = 0L, modified = 1_789_722_803_594_379L, now = now)!!
+    assertNull(onlyModified.createdAtMillis)
+    assertEquals(1_789_722_803_594L, onlyModified.modifiedAtMillis)
+    // Un end_tag troppo corto non si legge.
+    assertNull(SdocxParser.parseEndTag(ByteArray(20), now))
+  }
+
+  @Test
+  fun `un file che non e' uno zip non ha date`() {
+    val file = temp.newFile("rotto.sdocx")
+    file.writeBytes(ByteArray(100) { it.toByte() })
+
+    assertNull(SdocxParser.readDates(file, now))
+  }
+
   /** Un record come quelli di note.note: int32 lunghezza in caratteri + UTF-16LE. */
   private fun utf16Record(text: String): ByteArray {
     val encoded = text.toByteArray(Charsets.UTF_16LE)
