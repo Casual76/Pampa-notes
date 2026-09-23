@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dev.antigravity.fluidengine.ai.keys.KeystoreCipher
 import dev.antigravity.fluidengine.ai.keys.SecretCipher
@@ -43,6 +44,11 @@ data class PampaSettings(
   val chunkMinutes: Int = 10,
   /** Il tetto di upload di Groq: 25 MB sul piano gratuito, 100 sul dev tier. */
   val groqMaxUploadMb: Int = 25,
+  /**
+   * I pezzi del computer di casa, in minuti; null (di serie) vuol dire il file intero. Piu' lungo e'
+   * meglio per Whisper, che ha piu' contesto; si accorcia solo su un PC con poca memoria video.
+   */
+  val customMaxMinutes: Int? = null,
   val preferredProvider: TranscriptionProviderId = TranscriptionProviderId.GROQ,
   /**
    * Mai con Groq: ogni trascrizione, anche quella automatica all'import, va al computer di casa e
@@ -305,6 +311,38 @@ class PampaSettingsStore(
     if (before != trimmed.orEmpty()) touchEndpoint(prefs)
   }
 
+  // --- Trascrizione, coda e archivio -------------------------------------------------------------
+  // Un blocco a parte: le chiavi della coda e del computer di casa, non quelle del sync.
+
+  /** Null: il file intero. Fuori da 5–240 minuti un pezzo non ha senso, e si riporta dentro. */
+  suspend fun setCustomMaxMinutes(minutes: Int?) = edit { prefs ->
+    if (minutes == null) prefs.remove(CustomMaxMinutes) else prefs[CustomMaxMinutes] = minutes.coerceIn(5, 240)
+  }
+
+  /**
+   * Il permesso delle notifiche si chiede una volta sola, al primo lavoro messo in coda: chi ha
+   * detto di no non deve sentirselo richiedere a ogni lezione. Non sta in [PampaSettings] perche'
+   * non e' una scelta dell'utente.
+   */
+  suspend fun notificationPermissionAsked(): Boolean = store.data.first()[NotificationPermissionAsked] ?: false
+
+  suspend fun setNotificationPermissionAsked() = edit { it[NotificationPermissionAsked] = true }
+
+  /**
+   * I file che il computer di casa ha rifiutato, con quante volte e l'ultima quando.
+   *
+   * Un file che il server rifiuta sempre (troppo grande, un nome che non gli piace) veniva
+   * riprovato a ogni giro, per sempre, e il giro non finiva mai «bene». Qui si conta; l'archivio
+   * lo salta dopo qualche rifiuto e ci riprova solo dopo qualche giorno. Una riga per impronta:
+   * `sha|volte|millisecondi`.
+   */
+  suspend fun archiveFailures(): Map<String, ArchiveFailure> =
+    (store.data.first()[ArchiveFailures] ?: emptySet()).mapNotNull(ArchiveFailure::decode).associateBy { it.sha256 }
+
+  suspend fun setArchiveFailures(failures: Collection<ArchiveFailure>) = edit { prefs ->
+    if (failures.isEmpty()) prefs.remove(ArchiveFailures) else prefs[ArchiveFailures] = failures.map { it.encode() }.toSet()
+  }
+
   private suspend fun edit(block: (MutablePreferences) -> Unit) {
     store.edit(block)
   }
@@ -315,6 +353,7 @@ class PampaSettingsStore(
     vocabulary = this[Vocabulary] ?: "",
     chunkMinutes = this[ChunkMinutes] ?: 10,
     groqMaxUploadMb = this[GroqMaxUploadMb] ?: 25,
+    customMaxMinutes = this[CustomMaxMinutes],
     preferredProvider = TranscriptionProviderId.fromId(this[PreferredProvider]),
     customOnly = this[CustomOnly] ?: false,
     autoTranscribeOnImport = this[AutoTranscribe] ?: true,
@@ -395,5 +434,23 @@ class PampaSettingsStore(
     val LastExportPreset = stringPreferencesKey("last_export_preset")
     val ExportDefaults = stringPreferencesKey("export_defaults")
     val FakeProvider = booleanPreferencesKey("fake_provider")
+
+    // Trascrizione, coda e archivio.
+    val CustomMaxMinutes = intPreferencesKey("custom_max_minutes")
+    val NotificationPermissionAsked = booleanPreferencesKey("notification_permission_asked")
+    val ArchiveFailures = stringSetPreferencesKey("archive_failures")
+  }
+}
+
+/** Un file che il computer di casa ha rifiutato: quante volte, e l'ultima quando. */
+data class ArchiveFailure(val sha256: String, val count: Int, val lastAt: Long) {
+  internal fun encode(): String = "$sha256|$count|$lastAt"
+
+  companion object {
+    internal fun decode(raw: String): ArchiveFailure? {
+      val parts = raw.split('|')
+      if (parts.size != 3) return null
+      return ArchiveFailure(parts[0], parts[1].toIntOrNull() ?: return null, parts[2].toLongOrNull() ?: return null)
+    }
   }
 }

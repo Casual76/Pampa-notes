@@ -6,8 +6,11 @@ import dev.pampa.pampanotes.core.db.SourceDao
 import dev.pampa.pampanotes.core.db.SourceEntity
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
+import dev.pampa.pampanotes.core.transcription.CompanionAuth
+import dev.pampa.pampanotes.core.transcription.ComputerAuth
 import dev.pampa.pampanotes.core.transcription.EndpointResolver
 import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
+import dev.pampa.pampanotes.core.transcription.call
 import java.io.File
 import java.io.IOException
 import javax.inject.Inject
@@ -31,10 +34,13 @@ data class FetchOutcome(
   val failed: Int = 0,
   val bytes: Long = 0L,
   val lastError: String? = null,
-) {
-  /** Nessun file e' arrivato e almeno uno e' fallito: il computer non c'era, si riprova piu' tardi. */
-  val unreachable: Boolean get() = failed > 0 && downloaded == 0
-}
+  /**
+   * Il giro si e' fermato perche' il computer non rispondeva: si riprova piu' tardi. Un 404 invece
+   * e' una risposta, e riguarda quel file solo — il PC non l'ha ancora ricevuto dal dispositivo che
+   * l'ha registrato — quindi non ferma gli altri.
+   */
+  val unreachable: Boolean = false,
+)
 
 /**
  * Prende dal computer di casa un file che questo dispositivo non ha.
@@ -56,6 +62,7 @@ class ArchiveFetcher @Inject constructor(
   private val http: ArchiveHttp,
   private val audioParts: AudioPartDao,
   private val sources: SourceDao,
+  private val auth: ComputerAuth,
 ) {
   private val oneAtATime = Mutex()
 
@@ -122,10 +129,13 @@ class ArchiveFetcher @Inject constructor(
           onProgress(FetchProgress(index, total, name, (index + within) / total))
         }
         outcome = outcome.copy(downloaded = outcome.downloaded + 1, bytes = outcome.bytes + size)
-      } catch (error: ArchiveException) {
-        outcome = outcome.copy(failed = outcome.failed + 1, lastError = error.message)
       } catch (error: IOException) {
-        outcome = outcome.copy(failed = outcome.failed + 1, lastError = error.message)
+        outcome = outcome.copy(
+          failed = outcome.failed + 1,
+          lastError = error.message,
+          // Il computer non ha risposto: gli altri file fallirebbero uguali, ognuno dopo il suo timeout.
+          unreachable = ArchiveRepository.isUnreachable(error) && error !is ArchiveMissing && error !is ArchiveMismatch,
+        )
       }
       index++
     }
@@ -146,11 +156,13 @@ class ArchiveFetcher @Inject constructor(
     val endpoint = resolver.resolve(settings.endpointUrl, settings.endpointRemoteUrl)
       ?: throw ArchiveException(0, "server personale non configurato")
     val base = OpenAiCompatProvider.normalize(endpoint.url)
-    val token = settingsStore.endpointToken()
     val temp = files.tempFile("fetch", ".part")
     try {
-      val got = http.download("$base/files/$sha256", token, temp, onProgress)
-      if (!got.equals(sha256, ignoreCase = true)) throw ArchiveException(0, "il file arrivato non e' quello atteso")
+      val got = auth.call(
+        isUnauthorized = { it is ArchiveException && it.code == 401 },
+        rejected = { ArchiveException(401, CompanionAuth.ACCOUNT_REJECTED) },
+      ) { bearer -> http.download("$base/files/$sha256", bearer, temp, onProgress) }
+      if (!got.equals(sha256, ignoreCase = true)) throw ArchiveMismatch()
       target.parentFile?.mkdirs()
       if (!temp.renameTo(target)) {
         temp.copyTo(target, overwrite = true)
@@ -166,3 +178,6 @@ class ArchiveFetcher @Inject constructor(
 
 /** La riga c'e', il file no, e il computer di casa non l'ha mai ricevuto: e' rimasto sul dispositivo che l'ha registrato. */
 class ArchiveMissing(name: String) : IOException("«$name» non e' ancora arrivato al computer di casa")
+
+/** Il computer ha risposto, ma con un file diverso da quello atteso: non prende il nome di quello buono. */
+class ArchiveMismatch : IOException("il file arrivato non e' quello atteso")

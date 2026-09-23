@@ -479,8 +479,51 @@ interface JobDao {
   @Query("UPDATE jobs SET state = :state, updatedAt = :updatedAt WHERE id = :id")
   suspend fun setState(id: String, state: JobState, updatedAt: Long)
 
-  @Query("UPDATE jobs SET state = 'QUEUED', phase = NULL, updatedAt = :updatedAt WHERE state IN ('PREPARING','UPLOADING','TRANSCRIBING','STITCHING')")
-  suspend fun requeueInterrupted(updatedAt: Long)
+  /**
+   * I lavori rimasti «in corso» da un processo morto: tornano in fila. Chi stava aspettando di essere
+   * annullato invece si chiude annullato — l'utente l'aveva chiesto, e rimetterlo in fila lo farebbe
+   * ripartire. SQLite valuta ogni `CASE` sui valori di prima, quindi l'ordine delle colonne non conta.
+   */
+  @Query(
+    "UPDATE jobs SET " +
+      "state = CASE WHEN state = 'CANCEL_REQUESTED' THEN 'CANCELLED' ELSE 'QUEUED' END, " +
+      "finishedAt = CASE WHEN state = 'CANCEL_REQUESTED' THEN :updatedAt ELSE finishedAt END, " +
+      "phase = NULL, updatedAt = :updatedAt " +
+      "WHERE state IN ('PREPARING','UPLOADING','TRANSCRIBING','STITCHING','CANCEL_REQUESTED')",
+  )
+  suspend fun requeueInterrupted(updatedAt: Long): Int
+
+  /**
+   * Il progresso di un lavoro, scritto senza toccare il resto della riga.
+   *
+   * Un `@Update` della riga intera, fatto ogni mezzo secondo con la copia che il worker tiene in
+   * memoria, riscriveva `CANCEL_REQUESTED` con lo stato di prima: «Annulla» durava mezzo secondo.
+   * Qui la condizione lo lascia stare, e il numero di righe toccate dice a chi scrive se il lavoro
+   * e' ancora suo.
+   */
+  @Query(
+    "UPDATE jobs SET state = :state, progress = :progress, phase = :phase, chunkTotal = :chunkTotal, " +
+      "chunkDone = :chunkDone, updatedAt = :updatedAt WHERE id = :id AND state != 'CANCEL_REQUESTED'",
+  )
+  suspend fun publishProgress(
+    id: String,
+    state: JobState,
+    progress: Float,
+    phase: String?,
+    chunkTotal: Int,
+    chunkDone: Int,
+    updatedAt: Long,
+  ): Int
+
+  /** Torna in fila un lavoro che il sistema ha fermato: la ripresa riparte dai pezzi gia' su disco. */
+  @Query(
+    "UPDATE jobs SET state = 'QUEUED', phase = :phase, progress = 0, errorCode = NULL, errorMessage = NULL, " +
+      "finishedAt = NULL, updatedAt = :updatedAt WHERE id = :id AND state != 'CANCEL_REQUESTED'",
+  )
+  suspend fun requeue(id: String, phase: String?, updatedAt: Long): Int
+
+  @Query("UPDATE jobs SET state = 'CANCELLED', phase = NULL, finishedAt = :now, updatedAt = :now WHERE id = :id")
+  suspend fun markCancelled(id: String, now: Long)
 
   @Query("DELETE FROM jobs WHERE id = :id")
   suspend fun delete(id: String)

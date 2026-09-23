@@ -48,6 +48,15 @@ class AppFiles(context: Context) {
 
   fun clearExports(): Int = exports.listFiles()?.count { it.deleteRecursively() } ?: 0
 
+  /**
+   * Toglie da `cacheDir/tmp` quello che ha piu' di [olderThanMs]: i prelievi dal computer interrotti
+   * a meta' (`fetch-*.part`) e le copie di un import mai finito. Nessuno li riprende — un prelievo
+   * riparte da zero — e restavano li' finche' il sistema non svuotava la cache. Giovani no: possono
+   * essere di un lavoro che sta scrivendo adesso.
+   */
+  fun sweepTemp(olderThanMs: Long = 24 * 60 * 60_000L, now: Long = System.currentTimeMillis()): Int =
+    temp.listFiles()?.count { now - it.lastModified() > olderThanMs && it.deleteRecursively() } ?: 0
+
   companion object {
     /**
      * L'estensione dal nome, altrimenti dal MIME, altrimenti quella di ripiego. Sempre minuscola,

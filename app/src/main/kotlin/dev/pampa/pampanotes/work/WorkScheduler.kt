@@ -49,6 +49,25 @@ class WorkScheduler @Inject constructor(
     manager.enqueueUniqueWork(workName(providerId), if (running) ExistingWorkPolicy.KEEP else ExistingWorkPolicy.REPLACE, queueRequest(providerId))
   }
 
+  /**
+   * Riprende la coda di un provider fra [delayMillis]: il limite di Groq ha chiesto di aspettare ore.
+   *
+   * `APPEND_OR_REPLACE` perche' lo chiede il worker che sta ancora girando: si accoda a lui e parte
+   * quando lui ha chiuso, dopo l'attesa. Un `REPLACE` lo annullerebbe mentre scrive; un `KEEP` non
+   * accoderebbe niente. Chi nel frattempo chiede con [kick] trova questo in attesa e lo lascia: il
+   * limite e' dell'account, e un lavoro nuovo lo troverebbe uguale.
+   */
+  fun kickAfter(providerId: String, delayMillis: Long) {
+    val request = OneTimeWorkRequestBuilder<TranscriptionQueueWorker>()
+      .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+      .setInputData(workDataOf(TranscriptionQueueWorker.KEY_PROVIDER to providerId))
+      .setInitialDelay(delayMillis.coerceAtLeast(0L), TimeUnit.MILLISECONDS)
+      .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+      .addTag(TAG)
+      .build()
+    WorkManager.getInstance(context).enqueueUniqueWork(workName(providerId), ExistingWorkPolicy.APPEND_OR_REPLACE, request)
+  }
+
   private fun queueRequest(providerId: String) = OneTimeWorkRequestBuilder<TranscriptionQueueWorker>()
     .setConstraints(
       Constraints.Builder()

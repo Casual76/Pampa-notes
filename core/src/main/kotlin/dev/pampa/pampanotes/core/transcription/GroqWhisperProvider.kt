@@ -22,6 +22,7 @@ class GroqWhisperProvider(
     maxUploadBytes = maxUploadBytes,
     supportsSegments = true,
     needsChunking = true,
+    acceptedExtensions = ACCEPTED_EXTENSIONS,
   )
 
   override suspend fun listModels(): List<String> {
@@ -96,6 +97,13 @@ class GroqWhisperProvider(
     const val PROMPT_MAX_CHARS = 800
 
     /**
+     * I formati che Groq prende cosi' come sono, riconosciuti dall'estensione del nome che si manda.
+     * Tutto il resto — un `.amr` del registratore, un `.3gp`, un `.aac` nudo — va decodificato e
+     * ricodificato: mandato com'e' tornava un 400 che nessuno riprovando poteva guarire.
+     */
+    val ACCEPTED_EXTENSIONS = setOf("flac", "mp3", "mp4", "mpeg", "mpga", "m4a", "ogg", "opus", "wav", "webm")
+
+    /**
      * Groq risponde in pochi secondi anche per venti minuti di audio, ma il caricamento sulla rete
      * mobile puo' essere lento e il tempo di lettura parte da quando l'ultimo byte e' uscito.
      */
@@ -112,15 +120,22 @@ class GroqWhisperProvider(
 /**
  * Un endpoint compatibile con l'API OpenAI: di regola il computer di casa con WhisperX.
  *
- * Nessun tetto e nessun taglio: la macchina che sta dall'altra parte macina un'ora di audio senza
- * battere ciglio, e mandargliela intera evita sia le cuciture sia gli errori che le cuciture possono
- * introdurre. Il prezzo e' che bisogna aspettarla, e l'attesa puo' durare mezz'ora.
+ * Di serie nessun tetto e nessun taglio: la macchina che sta dall'altra parte macina un'ora di audio
+ * senza battere ciglio, e mandargliela intera evita sia le cuciture sia gli errori che le cuciture
+ * possono introdurre. Il prezzo e' che bisogna aspettarla, e l'attesa puo' durare mezz'ora. Chi ha
+ * un PC con poca memoria video puo' chiedere pezzi ([maxChunkMinutes]): stessa pianificazione e
+ * stessa cucitura di Groq.
+ *
+ * Le credenziali le da' [auth] a ogni chiamata — il biglietto dell'account, o il codice scritto a
+ * mano — e un 401 col biglietto lo rinnova e riprova una volta ([call]).
  */
 class OpenAiCompatProvider(
   private val http: TranscriptionHttp,
   baseUrl: String,
-  private val token: String? = null,
-  private val readTimeoutMillis: Int = 0,
+  private val auth: CompanionAuth = CompanionAuth.fixed(null),
+  private val readTimeoutMillis: Int = READ_TIMEOUT_MS,
+  /** Null: il file va intero. Altrimenti la durata massima di un pezzo, in minuti. */
+  maxChunkMinutes: Int? = null,
 ) : TranscriptionProvider {
 
   /** Normalizzato una volta: chi digita l'indirizzo mette o non mette la barra e il `/v1`. */
@@ -131,17 +146,20 @@ class OpenAiCompatProvider(
   override val capabilities: TranscriptionCapabilities = TranscriptionCapabilities(
     maxUploadBytes = null,
     supportsSegments = true,
-    needsChunking = false,
+    needsChunking = maxChunkMinutes != null,
+    maxChunkMinutes = maxChunkMinutes,
   )
 
   override suspend fun listModels(): List<String> =
-    VerboseJson.parseModels(http.getJson("$base/models", headers()))
+    authorized { headers -> VerboseJson.parseModels(http.getJson("$base/models", headers)) }
 
   override suspend fun health(): EndpointHealth {
     val started = System.currentTimeMillis()
     // Prima `/health`, che i server pensati per questo espongono e risponde subito; se non c'e' si
     // ripiega su `/models`, che qualsiasi endpoint compatibile ha.
-    val health = runCatching { http.getJson("${base.removeSuffix("/v1")}/health", headers()) }.getOrNull()
+    // `/health` risponde anche senza credenziali: e' la sonda. Le si mandano lo stesso, perche' un
+    // companion vecchio le chiedeva.
+    val health = runCatching { http.getJson("${base.removeSuffix("/v1")}/health", headers(auth.bearer())) }.getOrNull()
     val models = runCatching { listModels() }.getOrElse { error ->
       return EndpointHealth(
         reachable = false,
@@ -175,23 +193,37 @@ class OpenAiCompatProvider(
     request.language?.takeIf { it.isNotBlank() }?.let { fields["language"] = it }
     request.prompt?.takeIf { it.isNotBlank() }?.let { fields["prompt"] = it }
 
-    val body = http.postAudio(
-      url = "$base/audio/transcriptions",
-      headers = headers(),
-      fields = fields,
-      file = file,
-      fileMime = mime,
-      readTimeoutMillis = readTimeoutMillis,
-      onProgress = onProgress,
-    )
+    val body = authorized { headers ->
+      http.postAudio(
+        url = "$base/audio/transcriptions",
+        headers = headers,
+        fields = fields,
+        file = file,
+        fileMime = mime,
+        readTimeoutMillis = readTimeoutMillis,
+        onProgress = onProgress,
+      )
+    }
     return VerboseJson.parse(body)
   }
 
-  private fun headers(): Map<String, String> =
-    token?.takeIf { it.isNotBlank() }?.let { mapOf("Authorization" to "Bearer $it") } ?: emptyMap()
+  private suspend fun <T> authorized(block: suspend (Map<String, String>) -> T): T = auth.call(
+    isUnauthorized = { TranscriptionError.from(it) is TranscriptionError.Unauthorized },
+    rejected = { TranscriptionError.Unauthorized(CompanionAuth.ACCOUNT_REJECTED) },
+  ) { bearer -> block(headers(bearer)) }
+
+  private fun headers(bearer: String?): Map<String, String> =
+    bearer?.takeIf { it.isNotBlank() }?.let { mapOf("Authorization" to "Bearer $it") } ?: emptyMap()
 
   companion object {
     const val ID = "custom"
+
+    /**
+     * Quanto aspettare la risposta dopo l'ultimo byte mandato: novanta minuti. Lungo, perche' il PC
+     * trascrive un'ora di lezione prima di dire qualcosa; ma finito, perche' con zero una socket
+     * restava aperta per sempre verso un computer spento a meta' lavoro.
+     */
+    const val READ_TIMEOUT_MS = 90 * 60_000
 
     /**
      * Da quello che si scrive nel campo a un indirizzo che funziona.

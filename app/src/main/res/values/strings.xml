@@ -425,7 +425,7 @@
   <string name="settings_endpoint">Server personale</string>
   <string name="settings_endpoint_detail">Il tuo computer con WhisperX: nessun limite di dimensione, e i file non escono di casa.</string>
   <string name="settings_endpoint_url">Indirizzo in casa</string>
-  <string name="settings_endpoint_token">Token</string>
+  <string name="settings_endpoint_token">Codice (solo senza account)</string>
   <string name="settings_endpoint_token_hint">Solo se il server ne chiede uno</string>
   <string name="settings_endpoint_remote_url">Indirizzo fuori casa</string>
   <string name="settings_endpoint_remote_hint">Quello di Tailscale. Vuoto se non lo usi.</string>
@@ -451,6 +451,10 @@
   <string name="settings_chunk_minutes_detail">Quanto audio sta in una richiesta quando il file va tagliato</string>
   <string name="settings_groq_limit">Limite di Groq</string>
   <string name="settings_groq_limit_detail">25 MB sul piano gratuito, 100 su quello a pagamento</string>
+  <!-- Trascrizione e coda: pezzi del computer di casa, attesa del limite di Groq -->
+  <string name="settings_custom_chunk_whole">Intero</string>
+  <string name="settings_custom_chunk_detail">Quanto audio il computer di casa trascrive in una volta. Più lungo vuol dire più contesto per Whisper e meno cuciture: accorcialo solo se il PC ha poca memoria video.</string>
+  <string name="job_phase_until">In attesa del limite di Groq, fino alle %1$s</string>
   <string name="settings_vocabulary">Vocabolario</string>
   <string name="settings_vocabulary_hint">Termidoro, Monti, Feuerbach…</string>
   <string name="settings_vocabulary_detail">Nomi e termini che il modello non conosce. Vederli prima e\u0300 la differenza fra «Termidoro» e «term e d\'oro».</string>

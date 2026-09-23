@@ -76,6 +76,7 @@ class SettingsViewModel @Inject constructor(
   private val resolver: EndpointResolver,
   private val refinement: RefinementRepository,
   private val scheduler: dev.pampa.pampanotes.work.WorkScheduler,
+  private val computerAuth: dev.pampa.pampanotes.core.transcription.ComputerAuth,
 ) : ViewModel() {
 
   companion object {
@@ -216,7 +217,9 @@ class SettingsViewModel @Inject constructor(
       val provider = OpenAiCompatProvider(
         http = http,
         baseUrl = endpoint.url,
-        token = settingsStore.endpointToken(),
+        // Le stesse credenziali di una trascrizione vera: il biglietto dell'account se c'e', il
+        // codice altrimenti. Una prova che ne usa altre direbbe «funziona» a un lavoro che poi no.
+        auth = computerAuth,
         readTimeoutMillis = 15_000,
       )
       val health: EndpointHealth = provider.health()
@@ -272,6 +275,9 @@ class SettingsViewModel @Inject constructor(
   }
   fun setChunkMinutes(minutes: Int) = viewModelScope.launch { settingsStore.setChunkMinutes(minutes) }
   fun setGroqMaxUploadMb(mb: Int) = viewModelScope.launch { settingsStore.setGroqMaxUploadMb(mb) }
+
+  /** I pezzi del computer di casa: null, il file intero. */
+  fun setCustomMaxMinutes(minutes: Int?) = viewModelScope.launch { settingsStore.setCustomMaxMinutes(minutes) }
   fun setAutoTranscribe(enabled: Boolean) = viewModelScope.launch { settingsStore.setAutoTranscribeOnImport(enabled) }
 
   /** La cartella dove finiscono backup ed export. La sceglie anche il primo avvio. */

@@ -396,7 +396,7 @@
   <string name="settings_endpoint">Personal server</string>
   <string name="settings_endpoint_detail">Your computer with WhisperX: no size limit, and the files never leave the house.</string>
   <string name="settings_endpoint_url">Address at home</string>
-  <string name="settings_endpoint_token">Token</string>
+  <string name="settings_endpoint_token">Code (only without an account)</string>
   <string name="settings_endpoint_token_hint">Only if the server asks for one</string>
   <string name="settings_endpoint_remote_url">Address away from home</string>
   <string name="settings_endpoint_remote_hint">The Tailscale one. Leave empty if you don\'t use it.</string>
@@ -421,6 +421,10 @@
   <string name="settings_chunk_minutes_detail">How much audio goes in one request when a file must be split</string>
   <string name="settings_groq_limit">Groq limit</string>
   <string name="settings_groq_limit_detail">25 MB on the free plan, 100 on the paid one</string>
+  <!-- Transcription and queue: home computer chunks, waiting on Groq's limit -->
+  <string name="settings_custom_chunk_whole">Whole</string>
+  <string name="settings_custom_chunk_detail">How much audio the home computer transcribes at once. Longer means more context for Whisper and fewer seams: shorten it only if the PC is low on video memory.</string>
+  <string name="job_phase_until">Waiting on Groq\'s limit until %1$s</string>
   <string name="settings_vocabulary">Vocabulary</string>
   <string name="settings_vocabulary_hint">Thermidor, Feuerbach, Termidoro…</string>
   <string name="settings_vocabulary_detail">Names and terms the model does not know. Seeing them first is the difference between a name and nonsense.</string>
