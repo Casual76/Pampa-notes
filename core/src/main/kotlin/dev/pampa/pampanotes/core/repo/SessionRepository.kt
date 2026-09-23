@@ -18,6 +18,8 @@ import dev.pampa.pampanotes.core.model.Ids
 import dev.pampa.pampanotes.core.model.wordCount
 import dev.pampa.pampanotes.core.transcription.SessionAssembler
 import dev.pampa.pampanotes.core.transcription.SessionSegment
+import dev.pampa.pampanotes.core.transcription.SessionTranscript
+import dev.pampa.pampanotes.core.transcription.TranscriptPlacement
 import androidx.room.withTransaction
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -293,6 +295,99 @@ class SessionRepository @Inject constructor(
     if (activeIsGone) sessions.setActiveTranscript(sessionId, target.id, System.currentTimeMillis())
   }
 
+  /**
+   * Salva il risultato di una trascrizione, parte per parte, nelle sessioni in cui le parti stanno
+   * **adesso** (vedi [TranscriptPlacement]).
+   *
+   * Il lavoro e' partito con una fotografia delle parti ([partIds]) e nel frattempo la sessione puo'
+   * essere cambiata. Per ogni sessione che ha ancora almeno una di quelle parti: una grezza nuova,
+   * con provider, modello e lingua del risultato, che prende i segmenti nuovi delle parti del lavoro
+   * e **riadotta** quelli delle altre parti della sessione (arrivate nel frattempo, o gia' trascritte
+   * altrove); la grezza di prima se ne va con le sue raffinate, come ha sempre fatto una
+   * ritrascrizione; poi [rebuildRaw] rifa' testo e tempi dall'ordine di adesso. Una parte cancellata
+   * nel frattempo non riceve niente: i suoi segmenti sarebbero orfani, e prima facevano fallire il
+   * salvataggio.
+   *
+   * Tutto in una transazione: fra la cancellazione della grezza vecchia e l'ultimo segmento della
+   * nuova, un processo ucciso lasciava una sessione senza trascrizione, e il sync la portava cosi'
+   * anche sugli altri dispositivi.
+   *
+   * @return null se nessuna delle parti esiste piu' (la sessione e' stata cancellata mentre si
+   *   trascriveva): non c'e' niente da salvare, e non e' un errore.
+   */
+  suspend fun saveTranscription(
+    jobSessionId: String,
+    partIds: List<String>,
+    result: SessionTranscript,
+  ): SavedTranscription? = db.withTransaction {
+    val alive = partIds.mapNotNull { parts.get(it) }.associate { it.id to it.sessionId }
+    val targets = TranscriptPlacement.plan(jobSessionId, partIds, alive)
+    if (targets.isEmpty()) return@withTransaction null
+
+    val fresh = result.segments.groupBy { it.partId }
+    val now = System.currentTimeMillis()
+    targets.forEach { target ->
+      val written = target.partIds.toSet()
+      val inSession = parts.bySession(target.sessionId)
+      val others = inSession.filterNot { it.id in written }
+      // Le parole delle altre parti, da qualunque trascrizione vengano: vanno sotto la grezza nuova
+      // prima che quella vecchia se ne vada, o la cascata le porterebbe via con lei.
+      val kept = if (others.isEmpty()) emptyList() else segments.byParts(others.map { it.id })
+      val previous = transcripts.rawForSession(target.sessionId)
+
+      val transcript = TranscriptEntity(
+        id = Ids.newId(),
+        sessionId = target.sessionId,
+        kind = TranscriptKind.RAW,
+        provider = result.provider,
+        model = result.model,
+        language = result.language,
+        // Il testo lo compone [rebuildRaw] qui sotto, dall'ordine delle parti di adesso.
+        text = "",
+        wordCount = 0,
+        createdAt = now,
+      )
+      inSession.forEach { segments.deleteByPart(it.id) }
+      transcripts.upsert(transcript)
+      segments.insertAll(
+        kept.map { it.copy(id = 0, transcriptId = transcript.id) } +
+          target.partIds.flatMap { partId -> fresh[partId].orEmpty() }.map { segment ->
+            SegmentEntity(
+              transcriptId = transcript.id,
+              partId = segment.partId,
+              indexInPart = segment.indexInPart,
+              partStartMs = segment.partStartMs,
+              partEndMs = segment.partEndMs,
+              sessionStartMs = segment.sessionStartMs,
+              sessionEndMs = segment.sessionEndMs,
+              text = segment.text,
+              noSpeechProb = segment.noSpeechProb,
+              avgLogProb = segment.avgLogProb,
+              wordsJson = segment.wordsEncoded,
+              wordsEstimated = segment.wordsEstimated,
+            )
+          },
+      )
+      previous?.let {
+        transcripts.deleteChildren(it.id)
+        transcripts.delete(it.id)
+      }
+      sessions.setActiveTranscript(target.sessionId, transcript.id, now)
+      rebuildRawNow(target.sessionId)
+    }
+    // La nota non si tocca: una trascrizione finita non e' una modifica di chi l'ha scritta, e la
+    // data della nota e' quella vera (vedi `NoteDates`), non l'ora in cui il computer ha finito.
+
+    // Quella da raccontare: la sessione del lavoro se c'e' ancora, altrimenti quella che ne ha preso
+    // le parti (un'unione fatta mentre si trascriveva).
+    val main = targets.last().sessionId
+    SavedTranscription(
+      sessionId = main,
+      transcript = transcripts.rawForSession(main),
+      sessionIds = targets.map { it.sessionId },
+    )
+  }
+
   /** Le parti che la trascrizione mostrata non copre: quelle importate dopo, o arrivate da altrove. */
   suspend fun untranscribedParts(sessionId: String): List<AudioPartEntity> {
     val ordered = parts.bySession(sessionId)
@@ -394,3 +489,14 @@ class SessionRepository @Inject constructor(
     sessions.get(sessionId)?.let { notes.touch(it.noteId, System.currentTimeMillis()) }
   }
 }
+
+/**
+ * Dove e' finito il risultato di una trascrizione: [sessionId] e' la sessione del lavoro, o quella
+ * che ne ha preso le parti se nel frattempo e' sparita; [transcript] la sua grezza (null se le parti
+ * rimaste li' erano mute); [sessionIds] tutte quelle che si sono ricomposte.
+ */
+data class SavedTranscription(
+  val sessionId: String,
+  val transcript: TranscriptEntity?,
+  val sessionIds: List<String>,
+)

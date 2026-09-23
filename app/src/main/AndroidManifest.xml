@@ -40,6 +40,11 @@
       android:foregroundServiceType="dataSync"
       tools:node="merge" />
 
+    <!-- «Annulla» nella notifica di una trascrizione: annulla il lavoro, non il worker. Solo dall'app. -->
+    <receiver
+      android:name=".work.JobCancelReceiver"
+      android:exported="false" />
+
     <activity
       android:name=".MainActivity"
       android:configChanges="keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|uiMode"

@@ -11,7 +11,6 @@ import dev.pampa.pampanotes.core.db.JobType
 import dev.pampa.pampanotes.core.db.NoteDao
 import dev.pampa.pampanotes.core.db.PampaDatabase
 import dev.pampa.pampanotes.core.db.SegmentDao
-import dev.pampa.pampanotes.core.db.SegmentEntity
 import dev.pampa.pampanotes.core.db.SessionDao
 import dev.pampa.pampanotes.core.db.TranscriptDao
 import dev.pampa.pampanotes.core.db.TranscriptEntity
@@ -34,7 +33,10 @@ import dev.pampa.pampanotes.core.transcription.TranscriptionHttp
 import dev.pampa.pampanotes.core.transcription.TranscriptionProvider
 import dev.pampa.pampanotes.core.transcription.RemoteTranscribing
 import dev.pampa.pampanotes.core.transcription.TranscribingMarker
+import dev.pampa.pampanotes.core.transcription.JobPhase
 import dev.pampa.pampanotes.core.sync.deviceLabel
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -67,6 +69,7 @@ class TranscriptionRepository @Inject constructor(
   private val db: PampaDatabase,
   private val computerAuth: ComputerAuth,
   private val stats: StatsRepository,
+  private val sessionRepository: SessionRepository,
 ) {
 
   fun observeAll(): Flow<List<JobEntity>> = jobs.observeAll()
@@ -138,23 +141,83 @@ class TranscriptionRepository @Inject constructor(
     return job
   }
 
-  suspend fun nextQueued(providerId: String): JobEntity? = jobs.nextQueued(providerId)
+  /**
+   * Il prossimo in fila per un servizio. [skip] sono i lavori che il worker ha gia' lasciato in fila
+   * in questo giro (vedi [busyElsewhere]): restano `QUEUED`, e senza saltarli li riprenderebbe.
+   */
+  suspend fun nextQueued(providerId: String, skip: Set<String> = emptySet()): JobEntity? =
+    if (skip.isEmpty()) jobs.nextQueued(providerId) else jobs.nextQueuedExcept(providerId, skip.toList())
+
+  /**
+   * Vale la pena svegliare la coda di un servizio adesso: c'e' qualcosa in fila e nessuno aspetta il
+   * limite di Groq. Un lavoro fermo con `until:` nel futuro ha gia' il suo risveglio a quell'ora;
+   * svegliarlo prima vorrebbe dire rimandarlo contro lo stesso limite.
+   */
+  suspend fun readyToWake(providerId: String): Boolean {
+    val queued = jobs.queued(providerId)
+    if (queued.isEmpty()) return false
+    val now = System.currentTimeMillis()
+    return queued.none { (JobPhase.parse(it.phase) as? JobPhase.Until)?.let { until -> until.atMillis > now } == true }
+  }
 
   suspend fun queuedCount(providerId: String): Int = jobs.queuedCount(providerId)
 
   /** Tutti i falliti tornano in fila, e si dice quali code svegliare. */
-  suspend fun retryAllFailed(): Set<String> {
-    val failed = jobs.failed()
-    failed.forEach { retry(it.id) }
-    return failed.mapTo(mutableSetOf()) { it.provider }
-  }
+  suspend fun retryAllFailed(): Set<String> =
+    jobs.failed().mapNotNullTo(mutableSetOf()) { retry(it.id)?.provider }
 
   /**
    * I lavori in fila del computer di casa dicono che lo stanno aspettando, o smettono di dirlo.
    * E' una fase come le altre (`JobEntity.phase`): la riga del lavoro la legge e la scrive.
    */
-  suspend fun markWaitingForEndpoint(waiting: Boolean) =
-    jobs.setQueuedPhase(OpenAiCompatProvider.ID, if (waiting) PHASE_WAITING_ENDPOINT else null, System.currentTimeMillis())
+  suspend fun markWaitingForEndpoint(waiting: Boolean) {
+    val now = System.currentTimeMillis()
+    // Smettere di aspettare toglie solo «in attesa del computer»: le altre fasi di chi e' in fila
+    // («in trascrizione su Tab S9») dicono cose ancora vere.
+    if (waiting) {
+      jobs.setQueuedPhase(OpenAiCompatProvider.ID, PHASE_WAITING_ENDPOINT, now)
+    } else {
+      jobs.clearQueuedPhase(OpenAiCompatProvider.ID, PHASE_WAITING_ENDPOINT, now)
+    }
+  }
+
+  /**
+   * I lavori in fila di un servizio sono pronti, ma Android non ha lasciato partire il worker in
+   * primo piano (un worker svegliato in background, da Android 12): lo dicono, al posto di un «in
+   * attesa del computer» o di un «fino alle 14:32» che non sono piu' veri.
+   */
+  suspend fun markNeedsApp(providerId: String) =
+    jobs.setQueuedPhase(providerId, JobPhase.NeedsApp.encode(), System.currentTimeMillis())
+
+  /** Il worker e' partito: chi e' in fila dietro al primo non ha piu' bisogno che si apra l'app. */
+  suspend fun clearNeedsApp(providerId: String) =
+    jobs.clearQueuedPhase(providerId, JobPhase.NeedsApp.encode(), System.currentTimeMillis())
+
+  /** Il lavoro resta in fila perche' un altro dispositivo sta trascrivendo la stessa sessione. */
+  suspend fun markElsewhere(jobId: String, device: String) {
+    jobs.setPhaseIfQueued(jobId, JobPhase.Elsewhere(device).encode(), System.currentTimeMillis())
+  }
+
+  /**
+   * «Solo il computer di casa» e' acceso: le trascrizioni per Groq in fila o fallite passano al
+   * computer. La regola vale anche per i lavori accodati prima che la si accendesse, o una lezione
+   * finiva nel cloud per sbaglio lo stesso — ed e' la promessa dell'interruttore.
+   *
+   * @return quante ne ha spostate: chi chiama sveglia la coda del computer.
+   */
+  suspend fun moveGroqTranscriptionsToComputer(): Int =
+    jobs.moveTranscriptions(GroqWhisperProvider.ID, OpenAiCompatProvider.ID, System.currentTimeMillis())
+
+  /**
+   * Il servizio che una trascrizione deve usare adesso: con «solo il computer di casa» acceso, mai
+   * Groq, qualunque cosa ci fosse scritto quando e' stata accodata.
+   */
+  suspend fun effectiveProvider(job: JobEntity): String =
+    if (job.type == JobType.TRANSCRIBE && job.provider == GroqWhisperProvider.ID && settingsStore.current().customOnly) {
+      OpenAiCompatProvider.ID
+    } else {
+      job.provider
+    }
 
   /**
    * Il computer di casa: mai configurato, configurato ma muto, o pronto.
@@ -174,10 +237,39 @@ class TranscriptionRepository @Inject constructor(
   /**
    * Il lavoro torna in fila ad aspettare il computer, invece di fallire: e' quello che succede a
    * un lavoro del computer di casa caduto su un errore di rete mentre il computer non risponde.
+   *
+   * Non per sempre: una registrazione che fa cadere il computer (un file che manda in crash il
+   * companion, o la scheda) tornava in testa alla fila, lo rifaceva cadere al riavvio, e cosi' via,
+   * con tutte le lezioni dietro ferme. Alla [MAX_ENDPOINT_LOSSES]-esima volta si arrende, e chi
+   * chiama la segna fallita dicendo perche'. Il conto sta nelle opzioni del lavoro, e «Riprova» lo
+   * azzera.
+   *
+   * @return falso se il lavoro ha perso il computer troppe volte: va chiuso fallito.
    */
-  suspend fun requeueForEndpoint(jobId: String) {
-    jobs.requeue(jobId, PHASE_WAITING_ENDPOINT, System.currentTimeMillis())
+  suspend fun requeueForEndpoint(jobId: String): Boolean = requeueCountingLoss(jobId, PHASE_WAITING_ENDPOINT)
+
+  /**
+   * Il computer c'e', ma a un altro indirizzo da quello con cui il lavoro era partito (da casa a
+   * Tailscale, uscendo): il lavoro torna in fila e ripartira' con l'indirizzo di adesso, invece di
+   * fallire dopo i tentativi su una strada che non porta piu' da nessuna parte. Contato come
+   * [requeueForEndpoint], perche' un indirizzo che cambia a ogni tentativo e' un giro senza fine.
+   */
+  suspend fun requeueForNewAddress(jobId: String): Boolean = requeueCountingLoss(jobId, null)
+
+  private suspend fun requeueCountingLoss(jobId: String, phase: String?): Boolean {
+    // Una riga che non c'e' piu' non ha niente da chiudere: chi chiama non deve segnarla fallita.
+    val job = jobs.get(jobId) ?: return true
+    val options = transcribeOptions(job)
+    val losses = options.endpointLosses + 1
+    if (losses >= MAX_ENDPOINT_LOSSES) return false
+    val encoded = json.encodeToString(TranscribeOptions.serializer(), options.copy(endpointLosses = losses))
+    jobs.requeueWithOptions(jobId, phase, encoded, System.currentTimeMillis())
+    return true
   }
+
+  private fun transcribeOptions(job: JobEntity): TranscribeOptions =
+    job.optionsJson?.let { runCatching { json.decodeFromString(TranscribeOptions.serializer(), it) }.getOrNull() }
+      ?: TranscribeOptions()
 
   /**
    * Il sistema ha fermato il worker a meta' lavoro (vincoli, quota, un aggiornamento): il lavoro non
@@ -216,32 +308,68 @@ class TranscriptionRepository @Inject constructor(
 
   suspend fun update(job: JobEntity) = jobs.update(job.copy(updatedAt = System.currentTimeMillis()))
 
-  suspend fun markState(jobId: String, state: JobState) = jobs.setState(jobId, state, System.currentTimeMillis())
+  /**
+   * Il lavoro parte: da in fila a [state]. Falso se nel frattempo non era piu' in fila — annullato
+   * un attimo prima, o preso da qualcun altro — e allora non e' piu' di chi chiama.
+   */
+  suspend fun start(jobId: String, state: JobState, model: String?): Boolean =
+    jobs.start(jobId, state, model, System.currentTimeMillis()) > 0
 
-  /** Un lavoro che l'utente vuole fermare: il worker se ne accorge fra un pezzo e l'altro. */
-  suspend fun requestCancel(jobId: String) {
-    val job = jobs.get(jobId) ?: return
-    if (job.state == JobState.QUEUED) {
-      // Non e' ancora partito: si puo' togliere subito, senza aspettare che qualcuno lo guardi.
-      jobs.update(job.copy(state = JobState.CANCELLED, finishedAt = System.currentTimeMillis(), updatedAt = System.currentTimeMillis()))
-    } else if (job.state.isRunning) {
-      jobs.setState(jobId, JobState.CANCEL_REQUESTED, System.currentTimeMillis())
-    }
+  suspend fun markDone(jobId: String): Boolean = jobs.markDone(jobId, System.currentTimeMillis()) > 0
+
+  /** Com'e' finito un lavoro che si voleva segnare fallito. */
+  enum class FailOutcome {
+    /** Segnato fallito: si dice all'utente. */
+    FAILED,
+
+    /** Qualcuno aveva chiesto di annullarlo: vince la sua richiesta, e non c'e' niente da notificare. */
+    CANCELLED,
+
+    /** Il lavoro non c'e' piu', o era gia' chiuso: niente da scrivere e niente da dire. */
+    GONE,
   }
 
-  suspend fun retry(jobId: String) {
-    val job = jobs.get(jobId) ?: return
-    jobs.update(
-      job.copy(
-        state = JobState.QUEUED,
-        errorCode = null,
-        errorMessage = null,
-        phase = null,
-        progress = 0f,
-        updatedAt = System.currentTimeMillis(),
-        finishedAt = null,
-      ),
-    )
+  /** Segna fallito un lavoro, toccando solo le colonne dell'esito (vedi `JobDao.fail`). */
+  suspend fun fail(jobId: String, error: TranscriptionError): FailOutcome {
+    val now = System.currentTimeMillis()
+    if (jobs.fail(jobId, error.code, error.message, now) > 0) return FailOutcome.FAILED
+    val current = jobs.get(jobId) ?: return FailOutcome.GONE
+    if (current.state == JobState.CANCEL_REQUESTED) {
+      jobs.markCancelled(jobId, now)
+      return FailOutcome.CANCELLED
+    }
+    return FailOutcome.GONE
+  }
+
+  suspend fun markState(jobId: String, state: JobState) = jobs.setState(jobId, state, System.currentTimeMillis())
+
+  /**
+   * Un lavoro che l'utente vuole fermare: il worker se ne accorge subito (guarda la riga).
+   *
+   * Due `UPDATE` condizionati e non una lettura seguita da una scrittura: fra le due il worker poteva
+   * far partire il lavoro, e la scrittura della copia letta lo riportava a «annullato» mentre lui
+   * lavorava. Se e' ancora in fila si chiude adesso; se nel frattempo e' partito, la seconda lo trova
+   * in corso e chiede di fermarlo.
+   */
+  suspend fun requestCancel(jobId: String) {
+    val now = System.currentTimeMillis()
+    if (jobs.cancelIfQueued(jobId, now) > 0) return
+    jobs.requestCancelIfRunning(jobId, now)
+  }
+
+  /**
+   * Di nuovo in fila. Con «solo il computer di casa» acceso una trascrizione per Groq riparte sul
+   * computer: riprovare non deve essere la strada per cui una lezione finisce nel cloud.
+   *
+   * @return il lavoro com'e' adesso, col servizio che lo portera' avanti; null se non c'e'.
+   */
+  suspend fun retry(jobId: String): JobEntity? {
+    val job = jobs.get(jobId) ?: return null
+    // Il conto delle volte che il computer e' sparito riparte: chi riprova ha di solito rimesso a
+    // posto il computer. Le opzioni di un raffinamento (il preset) invece restano.
+    val options = if (job.type == JobType.TRANSCRIBE) null else job.optionsJson
+    jobs.retry(jobId, effectiveProvider(job), options, System.currentTimeMillis())
+    return jobs.get(jobId)
   }
 
   suspend fun delete(jobId: String) = jobs.delete(jobId)
@@ -316,22 +444,33 @@ class TranscriptionRepository @Inject constructor(
    */
   enum class EndpointState { UNCONFIGURED, UNREACHABLE, REACHABLE }
 
-  suspend fun providerFor(providerId: String): TranscriptionProvider? {
+  suspend fun providerFor(providerId: String): TranscriptionProvider? = bind(providerId)?.provider
+
+  /** Un servizio pronto e, per il computer di casa, l'indirizzo a cui e' legato. */
+  data class BoundProvider(val provider: TranscriptionProvider, val baseUrl: String?)
+
+  /**
+   * Come [providerFor], dicendo anche a quale indirizzo e' legato il provider del computer di casa:
+   * se a meta' lavoro il computer si raggiunge da un'altra strada (vedi [endpointMovedFrom]), il
+   * lavoro si rimette in fila invece di fallire.
+   */
+  suspend fun bind(providerId: String): BoundProvider? {
     val settings = settingsStore.current()
     return when (providerId) {
       GroqWhisperProvider.ID -> {
         val key = keys.key(ProviderId.GROQ)?.takeIf { it.isNotBlank() } ?: return null
-        GroqWhisperProvider(
+        val provider = GroqWhisperProvider(
           http = http,
           apiKey = key,
           maxUploadBytes = settings.groqMaxUploadMb * 1024L * 1024L,
         )
+        BoundProvider(provider, baseUrl = null)
       }
 
       OpenAiCompatProvider.ID -> {
         // Casa o Tailscale: lo decide la sonda, adesso, per questo lavoro. Vedi [EndpointResolver].
         val endpoint = resolver.resolve(settings.endpointUrl, settings.endpointRemoteUrl) ?: return null
-        OpenAiCompatProvider(
+        val provider = OpenAiCompatProvider(
           http = http,
           baseUrl = endpoint.url,
           // Il biglietto dell'account, se c'e'; altrimenti il codice scritto a mano. Vedi [ComputerAuth].
@@ -351,10 +490,25 @@ class TranscriptionRepository @Inject constructor(
           // provider del lavoro dopo. Vedi [AbandonedCompanionJobs].
           abandoned = dev.pampa.pampanotes.core.transcription.AbandonedCompanionJobs.shared,
         )
+        BoundProvider(provider, baseUrl = endpoint.url)
       }
 
       else -> null
     }
+  }
+
+  /**
+   * Il computer di casa risponde adesso, ma a un indirizzo diverso da [baseUrl]: si e' usciti di
+   * casa (o si e' tornati) a meta' lavoro. Con la risposta del resolver tenuta mezzo minuto la
+   * strada di prima sembrerebbe ancora buona: qui si chiede da capo.
+   */
+  suspend fun endpointMovedFrom(baseUrl: String): Boolean {
+    val settings = settingsStore.current()
+    if (!settings.hasEndpoint) return false
+    resolver.invalidate()
+    val endpoint = resolver.resolve(settings.endpointUrl, settings.endpointRemoteUrl) ?: return false
+    if (OpenAiCompatProvider.normalize(endpoint.url) == OpenAiCompatProvider.normalize(baseUrl)) return false
+    return EndpointResolver.reachable(endpoint.url)
   }
 
   /** Il modello da chiedere: quello salvato, altrimenti il migliore che il servizio dichiara. */
@@ -376,54 +530,44 @@ class TranscriptionRepository @Inject constructor(
   /**
    * Salva il risultato e lo rende quello mostrato.
    *
-   * Una trascrizione grezza per sessione: rifarla sostituisce la precedente e porta via i suoi
-   * segmenti e le raffinate che ne discendevano, perche' un testo raffinato che cita una grezza che
-   * non esiste piu' e' un testo di cui nessuno sa piu' da dove viene.
+   * Una trascrizione grezza per sessione: rifarla sostituisce la precedente e porta via le raffinate
+   * che ne discendevano, perche' un testo raffinato che cita una grezza che non esiste piu' e' un
+   * testo di cui nessuno sa piu' da dove viene.
+   *
+   * Si salva **per parte**, nelle sessioni in cui le parti stanno adesso: mentre il computer
+   * trascriveva la sessione puo' essere stata riordinata, separata, unita o sfoltita (vedi
+   * `SessionRepository.saveTranscription`). [partIds] sono le parti che il lavoro ha trascritto.
+   *
+   * @return null se nessuna di quelle parti esiste piu': non c'e' niente da salvare.
    */
-  suspend fun saveTranscript(sessionId: String, result: SessionTranscript): TranscriptEntity = db.withTransaction {
-    // Tutto o niente: fra la cancellazione della grezza vecchia e l'ultimo segmento della nuova, un
-    // processo ucciso lasciava una sessione senza trascrizione, o una trascrizione senza segmenti
-    // — e il sync la portava cosi' anche sugli altri dispositivi.
-    transcripts.rawForSession(sessionId)?.let { previous ->
-      transcripts.deleteChildren(previous.id)
-      transcripts.delete(previous.id)
-    }
+  suspend fun saveTranscript(sessionId: String, partIds: List<String>, result: SessionTranscript): SavedTranscription? =
+    sessionRepository.saveTranscription(sessionId, partIds, result)
 
-    val now = System.currentTimeMillis()
-    val transcript = TranscriptEntity(
-      id = Ids.newId(),
-      sessionId = sessionId,
-      kind = TranscriptKind.RAW,
-      provider = result.provider,
-      model = result.model,
-      language = result.language,
-      text = result.text,
-      wordCount = result.text.wordCount(),
-      createdAt = now,
-    )
-    transcripts.upsert(transcript)
-    segments.insertAll(
-      result.segments.map { segment ->
-        SegmentEntity(
-          transcriptId = transcript.id,
-          partId = segment.partId,
-          indexInPart = segment.indexInPart,
-          partStartMs = segment.partStartMs,
-          partEndMs = segment.partEndMs,
-          sessionStartMs = segment.sessionStartMs,
-          sessionEndMs = segment.sessionEndMs,
-          text = segment.text,
-          noSpeechProb = segment.noSpeechProb,
-          avgLogProb = segment.avgLogProb,
-          wordsJson = segment.wordsEncoded,
-          wordsEstimated = segment.wordsEstimated,
-        )
-      },
-    )
-    sessions.setActiveTranscript(sessionId, transcript.id, now)
-    // La nota non si tocca: una trascrizione finita non e' una modifica di chi l'ha scritta, e la
-    // data della nota e' quella vera (vedi `NoteDates`), non l'ora in cui il computer ha finito.
-    transcript
+  /**
+   * La sessione del lavoro non c'e' piu', ma qualcuna delle sue parti si': e' stata unita a
+   * un'altra mentre si trascriveva. La riga del lavoro se n'e' andata con lei (cascata), ma il
+   * lavoro vale ancora, e il risultato va nella sessione che ha preso le parti.
+   */
+  suspend fun partsOutliveSession(sessionId: String, partIds: List<String>): Boolean =
+    sessions.get(sessionId) == null && partIds.any { parts.get(it) != null }
+
+  /**
+   * La trascrizione di questa sessione e' gia' arrivata da un altro dispositivo dopo che il lavoro
+   * era stato accodato: una grezza nata dopo il lavoro, che copre tutte le parti di adesso. Rifarla
+   * vorrebbe dire la stessa lezione due volte dal computer o da Groq, e cancellare il risultato
+   * dell'altro con le raffinate che gli sono gia' state fatte sopra.
+   *
+   * Tutte le parti, e non solo «una grezza piu' nuova»: una grezza nasce anche qui, ricomponendo,
+   * quando nella sessione arriva una parte gia' trascritta altrove — e allora le parti di prima
+   * sono ancora da fare.
+   */
+  suspend fun arrivedFromElsewhere(job: JobEntity): Boolean {
+    val raw = transcripts.rawForSession(job.sessionId) ?: return false
+    if (raw.createdAt <= job.createdAt) return false
+    val ids = parts.bySession(job.sessionId).map { it.id }
+    if (ids.isEmpty()) return false
+    val covered = segments.byParts(ids).mapTo(mutableSetOf()) { it.partId }
+    return covered.containsAll(ids)
   }
 
   /**
@@ -539,7 +683,19 @@ class TranscriptionRepository @Inject constructor(
   /** Un giro alla volta: il cambio di un lavoro e il rinnovo a orologio possono arrivare insieme. */
   private val markersLock = Mutex()
 
+  /** Le opzioni di una trascrizione, in `optionsJson`: per ora solo quante volte il computer e' sparito. */
+  @Serializable
+  private data class TranscribeOptions(val endpointLosses: Int = 0)
+
+  private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
   companion object {
+    /**
+     * Alla terza volta che un lavoro perde il computer di casa a meta', si arrende: due sono un
+     * computer spento per sbaglio, la terza e' una registrazione che lo fa cadere.
+     */
+    const val MAX_ENDPOINT_LOSSES = 3
+
     /** La fase di un lavoro in fila che aspetta il computer di casa. */
     const val PHASE_WAITING_ENDPOINT = "endpoint"
 

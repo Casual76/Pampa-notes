@@ -24,6 +24,14 @@ class JobPhaseTest {
     roundTrip(JobPhase.Endpoint)
     roundTrip(JobPhase.Until(1_758_634_800_000))
     roundTrip(JobPhase.Stitching)
+    roundTrip(JobPhase.NeedsApp)
+    roundTrip(JobPhase.Elsewhere("Tab S9"))
+  }
+
+  @Test
+  fun `il nome del dispositivo altrove si rilegge intero, due punti compresi`() {
+    assertEquals(JobPhase.Elsewhere("PC: studio"), JobPhase.parse(JobPhase.Elsewhere("PC: studio").encode()))
+    assertNull(JobPhase.parse("elsewhere:"))
   }
 
   @Test

@@ -407,6 +407,10 @@
   <string name="error_generic">Something went wrong.</string>
   <string name="error_provider_not_configured">Service not configured: the key or the address is missing.</string>
   <string name="error_no_audio">This session has no recordings.</string>
+  <string name="error_computer_lost">The home computer stopped several times while transcribing this recording. Try again when it is on; if it happens again, the file is what stops it.</string>
+  <string name="job_phase_needs_app">Ready: open the app to start it</string>
+  <string name="notification_needs_app_title">Transcriptions ready to start</string>
+  <string name="notification_needs_app_text">Android won\'t start them while the app is closed: tap to open it.</string>
 
   <string name="jobs_section_active">Running</string>
   <string name="jobs_section_finished">Finished</string>

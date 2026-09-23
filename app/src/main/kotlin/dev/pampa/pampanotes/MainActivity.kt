@@ -9,6 +9,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
+import dev.pampa.pampanotes.core.transcription.GroqWhisperProvider
 import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
 import dev.pampa.pampanotes.ui.MainApp
 import dev.pampa.pampanotes.work.WorkScheduler
@@ -43,10 +44,14 @@ class MainActivity : ComponentActivity() {
   }
 
   /**
-   * Tornare nell'app sveglia la fila del computer di casa, se ne ha una. L'avvio del processo lo
-   * faceva gia' (`PampaNotesApp`), ma a processo vivo — il worker che l'aveva appena tenuto in piedi
-   * — riaprire l'app non cambiava niente, e la fila aspettava il suo tentativo. Al massimo una volta
-   * ogni mezzo minuto: una rotazione non e' un motivo per bussare di nuovo al PC.
+   * Tornare nell'app sveglia le file che hanno lavori pronti. L'avvio del processo lo faceva gia'
+   * (`PampaNotesApp`), ma a processo vivo — il worker che l'aveva appena tenuto in piedi — riaprire
+   * l'app non cambiava niente, e la fila aspettava il suo tentativo. Vale anche per Groq: un worker
+   * svegliato in background a cui Android ha rifiutato il primo piano lascia i lavori «pronti, apri
+   * l'app» (vedi `TranscriptionQueueWorker.needsApp`), ed e' questo il momento in cui possono
+   * partire. Non chi aspetta il limite di Groq: ha gia' il suo risveglio, e prima tornerebbe contro
+   * lo stesso limite ([TranscriptionRepository.readyToWake]). Al massimo una volta ogni mezzo minuto:
+   * una rotazione non e' un motivo per bussare di nuovo al PC.
    */
   override fun onStart() {
     super.onStart()
@@ -55,7 +60,8 @@ class MainActivity : ComponentActivity() {
     lastWake = now
     lifecycleScope.launch {
       runCatching {
-        if (transcription.queuedCount(OpenAiCompatProvider.ID) > 0) scheduler.wake(OpenAiCompatProvider.ID)
+        if (transcription.readyToWake(OpenAiCompatProvider.ID)) scheduler.wake(OpenAiCompatProvider.ID)
+        if (transcription.readyToWake(GroqWhisperProvider.ID)) scheduler.wake(GroqWhisperProvider.ID)
       }
     }
   }

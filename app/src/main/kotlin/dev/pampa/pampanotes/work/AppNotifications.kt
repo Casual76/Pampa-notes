@@ -29,6 +29,7 @@ object AppNotifications {
   const val ID_REFINEMENT_FOREGROUND = 1002
   const val ID_ARCHIVE_FOREGROUND = 1003
   const val ID_FETCH_FOREGROUND = 1004
+  private const val ID_NEEDS_APP = 1005
   private const val ID_RESULT_BASE = 2000
 
   fun createChannels(context: Context) {
@@ -60,6 +61,18 @@ object AppNotifications {
     text: String?,
     progress: Float?,
     workId: UUID,
+  ): Notification = buildProgress(context, title, text, progress, WorkManager.getInstance(context).createCancelPendingIntent(workId))
+
+  /**
+   * Come sopra, con il tasto «Annulla» che fa quello che dice [cancel]: per le trascrizioni annulla
+   * il lavoro e non il worker (vedi `JobCancelReceiver`). Null: nessun tasto.
+   */
+  fun buildProgress(
+    context: Context,
+    title: String,
+    text: String?,
+    progress: Float?,
+    cancel: PendingIntent?,
   ): Notification {
     val builder = NotificationCompat.Builder(context, CHANNEL_JOBS)
       .setContentTitle(title)
@@ -67,11 +80,7 @@ object AppNotifications {
       .setOngoing(true)
       .setSilent(true)
       .setContentIntent(openApp(context))
-      .addAction(
-        0,
-        context.getString(R.string.action_cancel),
-        WorkManager.getInstance(context).createCancelPendingIntent(workId),
-      )
+    cancel?.let { builder.addAction(0, context.getString(R.string.action_cancel), it) }
     text?.let(builder::setContentText)
     if (progress != null) {
       builder.setProgress(100, (progress * 100).toInt().coerceIn(0, 100), false)
@@ -124,7 +133,32 @@ object AppNotifications {
     )
   }
 
+  /**
+   * Le trascrizioni sono pronte a partire, ma Android non lascia partire il servizio in primo piano
+   * finche' l'app non si apre (un worker svegliato in background, da Android 12). Un tocco la apre,
+   * e aprirla sveglia le code. Una sola, qualunque sia la coda: rimetterla la aggiorna senza suonare
+   * di nuovo.
+   */
+  fun notifyNeedsApp(context: Context) {
+    post(
+      context = context,
+      id = ID_NEEDS_APP,
+      title = context.getString(R.string.notification_needs_app_title),
+      text = context.getString(R.string.notification_needs_app_text),
+      alertOnce = true,
+    )
+  }
+
+  /** Il worker e' partito: la richiesta di aprire l'app non serve piu'. */
+  fun cancelNeedsApp(context: Context) {
+    runCatching { NotificationManagerCompat.from(context).cancel(ID_NEEDS_APP) }
+  }
+
   private fun notify(context: Context, jobId: String, title: String, text: String) {
+    post(context, ID_RESULT_BASE + jobId.hashCode().and(0xFFF), title, text)
+  }
+
+  private fun post(context: Context, id: Int, title: String, text: String, alertOnce: Boolean = false) {
     val manager = NotificationManagerCompat.from(context)
     if (!manager.areNotificationsEnabled()) return
     // Da Android 13 il permesso e' a parte: senza, notify non fa niente e lint lo segnala.
@@ -138,9 +172,10 @@ object AppNotifications {
       .setStyle(NotificationCompat.BigTextStyle().bigText(text))
       .setSmallIcon(android.R.drawable.stat_notify_chat)
       .setAutoCancel(true)
+      .setOnlyAlertOnce(alertOnce)
       .setContentIntent(openApp(context))
       .build()
-    runCatching { manager.notify(ID_RESULT_BASE + jobId.hashCode().and(0xFFF), notification) }
+    runCatching { manager.notify(id, notification) }
   }
 
   private fun openApp(context: Context): PendingIntent {

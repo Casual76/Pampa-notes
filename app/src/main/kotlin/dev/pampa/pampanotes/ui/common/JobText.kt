@@ -122,6 +122,7 @@ fun jobErrorRes(code: String, provider: String? = null): Int = when (code) {
   "parse" -> R.string.error_parse
   "no_speech" -> R.string.error_no_speech
   "unknown_model" -> R.string.error_unknown_model
+  "computer_lost" -> R.string.error_computer_lost
   "cancelled" -> R.string.job_state_cancelled
   else -> R.string.error_generic
 }

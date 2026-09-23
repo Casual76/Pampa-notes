@@ -67,6 +67,69 @@ class JobDaoTest {
     assertEquals("large-v3", row.model)
   }
 
+  @Test
+  fun un_annulla_arrivato_prima_della_partenza_vince() = runTest {
+    seedSession()
+    job("lavoro", JobState.QUEUED)
+    val now = System.currentTimeMillis()
+
+    assertEquals(1, db.jobs().cancelIfQueued("lavoro", now))
+    // Il worker arriva dopo: il lavoro non e' piu' suo.
+    assertEquals(0, db.jobs().start("lavoro", JobState.PREPARING, "large-v3", now))
+    assertEquals(JobState.CANCELLED, db.jobs().get("lavoro")?.state)
+  }
+
+  @Test
+  fun un_annulla_arrivato_dopo_la_partenza_chiede_di_fermare() = runTest {
+    seedSession()
+    job("lavoro", JobState.QUEUED)
+    val now = System.currentTimeMillis()
+
+    assertEquals(1, db.jobs().start("lavoro", JobState.PREPARING, "large-v3", now))
+    assertEquals(0, db.jobs().cancelIfQueued("lavoro", now))
+    assertEquals(1, db.jobs().requestCancelIfRunning("lavoro", now))
+    val row = db.jobs().get("lavoro")!!
+    assertEquals(JobState.CANCEL_REQUESTED, row.state)
+    assertEquals(1, row.attempts)
+    assertEquals("large-v3", row.model)
+  }
+
+  @Test
+  fun fallire_non_scrive_sopra_un_annulla_ne_riporta_indietro_i_tentativi() = runTest {
+    seedSession()
+    job("lavoro", JobState.QUEUED)
+    val now = System.currentTimeMillis()
+    db.jobs().start("lavoro", JobState.PREPARING, "large-v3", now)
+
+    assertEquals(1, db.jobs().fail("lavoro", "network", "giu'", now))
+    val failed = db.jobs().get("lavoro")!!
+    assertEquals(JobState.FAILED, failed.state)
+    assertEquals(1, failed.attempts)
+    assertEquals("large-v3", failed.model)
+
+    job("annullando", JobState.CANCEL_REQUESTED)
+    assertEquals(0, db.jobs().fail("annullando", "network", "giu'", now))
+    assertEquals(JobState.CANCEL_REQUESTED, db.jobs().get("annullando")?.state)
+  }
+
+  @Test
+  fun solo_il_computer_sposta_le_trascrizioni_di_groq_ferme() = runTest {
+    seedSession()
+    val now = System.currentTimeMillis()
+    listOf("in-fila" to JobState.QUEUED, "fallita" to JobState.FAILED, "al-lavoro" to JobState.UPLOADING).forEach { (id, state) ->
+      db.jobs().upsert(JobEntity(id = id, sessionId = "s", type = JobType.TRANSCRIBE, provider = "groq", state = state, phase = "until:1", createdAt = now, updatedAt = now))
+    }
+    db.jobs().upsert(JobEntity(id = "raffinamento", sessionId = "s", type = JobType.REFINE, provider = "groq", createdAt = now, updatedAt = now))
+
+    assertEquals(2, db.jobs().moveTranscriptions("groq", "custom", now))
+
+    assertEquals("custom", db.jobs().get("in-fila")?.provider)
+    assertEquals(null, db.jobs().get("in-fila")?.phase)
+    assertEquals("custom", db.jobs().get("fallita")?.provider)
+    assertEquals("groq", db.jobs().get("al-lavoro")?.provider)
+    assertEquals("groq", db.jobs().get("raffinamento")?.provider)
+  }
+
   private suspend fun seedSession() {
     val now = System.currentTimeMillis()
     db.folders().upsert(FolderEntity(id = "f", name = "Filosofia", createdAt = now, updatedAt = now))

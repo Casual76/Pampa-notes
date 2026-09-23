@@ -54,6 +54,8 @@ object JobPhaseText {
       JobPhase.Endpoint -> context.getString(R.string.job_phase_endpoint)
       is JobPhase.Until -> untilText(context, phase.atMillis) ?: stateLabel(context, job.state)
       JobPhase.Stitching -> context.getString(R.string.job_phase_stitching)
+      JobPhase.NeedsApp -> context.getString(R.string.job_phase_needs_app)
+      is JobPhase.Elsewhere -> context.getString(R.string.transcribing_elsewhere, phase.device)
     }
   }
 

@@ -432,6 +432,10 @@
   <string name="error_generic">Qualcosa e\u0300 andato storto.</string>
   <string name="error_provider_not_configured">Servizio non configurato: manca la chiave o l\'indirizzo.</string>
   <string name="error_no_audio">Questa sessione non ha registrazioni.</string>
+  <string name="error_computer_lost">Il computer di casa si è fermato più volte mentre trascriveva questa registrazione. Riprova quando è acceso; se succede ancora, è il file a bloccarlo.</string>
+  <string name="job_phase_needs_app">Pronta: apri l\'app per farla partire</string>
+  <string name="notification_needs_app_title">Trascrizioni pronte a partire</string>
+  <string name="notification_needs_app_text">Android non le fa partire con l\'app chiusa: tocca per aprirla.</string>
 
   <!-- Lavori -->
   <string name="jobs_section_active">In corso</string>
