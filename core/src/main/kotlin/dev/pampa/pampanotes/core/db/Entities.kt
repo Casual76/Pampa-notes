@@ -226,6 +226,12 @@ data class SourceEntity(
   val importedAt: Long,
   /** Quando il computer di casa ha ricevuto il file originale. Zero: non ancora, o niente da mandare. */
   @ColumnInfo(defaultValue = "0") val archivedAt: Long = 0,
+  /**
+   * La fonte da cui questa e' stata ricavata: una pagina scritta a mano disegnata da un `.sdocx`
+   * punta al `.sdocx`. Null per tutto quello che l'utente ha importato lui. Quando il `.sdocx` se ne
+   * va — un aggiornamento della nota — se ne vanno anche le pagine ricavate da lui.
+   */
+  val derivedFromId: String? = null,
 )
 
 enum class JobType { TRANSCRIBE, REFINE }

@@ -307,11 +307,17 @@ class ExportService @Inject constructor(
       )
     }
 
+    val allSources = sources.byNote(note.id)
+    // Le pagine scritte a mano sono contenuto, non provenienza: vanno negli appunti, sempre. Solo
+    // quelle che stanno qui: un collegamento a un'immagine che non c'e' e' peggio di niente.
+    val pages = allSources.filter { it.derivedFromId != null && it.storedFileName?.let { name -> files.sourceFile(name).exists() } == true }
+      .sortedWith(compareBy({ it.importedAt }, { it.originalName }))
     return ExportNote(
       note = note,
       folderPath = folderPath,
       tags = tags.tags(note.id),
-      sources = sources.byNote(note.id).map { source ->
+      handwriting = pages.mapIndexed { index, page -> ExportImage(page.storedFileName!!, index + 1, page.sizeBytes) },
+      sources = allSources.filter { it.derivedFromId == null }.map { source ->
         ExportSource(
           originalName = source.originalName,
           kind = source.kind,

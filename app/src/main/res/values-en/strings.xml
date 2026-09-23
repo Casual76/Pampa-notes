@@ -869,4 +869,14 @@
   <string name="onboarding_computer_from_account">Home computer: %1$s</string>
   <string name="onboarding_computer_from_account_detail">Linked from your account</string>
   <string name="onboarding_computer_change">Change</string>
+  <string name="note_handwriting_title">Handwritten pages</string>
+  <string name="note_handwriting_page">Page %1$d</string>
+  <string name="note_handwriting_missing">Stored on another device: tap to download it from the computer</string>
+  <string name="note_handwriting_rederive">Redraw handwritten pages</string>
+  <string name="note_handwriting_working">Reading the ink…</string>
+  <string name="note_handwriting_none">There is no handwriting in this note to draw</string>
+  <plurals name="note_handwriting_done">
+    <item quantity="one">%d handwritten page</item>
+    <item quantity="other">%d handwritten pages</item>
+  </plurals>
 </resources>

@@ -24,11 +24,16 @@ data class SdocxDocument(
   /** Il testo battuto, con gli a capo di chi l'ha scritto. Vuoto se nella nota c'era solo inchiostro. */
   val body: String,
   val recordings: List<SdocxRecording>,
+  /**
+   * Quante immagini diventera' l'inchiostro ([InkLayout]): zero per una nota scritta a tastiera.
+   * Si conta all'ispezione, per dirlo nel wizard prima di importare.
+   */
+  val handwrittenPages: Int = 0,
 ) {
   /** In Samsung Notes ogni riga e' un paragrafo: fra due non c'e' sempre una riga vuota. */
   val paragraphCount: Int get() = body.lineSequence().count { it.isNotBlank() }
   val totalDurationMs: Long get() = recordings.sumOf { it.durationMs }
-  val isEmpty: Boolean get() = body.isBlank() && recordings.isEmpty() && title.isNullOrBlank()
+  val isEmpty: Boolean get() = body.isBlank() && recordings.isEmpty() && title.isNullOrBlank() && handwrittenPages == 0
 }
 
 /**
@@ -77,7 +82,8 @@ object SdocxParser {
       .filter { it.substringAfterLast('.', "").lowercase() in AUDIO_EXTENSIONS }
       .toList()
 
-    return SdocxDocument(title = title, body = body, recordings = pairRecordings(media, voices, audioEntries))
+    val handwritten = SdocxInk.read(zip).sumOf { InkLayout.slices(it).size }
+    return SdocxDocument(title = title, body = body, recordings = pairRecordings(media, voices, audioEntries), handwrittenPages = handwritten)
   }
 
   // -----------------------------------------------------------------------------------------------

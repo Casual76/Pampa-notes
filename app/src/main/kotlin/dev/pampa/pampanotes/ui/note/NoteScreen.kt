@@ -2,6 +2,7 @@ package dev.pampa.pampanotes.ui.note
 
 import dev.pampa.pampanotes.ui.share.ShareSheet
 import android.widget.Toast
+import java.io.File
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -92,6 +93,17 @@ fun NoteRoute(
         onError = { Toast.makeText(context, context.getString(R.string.note_source_fetch_failed, it), Toast.LENGTH_LONG).show() },
       )
     },
+    onRederiveHandwriting = {
+      Toast.makeText(context, context.getString(R.string.note_handwriting_working), Toast.LENGTH_SHORT).show()
+      viewModel.rederiveHandwriting(
+        onDone = { count ->
+          val message = if (count == 0) context.getString(R.string.note_handwriting_none)
+          else context.resources.getQuantityString(R.plurals.note_handwriting_done, count, count)
+          Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        },
+        onError = { Toast.makeText(context, context.getString(R.string.note_source_fetch_failed, it), Toast.LENGTH_LONG).show() },
+      )
+    },
   )
 }
 
@@ -116,6 +128,7 @@ private fun NoteScreen(
   onCancelJob: (String) -> Unit,
   onOpenSession: (String) -> Unit,
   onOpenSource: (SourceEntity) -> Unit,
+  onRederiveHandwriting: () -> Unit,
 ) {
   var tab by rememberSaveable { mutableStateOf(initialTab) }
   var confirmingDelete by remember { mutableStateOf(false) }
@@ -147,6 +160,7 @@ private fun NoteScreen(
   val shareLabel = stringResource(R.string.note_share)
   val selectLabel = stringResource(R.string.action_select)
   val retranscribeLabel = stringResource(R.string.session_retranscribe)
+  val rederiveLabel = stringResource(R.string.note_handwriting_rederive)
 
   val tabLabels = listOf(tabText, tabAudio, tabSources)
   val selectedLabel = when (tab) {
@@ -191,6 +205,8 @@ private fun NoteScreen(
               if (tab == NoteTab.AUDIO && state.sessions.isNotEmpty()) add(FluidContextAction(label = selectLabel) { selecting = true })
               add(FluidContextAction(label = exportLabel) { exporting = true })
               add(FluidContextAction(label = shareLabel) { sharing = true })
+              // Solo una nota che viene da Samsung Notes ha dell'inchiostro da rileggere.
+              if (state.sources.any { it.kind == SourceKind.SDOCX }) add(FluidContextAction(label = rederiveLabel) { onRederiveHandwriting() })
               add(FluidContextAction(label = if (state.note?.pinned == true) unpinLabel else pinLabel) { onTogglePinned() })
               add(FluidContextAction(label = deleteLabel, destructive = true) { confirmingDelete = true })
             }
@@ -219,7 +235,7 @@ private fun NoteScreen(
     }
 
     when (tab) {
-      NoteTab.TEXT -> textTab(state, onEdit)
+      NoteTab.TEXT -> textTab(state, onEdit, onOpenSource)
       NoteTab.AUDIO -> audioTab(state, onImport, onTranscribe, onCancelJob, onOpenSession)
       NoteTab.SOURCES -> sourcesTab(state, onImport, onOpenSource)
     }
@@ -290,9 +306,13 @@ private fun NoteScreen(
   }
 }
 
-private fun androidx.compose.foundation.lazy.LazyListScope.textTab(state: NoteUiState, onEdit: () -> Unit) {
+private fun androidx.compose.foundation.lazy.LazyListScope.textTab(
+  state: NoteUiState,
+  onEdit: () -> Unit,
+  onOpenPage: (SourceEntity) -> Unit,
+) {
   val body = state.note?.body.orEmpty()
-  if (body.isBlank()) {
+  if (body.isBlank() && state.handwriting.isEmpty()) {
     item {
       FluidEmptyState(
         title = stringResource(R.string.note_empty_title),
@@ -306,10 +326,28 @@ private fun androidx.compose.foundation.lazy.LazyListScope.textTab(state: NoteUi
         modifier = Modifier.fillMaxWidth(),
       )
     }
-  } else {
+  } else if (body.isNotBlank()) {
     item {
       FluidCard {
         MarkdownText(markdown = body, modifier = Modifier.fillMaxWidth())
+      }
+    }
+  }
+
+  // Le pagine scritte a mano stanno qui e non fra le fonti: sono appunti, come il testo sopra.
+  if (state.handwriting.isNotEmpty()) {
+    item { FluidSectionFootnote(text = stringResource(R.string.note_handwriting_title)) }
+    state.handwriting.forEachIndexed { index, page ->
+      item(key = page.id) {
+        val file = page.storedFileName?.let { File(LocalContext.current.filesDir, "sources/$it") }
+        if (file != null) {
+          HandwritingPageCard(
+            label = stringResource(R.string.note_handwriting_page, index + 1),
+            file = file,
+            missing = page.id in state.missingSources,
+            onOpen = { onOpenPage(page) },
+          )
+        }
       }
     }
   }

@@ -399,6 +399,13 @@ interface SourceDao {
   @Query("SELECT * FROM sources WHERE sha256 = :sha ORDER BY importedAt DESC LIMIT 1")
   suspend fun findBySha(sha: String): SourceEntity?
 
+  /** Le pagine ricavate da una fonte, nell'ordine in cui stavano nel quaderno. */
+  @Query("SELECT * FROM sources WHERE derivedFromId = :sourceId ORDER BY importedAt, originalName")
+  suspend fun derivedFrom(sourceId: String): List<SourceEntity>
+
+  @Query("SELECT * FROM sources WHERE kind = :kind ORDER BY importedAt")
+  suspend fun byKind(kind: SourceKind): List<SourceEntity>
+
   @Upsert
   suspend fun upsert(source: SourceEntity)
 

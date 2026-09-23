@@ -899,4 +899,14 @@
   <string name="onboarding_computer_from_account">Computer di casa: %1$s</string>
   <string name="onboarding_computer_from_account_detail">Collegato dall\'account</string>
   <string name="onboarding_computer_change">Cambia</string>
+  <string name="note_handwriting_title">Pagine scritte a mano</string>
+  <string name="note_handwriting_page">Pagina %1$d</string>
+  <string name="note_handwriting_missing">Sta su un altro dispositivo: tocca per scaricarla dal computer</string>
+  <string name="note_handwriting_rederive">Ricava le pagine a mano</string>
+  <string name="note_handwriting_working">Sto rileggendo l\'inchiostro…</string>
+  <string name="note_handwriting_none">In questa nota non c\'è scrittura a mano da disegnare</string>
+  <plurals name="note_handwriting_done">
+    <item quantity="one">%d pagina scritta a mano</item>
+    <item quantity="other">%d pagine scritte a mano</item>
+  </plurals>
 </resources>

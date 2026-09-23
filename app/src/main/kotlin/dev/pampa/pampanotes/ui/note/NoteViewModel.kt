@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import dev.pampa.pampanotes.core.archive.ArchiveFetcher
+import dev.pampa.pampanotes.core.importing.HandwritingPages
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -49,7 +50,10 @@ data class NoteUiState(
   val folderPath: String = "",
   val tags: List<String> = emptyList(),
   val sessions: List<SessionWithParts> = emptyList(),
+  /** Le fonti importate, senza le pagine ricavate da loro: quelle stanno in [handwriting]. */
   val sources: List<SourceEntity> = emptyList(),
+  /** Le pagine scritte a mano, come immagini, nell'ordine del quaderno. */
+  val handwriting: List<SourceEntity> = emptyList(),
   /** I lavori attivi di questa nota, per sessione: la riga mostra a che punto sono. */
   val activeJobs: Map<String, JobEntity> = emptyMap(),
   /** La trascrizione mostrata di ogni sessione. */
@@ -76,6 +80,7 @@ class NoteViewModel @Inject constructor(
   private val scheduler: WorkScheduler,
   private val files: AppFiles,
   private val fetcher: ArchiveFetcher,
+  private val handwriting: HandwritingPages,
 ) : ViewModel() {
 
   private val noteId: String = savedStateHandle.get<String>("noteId").orEmpty()
@@ -119,7 +124,8 @@ class NoteViewModel @Inject constructor(
       folder = values[7] as FolderEntity?,
       tags = values[1] as List<String>,
       sessions = values[2] as List<SessionWithParts>,
-      sources = values[3] as List<SourceEntity>,
+      sources = (values[3] as List<SourceEntity>).filter { it.derivedFromId == null },
+      handwriting = (values[3] as List<SourceEntity>).filter { it.derivedFromId != null }.sortedWith(compareBy({ it.importedAt }, { it.originalName })),
       folderPath = values[4] as String,
       activeJobs = (values[5] as List<JobEntity>).associateBy { it.sessionId },
       transcripts = values[6] as Map<String, TranscriptEntity>,
@@ -182,6 +188,22 @@ class NoteViewModel @Inject constructor(
 
   fun deleteSessions(sessionIds: Collection<String>) = viewModelScope.launch {
     sessionIds.forEach { sessionRepository.deleteSession(it) }
+  }
+
+  /**
+   * Rifa' le pagine scritte a mano dai `.sdocx` della nota: per una nota importata prima che l'app
+   * sapesse disegnarle, o il cui originale stava solo sul computer quando e' passato il giro unico.
+   */
+  fun rederiveHandwriting(onDone: (Int) -> Unit, onError: (String) -> Unit) = viewModelScope.launch {
+    try {
+      val title = notes.get(noteId)?.title.orEmpty()
+      onDone(handwriting.rederive(noteId, title))
+      if (settingsStore.current().syncEnabled) scheduler.syncNow()
+    } catch (cancelled: CancellationException) {
+      throw cancelled
+    } catch (error: Exception) {
+      onError(error.message ?: error::class.java.simpleName)
+    }
   }
 
   /**

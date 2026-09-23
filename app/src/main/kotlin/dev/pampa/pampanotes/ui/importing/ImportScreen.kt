@@ -353,6 +353,7 @@ private fun samsungSummary(doc: dev.pampa.pampanotes.core.importing.SdocxDocumen
       val recordings = pluralStringResource(R.plurals.import_samsung_recordings, doc.recordings.size, doc.recordings.size)
       add(if (doc.totalDurationMs > 0) "$recordings, ${Formats.durationShort(doc.totalDurationMs)}" else recordings)
     }
+    if (doc.handwrittenPages > 0) add(pluralStringResource(R.plurals.note_handwriting_done, doc.handwrittenPages, doc.handwrittenPages))
   }
   return pieces.ifEmpty { listOf(stringResource(R.string.import_samsung_empty)) }.joinToString(" · ")
 }

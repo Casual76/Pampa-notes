@@ -16,7 +16,7 @@ import javax.inject.Singleton
 /**
  * Il database: entita', DAO e l'indice di ricerca.
  *
- * Versione 4. Le aggiunte di colonna e di tabella passano da `@AutoMigration`; tutto il resto si
+ * Versione 5. Le aggiunte di colonna e di tabella passano da `@AutoMigration`; tutto il resto si
  * scrive a mano in [Migrations] e si prova con `MigrationTest` sugli schemi esportati in
  * `core/schemas`.
  *
@@ -27,6 +27,8 @@ import javax.inject.Singleton
  * 3 -> 4: le cinque tabelle di servizio della sincronizzazione (`sync_*`, vedi `SyncEntities.kt`).
  * Solo tabelle nuove: le entita' non cambiano, e i trigger che scrivono nell'outbox si installano
  * all'apertura come quelli dell'indice di ricerca.
+ * 4 -> 5: `derivedFromId` sulle sorgenti, per le pagine scritte a mano disegnate da un `.sdocx`.
+ * Una colonna che puo' essere nulla, e nulla e' giusto per tutte le righe di prima.
  */
 @Database(
   entities = [
@@ -48,9 +50,9 @@ import javax.inject.Singleton
     SyncMetaEntity::class,
     SyncOriginEntity::class,
   ],
-  version = 4,
+  version = 5,
   exportSchema = true,
-  autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4)],
+  autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5)],
 )
 abstract class PampaDatabase : RoomDatabase() {
   abstract fun folders(): FolderDao

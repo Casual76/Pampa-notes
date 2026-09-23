@@ -78,6 +78,7 @@ class ImportCoordinator @Inject constructor(
   private val extractors: TextExtractorRegistry,
   private val audioImporter: AudioImporter,
   private val archive: ArchiveRepository,
+  private val handwriting: HandwritingPages,
 ) {
 
   /**
@@ -372,33 +373,38 @@ class ImportCoordinator @Inject constructor(
     //    dispositivi, che mettono il loro file in quarantena.
     if (replace) {
       sources.byNote(noteId).filter { it.kind == SourceKind.SDOCX }.forEach { old ->
+        // Le pagine scritte a mano del file vecchio se ne vanno con lui: quelle del nuovo le
+        // contengono gia', e magari piu' lunghe.
+        handwriting.forget(old.id)
         old.storedFileName?.let { files.sourceFile(it).delete() }
         sources.delete(old.id)
         if (sources.findBySha(old.sha256) == null) archive.forget(old.sha256)
       }
     }
-    val status = if (body.isEmpty() && extracted.isEmpty() && alreadyThere == 0) SourceStatus.PARTIAL else SourceStatus.OK
+    val entity = SourceEntity(
+      id = sourceId,
+      noteId = noteId,
+      kind = SourceKind.SDOCX,
+      originalName = candidate.displayName,
+      mime = candidate.mime,
+      sizeBytes = candidate.sizeBytes,
+      sha256 = candidate.sha256,
+      storedFileName = storedName,
+      extractedChars = body.length,
+      importedAt = System.currentTimeMillis(),
+    )
+
+    // 5. L'inchiostro: le pagine scritte a mano diventano immagini attaccate alla nota.
+    val pages = handwriting.derive(entity, stored, doc.title ?: candidate.displayName.substringBeforeLast('.'))
+
+    val status = if (body.isEmpty() && extracted.isEmpty() && alreadyThere == 0 && pages == 0) SourceStatus.PARTIAL else SourceStatus.OK
     val detail = when {
-      status == SourceStatus.PARTIAL -> "Nella nota non c'era testo battuto ne' registrazioni: solo inchiostro, che non si legge"
-      replace -> "Aggiornata: ${extracted.size} registrazioni nuove, $alreadyThere gia' presenti"
+      status == SourceStatus.PARTIAL -> "Nella nota non c'era testo battuto, ne' registrazioni, ne' inchiostro da disegnare"
+      replace -> "Aggiornata: ${extracted.size} registrazioni nuove, $alreadyThere gia' presenti" + if (pages > 0) ", $pages pagine scritte a mano" else ""
+      pages > 0 -> "$pages pagine scritte a mano, attaccate alla nota come immagini"
       else -> null
     }
-    sources.upsert(
-      SourceEntity(
-        id = sourceId,
-        noteId = noteId,
-        kind = SourceKind.SDOCX,
-        originalName = candidate.displayName,
-        mime = candidate.mime,
-        sizeBytes = candidate.sizeBytes,
-        sha256 = candidate.sha256,
-        storedFileName = storedName,
-        extractedChars = body.length,
-        status = status,
-        detail = detail,
-        importedAt = System.currentTimeMillis(),
-      ),
-    )
+    sources.upsert(entity.copy(status = status, detail = detail))
     results.add(0, ImportedItem(candidate.id, doc.title ?: candidate.displayName, SourceKind.SDOCX, status, detail, body.length, sourceId))
     return results
   }

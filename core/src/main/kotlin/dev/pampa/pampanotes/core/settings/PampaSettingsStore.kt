@@ -247,6 +247,14 @@ class PampaSettingsStore(
   suspend fun setLastSync(at: Long, error: String) = edit { it[LastSyncAt] = at; it[LastSyncError] = error }
 
   /** L'id di questo dispositivo, creato la prima volta che serve. Vive qui e non nel database: un backup ripristinato altrove non deve portarselo dietro. */
+  /**
+   * Il giro unico che ricava le pagine scritte a mano dalle note importate prima che l'app sapesse
+   * leggere l'inchiostro. Non sta in [PampaSettings] perche' non e' una scelta dell'utente.
+   */
+  suspend fun handwritingBackfillDone(): Boolean = store.data.first()[HandwritingBackfillDone] ?: false
+
+  suspend fun setHandwritingBackfillDone() = edit { it[HandwritingBackfillDone] = true }
+
   suspend fun syncDeviceId(): String {
     val existing = store.data.first()[SyncDeviceId]
     if (!existing.isNullOrBlank()) return existing
@@ -372,6 +380,7 @@ class PampaSettingsStore(
     val SyncServerUrl = stringPreferencesKey("sync_server_url")
     val SyncTokenBlob = stringPreferencesKey("sync_token")
     val SyncDeviceId = stringPreferencesKey("sync_device_id")
+    val HandwritingBackfillDone = booleanPreferencesKey("handwriting_backfill_done")
     val SyncDeviceName = stringPreferencesKey("sync_device_name")
     val SyncAccount = stringPreferencesKey("sync_account")
     val LastSyncAt = longPreferencesKey("last_sync_at")

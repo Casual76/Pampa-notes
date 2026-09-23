@@ -6,6 +6,7 @@ import dev.pampa.pampanotes.core.files.Hashing
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
@@ -182,6 +183,9 @@ object SyncCodec {
       obj.forEach { (key, value) ->
         when {
           key == "updatedAt" -> Unit
+          // Una colonna nuova e vuota non cambia l'impronta: una sorgente di prima, riletta da una
+          // versione che ha `derivedFromId`, e' la stessa sorgente di prima.
+          key == "derivedFromId" && value is JsonNull -> Unit
           key == "note" && value is JsonObject -> put(key, strip(value))
           else -> put(key, value)
         }

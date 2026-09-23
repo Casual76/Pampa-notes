@@ -6,6 +6,8 @@ import androidx.work.Configuration
 import dagger.hilt.android.HiltAndroidApp
 import dev.antigravity.fluidengine.config.EngineRemoteConfig
 import dev.antigravity.fluidengine.foundation.EngineFlag
+import dev.pampa.pampanotes.core.db.NoteDao
+import dev.pampa.pampanotes.core.importing.HandwritingPages
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
@@ -30,6 +32,8 @@ class PampaNotesApp : Application(), Configuration.Provider {
   @Inject lateinit var settingsStore: PampaSettingsStore
   @Inject lateinit var scheduler: WorkScheduler
   @Inject lateinit var transcription: TranscriptionRepository
+  @Inject lateinit var handwriting: HandwritingPages
+  @Inject lateinit var notes: NoteDao
 
   /** Vive quanto il processo: niente di quello che parte qui ha qualcosa da cui essere cancellato. */
   private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -52,6 +56,18 @@ class PampaNotesApp : Application(), Configuration.Provider {
         // Una fila che aspetta il computer di casa: aprire l'app e' un buon momento per riprovare,
         // prima del tentativo rimandato. Il worker guarda se risponde, e se no torna ad aspettare.
         if (transcription.queuedCount(OpenAiCompatProvider.ID) > 0) scheduler.wake(OpenAiCompatProvider.ID)
+      }
+    }
+    // Le pagine scritte a mano delle note importate prima che l'app le sapesse disegnare: una volta
+    // sola, e solo dai `.sdocx` che stanno qui. Se il giro si interrompe si rifa' al prossimo avvio,
+    // e salta i file che hanno gia' le loro pagine.
+    applicationScope.launch {
+      runCatching {
+        if (!settingsStore.handwritingBackfillDone()) {
+          handwriting.backfill { noteId -> notes.get(noteId)?.title }
+          settingsStore.setHandwritingBackfillDone()
+          if (settingsStore.current().syncEnabled) scheduler.syncNow()
+        }
       }
     }
   }
