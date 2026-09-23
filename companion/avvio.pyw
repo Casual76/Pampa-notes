@@ -14,7 +14,8 @@ Qui si usa solo la libreria standard, cosi' questo file parte anche quando il re
   distanziato, e scrive ogni tentativo in `logs/avvio.log`. Un processo vivo ma lento non si uccide:
   lo si aspetta fino a cinque minuti, e poi lo si lascia al suo lavoro.
 
-Se il server risponde, questo processo esce e lascia l'icona al suo lavoro.
+Se il server risponde, questo processo esce e lascia l'icona al suo lavoro. Con `--dopo` e' il
+server stesso che si riavvia: si aspetta che il vecchio lasci la porta e si rilancia subito.
 """
 
 from __future__ import annotations
@@ -76,11 +77,19 @@ def launch() -> subprocess.Popen[bytes]:
 
 def main() -> None:
     at = port()
-    if healthy(at):
+    if "--dopo" in sys.argv:
+        # Chiamato dal server che si riavvia da se' (vedi `restart_when_idle`): quello vecchio sta
+        # uscendo, e finche' risponde non si lancia niente. Poi niente attesa iniziale: il sistema
+        # e' gia' acceso da un pezzo.
+        log("riavvio chiesto dal server: aspetto che lasci la porta")
+        deadline = time.monotonic() + 60
+        while healthy(at) and time.monotonic() < deadline:
+            time.sleep(1)
+    elif healthy(at):
         log("il server risponde gia': niente da fare")
         return
-
-    time.sleep(FIRST_WAIT_S)
+    else:
+        time.sleep(FIRST_WAIT_S)
     for attempt in range(1, ATTEMPTS + 1):
         if healthy(at):
             log("il server risponde")

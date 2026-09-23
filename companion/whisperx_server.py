@@ -37,7 +37,10 @@ import math
 import os
 import re
 import secrets
+import shutil
 import socket
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -215,6 +218,14 @@ def bearer_hash(bearer: str) -> str:
     return hashlib.sha256(bearer.encode("utf-8")).hexdigest()
 
 
+class JobCancelled(BaseException):
+    """
+    La lezione e' stata annullata dal telefono. `BaseException` e non `Exception` apposta: i
+    ripieghi (memoria finita, allineamento non riuscito) prendono `Exception`, e un annullamento
+    non deve finire trascritto sul processore o con i tempi di Whisper.
+    """
+
+
 class JobProgress:
     """
     Lo stato di una trascrizione, scritto dal thread che lavora e letto dal ciclo di eventi.
@@ -243,7 +254,17 @@ class JobProgress:
         # e' «1 di 1», e `fraction` vale dentro lo stato del pezzo di adesso.
         self.chunk = 1
         self.chunks = 1
+        # Chiesto dal telefono (`DELETE /v1/jobs/{id}`) o dalla connessione chiusa: il lavoro si
+        # ferma al prossimo scatto di WhisperX ([check_cancelled]).
+        self.cancelled = False
         self._lock = threading.Lock()
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+    def check_cancelled(self) -> None:
+        if self.cancelled:
+            raise JobCancelled()
 
     def piece(self, chunk: int, chunks: int) -> None:
         """Comincia il pezzo [chunk] di [chunks]: gli stati che seguono sono i suoi."""
@@ -277,8 +298,16 @@ class JobProgress:
             self.fraction = max(self.fraction, min(1.0, max(0.0, float(fraction))))
 
     def callback(self, state: str) -> Callable[[float], None]:
-        """Il `progress_callback` di WhisperX parla in percento."""
-        return lambda percent: self.advance(float(percent) / 100.0, state)
+        """
+        Il `progress_callback` di WhisperX parla in percento. E' anche il punto in cui un annullamento
+        ferma il lavoro: WhisperX lo chiama a ogni lotto, e un'eccezione qui esce da `transcribe`.
+        """
+
+        def step(percent: float) -> None:
+            self.check_cancelled()
+            self.advance(float(percent) / 100.0, state)
+
+        return step
 
     def processing_s(self, now: float | None = None) -> float:
         if self.started is None:
@@ -452,6 +481,9 @@ def vram_gb() -> float:
     """
     if STATE["device"] != "cuda":
         return 0.0
+    driver = nvidia_query(max_age_s=0)
+    if driver is not None:
+        return driver["used_gb"]
     try:
         import torch
 
@@ -532,9 +564,17 @@ COMPUTE_WEIGHT_FACTOR: dict[str, float] = {
 }
 COMPUTE_BATCH_FACTOR: dict[str, float] = {"float32": 2.0, "int8_float32": 2.0, "int8": 2.0}
 
-BATCH_ITEM_GB = 0.25  # large-v3 float16, per elemento del lotto
-ALIGN_GB = 0.4
-CONTEXT_GB = 0.7
+# Misurati il 23/09 su una RTX 4070 Ti con nvidia-smi, dieci minuti di una lezione vera: il modello
+# caricato (pesi, VAD, contesto CUDA) +4,0 GB; lotto 4 / 8 / 16 +1,3 / +2,4 / +5,0 GB sopra il modello,
+# cioe' circa 0,3 GB a elemento; l'allineamento italiano fino a +1,7 GB sopra il modello, che stanno
+# dentro il lotto quando il lotto e' grande. Le stime di prima (0,25 a elemento, 0,7 di contesto)
+# stavano sotto di quasi un gigabyte con lotto 16.
+BATCH_ITEM_GB = 0.32  # large-v3 float16, per elemento del lotto
+# L'allineatore resta caricato fra un pezzo e l'altro: in una lezione vera da 41 minuti in tre pezzi,
+# con la riserva di torch restituita dopo ogni allineamento, il companion ha preso 7,1 GB con il lotto
+# da 7 contro 6,6 stimati con 0,4 qui (23/09). Da li' 0,9.
+ALIGN_GB = 0.9
+CONTEXT_GB = 0.9
 # Quanto della VRAM che c'e' si da' al companion. Il resto e' per il desktop e per chi altro c'e'.
 HEADROOM = 0.85
 # Sotto questo lotto conviene un modello piu' leggero: large in int8 con lotto 9 fa lo stesso testo
@@ -659,8 +699,50 @@ def plan_vram(model: str, compute_type: str, batch_max: int, budget_gb: float) -
     }
 
 
+_NVSMI: dict[str, Any] = {"at": -1e9, "value": None}
+
+
+def nvidia_query(max_age_s: float = 2.0) -> dict[str, Any] | None:
+    """
+    Nome, memoria totale, occupata e libera della scheda, chiesti al driver con `nvidia-smi`.
+
+    Non a torch, per due motivi. Torch per rispondere apre un contesto CUDA, e un contesto aperto
+    all'accensione del PC — il companion parte appena si entra in Windows, col driver della scheda
+    forse non ancora pronto — restava convinto che la scheda fosse piena: `mem_get_info` diceva 0 GB
+    liberi con 10,8 liberi davvero, il modello «non entrava» e ogni lezione finiva sul processore
+    (23/09, dopo un riavvio). E il driver vede tutti i processi, che e' quello che serve per sapere
+    quanto lasciano libero gli altri. Tenuto per [max_age_s]: `/health` lo chiede spesso.
+    """
+    now = time.monotonic()
+    if now - _NVSMI["at"] < max_age_s:
+        return _NVSMI["value"]
+    value: dict[str, Any] | None = None
+    exe = shutil.which("nvidia-smi")
+    if exe:
+        try:
+            out = subprocess.run(
+                [exe, "--query-gpu=name,memory.total,memory.used,memory.free", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5,
+                creationflags=0x08000000 if sys.platform == "win32" else 0,  # CREATE_NO_WINDOW
+            )
+            name, total, used, free = (part.strip() for part in out.stdout.strip().splitlines()[0].split(","))
+            value = {
+                "name": name,
+                "total_gb": round(float(total) / 1024, 1),
+                "used_gb": float(used) / 1024,
+                "free_gb": float(free) / 1024,
+            }
+        except Exception:  # noqa: BLE001 — senza driver che risponde si torna a torch
+            value = None
+    _NVSMI["at"], _NVSMI["value"] = now, value
+    return value
+
+
 def detect_gpu() -> dict[str, Any] | None:
-    """Nome e memoria totale della scheda, o None se torch non ne vede una."""
+    """Nome e memoria totale della scheda, o None se non ce n'e' una. Dal driver, se c'e'."""
+    driver = nvidia_query(max_age_s=0)
+    if driver is not None:
+        return {"name": driver["name"], "total_gb": driver["total_gb"]}
     try:
         import torch
 
@@ -677,13 +759,8 @@ def gpu_status() -> dict[str, Any] | None:
     gpu = STATE.get("gpu")
     if STATE["device"] != "cuda" or not gpu:
         return None
-    free: float | None = None
-    try:
-        import torch
-
-        free = round(torch.cuda.mem_get_info()[0] / 1024**3, 1)
-    except Exception:  # noqa: BLE001
-        free = None
+    driver = nvidia_query()
+    free = round(driver["free_gb"], 1) if driver is not None else None
     return {"name": gpu["name"], "total_gb": gpu["total_gb"], "free_gb": free}
 
 
@@ -716,10 +793,16 @@ def decide_vram(tunables: dict[str, Any], device: str, gpu: dict[str, Any] | Non
             "breakdown": None,
         }
     budget: float | None = None
+    others: float | None = None
     if mode == "manual" and tunables.get("vram_gb"):
         budget = float(tunables["vram_gb"])
     elif gpu:
-        budget = float(gpu["total_gb"])
+        # In automatico il budget e' quello che resta dopo gli altri — il desktop, il browser, un
+        # gioco — non il totale della scheda. Contare 12 GB quando Windows ne tiene gia' due o tre
+        # faceva scegliere il lotto 16 e mandava quattro gigabyte nella memoria condivisa, dove
+        # tutto va sei volte piu' lento (23/09). Si rimisura a ogni lezione ([replan_for_job]).
+        others = others_gb()
+        budget = max(0.0, float(gpu["total_gb"]) - (others or 0.0))
     if budget is None:
         breakdown = vram_breakdown(model, compute, batch_max)
         plan = {
@@ -736,7 +819,40 @@ def decide_vram(tunables: dict[str, Any], device: str, gpu: dict[str, Any] | Non
         }
     else:
         plan = plan_vram(model, compute, batch_max, budget)
+    if others is not None:
+        plan["others_gb"] = round(others, 1)
     return {"mode": mode, "device": device, **plan}
+
+
+def others_gb() -> float | None:
+    """
+    Quanta VRAM occupano gli altri programmi: tutta quella occupata meno la nostra.
+
+    La nostra si misura quando il modello si carica ([ensure_model]); a modello scaricato e' zero.
+    None se il driver non risponde: allora si conta sul totale, come prima.
+    """
+    driver = nvidia_query()
+    if driver is None:
+        return None
+    mine = STATE.get("own_gb", 0.0) if STATE.get("model") is not None else 0.0
+    return max(0.0, driver["used_gb"] - mine)
+
+
+def replan_for_job() -> None:
+    """
+    Prima di ogni lezione, in automatico: il lotto giusto per la VRAM libera *adesso*.
+
+    Il piano fatto all'avvio valeva per la scheda di allora; se nel frattempo si e' aperto un gioco,
+    il lotto di prima non ci sta piu'. Cambia solo se deve: un modello diverso lo ricarica
+    [ensure_model], un lotto diverso vale dalla prossima finestra.
+    """
+    if STATE["device"] != "cuda" or STATE["tunables"].get("vram_mode") == "manual" or not STATE.get("gpu"):
+        return
+    plan = decide_vram(STATE["tunables"], STATE["device"], STATE["gpu"])
+    before = (STATE["name"], STATE["compute_type"], STATE["batch_size"])
+    apply_plan(plan)
+    if (plan["model"], plan["compute_type"], plan["batch_size"]) != before:
+        log.info("per questa lezione: %s (altri programmi: %.1f GB)", describe_plan(plan), plan.get("others_gb") or 0.0)
 
 
 def describe_plan(plan: dict[str, Any]) -> str:
@@ -786,6 +902,7 @@ def ensure_model() -> None:
     import whisperx
 
     started = time.time()
+    before_gb = vram_gb()
     log.info("carico %s su %s (%s)...", STATE["name"], STATE["device"], STATE["compute_type"])
     STATE["model"] = whisperx.load_model(
         STATE["name"],
@@ -793,7 +910,36 @@ def ensure_model() -> None:
         compute_type=STATE["compute_type"],
     )
     STATE["loaded_as"] = wanted
+    # Quanto e' nostro, per sapere poi quanto e' degli altri ([others_gb]).
+    STATE["own_gb"] = max(0.0, vram_gb() - before_gb)
     log.info("pronto in %.0f s (%.1f GB di VRAM)", time.time() - started, vram_gb())
+
+
+def restart_when_idle() -> None:
+    """
+    Riparte con un processo nuovo, se lo si e' chiesto ([run_job]) e nessuno aspetta.
+
+    Il processo che parte e' `avvio.pyw --dopo`: aspetta che questo lasci la porta e poi rilancia
+    l'icona, come all'accensione. Qualche secondo di ritardo, perche' la risposta della lezione
+    appena finita deve fare in tempo a partire.
+    """
+    if not STATE.get("restart_wanted") or STATE.get("busy") or GATE.waiting:
+        return
+    STATE["restart_wanted"] = False
+    launcher = Path(__file__).with_name("avvio.pyw")
+    runner = Path(sys.executable).with_name("pythonw.exe")
+    if not launcher.exists():
+        log.warning("vorrei ripartire ma avvio.pyw non c'e': riavvia il companion a mano")
+        return
+    log.warning("riparto con un processo nuovo, per ritrovare la scheda")
+    subprocess.Popen(
+        [str(runner if runner.exists() else sys.executable), str(launcher), "--dopo"],
+        cwd=str(launcher.parent),
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        close_fds=True,
+        creationflags=0x208 if sys.platform == "win32" else 0,
+    )
+    threading.Timer(3.0, lambda: os._exit(0)).start()
 
 
 def unload_model(reason: str) -> None:
@@ -810,6 +956,7 @@ def unload_model(reason: str) -> None:
     before = vram_gb()
     STATE["model"] = None
     STATE["loaded_as"] = None
+    STATE["own_gb"] = 0.0
     # Anche gli allineatori stanno sulla scheda, uno per lingua.
     STATE["align"].clear()
     gc.collect()
@@ -1612,6 +1759,7 @@ async def transcriptions(
         vocabulary = prompt.strip() or None
 
         progress.set("queued")
+        watcher = asyncio.create_task(_watch_cancel(request, progress, asyncio.current_task()))
         # Il proprietario passa davanti agli ospiti in attesa; nessuno interrompe chi sta gia' trascrivendo.
         async with GATE.slot(0 if caller.kind == "owner" else 1, key=progress.id or None):
             STATE["busy"] = True
@@ -1624,6 +1772,10 @@ async def transcriptions(
                 result = await asyncio.to_thread(
                     _transcribe, str(source), language.strip() or None, progress, prompt=vocabulary, max_minutes=cap,
                 )
+            except JobCancelled:
+                log.info("%sannullata dal telefono: lascio perdere %s", who, label)
+                progress.set("failed", detail="annullata")
+                raise HTTPException(status_code=499, detail="annullata") from None
             except Exception as error:  # noqa: BLE001 — qualunque guasto deve tornare come 500 leggibile
                 log.exception("trascrizione fallita")
                 progress.set("failed", detail=str(error)[:300])
@@ -1631,6 +1783,17 @@ async def transcriptions(
             finally:
                 STATE["busy"] = False
                 STATE["last_used"] = time.time()
+                restart_when_idle()
+    except asyncio.CancelledError:
+        # Annullata mentre aspettava il suo turno ([_watch_cancel]): si esce dalla fila e lo si dice.
+        if not progress.cancelled:
+            raise
+        task = asyncio.current_task()
+        if task is not None:
+            task.uncancel()
+        log.info("%sannullata dal telefono mentre aspettava: esce dalla fila", who)
+        progress.set("failed", detail="annullata")
+        raise HTTPException(status_code=499, detail="annullata") from None
     except BaseException:
         # Annullata mentre arrivava o aspettava il turno: chi chiede deve leggere che e' finita,
         # non vederla ferma in fila per sempre.
@@ -1638,6 +1801,8 @@ async def transcriptions(
             progress.set("failed", detail="interrotta")
         raise
     finally:
+        if "watcher" in locals():
+            watcher.cancel()
         if target is not None:
             with contextlib.suppress(OSError):
                 target.unlink(missing_ok=True)
@@ -1665,6 +1830,43 @@ async def transcriptions(
     if response_format == "text":
         return PlainTextResponse(result["text"])
     return JSONResponse(result)
+
+
+async def _watch_cancel(request: Request, progress: JobProgress, handler: asyncio.Task | None) -> None:
+    """
+    Tiene d'occhio chi ha chiesto la lezione: se il telefono chiude la connessione, o la annulla con
+    `DELETE /v1/jobs/{id}`, il lavoro si ferma. Prima «Annulla» chiudeva solo la connessione del
+    telefono, e il computer andava avanti a trascrivere per nessuno (23/09).
+
+    In fila basta togliere la richiesta dalla fila (si annulla il suo task, e [PriorityGate] la fa
+    uscire); mentre si trascrive si alza la bandiera, e WhisperX si ferma al lotto dopo.
+    """
+    while True:
+        await asyncio.sleep(1.0)
+        if not progress.cancelled:
+            with contextlib.suppress(Exception):
+                if await request.is_disconnected():
+                    progress.cancel()
+        if progress.cancelled:
+            if progress.state == "queued" and handler is not None:
+                handler.cancel()
+            return
+
+
+@app.delete("/v1/jobs/{job_id}")
+async def job_cancel(job_id: str, request: Request) -> dict[str, Any]:
+    """
+    «Annulla» dal telefono: la lezione si ferma qui, non solo sul telefono. Chi puo' vederla puo'
+    annullarla — il proprietario tutte, un ospite le sue ([JobRegistry.visible_to]); per gli altri
+    404, come per un id che non esiste.
+    """
+    caller = caller_of(request)
+    job = JOBS.get(job_id)
+    if job is None or not JOBS.visible_to(job, caller):
+        raise HTTPException(status_code=404, detail="lavoro sconosciuto")
+    if job.state not in ("done", "failed"):
+        job.cancel()
+    return {"cancelled": True, "state": job.state}
 
 
 @app.get("/v1/jobs/{job_id}")
@@ -1829,7 +2031,19 @@ def run_job(
         if device != "cuda" or not is_oom(error):
             raise
         engine.release()
-        log.warning("il modello non entra nella scheda: questa lezione va sul processore")
+        log.warning("il modello non entra nella scheda: questa lezione va sul processore (%s: %s)", type(error).__name__, error)
+        # La scheda puo' essere piena davvero (un gioco) o sembrarlo solo a questo processo: il
+        # driver dice quanta ce n'e' per tutti. Se basta, e' il contesto CUDA di questo processo che
+        # non la vede — succede quando si apre all'accensione del PC — e l'unico rimedio e' un
+        # processo nuovo: si riparte appena il computer e' libero ([restart_when_idle]).
+        driver = nvidia_query(max_age_s=0)
+        needed = estimate_vram_gb(STATE["name"], STATE["compute_type"], 1)
+        if driver is not None and driver["free_gb"] >= needed:
+            STATE["restart_wanted"] = True
+            log.warning(
+                "la scheda ha %.1f GB liberi ma questo processo non li vede: mi riavvio appena ho finito",
+                driver["free_gb"],
+            )
         model = None
 
     while model is not None:
@@ -1870,11 +2084,16 @@ def run_job(
     segments = transcription.get("segments", [])
 
     alignment = "ok"
+    progress.check_cancelled()
     try:
         align_device = device_used
         try:
             progress.set("aligning")
             segments = engine.align(segments, detected, audio, align_device, progress_callback=progress.callback("aligning"))
+            # Quello che l'allineamento ha usato resta nella riserva di torch, e il pezzo dopo lo
+            # trascrive ctranslate2, che quella riserva non la vede: due gigabyte tenuti per niente
+            # sotto la trascrizione (23/09, 10,6 GB di picco con il lotto da 7). Si restituiscono.
+            engine.release()
         except Exception as error:
             if align_device != "cuda" or not is_oom(error):
                 raise
@@ -2054,6 +2273,7 @@ def transcribe_audio(
     alignment = "ok"
     batch_size = STATE["batch_size"]
     for index, (start_s, end_s) in enumerate(bounds):
+        progress.check_cancelled()
         progress.piece(index + 1, len(bounds))
         piece = audio if len(bounds) == 1 else audio[int(round(start_s * sample_rate)) : int(round(end_s * sample_rate))]
         job = run_job(piece, detected, engine, STATE["batch_size"], STATE["device"], progress, prompt=prompt)
@@ -2086,9 +2306,11 @@ def _transcribe(
     from whisperx.audio import SAMPLE_RATE
 
     progress = progress or JobProgress()
+    replan_for_job()
     # ffmpeg che decodifica un'ora di m4a sono secondi veri: meglio dirlo che restare «in coda».
     progress.set("decoding")
     audio = whisperx.load_audio(path)
+    progress.check_cancelled()
     audio_s = len(audio) / SAMPLE_RATE
     progress.audio_s = audio_s
     job = transcribe_audio(audio, SAMPLE_RATE, language, progress, Engine(), max_minutes=max_minutes, prompt=prompt)
