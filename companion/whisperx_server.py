@@ -950,6 +950,8 @@ def ensure_model() -> None:
     STATE["loaded_as"] = wanted
     # Quanto e' nostro, per sapere poi quanto e' degli altri ([others_gb]).
     STATE["own_gb"] = max(0.0, vram_gb() - before_gb)
+    STATE["last_load_s"] = time.time() - started
+    STATE["loads"] = STATE.get("loads", 0) + 1
     log.info("pronto in %.0f s (%.1f GB di VRAM)", time.time() - started, vram_gb())
 
 
@@ -1153,7 +1155,7 @@ def align_model_for(language: str, device: str | None = None):
 # * `server_chunks`: `max_minutes` divide qui una lezione lunga, invece che sul telefono;
 # * `file_meta`: `GET /v1/files/<sha>/meta`, le date vere di un `.sdocx` o di una registrazione;
 # * `prompt`: il campo `prompt` arriva davvero a Whisper (prima si accettava e si ignorava).
-FEATURES = ("by_ref", "archive_upload", "server_chunks", "file_meta", "prompt")
+FEATURES = ("by_ref", "archive_upload", "server_chunks", "file_meta", "prompt", "auto_chunks")
 
 
 @app.get("/health")
@@ -1802,7 +1804,7 @@ async def transcriptions(
         size_mb = source.stat().st_size / (1024 * 1024)
         how = "dall'archivio" if origin == "archive" else ("ricevuto e archiviato" if archived else "ricevuto")
         log.info("%s%s %s (%.1f MB)%s", who, how, label, size_mb, f", {GATE.waiting} in fila" if GATE.waiting else "")
-        cap = _positive_int(max_minutes)
+        cap: int | str | None = "auto" if max_minutes.strip().lower() == "auto" else _positive_int(max_minutes)
         vocabulary = prompt.strip() or None
         lang = language.strip() or None
 
@@ -1891,7 +1893,7 @@ INFLIGHT: dict[tuple, SharedWork] = {}
 
 
 async def _run_work(
-    work: SharedWork, source: Path, language: str | None, prompt: str | None, cap: int | None,
+    work: SharedWork, source: Path, language: str | None, prompt: str | None, cap: int | str | None,
     priority: int, who: str, label: str,
 ) -> dict[str, Any]:
     """La trascrizione vera: il turno nella fila, poi WhisperX su un thread."""
@@ -1903,6 +1905,7 @@ async def _run_work(
             STATE["busy"] = True
             progress.admitted()
             started = time.time()
+            loads = STATE.get("loads", 0)
             try:
                 # Su un thread anche il caricamento del modello: cosi' `/health` continua a
                 # rispondere durante i minuti del primo avvio, invece di far credere all'app che il
@@ -1929,6 +1932,10 @@ async def _run_work(
     elapsed = time.time() - started
     duration = result["segments"][-1]["end"] if result["segments"] else 0.0
     speed = duration / elapsed if elapsed > 0 else 0
+    # La velocita' per la scelta automatica dei pezzi: senza il caricamento del modello, se c'e'
+    # stato, che si paga una volta e non dice niente di quanto va veloce la trascrizione.
+    work_s = elapsed - (STATE.get("last_load_s", 0.0) if STATE.get("loads", 0) != loads else 0.0)
+    record_speed(result.get("device_used") or STATE["device"], float(result.get("audio_s") or duration), work_s)
     on_cpu = " sul processore" if result.get("device_used") == "cpu" and STATE["device"] != "cpu" else ""
     log.info("%sfatto%s: %.1f min in %.0f s (%.0f volte il tempo reale)", who, on_cpu, duration / 60, elapsed, speed)
     if STATE["idle_seconds"]:
@@ -2250,6 +2257,50 @@ QUIET_WINDOW_MS = 500
 MIN_PIECE_S = 60.0
 
 
+# «Automatico»: pezzi da circa quattro minuti di lavoro ciascuno. Abbastanza lunghi da dare a Whisper
+# il contesto che gli serve e da non moltiplicare le cuciture; abbastanza corti che una lezione
+# annullata, un computer che si spegne o un riavvio perdano poco, e che la barra si muova. Sulla
+# scheda, veloce, questo vuol dire lezioni intere; sul processore, pezzi da un quarto d'ora.
+AUTO_PIECE_WORK_S = 4 * 60
+AUTO_MIN_MINUTES = 15
+AUTO_MAX_MINUTES = 120
+# Quanto va veloce, prima di averlo misurato: large-v3 su una scheda di fascia media, e sul processore.
+DEFAULT_SPEED = {"cuda": 25.0, "cpu": 1.5}
+SPEED_SAMPLES = 10
+
+
+def recent_speed(device: str) -> float:
+    """Quante volte il tempo reale va questo computer, dalle ultime lezioni (la mediana) o una stima."""
+    samples = sorted(STATE.get("speeds", {}).get(device, []))
+    if not samples:
+        return DEFAULT_SPEED.get(device, 1.5)
+    return samples[len(samples) // 2]
+
+
+def record_speed(device: str, audio_s: float, work_s: float) -> None:
+    """Una lezione finita: quanto audio in quanto lavoro. Le brevi non contano: pesa il caricamento."""
+    if audio_s < 120 or work_s <= 0:
+        return
+    speeds = STATE.setdefault("speeds", {}).setdefault(device, [])
+    speeds.append(audio_s / work_s)
+    del speeds[:-SPEED_SAMPLES]
+
+
+def auto_piece_minutes(duration_s: float, device: str) -> int | None:
+    """
+    Il tetto dei pezzi scelto dal computer, in minuti, o None per la lezione intera.
+
+    Dalla velocita' misurata: quanti minuti di audio fa in [AUTO_PIECE_WORK_S], arrotondati a cinque e
+    tenuti fra [AUTO_MIN_MINUTES] e [AUTO_MAX_MINUTES]. Se la lezione ci sta in un pezzo (con la
+    stessa tolleranza di [piece_count]) va intera.
+    """
+    minutes = recent_speed(device) * AUTO_PIECE_WORK_S / 60
+    minutes = int(max(AUTO_MIN_MINUTES, min(AUTO_MAX_MINUTES, round(minutes / 5) * 5)))
+    if duration_s <= minutes * 60 + COMPUTER_TOLERANCE_S:
+        return None
+    return minutes
+
+
 def piece_count(duration_s: float, max_minutes: int | None) -> int:
     """
     In quanti pezzi va una registrazione: 1 fino al tetto piu' dieci minuti, poi `ceil(durata/tetto)`.
@@ -2411,7 +2462,7 @@ def _transcribe(
     language: str | None,
     progress: JobProgress | None = None,
     prompt: str | None = None,
-    max_minutes: int | None = None,
+    max_minutes: int | str | None = None,
 ) -> dict[str, Any]:
     """Il lavoro vero, su un thread suo: WhisperX blocca, e bloccare il loop ferma anche /health."""
     import whisperx
@@ -2425,7 +2476,10 @@ def _transcribe(
     progress.check_cancelled()
     audio_s = len(audio) / SAMPLE_RATE
     progress.audio_s = audio_s
-    job = transcribe_audio(audio, SAMPLE_RATE, language, progress, Engine(), max_minutes=max_minutes, prompt=prompt)
+    # «auto»: la lunghezza dei pezzi la sceglie il computer, adesso che sa quanto e' lunga la lezione
+    # e quanto va veloce ([auto_piece_minutes]).
+    cap = auto_piece_minutes(audio_s, STATE["device"]) if max_minutes == "auto" else max_minutes
+    job = transcribe_audio(audio, SAMPLE_RATE, language, progress, Engine(), max_minutes=cap, prompt=prompt)
     STATE["alignment"][job["language"]] = job["alignment"]
 
     out = []
@@ -2465,6 +2519,8 @@ def _transcribe(
         # La durata vera del file, non la fine dell'ultimo segmento: un finale muto conta lo stesso.
         "audio_s": audio_s,
         "chunks": job["chunks"],
+        # Il tetto usato davvero, in minuti; 0 = intera. Con «auto» e' quello che l'app mostra.
+        "max_minutes_used": int(cap or 0),
     }
 
 

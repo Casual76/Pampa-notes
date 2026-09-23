@@ -295,6 +295,49 @@ class JobProgressTest(unittest.TestCase):
         self.assertEqual((snap["processing_s"], snap["elapsed_s"]), (20.0, 30.0))
 
 
+class AutoPiecesTest(StateMixin, unittest.TestCase):
+    """«Automatico»: pezzi da circa quattro minuti di lavoro, dalla velocita' misurata."""
+
+    def test_fast_card_keeps_a_lesson_whole(self) -> None:
+        server.STATE["speeds"] = {"cuda": [40.0, 43.0, 38.0]}
+        # 40x per quattro minuti = 160 minuti di audio, oltre il massimo: 120, e un'ora e mezza ci sta.
+        self.assertIsNone(server.auto_piece_minutes(90 * 60, "cuda"))
+        self.assertEqual(server.auto_piece_minutes(200 * 60, "cuda"), 120)
+
+    def test_processor_gets_short_pieces(self) -> None:
+        server.STATE["speeds"] = {"cpu": [1.2, 1.4, 1.5]}
+        # 1,4x per quattro minuti = 5,6 minuti: sotto il minimo, quindici.
+        self.assertEqual(server.auto_piece_minutes(60 * 60, "cpu"), 15)
+
+    def test_without_measurements_a_default_is_used(self) -> None:
+        server.STATE["speeds"] = {}
+        # 25x per quattro minuti = 100 minuti.
+        self.assertEqual(server.auto_piece_minutes(4 * 3600, "cuda"), 100)
+
+    def test_short_or_loading_heavy_runs_are_not_measured(self) -> None:
+        server.STATE["speeds"] = {}
+        server.record_speed("cuda", 60, 5)
+        self.assertEqual(server.STATE["speeds"].get("cuda", []), [])
+        for _ in range(15):
+            server.record_speed("cuda", 3600, 90)
+        self.assertEqual(len(server.STATE["speeds"]["cuda"]), server.SPEED_SAMPLES)
+
+    def test_auto_reaches_the_job_and_comes_back(self) -> None:
+        seen = {}
+
+        def fake_transcribe_audio(audio, sample_rate, language, progress, engine, max_minutes=None, prompt=None):
+            seen["max_minutes"] = max_minutes
+            return {"segments": [], "language": "it", "device_used": "cuda", "batch_size": 8, "alignment": "ok", "chunks": 3}
+
+        server.STATE["speeds"] = {"cuda": [8.0]}
+        server.STATE["device"] = "cuda"
+        audio = [0.0] * 16000 * 60 * 50  # cinquanta minuti
+        with mock.patch("whisperx.load_audio", return_value=audio, create=True),                 mock.patch.object(server, "transcribe_audio", fake_transcribe_audio),                 mock.patch.object(server, "replan_for_job"):
+            result = server._transcribe("x.m4a", "it", server.JobProgress(), max_minutes="auto")
+        # 8x per quattro minuti = 32, arrotondato a 30: cinquanta minuti vanno in pezzi.
+        self.assertEqual((seen["max_minutes"], result["max_minutes_used"]), (30, 30))
+
+
 class RegistryKeepsLiveJobsTest(unittest.TestCase):
     def test_a_running_job_is_never_forgotten(self) -> None:
         registry = server.JobRegistry(limit=2)
@@ -1365,7 +1408,7 @@ class ServerTest(StateMixin, unittest.TestCase):
 
     def test_health_lists_the_features(self) -> None:
         data = json.loads(self.call("GET", "/health")[2])
-        self.assertEqual(set(data["features"]), {"by_ref", "archive_upload", "server_chunks", "file_meta", "prompt"})
+        self.assertEqual(set(data["features"]), {"by_ref", "archive_upload", "server_chunks", "file_meta", "prompt", "auto_chunks"})
 
     def test_by_ref_reads_the_blob_and_keeps_it(self) -> None:
         data = b"una lezione gia' nell'archivio" * 50
