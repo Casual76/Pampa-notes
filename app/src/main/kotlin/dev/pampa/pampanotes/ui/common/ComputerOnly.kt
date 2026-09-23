@@ -265,10 +265,15 @@ private fun ComputerOnlyConfirm(ask: ComputerOnlyAsk, onConfirm: () -> Unit, onD
       if (preview.originals.count > 0) add(pluralStringResource(R.plurals.computer_only_originals, preview.originals.count, preview.originals.count))
     }.joinToString(stringResource(R.string.computer_only_and))
     val size = Formats.bytes(preview.here.bytes)
-    when (preview.leavingNow.count) {
-      0 -> stringResource(R.string.computer_only_confirm_message_later, what, size)
-      preview.here.count -> stringResource(R.string.computer_only_confirm_message_all, what, size)
-      else -> stringResource(R.string.computer_only_confirm_message, what, size, preview.leavingNow.count)
+    // Quelli gia' sul computer ma protetti (la lezione che si ascolta o si trascrive) non se ne vanno
+    // «dopo l'archiviazione»: l'archiviazione li ha gia' presi. Lo si dice per quello che e'.
+    val later = preview.here.count - preview.leavingNow.count - preview.kept.count
+    val kept = if (preview.kept.count > 0) " " + stringResource(R.string.computer_only_confirm_kept) else ""
+    when {
+      later <= 0 && preview.leavingNow.count == 0 -> stringResource(R.string.computer_only_confirm_message_kept_only, what, size)
+      preview.leavingNow.count == preview.here.count -> stringResource(R.string.computer_only_confirm_message_all, what, size)
+      preview.leavingNow.count == 0 -> stringResource(R.string.computer_only_confirm_message_later, what, size) + kept
+      else -> stringResource(R.string.computer_only_confirm_message, what, size, preview.leavingNow.count) + kept
     }
   }
   FluidAlert(

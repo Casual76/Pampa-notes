@@ -1196,6 +1196,8 @@
   <string name="computer_only_confirm_message">%1$s, %2$s here: the ones already on the computer (%3$d) leave now, the rest after archiving. You can always listen again: they download when needed.</string>
   <string name="computer_only_confirm_message_all">%1$s, %2$s here: all already on the computer, so they leave now. You can always listen again: they download when needed.</string>
   <string name="computer_only_confirm_message_later">%1$s, %2$s here: they leave after archiving, once the computer has them. You can always listen again: they download when needed.</string>
+  <string name="computer_only_confirm_message_kept_only">%1$s, %2$s here: already on the computer, but the lesson you are listening to or transcribing stays here for another day. You can always listen again: they download when needed.</string>
+  <string name="computer_only_confirm_kept">The lesson you are listening to or transcribing stays here for another day.</string>
   <string name="computer_only_confirm_nothing">Nothing to remove here. From now on recordings and originals stay on the computer and “Keep everything here too” won\'t download them: you can always listen again, they download when needed.</string>
   <string name="computer_only_header">Computer only</string>
   <string name="computer_only_header_detail">Folders and notes whose recordings and originals stay on the computer, not here. Applies to this device only.</string>

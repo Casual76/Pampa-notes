@@ -45,6 +45,8 @@ data class ComputerOnlyPreview(
   val recordings: SizeTotal = SizeTotal(0, 0),
   val originals: SizeTotal = SizeTotal(0, 0),
   val leavingNow: SizeTotal = SizeTotal(0, 0),
+  /** Gia' sul computer ma protetti: una lezione che si sta ascoltando o trascrivendo. */
+  val kept: SizeTotal = SizeTotal(0, 0),
 ) {
   val here: SizeTotal get() = SizeTotal(recordings.count + originals.count, recordings.bytes + originals.bytes)
 }
@@ -183,6 +185,7 @@ class StorageRepository @Inject constructor(
       recordings = SizeTotal(parts.size, parts.sumOf { it.sizeBytes }),
       originals = SizeTotal(docs.size, docs.sumOf { it.sizeBytes }),
       leavingNow = SizeTotal(now.size, now.sum()),
+      kept = parts.filter { it.archivedAt > 0 && it.sessionId in guarded }.let { kept -> SizeTotal(kept.size, kept.sumOf { it.sizeBytes }) },
     )
   }
 

@@ -1226,6 +1226,8 @@
   <string name="computer_only_confirm_message">%1$s, %2$s qui: quelli già sul computer (%3$d) se ne vanno adesso, gli altri dopo l\'archiviazione. Si possono sempre riascoltare: si scaricano quando servono.</string>
   <string name="computer_only_confirm_message_all">%1$s, %2$s qui: sono già tutti sul computer e se ne vanno adesso. Si possono sempre riascoltare: si scaricano quando servono.</string>
   <string name="computer_only_confirm_message_later">%1$s, %2$s qui: se ne vanno dopo l\'archiviazione, quando il computer li avrà. Si possono sempre riascoltare: si scaricano quando servono.</string>
+  <string name="computer_only_confirm_message_kept_only">%1$s, %2$s qui: sono già sul computer, ma la lezione che stai ascoltando o trascrivendo resta qui ancora per un giorno. Si possono sempre riascoltare: si scaricano quando servono.</string>
+  <string name="computer_only_confirm_kept">La lezione che stai ascoltando o trascrivendo resta qui ancora per un giorno.</string>
   <string name="computer_only_confirm_nothing">Qui non c\'è niente da togliere. Da adesso registrazioni e originali restano sul computer e «Tieni tutto anche qui» non li scarica: si possono sempre riascoltare, si scaricano quando servono.</string>
   <string name="computer_only_header">Solo sul computer</string>
   <string name="computer_only_header_detail">Le cartelle e le note le cui registrazioni e i cui originali stanno sul computer e non qui. Vale solo per questo dispositivo.</string>
