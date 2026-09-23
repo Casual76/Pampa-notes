@@ -42,7 +42,12 @@ data class ImportUiState(
   val updateExisting: Boolean = true,
   val existingSessions: List<SessionEntity> = emptyList(),
   val appendToSessionId: String? = null,
-  val sessionDate: String = Dates.today(),
+  /**
+   * Il giorno scelto a mano per la sessione nuova. Null: lo dicono le registrazioni
+   * ([ImportCandidate.recordedOn]), una sessione per giorno — e' il default, perche' il giorno
+   * dell'import e' quasi sempre il giorno sbagliato.
+   */
+  val sessionDate: String? = null,
   val progressLabel: String = "",
   val progress: Float = 0f,
   val outcome: ImportOutcome? = null,
@@ -59,6 +64,21 @@ data class ImportUiState(
 
   /** Le registrazioni nell'ordine in cui [AudioImporter] le importa: per nome, come le numera un registratore. */
   val audioInOrder: List<ImportCandidate> get() = included.filter { it.isAudio }.sortedBy { it.displayName.lowercase() }
+
+  /**
+   * I giorni in cui le registrazioni sono state fatte, dal piu' vecchio: uno solo nel caso normale,
+   * piu' d'uno quando si importa una settimana di lezioni in una volta.
+   */
+  val recordedDays: List<java.time.LocalDate>
+    get() = audioInOrder.mapNotNull { it.recordedOn?.date }.distinct().sorted()
+
+  /**
+   * Da dove viene il giorno che la schermata propone: la fonte meno affidabile fra quelle usate,
+   * perche' e' quella che va detta. Tre registrazioni con la data dentro e una con la sola data
+   * del file sono «dalla data del file», non «dalla registrazione».
+   */
+  val recordedSource: dev.pampa.pampanotes.core.importing.RecordingDateSource?
+    get() = audioInOrder.mapNotNull { it.recordedOn?.source }.maxOrNull()
 
   /** Dividere ha senso solo con almeno due registrazioni, e non quando vanno in coda a una sessione che c'e' gia'. */
   val canGroup: Boolean get() = appendToSessionId == null && audioInOrder.size >= 2
@@ -223,7 +243,11 @@ class ImportViewModel @Inject constructor(
 
   fun setAppendToSession(sessionId: String?) = _uiState.update { it.copy(appendToSessionId = sessionId) }
 
-  fun setSessionDate(date: String) = _uiState.update { it.copy(sessionDate = date) }
+  /** Null torna alla data delle registrazioni. Una data che non si legge non si prende. */
+  fun setSessionDate(date: String?) {
+    if (date != null && Dates.parseOrNull(date) == null) return
+    _uiState.update { it.copy(sessionDate = date) }
+  }
 
   fun toggleGroupStart(candidateId: String) = updateGrouping { it.toggle(candidateId) }
   fun splitAllGroups() = updateGrouping { it.splitAll() }
@@ -295,11 +319,15 @@ class ImportViewModel @Inject constructor(
       _uiState.update { state ->
         // Due tocchi veloci su due note: arriva per ultima la risposta della prima, e non vale piu'.
         if (state.selectedNoteId != noteId) return@update state
+        // Il default: se la nota ha gia' una sessione del giorno della registrazione, il nuovo
+        // audio ci va dentro. E' il caso della registrazione staccata per sbaglio e ripresa
+        // subito. Il giorno della registrazione, non quello dell'import: la seconda meta' della
+        // lezione di ieri, importata oggi, va nella lezione di ieri. Con registrazioni di piu'
+        // giorni non si accoda niente: sono lezioni diverse.
+        val day = state.recordedDays.singleOrNull()?.toString() ?: Dates.today().takeIf { state.recordedDays.isEmpty() }
         state.copy(
           existingSessions = list,
-          // Il default: se la nota ha gia' una sessione di oggi, il nuovo audio ci va dentro. E'
-          // il caso della registrazione staccata per sbaglio e ripresa subito.
-          appendToSessionId = list.lastOrNull { it.date == Dates.today() }?.id,
+          appendToSessionId = day?.let { d -> list.lastOrNull { it.date == d }?.id },
         )
       }
     }

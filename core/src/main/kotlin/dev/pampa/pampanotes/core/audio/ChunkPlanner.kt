@@ -139,9 +139,138 @@ object ChunkPlanner {
     return (bestStart + windowFrames / 2).toLong() * frameMs
   }
 
+  /**
+   * [pieces] pezzi **uguali**, ognuno tagliato nel silenzio piu' vicino al suo confine ideale.
+   *
+   * Il confine k-esimo si cerca attorno a `k * totale / pieces`, non a «dove e' finito il pezzo
+   * prima piu' la durata»: cosi' gli scarti della ricerca nel silenzio non si sommano, e l'ultimo
+   * pezzo non diventa ne' un moncone ne' il doppio degli altri. Quaranta minuti con un tetto di
+   * trenta sono due pezzi da venti, non trenta piu' dieci: dieci minuti da soli sono il pezzo in cui
+   * Whisper ha meno contesto, e la cucitura in piu' non la paga nessuno.
+   *
+   * Con un pezzo solo il file si ricodifica intero (un formato che il servizio non prende, o troppo
+   * pesante com'e'), senza tagli.
+   */
+  fun planEqual(
+    frameEnergies: FloatArray,
+    frameMs: Long = DEFAULT_FRAME_MS,
+    pieces: Int,
+    overlapMs: Long = DEFAULT_OVERLAP_MS,
+    searchWindowMs: Long = DEFAULT_SEARCH_WINDOW_MS,
+    minChunkMs: Long = DEFAULT_MIN_CHUNK_MS,
+  ): ChunkPlan {
+    val totalMs = frameEnergies.size * frameMs
+    require(pieces > 0) { "almeno un pezzo" }
+    // Pezzi che durerebbero meno del minimo non si fanno: meglio meno pezzi, un po' piu' lunghi.
+    val count = if (minChunkMs > 0) min(pieces.toLong(), max(1L, totalMs / minChunkMs)).toInt() else pieces
+    if (count <= 1 || frameEnergies.isEmpty()) {
+      return ChunkPlan(listOf(ChunkSpec(0, 0, max(totalMs, 0L))), overlapMs, totalMs)
+    }
+
+    val cuts = mutableListOf<Long>()
+    for (k in 1 until count) {
+      val ideal = totalMs * k / count
+      val previous = cuts.lastOrNull() ?: 0L
+      // La finestra non scavalca il taglio prima ne' la fine: ogni pezzo resta lungo almeno il minimo.
+      val from = max(previous + minChunkMs, ideal - searchWindowMs)
+      val to = min(totalMs - minChunkMs, ideal + searchWindowMs)
+      val cut = if (from >= to) ideal else quietestPoint(frameEnergies, frameMs, from, to)
+      if (cut <= previous || cut >= totalMs) continue
+      cuts += cut
+    }
+
+    val boundaries = listOf(0L) + cuts + listOf(totalMs)
+    val chunks = boundaries.dropLast(1).mapIndexed { index, start ->
+      val end = min(totalMs, boundaries[index + 1] + if (index < cuts.size) overlapMs else 0L)
+      ChunkSpec(index = index, startMs = start, endMs = end)
+    }
+    return ChunkPlan(chunks, overlapMs, totalMs)
+  }
+
   /** Quante richieste servono per un audio di questa durata: il numero che la UI mostra prima di partire. */
   fun estimateChunkCount(totalMs: Long, targetMs: Long): Int {
     if (totalMs <= targetMs) return 1
     return max(1, (totalMs.toDouble() / targetMs).roundToInt())
   }
+}
+
+/** Cosa fare di un file prima di mandarlo: intero com'e', oppure decodificato e in [pieces] pezzi uguali. */
+sealed interface ChunkDecision {
+  /** Il file va cosi' com'e': niente decodifica, niente ricodifica, niente cuciture. */
+  data object Whole : ChunkDecision
+
+  /**
+   * Si decodifica e si ricodifica in [pieces] pezzi uguali, tagliati nei silenzi. Con un pezzo solo
+   * e' una ricodifica senza tagli: il formato non va bene al servizio, o il file pesa troppo.
+   */
+  data class Split(val pieces: Int, val pieceMs: Long) : ChunkDecision
+}
+
+/**
+ * Quando mandare un file intero e in quanti pezzi dividerlo.
+ *
+ * Una regola sola per i due servizi, con due numeri diversi. Il tetto (`capMs`) e' quanto l'utente
+ * vuole al massimo in una richiesta; la **tolleranza** e' quanto si puo' sforare pur di non tagliare:
+ * una lezione da quaranta minuti con un tetto di trenta va intera, perche' dieci minuti in piu' sul
+ * computer di casa costano solo tempo, e un taglio costa contesto e una cucitura. Oltre, pezzi
+ * **uguali** (vedi [ChunkPlanner.planEqual]): `ceil(durata / tetto)`, mai un moncone in fondo.
+ *
+ * Per Groq la tolleranza e' piccola e c'e' un limite che non si discute, i byte per richiesta: un
+ * file intero ci deve stare com'e', e i pezzi ricodificati ci devono stare con margine. Si decide
+ * **per parte**: ogni file si trascrive per conto suo, e le parti si mettono in fila solo per
+ * ascoltarle.
+ *
+ * Puro: si prova in JVM.
+ */
+object ChunkPolicy {
+
+  /** Il computer di casa: dieci minuti oltre il tetto costano solo attesa. */
+  const val COMPUTER_TOLERANCE_MS = 10 * 60_000L
+
+  /** Groq: un paio di minuti, che su un pezzo da dieci sono gia' un quinto in piu' di quota per richiesta. */
+  const val GROQ_TOLERANCE_MS = 2 * 60_000L
+
+  /**
+   * Quanto pesa un secondo ricodificato da [ChunkEncoder]: AAC a 48 kbps, piu' il contenitore. Il
+   * margine sul limite ([BYTES_SAFETY]) copre il resto: la busta multipart, e un encoder che sfora.
+   */
+  const val ENCODED_BYTES_PER_SECOND = 6_200L
+  const val BYTES_SAFETY = 0.9
+
+  /**
+   * @param capMs il pezzo piu' lungo che si vuole.
+   * @param toleranceMs quanto oltre il tetto un file resta intero.
+   * @param maxUploadBytes il tetto per richiesta del servizio, se ne ha uno.
+   * @param acceptedAsIs il servizio prende questo formato cosi' com'e'.
+   */
+  fun decide(
+    durationMs: Long,
+    sizeBytes: Long,
+    capMs: Long,
+    toleranceMs: Long,
+    maxUploadBytes: Long?,
+    acceptedAsIs: Boolean,
+  ): ChunkDecision {
+    require(capMs > 0) { "il tetto di un pezzo deve essere positivo" }
+    val fitsBytes = maxUploadBytes == null || sizeBytes <= maxUploadBytes
+    val withinLength = durationMs <= capMs + toleranceMs
+    if (acceptedAsIs && fitsBytes && withinLength) return ChunkDecision.Whole
+
+    // Da qui si ricodifica comunque. Se la durata ci sta, un pezzo solo: tagliare un file da
+    // undici minuti in due solo perche' e' un .amr non ha senso.
+    var pieces = if (withinLength) 1 else ceilDiv(durationMs, capMs).toInt()
+
+    // E un pezzo ricodificato deve stare nel limite di byte, con margine. Con i tetti di Groq
+    // (minuti, non ore) non capita quasi mai, ma e' un limite vero e un 413 fa perdere il lavoro.
+    if (maxUploadBytes != null && durationMs > 0) {
+      val budget = (maxUploadBytes * BYTES_SAFETY).toLong().coerceAtLeast(1L)
+      val encodedTotal = durationMs * ENCODED_BYTES_PER_SECOND / 1000L
+      pieces = max(pieces, ceilDiv(encodedTotal, budget).toInt())
+    }
+    pieces = max(1, pieces)
+    val pieceMs = if (durationMs > 0) ceilDiv(durationMs, pieces.toLong()) else capMs
+    return ChunkDecision.Split(pieces, pieceMs)
+  }
+
+  private fun ceilDiv(a: Long, b: Long): Long = if (a <= 0) 0 else (a + b - 1) / b
 }

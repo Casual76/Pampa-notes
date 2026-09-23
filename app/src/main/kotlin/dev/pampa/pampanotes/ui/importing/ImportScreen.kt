@@ -1,10 +1,12 @@
 package dev.pampa.pampanotes.ui.importing
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,6 +23,7 @@ import dev.antigravity.fluidengine.ui.fluid.FluidAlertAction
 import dev.antigravity.fluidengine.ui.fluid.FluidAmbient
 import dev.antigravity.fluidengine.ui.fluid.FluidButton
 import dev.antigravity.fluidengine.ui.fluid.FluidButtonStyle
+import dev.antigravity.fluidengine.ui.fluid.FluidChip
 import dev.antigravity.fluidengine.ui.fluid.FluidHeroMotif
 import dev.antigravity.fluidengine.ui.fluid.FluidHeroTone
 import dev.antigravity.fluidengine.ui.fluid.FluidProgressBar
@@ -43,6 +46,7 @@ import dev.pampa.pampanotes.core.db.SourceKind
 import dev.pampa.pampanotes.core.db.SourceStatus
 import dev.pampa.pampanotes.core.importing.ImportCandidate
 import dev.pampa.pampanotes.core.importing.ImportSummary
+import dev.pampa.pampanotes.core.importing.RecordingDateSource
 import dev.pampa.pampanotes.core.model.Dates
 import dev.pampa.pampanotes.ui.common.Formats
 
@@ -70,6 +74,7 @@ fun ImportRoute(
     onUpdateExisting = viewModel::setUpdateExisting,
     onCreateFolder = viewModel::createFolder,
     onSelectSession = viewModel::setAppendToSession,
+    onSessionDate = viewModel::setSessionDate,
     onToggleGroupStart = viewModel::toggleGroupStart,
     onSplitAll = viewModel::splitAllGroups,
     onJoinAll = viewModel::joinAllGroups,
@@ -92,6 +97,7 @@ private fun ImportScreen(
   onUpdateExisting: (Boolean) -> Unit,
   onCreateFolder: (String) -> Unit,
   onSelectSession: (String?) -> Unit,
+  onSessionDate: (String?) -> Unit,
   onToggleGroupStart: (String) -> Unit,
   onSplitAll: () -> Unit,
   onJoinAll: () -> Unit,
@@ -149,7 +155,7 @@ private fun ImportScreen(
         }
       }
       ImportStep.DESTINATION -> destinationStep(state, onSelectFolder, onSelectNote, onTitleChange, onNext, { creatingFolder = true })
-      ImportStep.AUDIO -> audioStep(state, onSelectSession, onToggleGroupStart, onSplitAll, onJoinAll, onGroupTitle, onGroupsAsNotes, onNext)
+      ImportStep.AUDIO -> audioStep(state, onSelectSession, onSessionDate, onToggleGroupStart, onSplitAll, onJoinAll, onGroupTitle, onGroupsAsNotes, onNext)
       ImportStep.RUNNING -> runningStep(state)
       ImportStep.DONE -> doneStep(state, onClose, onOpenNote)
     }
@@ -503,6 +509,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.destinationStep(
 private fun androidx.compose.foundation.lazy.LazyListScope.audioStep(
   state: ImportUiState,
   onSelectSession: (String?) -> Unit,
+  onSessionDate: (String?) -> Unit,
   onToggleGroupStart: (String) -> Unit,
   onSplitAll: () -> Unit,
   onJoinAll: () -> Unit,
@@ -545,6 +552,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioStep(
     }
   }
 
+  // Il giorno conta solo per una sessione nuova: accodando, la sessione ha gia' il suo.
+  if (state.appendToSessionId == null) sessionDateSection(state, onSessionDate)
+
   if (state.canGroup) groupingSection(state, onToggleGroupStart, onSplitAll, onJoinAll, onGroupTitle, onGroupsAsNotes)
 
   item {
@@ -556,6 +566,91 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioStep(
     )
   }
 }
+
+/**
+ * Il giorno della sessione nuova: quello letto dalle registrazioni, detto con la sua provenienza,
+ * e un modo per cambiarlo.
+ *
+ * La provenienza si dice perche' non vale sempre uguale: la data scritta dal registratore e' quasi
+ * certa, quella del nome del file quasi, la data di modifica e' una supposizione. Chi la legge sa
+ * se controllare. Per cambiarla, le stesse scorciatoie del foglio della sessione — oggi, ieri, la
+ * settimana passata — e il campo libero per andare piu' indietro.
+ */
+private fun androidx.compose.foundation.lazy.LazyListScope.sessionDateSection(
+  state: ImportUiState,
+  onSessionDate: (String?) -> Unit,
+) {
+  val days = state.recordedDays
+  item {
+    FluidSectionHeader(
+      title = stringResource(R.string.import_date_header),
+      detail = stringResource(R.string.import_date_detail),
+    )
+  }
+  item {
+    FluidListGroup {
+      FluidListRow(
+        title = when {
+          days.size > 1 -> stringResource(R.string.import_date_many_days, days.size)
+          days.size == 1 -> Formats.relativeDate(days.single())
+          else -> stringResource(R.string.date_today)
+        },
+        subtitle = recordedSourceText(state.recordedSource),
+        onClick = { onSessionDate(null) },
+        tone = FluidTone.Primary,
+        badge = if (state.sessionDate == null) {
+          { FluidStatusBadge(label = stringResource(R.string.import_chosen), tone = FluidTone.Primary) }
+        } else {
+          null
+        },
+      )
+    }
+  }
+  item { FluidSectionFootnote(text = stringResource(R.string.import_date_pick)) }
+  item {
+    val today = remember { java.time.LocalDate.now() }
+    val shortcuts = remember(today) { (0L..6L).map { today.minusDays(it) } }
+    val scroll = rememberScrollState()
+    Row(
+      modifier = Modifier.fillMaxWidth().horizontalScroll(scroll),
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      shortcuts.forEach { day ->
+        val iso = Formats.isoDate(day)
+        FluidChip(
+          label = Formats.relativeDate(day),
+          selected = state.sessionDate == iso,
+          // Un secondo tocco sulla scelta la toglie: si torna alla data delle registrazioni.
+          onClick = { onSessionDate(if (state.sessionDate == iso) null else iso) },
+        )
+      }
+    }
+  }
+  item {
+    var typed by remember { mutableStateOf("") }
+    FluidTextField(
+      value = typed,
+      onValueChange = { text ->
+        typed = text
+        // Si prende solo quando e' una data: a meta' battitura resta quella di prima.
+        if (Dates.parseOrNull(text.trim()) != null) onSessionDate(text.trim())
+      },
+      label = stringResource(R.string.session_date_custom),
+      placeholder = "2025-09-22",
+      modifier = Modifier.fillMaxWidth(),
+    )
+  }
+}
+
+@Composable
+private fun recordedSourceText(source: RecordingDateSource?): String = stringResource(
+  when (source) {
+    RecordingDateSource.METADATA -> R.string.import_date_source_metadata
+    RecordingDateSource.FILE_NAME -> R.string.import_date_source_name
+    RecordingDateSource.FILE_MODIFIED -> R.string.import_date_source_modified
+    RecordingDateSource.TODAY, null -> R.string.import_date_source_today
+  },
+)
 
 /**
  * Dove staccare, fra piu' registrazioni importate insieme.
@@ -758,7 +853,11 @@ private fun candidateSubtitle(candidate: ImportCandidate): String {
     return stringResource(R.string.import_duplicate_of, candidate.duplicateOfNoteTitle.orEmpty())
   }
   val size = Formats.bytes(candidate.sizeBytes)
-  return if (candidate.isAudio && candidate.durationMs > 0) "${Formats.durationShort(candidate.durationMs)} · $size" else size
+  val base = if (candidate.isAudio && candidate.durationMs > 0) "${Formats.durationShort(candidate.durationMs)} · $size" else size
+  // Il giorno di ogni registrazione, quando si e' letto dal file: e' cosi' che si vede quale file
+  // ha fatto finire un import in due sessioni.
+  val recorded = candidate.recordedOn?.takeIf { candidate.isAudio && it.source != RecordingDateSource.TODAY } ?: return base
+  return "$base · ${Formats.relativeDate(recorded.date)}"
 }
 
 @Composable

@@ -1,6 +1,8 @@
 package dev.pampa.pampanotes.core.transcription
 
+import dev.pampa.pampanotes.core.audio.ChunkDecision
 import dev.pampa.pampanotes.core.audio.ChunkEncoder
+import dev.pampa.pampanotes.core.audio.ChunkPolicy
 import dev.pampa.pampanotes.core.audio.ChunkPlan
 import dev.pampa.pampanotes.core.audio.ChunkPlanner
 import dev.pampa.pampanotes.core.audio.ChunkSpec
@@ -172,11 +174,11 @@ class TranscriptionRunner @Inject constructor(
       }
     }
 
-    val targetMs = chunkTargetMs(provider.capabilities, source.name, source.length(), part.durationMs, chunkMinutes)
+    val decision = chunkDecision(provider.capabilities, source.name, source.length(), part.durationMs, chunkMinutes)
 
     // La via breve: il file ci sta intero. Niente decodifica, niente ricodifica, niente cuciture —
     // ed e' anche l'unica che conserva la qualita' originale dell'audio.
-    if (targetMs == null) {
+    if (decision == ChunkDecision.Whole) {
       val result = try {
         sendWithRetry(provider, source, part.mime, request, waitingReporter(onProgress)) { progress ->
           onProgress(TranscriptionProgress.Uploading(0, 1, progress.fraction))
@@ -194,7 +196,10 @@ class TranscriptionRunner @Inject constructor(
     }
 
     val pcm = File(workDir, "audio.pcm")
-    val plan = preparePlan(source, pcm, workDir, targetMs) { fraction ->
+    // I pezzi si ricontano sulla durata vera, quella del PCM decodificato: la durata della riga puo'
+    // mancare (0) o essere quella stimata dal contenitore, e un conto sbagliato qui e' un pezzo che
+    // sfora il limite di Groq.
+    val plan = preparePlan(source, pcm, workDir, { totalMs -> piecesFor(provider.capabilities, totalMs, chunkMinutes) }) { fraction ->
       onProgress(TranscriptionProgress.Preparing(partIndex, partCount, fraction))
     }
 
@@ -243,7 +248,7 @@ class TranscriptionRunner @Inject constructor(
     source: File,
     pcm: File,
     workDir: File,
-    targetMs: Long,
+    piecesFor: (totalMs: Long) -> Int,
     onProgress: (Float) -> Unit,
   ): ChunkPlan {
     val planFile = File(workDir, "plan.json")
@@ -262,10 +267,11 @@ class TranscriptionRunner @Inject constructor(
     }
 
     val decoded = PcmDecoder.decodeToPcm(source, pcm, onProgress)
-    val plan = ChunkPlanner.plan(
+    val totalMs = decoded.frameEnergies.size * decoded.frameMs
+    val plan = ChunkPlanner.planEqual(
       frameEnergies = decoded.frameEnergies,
       frameMs = decoded.frameMs,
-      targetMs = targetMs,
+      pieces = piecesFor(totalMs),
     )
     planFile.writeText(
       json.encodeToString(plan.chunks.map { StoredChunk(it.index, it.startMs, it.endMs, emptyList()) }),
@@ -386,27 +392,50 @@ class TranscriptionRunner @Inject constructor(
       (error.retryAfterSec ?: 0.0) * 1000 > MAX_RATE_LIMIT_WAIT_MS
 
     /**
-     * Quanto deve durare un pezzo, oppure null se il file va mandato intero.
+     * Intero, o in quanti pezzi uguali: la regola sta in [ChunkPolicy], qui si sceglie coi numeri
+     * di quale servizio.
      *
-     * Intero quando il servizio non vuole pezzi, oppure quando il file ci sta: formato accettato,
-     * sotto il tetto di byte, e non piu' lungo di un pezzo. La durata la dice il servizio se ne ha
-     * una sua ([TranscriptionCapabilities.maxChunkMinutes], il computer di casa con un tetto),
-     * altrimenti le impostazioni di Groq ([groqChunkMinutes]).
+     * Intero sempre quando il servizio non vuole pezzi (il computer di casa senza tetto). Il tetto
+     * lo dice il servizio se ne ha uno suo ([TranscriptionCapabilities.maxChunkMinutes], il computer
+     * di casa con un tetto: tolleranza di dieci minuti, perche' li' sforare costa solo tempo),
+     * altrimenti le impostazioni di Groq ([groqChunkMinutes], tolleranza di due e il limite di byte).
      */
-    fun chunkTargetMs(
+    fun chunkDecision(
       capabilities: TranscriptionCapabilities,
       fileName: String,
       sizeBytes: Long,
       durationMs: Long,
       groqChunkMinutes: Int,
-    ): Long? {
-      if (!capabilities.needsChunking) return null
-      val targetMs = (capabilities.maxChunkMinutes ?: groqChunkMinutes).coerceAtLeast(1) * 60_000L
-      val limit = capabilities.maxUploadBytes
-      val fits = capabilities.acceptsAsIs(fileName) &&
-        (limit == null || sizeBytes <= limit) &&
-        durationMs <= targetMs
-      return if (fits) null else targetMs
+    ): ChunkDecision {
+      if (!capabilities.needsChunking) return ChunkDecision.Whole
+      val computer = capabilities.maxChunkMinutes != null
+      val capMs = (capabilities.maxChunkMinutes ?: groqChunkMinutes).coerceAtLeast(1) * 60_000L
+      return ChunkPolicy.decide(
+        durationMs = durationMs,
+        sizeBytes = sizeBytes,
+        capMs = capMs,
+        toleranceMs = if (computer) ChunkPolicy.COMPUTER_TOLERANCE_MS else ChunkPolicy.GROQ_TOLERANCE_MS,
+        maxUploadBytes = capabilities.maxUploadBytes,
+        acceptedAsIs = capabilities.acceptsAsIs(fileName),
+      )
+    }
+
+    /**
+     * In quanti pezzi va un audio gia' decodificato, lungo [totalMs]. E' sempre una ricodifica: il
+     * peso che conta e' quello dei pezzi ricodificati, che [ChunkPolicy] stima dalla durata.
+     */
+    fun piecesFor(capabilities: TranscriptionCapabilities, totalMs: Long, groqChunkMinutes: Int): Int {
+      val computer = capabilities.maxChunkMinutes != null
+      val capMs = (capabilities.maxChunkMinutes ?: groqChunkMinutes).coerceAtLeast(1) * 60_000L
+      val decision = ChunkPolicy.decide(
+        durationMs = totalMs,
+        sizeBytes = 0,
+        capMs = capMs,
+        toleranceMs = if (computer) ChunkPolicy.COMPUTER_TOLERANCE_MS else ChunkPolicy.GROQ_TOLERANCE_MS,
+        maxUploadBytes = capabilities.maxUploadBytes,
+        acceptedAsIs = false,
+      )
+      return (decision as? ChunkDecision.Split)?.pieces ?: 1
     }
   }
 }
