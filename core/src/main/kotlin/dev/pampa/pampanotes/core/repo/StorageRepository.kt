@@ -1,5 +1,6 @@
 package dev.pampa.pampanotes.core.repo
 
+import dev.pampa.pampanotes.core.archive.ArchiveRepository
 import dev.pampa.pampanotes.core.archive.ComputerOnlyItems
 import dev.pampa.pampanotes.core.archive.ComputerOnlyScope
 import dev.pampa.pampanotes.core.db.AudioPartDao
@@ -9,6 +10,7 @@ import dev.pampa.pampanotes.core.db.SourceDao
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.files.FileFact
 import dev.pampa.pampanotes.core.files.FileLocations
+import dev.pampa.pampanotes.core.files.FilesInUse
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
@@ -64,6 +66,8 @@ class StorageRepository @Inject constructor(
   private val jobs: JobDao,
   private val files: AppFiles,
   private val computerOnly: ComputerOnlyScope,
+  private val archive: ArchiveRepository,
+  private val inUse: FilesInUse,
 ) {
   /**
    * Le sessioni che [evictComputerOnly] non tocca anche se la regola le copre: quella che si stava
@@ -122,56 +126,85 @@ class StorageRepository @Inject constructor(
    * coda. Non si tocca una registrazione con una trascrizione in corso: il worker la sta leggendo.
    * Non si toccano nemmeno le pagine scritte a mano (`derivedFromId`): pesano qualche centinaio di
    * kB, stanno a schermo dentro la nota, e senza computer la nota resterebbe con dei buchi al posto
-   * degli appunti per risparmiare quanto una foto.
+   * degli appunti per risparmiare quanto una foto. Ne' quello che un export sta per leggere
+   * ([FilesInUse]).
+   *
+   * `archivedAt > 0` da solo non basta: dice che un giorno un computer l'ha ricevuto, non che il
+   * computer di adesso ce l'ha ([drop]).
    * Torna quanti file e quanti byte se ne sono andati.
    */
   suspend fun evictArchived(sources: Boolean, audio: Boolean): SizeTotal = withContext(Dispatchers.IO) {
-    var count = 0
-    var bytes = 0L
-    if (sources) {
-      this@StorageRepository.sources.all().filter { it.archivedAt > 0 && it.storedFileName != null && it.derivedFromId == null }.forEach { source ->
-        val file = files.sourceFile(source.storedFileName!!)
-        if (file.exists()) {
-          val size = file.length()
-          if (file.delete()) { count++; bytes += size }
+    val held = inUse.current()
+    val candidates = buildList {
+      if (sources) {
+        this@StorageRepository.sources.all().filter { it.archivedAt > 0 && it.storedFileName != null && it.derivedFromId == null }.forEach { source ->
+          val stored = source.storedFileName!!
+          add(Evictable(source.sha256, files.sourceFile(stored), FilesInUse.source(stored)) { this@StorageRepository.sources.markArchived(source.id, 0L) })
+        }
+      }
+      if (audio) {
+        val busySessions = busySessions()
+        audioParts.all().filter { it.archivedAt > 0 && it.sessionId !in busySessions }.forEach { part ->
+          add(Evictable(part.sha256, files.audioFile(part.fileName), FilesInUse.audio(part.fileName)) { audioParts.markArchived(part.id, 0L) })
         }
       }
     }
-    if (audio) {
-      val busySessions = jobs.all().filter { !it.state.isTerminal }.map { it.sessionId }.toSet()
-      audioParts.all().filter { it.archivedAt > 0 && it.sessionId !in busySessions }.forEach { part ->
-        val file = files.audioFile(part.fileName)
-        if (file.exists()) {
-          val size = file.length()
-          if (file.delete()) { count++; bytes += size }
-        }
-      }
-    }
-    SizeTotal(count, bytes)
+    drop(candidates.filter { it.key !in held })
   }
 
   /**
    * Toglie da qui i file che una regola «solo sul computer» copre e che il computer ha gia'.
    *
    * Le stesse guardie di [evictArchived] — non una registrazione che la coda sta leggendo, non le
-   * pagine a mano (che [ComputerOnlyScope] non mette nemmeno nell'insieme) — piu' le sessioni di
-   * [protectedSessionIds]. Quello che non e' ancora archiviato resta finche' l'archivio non l'ha
-   * preso: non si perde niente. Gira dopo ogni archiviazione riuscita e quando si accende una regola.
+   * pagine a mano (che [ComputerOnlyScope] non mette nemmeno nell'insieme), non quello che un
+   * export tiene — piu' le sessioni di [protectedSessionIds]. Quello che non e' ancora archiviato
+   * resta finche' l'archivio non l'ha preso: non si perde niente. Gira dopo ogni archiviazione
+   * riuscita e quando si accende una regola.
    */
   suspend fun evictComputerOnly(): SizeTotal = withContext(Dispatchers.IO) {
     val scope = computerOnly.current()
     if (scope.isEmpty) return@withContext SizeTotal(0, 0)
     val guarded = busySessions() + runCatching { protectedSessionIds() }.getOrDefault(emptySet())
+    val held = inUse.current()
+    val candidates = buildList {
+      scope.parts.filter { it.archivedAt > 0 && it.sessionId !in guarded }.forEach { part ->
+        add(Evictable(part.sha256, files.audioFile(part.fileName), FilesInUse.audio(part.fileName)) { audioParts.markArchived(part.id, 0L) })
+      }
+      scope.sources.filter { it.archivedAt > 0 }.forEach { source ->
+        val stored = source.storedFileName ?: return@forEach
+        add(Evictable(source.sha256, files.sourceFile(stored), FilesInUse.source(stored)) { sources.markArchived(source.id, 0L) })
+      }
+    }
+    drop(candidates.filter { it.key !in held })
+  }
+
+  /** Un file che si potrebbe togliere da qui, con l'impronta con cui lo si chiede al computer. */
+  private class Evictable(val sha256: String, val file: java.io.File, val key: String, val lost: suspend () -> Unit)
+
+  /**
+   * Toglie i file che il computer di casa conferma di avere adesso (un `HEAD` per file).
+   *
+   * Un 404 vuol dire che la riga mente — un PC nuovo, un archivio svuotato — e questa copia puo'
+   * essere l'unica: il file resta, e la riga torna «da archiviare», cosi' il prossimo giro
+   * dell'archivio lo rimanda. Un computer che non risponde non conferma niente: resta tutto.
+   */
+  private suspend fun drop(candidates: List<Evictable>): SizeTotal {
+    val here = candidates.filter { it.file.exists() }
+    if (here.isEmpty()) return SizeTotal(0, 0)
+    val confirmed = archive.presence(here.map { it.sha256 })
     var count = 0
     var bytes = 0L
-    fun drop(file: java.io.File) {
-      if (!file.exists()) return
-      val size = file.length()
-      if (file.delete()) { count++; bytes += size }
+    here.forEach { item ->
+      when (confirmed[item.sha256]) {
+        true -> {
+          val size = item.file.length()
+          if (item.file.delete()) { count++; bytes += size }
+        }
+        false -> item.lost()
+        null -> Unit
+      }
     }
-    scope.parts.filter { it.archivedAt > 0 && it.sessionId !in guarded }.forEach { drop(files.audioFile(it.fileName)) }
-    scope.sources.filter { it.archivedAt > 0 }.forEach { drop(files.sourceFile(it.storedFileName!!)) }
-    SizeTotal(count, bytes)
+    return SizeTotal(count, bytes)
   }
 
   /** Quello che accendere queste regole toglierebbe da qui: la conferma lo dice prima. */

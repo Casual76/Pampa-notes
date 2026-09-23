@@ -81,8 +81,10 @@ class RealDatesBackfill @Inject constructor(
     oneAtATime.withLock {
       val previous = settingsStore.realDatesPending()
       if (previous != null && previous.isEmpty()) return@withLock Summary(skipped = true)
-      // Null: il primo giro, su tutto. Poi solo quello che aspettava il computer.
-      fun wanted(key: String) = previous == null || key in previous
+      // Le voci fallite tornano con quante volte hanno fallito ([PendingKeys]).
+      val failedBefore = previous.orEmpty().mapNotNull(PendingKeys::failed).toMap()
+      // Null: il primo giro, su tutto. Poi solo quello che aspettava il computer, o che era fallito.
+      fun wanted(key: String) = previous == null || key in previous || key in failedBefore
 
       val now = System.currentTimeMillis()
       val today = LocalDate.now(zone)
@@ -105,6 +107,7 @@ class RealDatesBackfill @Inject constructor(
           throw e
         } catch (e: Throwable) {
           failures++
+          PendingKeys.retry(key, failedBefore[key])?.let { pending += it }
           android.util.Log.w(TAG, "date vere: sessione ${session.id}", e)
         }
       }
@@ -123,6 +126,7 @@ class RealDatesBackfill @Inject constructor(
           throw e
         } catch (e: Throwable) {
           failures++
+          PendingKeys.retry(key, failedBefore[key])?.let { pending += it }
           android.util.Log.w(TAG, "date vere: nota ${note.id}", e)
         }
       }
@@ -296,5 +300,31 @@ class RealDatesBackfill @Inject constructor(
     const val TAG = "PampaNotes"
     const val NOTE_PREFIX = "n:"
     const val SESSION_PREFIX = "s:"
+  }
+}
+
+/**
+ * Le voci in attesa di [RealDatesBackfill], nel set che resta in DataStore.
+ *
+ * Una voce che aspetta il computer e' la sua chiave (`n:<id>`). Una che e' fallita — un file che il
+ * parser non digerisce, un errore del database — prima usciva dal set e non si riprovava mai piu';
+ * adesso resta come `!<tentativi>!<chiave>`, e dopo [MAX_ATTEMPTS] giri falliti si lascia stare:
+ * un file che fallisce sempre non deve costare un giro a ogni avvio, per sempre.
+ *
+ * Puro: si prova in JVM.
+ */
+internal object PendingKeys {
+  const val MAX_ATTEMPTS = 3
+
+  private val FAILED = Regex("^!(\\d+)!(.+)$")
+
+  /** La chiave e i tentativi falliti, se [entry] e' una voce fallita. */
+  fun failed(entry: String): Pair<String, Int>? =
+    FAILED.matchEntire(entry)?.let { it.groupValues[2] to it.groupValues[1].toInt() }
+
+  /** La voce da tenere dopo un altro fallimento, o null se i tentativi sono finiti. */
+  fun retry(key: String, attemptsBefore: Int?): String? {
+    val attempts = (attemptsBefore ?: 0) + 1
+    return if (attempts < MAX_ATTEMPTS) "!$attempts!$key" else null
   }
 }

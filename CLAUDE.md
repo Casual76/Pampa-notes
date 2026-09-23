@@ -152,13 +152,16 @@ leggerlo non costa aprire i gigabyte che seguono: e' cosi' che la schermata puo'
 registrazione, di oggi» **prima** di chiedere conferma, che e' l'unico momento in cui accorgersi di
 aver scelto il backup di marzo costa un tocco invece di un mese di appunti.
 
-Quattro cose non ovvie, tutte in `core/backup/`:
+Cinque cose non ovvie, tutte in `core/backup/`:
 
 - **Il database si copia, non si zippa vivo.** Room scrive in WAL: il file principale da solo puo'
   essere indietro di minuti. `snapshotDatabase` fa `PRAGMA wal_checkpoint(TRUNCATE)` e poi copia.
 - **Niente segreti dentro.** La chiave di Groq e il token del server sono cifrati col Keystore del
   telefono, che non esce dal telefono: in un file su Drive sarebbero in chiaro e su un altro
   dispositivo non si aprirebbero comunque. `BackupSettings` porta solo le preferenze.
+- **L'archivio ha una chiusura.** L'ultima voce (`end.json`, `BackupTrailer`) dice quanti file e
+  byte sono entrati: un file sparito a meta' backup si salta, e uno zip troncato fra due voci — che
+  `ZipInputStream` legge senza errori — si rifiuta (`INCOMPLETE`) prima di toccare niente.
 - **Si estrae in `filesDir/restore`, e solo alla fine si sposta.** Fino al penultimo passo un errore
   lascia l'archivio dell'utente esattamente com'era. `BackupArchive.accepts` scarta ogni nome fuori
   dai tre posti previsti: `../../databases/altro.db` dentro uno zip e' il modo classico di far
@@ -322,7 +325,10 @@ meta' non prende mai il nome di quello buono, e `sweepOrphans` non guarda `tmp`.
 **Libera spazio** (Archiviazione → «Qui e anche sul computer»): quello che ha `archivedAt > 0` e sta
 ancora qui si puo' togliere dal dispositivo — originali e registrazioni con due tasti separati,
 perche' un PDF si riapre in un secondo e una lezione da un'ora senza il PC non si ascolta
-(`StorageRepository.evictArchived`; non tocca una registrazione con un lavoro in corso). Le righe
+(`StorageRepository.evictArchived`; non tocca una registrazione con un lavoro in corso, ne' quello
+che un export tiene in `FilesInUse`). `archivedAt > 0` non basta: prima di togliere un file si chiede
+al computer di adesso (`ArchiveRepository.presence`, un `HEAD`), e un 404 rimette la riga «da
+archiviare» invece di togliere l'unica copia; lo stesso fa `ArchiveFetcher` quando scarica. Le righe
 restano: e' lo stesso stato «il file non c'e'» di una riga arrivata dal sync, e tutto quello che
 segue vale anche qui. L'export dichiara anche gli originali saltati (`skippedSources`).
 
@@ -585,9 +591,12 @@ il testo di una nota scritta tutta a mano: ora si scarta.
 quando crescono: se il titolo e' quello di una nota gia' importata da un `.sdocx`
 (`ImportCandidate.updateOfNoteId`, cercato all'ispezione) il wizard propone «Aggiorna» per primo.
 `ImportTarget.UpdateNote`: il testo si **sostituisce**, le registrazioni con la stessa impronta
-restano con le loro trascrizioni, le nuove entrano una sessione per giorno di registrazione, e il
-`.sdocx` vecchio se ne va — riga, file, e blob sul PC (`DELETE /v1/files/<sha>` del companion,
-solo se nessun'altra fonte lo cita). Stesso contenuto (stessa impronta) e' invece un doppione, e
+restano con le loro trascrizioni, le nuove entrano una sessione per giorno di registrazione (in coda
+a quella della nota che ha gia' quel giorno), e il `.sdocx` vecchio se ne va — riga, file, pagine a
+mano e blob sul PC (`DELETE /v1/files/<sha>` del companion, solo se nessun'altra fonte lo cita).
+**Uno solo**: quello col titolo uguale (`ImportCandidate.updateOfSourceId`, `SdocxUpdate.pick`); un
+`.sdocx` arrivato con «Importa qui» resta, e del corpo si sostituisce solo il suo pezzo
+(`SdocxUpdate.mergeBody`: il testo vecchio dov'e', o il paragrafo `## <titolo>`, o in fondo). Stesso contenuto (stessa impronta) e' invece un doppione, e
 resta l'avviso di prima.
 
 ## Il testo che si accende

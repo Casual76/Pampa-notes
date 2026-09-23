@@ -307,6 +307,16 @@ class PampaSettingsStore(
 
   suspend fun setRealDatesPending(keys: Set<String>) = edit { it[RealDatesPending] = keys }
 
+  /**
+   * I due giri unici dell'avvio (date vere, pagine a mano) ripartono da capo. Serve dopo un
+   * ripristino: il database di un backup vecchio non ha avuto nessuno dei due, e i segni di «fatto»
+   * parlavano di quello che c'era prima.
+   */
+  suspend fun resetBackfills() = edit {
+    it.remove(RealDatesPending)
+    it.remove(HandwritingBackfillDone)
+  }
+
   // --- Aggiornamenti dell'app, per dispositivo ---------------------------------------------------
 
   /** Quando si e' guardato l'ultima volta se c'e' una versione nuova: il controllo all'avvio e' al massimo due al giorno. */

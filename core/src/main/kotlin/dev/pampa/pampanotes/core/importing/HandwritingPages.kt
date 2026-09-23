@@ -55,7 +55,7 @@ class HandwritingPages @Inject constructor(
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
   /** I `.sdocx` gia' provati dal giro unico: un segnaposto per file, scritto prima di provarlo. */
-  private val triedDir: File get() = File(files.root, "handwriting-tried")
+  private val triedDir: File get() = File(files.root, TRIED_DIR)
 
   /**
    * Ricava le pagine da un `.sdocx` gia' salvato e torna quante ne ha fatte.
@@ -238,6 +238,11 @@ class HandwritingPages @Inject constructor(
     } finally {
       temp.delete()
     }
+  }
+
+  companion object {
+    /** La cartella dei segnaposto del giro unico, sotto `filesDir`: il ripristino di un backup la svuota. */
+    const val TRIED_DIR = "handwriting-tried"
   }
 
   private fun pageId(sdocxId: String, number: Int): String =

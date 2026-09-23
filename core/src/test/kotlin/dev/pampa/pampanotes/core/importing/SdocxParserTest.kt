@@ -191,6 +191,23 @@ class SdocxParserTest {
   }
 
   /** Un record come quelli di note.note: int32 lunghezza in caratteri + UTF-16LE. */
+  @Test
+  fun `una registrazione datata nel futuro non ha data`() {
+    val now = 1_790_164_800_000L
+    fun record(atMillis: Long): ByteArray {
+      val name = "a.m4a"
+      val buffer = java.nio.ByteBuffer.allocate(10 + name.length * 2 + 64 + 2 + 8).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+      buffer.putInt(0x79).putInt(0).putShort(name.length.toShort())
+      buffer.put(name.toByteArray(Charsets.UTF_16LE))
+      buffer.put("0".repeat(64).toByteArray(Charsets.US_ASCII))
+      buffer.putShort(0).putLong(atMillis * 1000)
+      return buffer.array()
+    }
+    // Un'ora fa: vale. L'anno prossimo (prima si accettava fino al 2100): no.
+    assertEquals(now - 3_600_000, SdocxParser.readMediaInfo(record(now - 3_600_000), now).single().createdAtMillis)
+    assertNull(SdocxParser.readMediaInfo(record(now + 365L * 24 * 3_600_000), now).single().createdAtMillis)
+  }
+
   private fun utf16Record(text: String): ByteArray {
     val encoded = text.toByteArray(Charsets.UTF_16LE)
     val out = java.io.ByteArrayOutputStream()

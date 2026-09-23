@@ -146,6 +146,14 @@ interface NoteDao {
   @Query("SELECT * FROM notes WHERE title LIKE '%' || :query || '%' ORDER BY updatedAt DESC LIMIT :limit")
   suspend fun byTitle(query: String, limit: Int): List<NoteEntity>
 
+  /**
+   * Le note con esattamente quel titolo, senza badare a maiuscole e spazi in testa o in coda. Non
+   * [byTitle] filtrato dopo: con dieci note piu' recenti che *contengono* «Fichte» la nota che si
+   * chiama proprio cosi' restava fuori, e l'aggiornamento non veniva proposto.
+   */
+  @Query("SELECT * FROM notes WHERE TRIM(title) = TRIM(:title) COLLATE NOCASE ORDER BY updatedAt DESC")
+  suspend fun byExactTitle(title: String): List<NoteEntity>
+
   @Upsert
   suspend fun upsert(note: NoteEntity)
 

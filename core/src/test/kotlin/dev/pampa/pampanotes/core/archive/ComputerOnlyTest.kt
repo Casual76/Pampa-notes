@@ -14,6 +14,7 @@ import dev.pampa.pampanotes.core.db.SourceEntity
 import dev.pampa.pampanotes.core.db.SourceKind
 import dev.pampa.pampanotes.core.db.SyncDao
 import dev.pampa.pampanotes.core.files.AppFiles
+import dev.pampa.pampanotes.core.files.FilesInUse
 import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.repo.StorageRepository
 import dev.pampa.pampanotes.core.settings.PampaSettings
@@ -57,6 +58,13 @@ class ComputerOnlyTest {
   private var folderRules = emptySet<String>()
   private var noteRules = emptySet<String>()
   private val jobs = mutableListOf<JobEntity>()
+
+  // Quello che il computer di casa risponde al `HEAD` di ogni file: di serie ce li ha tutti.
+  private var lostOnComputer = emptySet<String>()
+  private var computerSilent = false
+  private val clearedParts = mutableListOf<String>()
+  private val clearedSources = mutableListOf<String>()
+  private val inUse = FilesInUse()
 
   private lateinit var settings: PampaSettingsStore
   private lateinit var scope: ComputerOnlyScope
@@ -176,7 +184,15 @@ class ComputerOnlyTest {
     val sources = mockk<SourceDao>()
     val jobDao = mockk<JobDao>()
     coEvery { jobDao.all() } answers { jobs.toList() }
-    return StorageRepository(audioParts, sources, jobDao, files, scope)
+    coEvery { audioParts.all() } answers { partsBySession.values.flatten() }
+    coEvery { sources.all() } answers { sourcesByNote.values.flatten() }
+    coEvery { audioParts.markArchived(any(), 0L) } answers { clearedParts += firstArg<String>() }
+    coEvery { sources.markArchived(any(), 0L) } answers { clearedSources += firstArg<String>() }
+    val archive = mockk<ArchiveRepository>()
+    coEvery { archive.presence(any()) } answers {
+      if (computerSilent) emptyMap() else firstArg<Collection<String>>().associateWith { it !in lostOnComputer }
+    }
+    return StorageRepository(audioParts, sources, jobDao, files, scope, archive, inUse)
   }
 
   private fun allHere() {
@@ -232,6 +248,49 @@ class ComputerOnlyTest {
     storage.evictComputerOnly()
     assertFalse(audioHere("p4"))
     assertTrue(audioHere("p5"))
+  }
+
+  @Test
+  fun `quello che il computer non ha piu' resta qui e torna da archiviare`() = runBlocking {
+    allHere()
+    folderRules = setOf("f2")
+    // Un PC nuovo, o un archivio svuotato: la riga dice archiviato, il computer risponde 404.
+    lostOnComputer = setOf("p3", "pdf3")
+    val gone = storage().evictComputerOnly()
+    assertEquals(1, gone.count)
+    assertTrue(audioHere("p3"))
+    assertTrue(sourceHere("pdf3"))
+    assertFalse(sourceHere("sdocx3"))
+    assertEquals(listOf("p3"), clearedParts)
+    assertEquals(listOf("pdf3"), clearedSources)
+  }
+
+  @Test
+  fun `col computer muto non se ne va niente`() = runBlocking {
+    allHere()
+    computerSilent = true
+    folderRules = setOf("f2")
+    assertEquals(0, storage().evictComputerOnly().count)
+    assertEquals(0, storage().evictArchived(sources = true, audio = true).count)
+    assertTrue(audioHere("p3"))
+    assertTrue(sourceHere("pdf3"))
+    // Nessuna risposta non e' un 404: le righe restano come sono.
+    assertTrue(clearedParts.isEmpty() && clearedSources.isEmpty())
+  }
+
+  @Test
+  fun `quello che un export sta per leggere resta`() = runBlocking {
+    allHere()
+    folderRules = setOf("f2")
+    inUse.hold(listOf(FilesInUse.audio("p3.m4a"), FilesInUse.source("pdf3.bin")), ttlMillis = 60_000)
+    storage().evictComputerOnly()
+    assertTrue(audioHere("p3"))
+    assertTrue(sourceHere("pdf3"))
+    assertFalse(sourceHere("sdocx3"))
+    // Scaduta la presa, il file torna a potersene andare.
+    inUse.release(listOf(FilesInUse.audio("p3.m4a")))
+    storage().evictComputerOnly()
+    assertFalse(audioHere("p3"))
   }
 
   @Test

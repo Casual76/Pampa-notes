@@ -83,14 +83,10 @@ object SdocxParser {
     val note = zip.getEntry(NOTE_ENTRY)?.let { zip.getInputStream(it).use { s -> s.readBytes() } }
     val mediaInfo = zip.getEntry(MEDIA_INFO_ENTRY)?.let { zip.getInputStream(it).use { s -> s.readBytes() } }
 
-    val prose = note?.let(::readProse).orEmpty()
-    // La prima stringa e' il titolo: e' corta e viene prima di tutto. Quando la nota non ha un
-    // titolo, Samsung Notes non ne scrive uno e la prima stringa e' gia' il corpo.
-    val title = prose.firstOrNull()?.takeIf { it.length <= TITLE_MAX_CHARS && !it.contains('\n') }
-    val body = (if (title != null) prose.drop(1) else prose).joinToString("\n\n").trim()
+    val (title, body) = note?.let(::titleAndBody) ?: (null to "")
 
     val voices = note?.let(::readVoices).orEmpty()
-    val media = mediaInfo?.let(::readMediaInfo).orEmpty()
+    val media = mediaInfo?.let { readMediaInfo(it) }.orEmpty()
     val audioEntries = zip.entries().asSequence()
       .map { it.name }
       .filter { it.substringAfterLast('.', "").lowercase() in AUDIO_EXTENSIONS }
@@ -106,6 +102,29 @@ object SdocxParser {
       handwrittenPages = handwritten,
       dates = readDates(zip, note),
     )
+  }
+
+  /**
+   * Solo titolo e testo battuto, senza inchiostro ne' registrazioni: serve a riconoscere quale
+   * `.sdocx` di una nota e' quello che si sta aggiornando, e che testo aveva portato. Contare le
+   * pagine a mano di un quaderno lungo per sapere come si chiama costerebbe secondi. Null se il file
+   * non si apre.
+   */
+  fun readText(file: File): Pair<String?, String>? = runCatching {
+    ZipFile(file).use { zip ->
+      zip.getEntry(NOTE_ENTRY)?.let { entry -> zip.getInputStream(entry).use { titleAndBody(it.readBytes()) } } ?: (null to "")
+    }
+  }.getOrNull()
+
+  /**
+   * La prima stringa e' il titolo: e' corta e viene prima di tutto. Quando la nota non ha un
+   * titolo, Samsung Notes non ne scrive uno e la prima stringa e' gia' il corpo.
+   */
+  private fun titleAndBody(note: ByteArray): Pair<String?, String> {
+    val prose = readProse(note)
+    val title = prose.firstOrNull()?.takeIf { it.length <= TITLE_MAX_CHARS && !it.contains('\n') }
+    val body = (if (title != null) prose.drop(1) else prose).joinToString("\n\n").trim()
+    return title to body
   }
 
   // -----------------------------------------------------------------------------------------------
@@ -271,7 +290,7 @@ object SdocxParser {
    * prefisso a trentadue: letta a trentadue, il nome partiva due byte dopo e nessun record passava
    * il controllo sull'estensione.
    */
-  internal fun readMediaInfo(bytes: ByteArray): List<MediaRecord> {
+  internal fun readMediaInfo(bytes: ByteArray, now: Long = System.currentTimeMillis()): List<MediaRecord> {
     val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
     val result = mutableListOf<MediaRecord>()
     var i = 0
@@ -286,7 +305,7 @@ object SdocxParser {
           val sha = if (cursor + 64 <= bytes.size) String(bytes, cursor, 64, Charsets.US_ASCII).takeIf { HEX64.matches(it) } else null
           if (sha != null) cursor += 64
           // Due byte di separatore, poi l'ora. Si legge solo se ha un valore da orologio.
-          val createdAt = if (sha != null && cursor + 2 + 8 <= bytes.size) plausibleEpochMillis(buffer.getLong(cursor + 2)) else null
+          val createdAt = if (sha != null && cursor + 2 + 8 <= bytes.size) plausibleEpochMillis(buffer.getLong(cursor + 2), now) else null
           result += MediaRecord(index, name, sha, createdAt)
           i = cursor
           continue
@@ -373,10 +392,15 @@ object SdocxParser {
     return ((h * 60 + m) * 60 + s) * 1000
   }
 
-  /** Microsecondi dal 1970, e solo se cadono in un intervallo da orologio; altrimenti null. */
-  private fun plausibleEpochMillis(raw: Long): Long? {
+  /**
+   * Microsecondi dal 1970, e solo se cadono in un intervallo da orologio; altrimenti null. In alto
+   * il limite e' adesso piu' un giorno, come per [RecordingDate]: una registrazione non e' stata
+   * fatta l'anno prossimo, e un valore del 2090 letto da un byte sbagliato datava nel futuro la
+   * lezione e la nota. Il giorno di margine e' per l'orologio di un tablet un po' avanti.
+   */
+  private fun plausibleEpochMillis(raw: Long, now: Long): Long? {
     val millis = raw / 1000
-    return millis.takeIf { it in EPOCH_2010_MS..EPOCH_2100_MS }
+    return millis.takeIf { it in EPOCH_2010_MS..(now + RECORDING_FUTURE_SLACK_MS) }
   }
 
   private const val PROSE_MIN_CHARS = 8
@@ -394,7 +418,7 @@ object SdocxParser {
   private const val TITLE_MAX_CHARS = 160
   private const val VOICE_NAME_MAX_CHARS = 80
   private const val EPOCH_2010_MS = 1_262_304_000_000L
-  private const val EPOCH_2100_MS = 4_102_444_800_000L
+  private const val RECORDING_FUTURE_SLACK_MS = 24 * 60 * 60_000L
 
   private val DURATION = Regex("\\d\\d:\\d\\d:\\d\\d")
   private val HEX64 = Regex("[0-9a-fA-F]{64}")

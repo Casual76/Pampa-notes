@@ -12,6 +12,7 @@ import dev.pampa.pampanotes.core.db.SessionDao
 import dev.pampa.pampanotes.core.db.SourceDao
 import dev.pampa.pampanotes.core.db.TranscriptDao
 import dev.pampa.pampanotes.core.files.AppFiles
+import dev.pampa.pampanotes.core.importing.HandwritingPages
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import java.io.File
 import javax.inject.Inject
@@ -56,8 +57,19 @@ class BackupService @Inject constructor(
 
   /** Cosa ci sarebbe dentro un backup fatto adesso: la schermata lo dice prima di scrivere niente. */
   suspend fun preview(app: String, includeAudio: Boolean, includeSources: Boolean): BackupManifest = withContext(io) {
-    manifest(app, includeAudio, includeSources, databaseBytes = liveDatabase().length())
+    manifest(
+      app, includeAudio, includeSources,
+      databaseBytes = liveDatabase().length(),
+      audioBytes = if (includeAudio) files.sizeOf(files.audio) else 0,
+      sourceBytes = if (includeSources) files.sizeOf(files.sources) else 0,
+    )
   }
+
+  /**
+   * Vero finche' il database e' aperto. Un ripristino fallito prima di chiuderlo lascia l'app com'era
+   * (e chi chiama rimette in moto quello che aveva fermato); uno fallito dopo vuole un riavvio.
+   */
+  val databaseOpen: Boolean get() = database.isOpen
 
   /** Scrive il backup nella cartella scelta e torna dove l'ha messo. */
   suspend fun write(
@@ -75,7 +87,8 @@ class BackupService @Inject constructor(
     try {
       val audio = if (includeAudio) filesIn(files.audio) else emptyList()
       val sourceFiles = if (includeSources) filesIn(files.sources) else emptyList()
-      val card = manifest(app, includeAudio, includeSources, snapshot.length())
+      // I pesi dal file che si scriveranno, non dalla cartella: e' quello che si confronta dopo.
+      val card = manifest(app, includeAudio, includeSources, snapshot.length(), audio.sumOf { it.length() }, sourceFiles.sumOf { it.length() })
       val name = backupFileName(card.createdAt)
 
       // Si scrive con un nome provvisorio e si rinomina alla fine: un file col nome di un backup e'
@@ -87,7 +100,7 @@ class BackupService @Inject constructor(
       val document = folder.createFile(PARTIAL_MIME, partialName)
         ?: throw BackupFailure(BackupFailure.Reason.CREATE)
 
-      try {
+      val trailer = try {
         val stream = context.contentResolver.openOutputStream(document.uri)
           ?: throw BackupFailure(BackupFailure.Reason.NOT_WRITABLE)
         stream.use { out -> BackupArchive.write(out, card, snapshot, audio, sourceFiles, onProgress) }
@@ -111,7 +124,9 @@ class BackupService @Inject constructor(
       }
 
       settings.setLastBackupAt(card.createdAt)
-      BackupResult(finished.uri, name, finished.length(), card)
+      // Quello che e' entrato davvero: un file tolto a meta' backup non c'e', e la schermata non lo
+      // conta.
+      BackupResult(finished.uri, name, finished.length(), card.copy(audioBytes = trailer.audioBytes, sourceBytes = trailer.sourceBytes, sealed = true))
     } finally {
       snapshot.delete()
     }
@@ -166,9 +181,21 @@ class BackupService @Inject constructor(
       database.close()
       val live = liveDatabase()
       // Il giornale di scrittura appartiene al database di prima: lasciarlo accanto a quello nuovo
-      // vorrebbe dire rigiocarci sopra transazioni di un altro archivio.
-      listOf(live, File(live.path + "-wal"), File(live.path + "-shm")).forEach { it.delete() }
-      move(staged.database, live)
+      // vorrebbe dire rigiocarci sopra transazioni di un altro archivio. Si mette da parte, non si
+      // cancella, finche' quello nuovo non e' al suo posto: uno spostamento fallito a meta' (disco
+      // pieno) lasciava l'app senza nessuno dei due.
+      val current = listOf(live, File(live.path + "-wal"), File(live.path + "-shm"))
+      val aside = current.map { File(it.path + ASIDE) }
+      aside.forEach { it.delete() }
+      current.zip(aside).forEach { (from, to) -> if (from.exists() && !from.renameTo(to)) throw BackupFailure(BackupFailure.Reason.INTERRUPTED) }
+      try {
+        move(staged.database, live)
+      } catch (e: Throwable) {
+        live.delete()
+        aside.zip(current).forEach { (from, to) -> if (from.exists()) from.renameTo(to) }
+        throw e
+      }
+      aside.forEach { it.delete() }
 
       if (staged.manifest.includesAudio) replaceDir(staged.audio, files.audio)
       if (staged.manifest.includesSources) replaceDir(staged.sources, files.sources)
@@ -178,6 +205,10 @@ class BackupService @Inject constructor(
 
       staged.manifest.settings?.let { restoreSettings(it) }
       settings.setOnboardingDone(true)
+      // I giri unici dell'avvio ricominciano: il database ripristinato puo' essere di prima delle
+      // date vere e delle pagine a mano, e i segni di «fatto» parlavano di quello di prima.
+      settings.resetBackfills()
+      File(files.root, HandwritingPages.TRIED_DIR).deleteRecursively()
       staged.manifest
     } finally {
       staging.deleteRecursively()
@@ -191,14 +222,16 @@ class BackupService @Inject constructor(
     includeAudio: Boolean,
     includeSources: Boolean,
     databaseBytes: Long,
+    audioBytes: Long,
+    sourceBytes: Long,
   ): BackupManifest = BackupManifest(
     createdAt = System.currentTimeMillis(),
     app = app,
     databaseVersion = database.openHelper.readableDatabase.version,
     includesAudio = includeAudio,
     includesSources = includeSources,
-    audioBytes = if (includeAudio) files.sizeOf(files.audio) else 0,
-    sourceBytes = if (includeSources) files.sizeOf(files.sources) else 0,
+    audioBytes = audioBytes,
+    sourceBytes = sourceBytes,
     databaseBytes = databaseBytes,
     counts = BackupCounts(
       folders = folders.count(),
@@ -269,5 +302,6 @@ class BackupService @Inject constructor(
     const val MIME = "application/zip"
     private const val PARTIAL = ".partial"
     private const val PARTIAL_MIME = "application/octet-stream"
+    private const val ASIDE = ".before-restore"
   }
 }

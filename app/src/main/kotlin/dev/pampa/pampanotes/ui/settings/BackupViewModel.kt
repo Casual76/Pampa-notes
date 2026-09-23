@@ -11,6 +11,8 @@ import dev.pampa.pampanotes.core.backup.BackupManifest
 import dev.pampa.pampanotes.core.backup.BackupResult
 import dev.pampa.pampanotes.core.backup.BackupService
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
+import dev.pampa.pampanotes.core.transcription.GroqWhisperProvider
+import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
 import dev.pampa.pampanotes.work.WorkScheduler
 import javax.inject.Inject
 import kotlinx.coroutines.Job
@@ -167,7 +169,24 @@ class BackupViewModel @Inject constructor(
         throw cancelled
       } catch (failure: Throwable) {
         _uiState.update { it.copy(stage = BackupStage.IDLE, pending = null, error = messageOf(failure)) }
+        // Il ripristino non e' andato e il database e' ancora quello di prima: quello che si era
+        // fermato riparte, o sync, archivio e coda restavano spenti fino al prossimo avvio.
+        if (service.databaseOpen) resumeWork()
       }
+    }
+  }
+
+  /** Quello che [WorkScheduler.stopAll] ha fermato, rimesso come all'avvio dell'app. */
+  private suspend fun resumeWork() {
+    runCatching {
+      val current = settings.current()
+      work.setPeriodicArchive(current.archiveEnabled, current.archiveOnlyUnmetered)
+      work.setPeriodicSync(current.syncEnabled)
+      if (current.syncEnabled) work.syncNow()
+      // Una coda vuota si chiude subito, senza andare in primo piano: svegliarle tutte e due costa
+      // niente, e i lavori interrotti dallo stop sono tornati in fila.
+      work.wake(OpenAiCompatProvider.ID)
+      work.kick(GroqWhisperProvider.ID)
     }
   }
 
@@ -199,6 +218,7 @@ class BackupViewModel @Inject constructor(
         BackupFailure.Reason.NEWER -> R.string.backup_failure_newer
         BackupFailure.Reason.BAD_MANIFEST -> R.string.backup_failure_bad_manifest
         BackupFailure.Reason.NO_DATABASE -> R.string.backup_failure_no_database
+        BackupFailure.Reason.INCOMPLETE -> R.string.backup_failure_incomplete
       },
     )
   }

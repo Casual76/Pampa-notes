@@ -44,6 +44,11 @@ data class ImportCandidate(
   val updateOfNoteId: String? = null,
   val updateOfNoteTitle: String? = null,
   /**
+   * Quale `.sdocx` di quella nota e' la versione vecchia di questo ([SdocxUpdate.pick]): se ne va
+   * lui solo, con le sue pagine a mano. Gli altri — arrivati con «Importa qui» — restano.
+   */
+  val updateOfSourceId: String? = null,
+  /**
    * Il giorno della registrazione, per l'audio: letto all'ispezione, perche' la data di modifica
    * del file la sa solo chi lo condivide, e la copia nostra e' di adesso. Vedi [RecordingDate].
    */
