@@ -1,5 +1,6 @@
 package dev.pampa.pampanotes.core.sync
 
+import android.database.sqlite.SQLiteConstraintException
 import androidx.room.withTransaction
 import dev.pampa.pampanotes.core.db.AudioPartEntity
 import dev.pampa.pampanotes.core.db.ExportPresetEntity
@@ -29,6 +30,11 @@ data class ApplyOutcome(
   val deleted: Int = 0,
   val skipped: Int = 0,
   val forked: Int = 0,
+  /**
+   * Le righe il cui padre qui non c'e' ancora: non applicate, da riprovare con le pagine che
+   * seguono. Vedi [SyncApplier.apply].
+   */
+  val orphans: List<WireChange> = emptyList(),
 )
 
 /**
@@ -62,7 +68,17 @@ class SyncApplier @Inject constructor(
 ) {
   private val json = SyncCodec.json
 
-  /** @param deviceNames come si chiamano gli altri dispositivi, per il titolo di una copia del loro testo. */
+  /**
+   * @param deviceNames come si chiamano gli altri dispositivi, per il titolo di una copia del loro testo.
+   *
+   * Una riga il cui padre qui non c'e' non fa fallire la pagina: torna in [ApplyOutcome.orphans]. Il
+   * server tiene una riga sola per elemento, col numero della sua **ultima** modifica, quindi una
+   * nota ritoccata dopo che le si e' aggiunta una fonte arriva *dopo* la fonte, magari in una pagina
+   * successiva. Prima, la fonte faceva scattare la chiave esterna, la pagina tornava indietro, e il
+   * pull falliva sempre nello stesso punto: il dispositivo non si sincronizzava piu', e siccome il
+   * push viene dopo il pull non mandava piu' niente nemmeno lui. Chi chiama ripresenta gli orfani
+   * insieme alla pagina dopo, dove il padre di solito c'e'.
+   */
   suspend fun apply(changes: List<WireChange>, ownerId: String, deviceName: String, deviceNames: Map<String, String> = emptyMap()): ApplyOutcome {
     if (changes.isEmpty()) return ApplyOutcome()
     val ordered = changes.sortedWith(compareBy({ SyncMerge.orderOf(it.tbl) }, { it.seq }))
@@ -77,7 +93,7 @@ class SyncApplier @Inject constructor(
       if (big) SEARCH_TRIGGER_NAMES.forEach { db.openHelper.writableDatabase.execSQL("DROP TRIGGER IF EXISTS $it") }
       try {
         var outcome = ApplyOutcome()
-        for (change in ordered) outcome = applyOne(change, ownerId, deviceName, deviceNames, outcome)
+        for (change in ordered) outcome = applyOrPark(change, ownerId, deviceName, deviceNames, outcome)
         if (big) {
           PampaDatabase.SEARCH_TRIGGERS.forEach { db.openHelper.writableDatabase.execSQL(it) }
           db.search().rebuild()
@@ -86,6 +102,27 @@ class SyncApplier @Inject constructor(
       } finally {
         sync.setApplying(0)
       }
+    }
+  }
+
+  /**
+   * [applyOne] dentro un savepoint: se il padre manca, torna indietro tutto quello che la riga aveva
+   * fatto — anche la copia di conflitto, che altrimenti nascerebbe due volte quando la riga si
+   * riprova — e la riga si mette da parte.
+   */
+  private suspend fun applyOrPark(change: WireChange, ownerId: String, deviceName: String, deviceNames: Map<String, String>, outcome: ApplyOutcome): ApplyOutcome {
+    val sql = db.openHelper.writableDatabase
+    sql.execSQL("SAVEPOINT sync_row")
+    return try {
+      applyOne(change, ownerId, deviceName, deviceNames, outcome).also { sql.execSQL("RELEASE sync_row") }
+    } catch (orphan: SQLiteConstraintException) {
+      if (orphan.message?.contains("FOREIGN KEY", ignoreCase = true) != true) {
+        sql.execSQL("ROLLBACK TO sync_row"); sql.execSQL("RELEASE sync_row")
+        throw orphan
+      }
+      sql.execSQL("ROLLBACK TO sync_row")
+      sql.execSQL("RELEASE sync_row")
+      outcome.copy(orphans = outcome.orphans + change)
     }
   }
 

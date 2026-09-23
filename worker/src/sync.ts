@@ -204,6 +204,8 @@ export async function pull(env: Env, ownerId: string, deviceId: string, since: n
 
   const more = rows.results.length > pageSize;
   const page = rows.results.slice(0, pageSize);
+  const lastSeq = page.length ? page[page.length - 1].seq : owner.seq;
+  if (more) page.push(...(await parentsAfter(env, ownerId, deviceId, page, lastSeq)));
 
   const transcriptIds = page.filter((r) => r.tbl === "transcripts" && r.op === "U").map((r) => r.rowId);
   const segmentsById = new Map<string, unknown[]>();
@@ -233,8 +235,64 @@ export async function pull(env: Env, ownerId: string, deviceId: string, since: n
 
   // La pagina si ferma all'ultimo `seq` consegnato: il prossimo pull riparte da li'. Se non c'e'
   // altro, si dice il `seq` del proprietario, cosi' il client sa di essere in pari.
-  const lastSeq = page.length ? page[page.length - 1].seq : owner.seq;
   return { changes, seq: more ? lastSeq : owner.seq, more };
+}
+
+type StateRow = { tbl: Table; rowId: string; op: "U" | "D"; updatedAt: number; hash: string; deviceId: string; payload: string | null; seq: number };
+
+/** Dove sta il padre di una riga, per le tabelle che ne hanno uno. */
+function parentOf(row: StateRow): { tbl: Table; id: string } | null {
+  if (row.op !== "U" || !row.payload) return null;
+  const payload = JSON.parse(row.payload) as Record<string, unknown>;
+  const pick = (tbl: Table, value: unknown) => (typeof value === "string" && value ? { tbl, id: value } : null);
+  switch (row.tbl) {
+    case "folders": return pick("folders", payload.parentId);
+    // Il client manda la nota dentro `note`, insieme ai tag; i test del protocollo la mandano piatta.
+    case "notes": return pick("folders", (payload.note as Record<string, unknown> | undefined)?.folderId ?? payload.folderId);
+    case "sessions":
+    case "sources": return pick("notes", payload.noteId);
+    case "audio_parts": return pick("sessions", payload.sessionId);
+    case "transcripts": return pick("sessions", payload.sessionId);
+    default: return null;
+  }
+}
+
+/**
+ * I padri che arriverebbero in una pagina dopo, messi in questa.
+ *
+ * Lo stato tiene una riga per elemento col `seq` della sua **ultima** modifica: una nota ritoccata
+ * dopo che le si e' aggiunta una sessione ha un `seq` piu' alto della sessione, e se la pagina si
+ * ferma in mezzo la sessione arriva senza la nota. Sul dispositivo la chiave esterna la rifiuta, e
+ * un client che non sa aspettare il padre fallisce il pull sempre nello stesso punto — e siccome il
+ * push viene dopo il pull, smette anche di mandare. Con i padri dentro la pagina (il client applica
+ * padre prima di figlio) la pagina entra; i padri torneranno nella loro pagina, e riapplicarli non
+ * cambia niente. Si risale la catena: parte → sessione → nota → cartella.
+ */
+async function parentsAfter(env: Env, ownerId: string, deviceId: string, page: StateRow[], lastSeq: number): Promise<StateRow[]> {
+  const have = new Set(page.map((r) => `${r.tbl}/${r.rowId}`));
+  const extra: StateRow[] = [];
+  let frontier = page;
+  for (let depth = 0; depth < 4 && frontier.length; depth++) {
+    const wanted = new Map<string, { tbl: Table; id: string }>();
+    for (const row of frontier) {
+      const parent = parentOf(row);
+      if (parent && !have.has(`${parent.tbl}/${parent.id}`)) wanted.set(`${parent.tbl}/${parent.id}`, parent);
+    }
+    const found: StateRow[] = [];
+    const list = [...wanted.values()];
+    for (let i = 0; i < list.length; i += 40) {
+      const slice = list.slice(i, i + 40);
+      const where = slice.map(() => "(tbl = ? AND rowId = ?)").join(" OR ");
+      const result = await env.DB.prepare(
+        `SELECT tbl, rowId, op, updatedAt, hash, deviceId, payload, seq FROM state WHERE ownerId = ? AND seq > ? AND deviceId != ? AND op = 'U' AND (${where})`,
+      ).bind(ownerId, lastSeq, deviceId, ...slice.flatMap((p) => [p.tbl, p.id])).all<StateRow>();
+      found.push(...result.results);
+    }
+    for (const row of found) have.add(`${row.tbl}/${row.rowId}`);
+    extra.push(...found);
+    frontier = found;
+  }
+  return extra;
 }
 
 export interface Status {

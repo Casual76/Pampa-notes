@@ -165,6 +165,11 @@ class SyncRepository @Inject constructor(
       }
     }
 
+    // Prima i padri: una fonte che sale in un blocco prima della sua nota arriverebbe agli altri
+    // dispositivi senza il padre. L'outbox e' in ordine di ultima modifica, e una nota ritoccata
+    // dopo aver ricevuto una sessione ci sta dietro.
+    staged.sortBy { SyncMerge.orderOf(it.second.tbl) }
+
     var sent = 0
     var rejected = 0
     staged.chunked(BATCH).forEach { batch ->
@@ -191,14 +196,26 @@ class SyncRepository @Inject constructor(
     var applied = 0
     var deleted = 0
     var forked = 0
+    // Le righe arrivate prima del loro padre (vedi SyncApplier.apply): si ripresentano con la
+    // pagina dopo, e il punto da cui ripartire non le scavalca finche' non sono entrate — se il
+    // giro si interrompe, il prossimo le riprende.
+    var parked = emptyList<WireChange>()
     while (true) {
       val page = api.pull(url, token, deviceId, since)
       if (page.rebaseline) return rebaseline(url, token, deviceId, deviceName, names, ownerId)
-      val outcome = applier.apply(page.changes, ownerId, deviceName, names)
+      val outcome = applier.apply(parked + page.changes, ownerId, deviceName, names)
       applied += outcome.applied; deleted += outcome.deleted; forked += outcome.forked
+      parked = outcome.orphans
       since = page.seq
-      db.sync().upsertState(SyncStateEntity(lastPullSeq = since, deviceId = deviceId))
+      val safe = parked.minOfOrNull { it.seq - 1 }?.coerceAtMost(since) ?: since
+      db.sync().upsertState(SyncStateEntity(lastPullSeq = safe, deviceId = deviceId))
       if (!page.more) break
+    }
+    if (parked.isNotEmpty()) {
+      // Il padre non e' arrivato nemmeno in fondo: sul server non c'e' piu', o non c'e' ancora. Si
+      // va avanti lo stesso — una riga senza padre non ha dove stare — e lo si scrive.
+      android.util.Log.w("SyncRepository", "pull: ${parked.size} righe senza padre saltate: ${parked.take(5).joinToString { "${it.tbl}/${it.id}" }}")
+      db.sync().upsertState(SyncStateEntity(lastPullSeq = since, deviceId = deviceId))
     }
     return Pulled(applied, deleted, forked, rebaselined = false)
   }
@@ -210,6 +227,7 @@ class SyncRepository @Inject constructor(
    */
   private suspend fun rebaseline(url: String, token: String, deviceId: String, deviceName: String, names: Map<String, String>, ownerId: String): Pulled {
     val seen = mutableMapOf<String, MutableSet<String>>()
+    var parked = emptyList<WireChange>()
     var since = 0L
     var applied = 0
     var deleted = 0
@@ -217,8 +235,9 @@ class SyncRepository @Inject constructor(
     while (true) {
       val page = api.pull(url, token, deviceId, since)
       page.changes.filter { !it.isDelete }.forEach { seen.getOrPut(it.tbl) { mutableSetOf() } += it.id }
-      val outcome = applier.apply(page.changes, ownerId, deviceName, names)
+      val outcome = applier.apply(parked + page.changes, ownerId, deviceName, names)
       applied += outcome.applied; deleted += outcome.deleted; forked += outcome.forked
+      parked = outcome.orphans
       since = page.seq
       if (!page.more) break
     }
