@@ -1,10 +1,12 @@
 package dev.pampa.pampanotes.ui.common
 
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.db.JobEntity
 import dev.pampa.pampanotes.core.db.JobState
+import dev.pampa.pampanotes.work.JobPhaseText
 
 /**
  * Le frasi che descrivono un lavoro.
@@ -69,6 +71,9 @@ fun jobPhaseText(job: JobEntity): String {
 
     "waiting" -> stringResource(R.string.job_phase_waiting, parts.getOrNull(1)?.toIntOrNull() ?: 0)
     "endpoint" -> stringResource(R.string.job_phase_endpoint)
+    // Groq ha chiesto di aspettare piu' di quanto valga la pena tenere il lavoro aperto: e' tornato
+    // in coda, e riparte da solo a quell'ora.
+    "until" -> JobPhaseText.untilText(LocalContext.current, parts.getOrNull(1)?.toLongOrNull()) ?: jobStateLabel(job.state)
     "stitching" -> stringResource(R.string.job_state_stitching)
     else -> jobStateLabel(job.state)
   }

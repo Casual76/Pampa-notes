@@ -32,7 +32,10 @@ data class PartTranscript(
   val text: String,
   val segments: List<StitchedSegment>,
   val language: String?,
-)
+) {
+  /** Niente parole: una parte muta, o tutti i suoi pezzi muti. */
+  val isEmpty: Boolean get() = segments.isEmpty() && text.isBlank()
+}
 
 /** Il risultato di una sessione intera: le parti in fila, con i tempi assoluti gia' fatti. */
 data class SessionTranscript(
@@ -139,6 +142,10 @@ class TranscriptionRunner @Inject constructor(
       )
     }
 
+    // Una parte muta in mezzo a una lezione e' una registrazione partita per sbaglio, non una
+    // lezione fallita: si salta. Muta tutta, invece, non c'e' niente da salvare, e lo si dice.
+    if (transcripts.all { it.isEmpty }) throw TranscriptionError.NoSpeech("il servizio non ha riconosciuto parole")
+
     onProgress(TranscriptionProgress.Stitching)
     return SessionAssembler.assemble(transcripts, provider.id, request.model)
   }
@@ -165,22 +172,25 @@ class TranscriptionRunner @Inject constructor(
       }
     }
 
-    val limit = provider.capabilities.maxUploadBytes
-    val targetMs = chunkMinutes * 60_000L
-    val fitsWhole = !provider.capabilities.needsChunking ||
-      (limit != null && source.length() <= limit && part.durationMs <= targetMs)
+    val targetMs = chunkTargetMs(provider.capabilities, source.name, source.length(), part.durationMs, chunkMinutes)
 
     // La via breve: il file ci sta intero. Niente decodifica, niente ricodifica, niente cuciture —
     // ed e' anche l'unica che conserva la qualita' originale dell'audio.
-    if (fitsWhole) {
-      val result = sendWithRetry(provider, source, part.mime, request) { progress ->
-        onProgress(TranscriptionProgress.Uploading(0, 1, progress.fraction))
+    if (targetMs == null) {
+      val result = try {
+        sendWithRetry(provider, source, part.mime, request, waitingReporter(onProgress)) { progress ->
+          onProgress(TranscriptionProgress.Uploading(0, 1, progress.fraction))
+        }
+      } catch (silent: TranscriptionError.NoSpeech) {
+        return PartTranscript(part, "", emptyList(), null)
       }
       onProgress(TranscriptionProgress.Transcribing(0, 1))
       val stitched = TranscriptStitcher.stitch(
         listOf(ChunkTranscript(ChunkSpec(0, 0, part.durationMs), result.segments)),
       )
-      return PartTranscript(part, stitched.text, stitched.segments, result.language)
+      // Un server che risponde col solo testo, senza segmenti: mezzo risultato vale piu' di niente.
+      val text = stitched.text.ifBlank { result.text.trim() }
+      return PartTranscript(part, text, stitched.segments, result.language)
     }
 
     val pcm = File(workDir, "audio.pcm")
@@ -201,11 +211,17 @@ class TranscriptionRunner @Inject constructor(
 
       val encoded = ChunkEncoder.encode(pcm, PcmDecoder.TARGET_SAMPLE_RATE, spec, workDir)
       try {
-        val result = sendWithRetry(provider, encoded.file, encoded.mime, request) { progress ->
-          onProgress(TranscriptionProgress.Uploading(spec.index + 1, plan.chunks.size, progress.fraction))
+        val segments = try {
+          sendWithRetry(provider, encoded.file, encoded.mime, request, waitingReporter(onProgress)) { progress ->
+            onProgress(TranscriptionProgress.Uploading(spec.index + 1, plan.chunks.size, progress.fraction))
+          }.segments
+        } catch (silent: TranscriptionError.NoSpeech) {
+          // Dieci minuti di intervallo, o la classe che esce: un pezzo muto e' un pezzo vuoto, non
+          // una lezione fallita. Si salva vuoto, cosi' una ripresa non lo rimanda.
+          emptyList()
         }
         onProgress(TranscriptionProgress.Transcribing(spec.index + 1, plan.chunks.size))
-        val chunk = ChunkTranscript(spec, result.segments)
+        val chunk = ChunkTranscript(spec, segments)
         // Prima su disco, poi in memoria: un processo ucciso fra le due cose deve poter ripartire
         // da qui, non dal pezzo precedente.
         writeStoredChunk(workDir, chunk)
@@ -269,6 +285,7 @@ class TranscriptionRunner @Inject constructor(
     file: File,
     mime: String,
     request: TranscribeRequest,
+    onWaiting: (seconds: Int) -> Unit,
     onProgress: (UploadProgress) -> Unit,
   ): TranscriptResult {
     var attempt = 0
@@ -277,13 +294,24 @@ class TranscriptionRunner @Inject constructor(
       try {
         return provider.transcribe(file, mime, request, onProgress)
       } catch (error: Throwable) {
+        // Una cancellazione resta una cancellazione: tradotta in un errore, il worker la scambiava
+        // per un guasto e segnava fallito un lavoro che l'utente — o il sistema — aveva fermato.
+        if (error is kotlinx.coroutines.CancellationException) throw error
         val mapped = TranscriptionError.from(error)
-        if (mapped is TranscriptionError.Cancelled) throw mapped
         attempt++
         if (!mapped.retryable || attempt > MAX_ATTEMPTS) throw mapped
-        delay(backoffMillis(mapped, attempt))
+        // Un limite che chiede ore non si aspetta qui dentro, con il worker in primo piano e la
+        // notifica accesa: esce, e la coda rimette il lavoro in fila per quell'ora.
+        if (mapped is TranscriptionError.RateLimited && exceedsWaitCap(mapped)) throw mapped
+        val wait = backoffMillis(mapped, attempt)
+        if (mapped is TranscriptionError.RateLimited) onWaiting(((wait + 999) / 1000).toInt())
+        delay(wait)
       }
     }
+  }
+
+  private fun waitingReporter(onProgress: (TranscriptionProgress) -> Unit): (Int) -> Unit = { seconds ->
+    onProgress(TranscriptionProgress.Waiting(seconds, "rate_limit"))
   }
 
   /** Quanto aspettare prima del tentativo numero [attempt]. */
@@ -350,7 +378,35 @@ class TranscriptionRunner @Inject constructor(
     const val BASE_BACKOFF_MS = 2_000L
     const val MAX_BACKOFF_MS = 32_000L
 
-    /** Un'attesa piu' lunga di questa la si mostra come errore, non come pausa. */
+    /** Un'attesa piu' lunga di questa non si fa qui: il lavoro torna in coda per l'ora giusta. */
     const val MAX_RATE_LIMIT_WAIT_MS = 90_000L
+
+    /** Il limite chiede di aspettare piu' di quanto si aspetti dentro un lavoro. */
+    fun exceedsWaitCap(error: TranscriptionError.RateLimited): Boolean =
+      (error.retryAfterSec ?: 0.0) * 1000 > MAX_RATE_LIMIT_WAIT_MS
+
+    /**
+     * Quanto deve durare un pezzo, oppure null se il file va mandato intero.
+     *
+     * Intero quando il servizio non vuole pezzi, oppure quando il file ci sta: formato accettato,
+     * sotto il tetto di byte, e non piu' lungo di un pezzo. La durata la dice il servizio se ne ha
+     * una sua ([TranscriptionCapabilities.maxChunkMinutes], il computer di casa con un tetto),
+     * altrimenti le impostazioni di Groq ([groqChunkMinutes]).
+     */
+    fun chunkTargetMs(
+      capabilities: TranscriptionCapabilities,
+      fileName: String,
+      sizeBytes: Long,
+      durationMs: Long,
+      groqChunkMinutes: Int,
+    ): Long? {
+      if (!capabilities.needsChunking) return null
+      val targetMs = (capabilities.maxChunkMinutes ?: groqChunkMinutes).coerceAtLeast(1) * 60_000L
+      val limit = capabilities.maxUploadBytes
+      val fits = capabilities.acceptsAsIs(fileName) &&
+        (limit == null || sizeBytes <= limit) &&
+        durationMs <= targetMs
+      return if (fits) null else targetMs
+    }
   }
 }

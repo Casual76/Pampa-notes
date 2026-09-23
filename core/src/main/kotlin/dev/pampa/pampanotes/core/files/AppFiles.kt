@@ -61,6 +61,15 @@ class AppFiles(context: Context) {
 
   fun clearExports(): Int = exports.listFiles()?.count { it.deleteRecursively() } ?: 0
 
+  /**
+   * Toglie da `cacheDir/tmp` quello che ha piu' di [olderThanMs]: i prelievi dal computer interrotti
+   * a meta' (`fetch-*.part`) e le copie di un import mai finito. Nessuno li riprende — un prelievo
+   * riparte da zero — e restavano li' finche' il sistema non svuotava la cache. Giovani no: possono
+   * essere di un lavoro che sta scrivendo adesso.
+   */
+  fun sweepTemp(olderThanMs: Long = 24 * 60 * 60_000L, now: Long = System.currentTimeMillis()): Int =
+    temp.listFiles()?.count { now - it.lastModified() > olderThanMs && it.deleteRecursively() } ?: 0
+
   companion object {
     /** Quanto deve avere un file senza riga prima che la pulizia lo consideri orfano. */
     const val ORPHAN_MIN_AGE_MS = 15 * 60 * 1000L

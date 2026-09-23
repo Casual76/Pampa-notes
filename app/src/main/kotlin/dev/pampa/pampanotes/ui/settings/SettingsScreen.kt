@@ -401,38 +401,60 @@ private fun LazyListScope.transcriptionSection(settings: PampaSettings, viewMode
           FluidSwitch(checked = settings.autoTranscribeOnImport, onCheckedChange = viewModel::setAutoTranscribe)
         },
       )
-      FluidListDivider()
-      FluidListRow(
-        title = stringResource(R.string.settings_chunk_minutes),
-        subtitle = stringResource(R.string.settings_chunk_minutes_detail),
-        meta = "${settings.chunkMinutes} min",
+    }
+  }
+
+  // I pezzi, un servizio per volta: Groq li vuole per forza (il tetto per richiesta), il computer di
+  // casa solo se glieli si chiede. Con «solo il computer di casa» Groq non si usa mai, e le sue
+  // scelte spariscono invece di restare li' a sembrare importanti.
+  if (!settings.customOnly) {
+    item { FluidSectionHeader(title = stringResource(R.string.provider_groq)) }
+    item {
+      FluidListGroup {
+        FluidListRow(
+          title = stringResource(R.string.settings_chunk_minutes),
+          subtitle = stringResource(R.string.settings_chunk_minutes_detail),
+          meta = "${settings.chunkMinutes} min",
+        )
+        FluidListDivider()
+        FluidListRow(
+          title = stringResource(R.string.settings_groq_limit),
+          subtitle = stringResource(R.string.settings_groq_limit_detail),
+          meta = "${settings.groqMaxUploadMb} MB",
+        )
+      }
+    }
+
+    item {
+      FluidSegmentedControl(
+        options = listOf(5, 10, 15),
+        selected = settings.chunkMinutes,
+        onSelect = viewModel::setChunkMinutes,
+        label = { "$it min" },
       )
-      FluidListDivider()
-      FluidListRow(
-        title = stringResource(R.string.settings_groq_limit),
-        subtitle = stringResource(R.string.settings_groq_limit_detail),
-        meta = "${settings.groqMaxUploadMb} MB",
+    }
+
+    item {
+      FluidSegmentedControl(
+        options = listOf(25, 100),
+        selected = settings.groqMaxUploadMb,
+        onSelect = viewModel::setGroqMaxUploadMb,
+        label = { "$it MB" },
       )
     }
   }
 
+  item { FluidSectionHeader(title = stringResource(R.string.provider_custom)) }
   item {
+    val whole = stringResource(R.string.settings_custom_chunk_whole)
     FluidSegmentedControl(
-      options = listOf(5, 10, 15),
-      selected = settings.chunkMinutes,
-      onSelect = viewModel::setChunkMinutes,
-      label = { "$it min" },
+      options = listOf<Int?>(null, 30, 60, 120),
+      selected = settings.customMaxMinutes,
+      onSelect = viewModel::setCustomMaxMinutes,
+      label = { minutes -> minutes?.let { "$it min" } ?: whole },
     )
   }
-
-  item {
-    FluidSegmentedControl(
-      options = listOf(25, 100),
-      selected = settings.groqMaxUploadMb,
-      onSelect = viewModel::setGroqMaxUploadMb,
-      label = { "$it MB" },
-    )
-  }
+  item { FluidSectionFootnote(text = stringResource(R.string.settings_custom_chunk_detail)) }
 
   item {
     val autoLabel = stringResource(R.string.language_auto)

@@ -186,6 +186,26 @@ fun SyncSectionRoute(
         )
       }
     }
+    // Un altro account: il giro si e' fermato per non mescolare le note di due persone. Si esce in
+    // due modi — rientrare con l'account di prima, o dire esplicitamente che queste note sono tue.
+    if (state.foreignAccount) {
+      item {
+        FluidInlineMessage(
+          title = stringResource(R.string.sync_foreign_title),
+          message = stringResource(R.string.sync_foreign_detail),
+          tone = FluidTone.Warning,
+        )
+      }
+      item {
+        FluidButton(
+          text = stringResource(R.string.sync_foreign_adopt),
+          onClick = viewModel::adoptAccount,
+          style = FluidButtonStyle.Tinted,
+          fillWidth = true,
+          modifier = Modifier.fillMaxWidth(),
+        )
+      }
+    }
     state.last?.takeIf { it.error == null }?.let { last ->
       item {
         FluidInlineMessage(

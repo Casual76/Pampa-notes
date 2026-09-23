@@ -1,5 +1,6 @@
 package dev.pampa.pampanotes.core.repo
 
+import androidx.room.withTransaction
 import dev.antigravity.fluidengine.ai.keys.AiKeyStore
 import dev.antigravity.fluidengine.ai.provider.ProviderId
 import dev.pampa.pampanotes.core.db.AudioPartDao
@@ -8,6 +9,7 @@ import dev.pampa.pampanotes.core.db.JobEntity
 import dev.pampa.pampanotes.core.db.JobState
 import dev.pampa.pampanotes.core.db.JobType
 import dev.pampa.pampanotes.core.db.NoteDao
+import dev.pampa.pampanotes.core.db.PampaDatabase
 import dev.pampa.pampanotes.core.db.SegmentDao
 import dev.pampa.pampanotes.core.db.SegmentEntity
 import dev.pampa.pampanotes.core.db.SessionDao
@@ -20,6 +22,7 @@ import dev.pampa.pampanotes.core.model.wordCount
 import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
+import dev.pampa.pampanotes.core.transcription.ComputerAuth
 import dev.pampa.pampanotes.core.transcription.GroqWhisperProvider
 import dev.pampa.pampanotes.core.transcription.EndpointResolver
 import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
@@ -28,9 +31,12 @@ import dev.pampa.pampanotes.core.transcription.TranscribeRequest
 import dev.pampa.pampanotes.core.transcription.TranscriptionError
 import dev.pampa.pampanotes.core.transcription.TranscriptionHttp
 import dev.pampa.pampanotes.core.transcription.TranscriptionProvider
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * La coda delle trascrizioni, vista da chi la usa.
@@ -51,6 +57,8 @@ class TranscriptionRepository @Inject constructor(
   private val keys: AiKeyStore,
   private val http: TranscriptionHttp,
   private val resolver: EndpointResolver,
+  private val db: PampaDatabase,
+  private val computerAuth: ComputerAuth,
 ) {
 
   fun observeAll(): Flow<List<JobEntity>> = jobs.observeAll()
@@ -59,6 +67,9 @@ class TranscriptionRepository @Inject constructor(
   fun observeBySession(sessionId: String): Flow<List<JobEntity>> = jobs.observeBySession(sessionId)
 
   suspend fun get(jobId: String): JobEntity? = jobs.get(jobId)
+
+  /** La riga di un lavoro, viva: il worker la guarda per accorgersi di un «Annulla» mentre lavora. */
+  fun observeJob(jobId: String): Flow<JobEntity?> = jobs.observe(jobId)
 
   /**
    * Mette in coda la trascrizione di una sessione.
@@ -152,19 +163,43 @@ class TranscriptionRepository @Inject constructor(
    * un lavoro del computer di casa caduto su un errore di rete mentre il computer non risponde.
    */
   suspend fun requeueForEndpoint(jobId: String) {
-    val job = jobs.get(jobId) ?: return
-    jobs.update(
-      job.copy(
-        state = JobState.QUEUED,
-        phase = PHASE_WAITING_ENDPOINT,
-        progress = 0f,
-        errorCode = null,
-        errorMessage = null,
-        updatedAt = System.currentTimeMillis(),
-        finishedAt = null,
-      ),
-    )
+    jobs.requeue(jobId, PHASE_WAITING_ENDPOINT, System.currentTimeMillis())
   }
+
+  /**
+   * Il sistema ha fermato il worker a meta' lavoro (vincoli, quota, un aggiornamento): il lavoro non
+   * e' fallito, torna in fila e riparte dai pezzi gia' su disco. Un «Annulla» arrivato nel frattempo
+   * vince: la condizione della query lo lascia com'e'.
+   */
+  suspend fun requeueStopped(jobId: String) {
+    jobs.requeue(jobId, null, System.currentTimeMillis())
+  }
+
+  /**
+   * Il limite di Groq chiede di aspettare ore: il lavoro torna in fila e dice fino a quando
+   * ([PHASE_RETRY_AT]), invece di fallire o di tenere una notifica accesa per tutto quel tempo.
+   */
+  suspend fun requeueUntil(jobId: String, atMillis: Long) {
+    jobs.requeue(jobId, "$PHASE_RETRY_AT:$atMillis", System.currentTimeMillis())
+  }
+
+  suspend fun markCancelled(jobId: String) = jobs.markCancelled(jobId, System.currentTimeMillis())
+
+  /**
+   * Scrive il progresso senza toccare il resto della riga.
+   *
+   * @return falso se il lavoro non c'e' piu' o se nel frattempo e' stato chiesto di annullarlo: chi
+   *   lavora deve fermarsi, non scrivere sopra.
+   */
+  suspend fun publishProgress(job: JobEntity): Boolean = jobs.publishProgress(
+    id = job.id,
+    state = job.state,
+    progress = job.progress,
+    phase = job.phase,
+    chunkTotal = job.chunkTotal,
+    chunkDone = job.chunkDone,
+    updatedAt = System.currentTimeMillis(),
+  ) > 0
 
   suspend fun update(job: JobEntity) = jobs.update(job.copy(updatedAt = System.currentTimeMillis()))
 
@@ -200,8 +235,27 @@ class TranscriptionRepository @Inject constructor(
 
   suspend fun clearFinished() = jobs.deleteTerminal()
 
-  /** I lavori che il sistema ha interrotto tornano in coda all'avvio: erano in corso, non falliti. */
-  suspend fun requeueInterrupted() = jobs.requeueInterrupted(System.currentTimeMillis())
+  /**
+   * I lavori che il processo precedente ha lasciato «in corso» tornano in coda: erano in corso, non
+   * falliti. Una volta per processo, da chiunque arrivi prima.
+   *
+   * Lo chiamano l'avvio dell'app (in una coroutine: un `runBlocking` su `onCreate` e' un ANR che
+   * aspetta un disco lento) e ogni worker della coda prima di prendere un lavoro. Il lucchetto fa
+   * si' che nessun worker di questo processo prenda un lavoro prima che la pulizia sia finita, cosi'
+   * non si rischia di rimettere in fila un lavoro vivo: a quel punto tutti quelli «in corso» sono
+   * del processo morto. Se la query fallisce, il prossimo che chiama riprova.
+   *
+   * @return vero se questa chiamata ha fatto la pulizia: chi la fa sveglia le code che ne hanno bisogno.
+   */
+  suspend fun requeueInterruptedOnce(): Boolean {
+    if (requeueDone.get()) return false
+    return requeueLock.withLock {
+      if (requeueDone.get()) return@withLock false
+      jobs.requeueInterrupted(System.currentTimeMillis())
+      requeueDone.set(true)
+      true
+    }
+  }
 
   suspend fun partsOf(sessionId: String) = parts.bySession(sessionId)
 
@@ -261,10 +315,16 @@ class TranscriptionRepository @Inject constructor(
         OpenAiCompatProvider(
           http = http,
           baseUrl = endpoint.url,
-          token = settingsStore.endpointToken(),
-          // Zero vuol dire "aspetta": il limite vero lo mette il worker con un withTimeout, che si
-          // puo' annullare, invece della socket, che non si annulla.
-          readTimeoutMillis = 0,
+          // Il biglietto dell'account, se c'e'; altrimenti il codice scritto a mano. Vedi [ComputerAuth].
+          auth = computerAuth,
+          // Mai meno di quanto l'utente ha detto di voler aspettare il server: il limite vero lo
+          // mette il worker con un withTimeout, che adesso stacca anche la socket; questo e' il
+          // paracadute, finito, per quando nessuno annulla.
+          readTimeoutMillis = maxOf(
+            OpenAiCompatProvider.READ_TIMEOUT_MS.toLong(),
+            settings.endpointTimeoutMinutes * 60_000L,
+          ).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+          maxChunkMinutes = settings.customMaxMinutes,
         )
       }
 
@@ -295,7 +355,10 @@ class TranscriptionRepository @Inject constructor(
    * segmenti e le raffinate che ne discendevano, perche' un testo raffinato che cita una grezza che
    * non esiste piu' e' un testo di cui nessuno sa piu' da dove viene.
    */
-  suspend fun saveTranscript(sessionId: String, result: SessionTranscript): TranscriptEntity {
+  suspend fun saveTranscript(sessionId: String, result: SessionTranscript): TranscriptEntity = db.withTransaction {
+    // Tutto o niente: fra la cancellazione della grezza vecchia e l'ultimo segmento della nuova, un
+    // processo ucciso lasciava una sessione senza trascrizione, o una trascrizione senza segmenti
+    // — e il sync la portava cosi' anche sugli altri dispositivi.
     transcripts.rawForSession(sessionId)?.let { previous ->
       transcripts.deleteChildren(previous.id)
       transcripts.delete(previous.id)
@@ -334,7 +397,7 @@ class TranscriptionRepository @Inject constructor(
     )
     sessions.setActiveTranscript(sessionId, transcript.id, now)
     sessions.get(sessionId)?.let { notes.touch(it.noteId, now) }
-    return transcript
+    transcript
   }
 
   /**
@@ -382,6 +445,13 @@ class TranscriptionRepository @Inject constructor(
   companion object {
     /** La fase di un lavoro in fila che aspetta il computer di casa. */
     const val PHASE_WAITING_ENDPOINT = "endpoint"
+
+    /** La fase di un lavoro in fila che aspetta il limite di Groq: `until:<millisecondi epoch>`. */
+    const val PHASE_RETRY_AT = "until"
+
+    /** Per processo, non per istanza: la pulizia riguarda il processo morto prima di questo. */
+    private val requeueDone = AtomicBoolean(false)
+    private val requeueLock = Mutex()
     /** Quello che WhisperX usa quando nessuno dice altro. */
     const val DEFAULT_LOCAL_MODEL = "large-v3"
   }

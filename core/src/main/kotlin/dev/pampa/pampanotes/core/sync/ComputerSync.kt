@@ -63,7 +63,10 @@ class ComputerSync @Inject constructor(
           ),
         )
         if (response.accepted) {
-          settingsStore.markEndpointSynced(expectedUpdatedAt = local.updatedAt, syncedAt = at)
+          // L'ora che il server ha tenuto, non la nostra: un orologio avanti viene riportato al suo,
+          // e se si tenesse la nostra il giro dopo la rimanderebbe come piu' recente, all'infinito.
+          val kept = response.computer.updatedAt.takeIf { it > 0 } ?: at
+          settingsStore.markEndpointSynced(expectedUpdatedAt = local.updatedAt, syncedAt = kept)
           Outcome.PUSHED
         } else {
           // Qualcuno ha scritto dopo di noi: la sua versione e' nella risposta.

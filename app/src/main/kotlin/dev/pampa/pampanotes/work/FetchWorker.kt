@@ -41,7 +41,12 @@ class FetchWorker @AssistedInject constructor(
     if (!forced && !settings.mirrorEnabled) return Result.success()
     // Niente da scaricare: si chiude senza nemmeno mostrare la notifica.
     if (fetcher.pendingCount() == 0) return Result.success(workDataOf(KEY_DOWNLOADED to 0, KEY_FAILED to 0, KEY_BYTES to 0L))
-    setForeground(getForegroundInfo())
+    // Il primo piano negato a un'app in background (Android 12+) e' un «non adesso»: si riprova.
+    try {
+      setForeground(getForegroundInfo())
+    } catch (refused: IllegalStateException) {
+      return Result.retry()
+    }
 
     var lastPublished = 0L
     val outcome = fetcher.fetchAll { progress ->

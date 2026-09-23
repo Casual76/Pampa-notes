@@ -135,6 +135,9 @@ class RefinementService {
         // sono lo stesso orologio, e ripartire un istante troppo presto costa un altro giro.
         delay((seconds * 1000).toLong() + 1_000L)
       } catch (error: Throwable) {
+        // La cancellazione passa com'e': avvolta in un RefinementError il worker la leggeva come un
+        // guasto del servizio, e un «Annulla» diventava un lavoro fallito.
+        if (error is kotlinx.coroutines.CancellationException) throw error
         if (error is RefinementError) throw error
         throw RefinementError(error.message ?: "il servizio non ha risposto", error)
       }

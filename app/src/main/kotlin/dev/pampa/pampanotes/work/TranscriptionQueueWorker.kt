@@ -2,9 +2,11 @@ package dev.pampa.pampanotes.work
 
 import android.content.Context
 import android.content.pm.ServiceInfo
+import android.os.Build
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
+import androidx.work.WorkInfo
 import androidx.work.WorkerParameters
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -15,18 +17,24 @@ import dev.pampa.pampanotes.core.refinement.RefinementError
 import dev.pampa.pampanotes.core.repo.RefinementRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
+import dev.pampa.pampanotes.core.transcription.GroqWhisperProvider
 import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
 import dev.pampa.pampanotes.core.transcription.TranscriptionError
 import dev.pampa.pampanotes.core.transcription.TranscriptionProgress
 import dev.pampa.pampanotes.core.transcription.TranscriptionRunner
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
 /**
@@ -39,6 +47,14 @@ import kotlinx.coroutines.withTimeout
  * Gira **in primo piano** con una notifica: una lezione da un'ora sono diversi minuti di lavoro, e
  * un worker normale il sistema lo ferma dopo dieci. Che sia sincronizzazione dati e' esatto: sta
  * caricando file e scaricando testo.
+ *
+ * Tre modi in cui un lavoro si ferma a meta', e ognuno ha la sua uscita:
+ *  - **l'utente annulla** (la riga diventa `CANCEL_REQUESTED`): il worker la guarda mentre lavora e
+ *    interrompe tutto, connessione compresa, e il lavoro si chiude annullato;
+ *  - **il sistema ferma il worker** (vincoli, quota, un aggiornamento): il lavoro torna in fila,
+ *    non fallisce, e riparte dai pezzi gia' su disco;
+ *  - **il servizio chiede di aspettare ore** (il limite giornaliero di Groq): torna in fila con
+ *    l'ora a cui riprovare, e la coda si risveglia da sola a quell'ora.
  */
 @HiltWorker
 class TranscriptionQueueWorker @AssistedInject constructor(
@@ -51,8 +67,15 @@ class TranscriptionQueueWorker @AssistedInject constructor(
   private val scheduler: WorkScheduler,
 ) : CoroutineWorker(context, params) {
 
-  /** Cosa fare dopo un lavoro: il prossimo, oppure fermarsi e aspettare il computer di casa. */
-  private enum class Step { NEXT, WAIT }
+  /** Cosa fare dopo un lavoro: il prossimo, aspettare il computer di casa, o riprendere a un'ora. */
+  private sealed interface Step {
+    data object Next : Step
+    data object WaitForEndpoint : Step
+    data class ResumeAt(val atMillis: Long) : Step
+  }
+
+  /** Il lavoro l'ha annullato chi guardava la riga: l'utente, o la riga che non c'e' piu'. */
+  private class JobCancelled : CancellationException("lavoro annullato")
 
   override suspend fun getForegroundInfo(): ForegroundInfo = foregroundInfo(
     title = applicationContext.getString(dev.pampa.pampanotes.R.string.notification_transcribing),
@@ -62,14 +85,25 @@ class TranscriptionQueueWorker @AssistedInject constructor(
 
   override suspend fun doWork(): Result {
     val providerId = inputData.getString(KEY_PROVIDER) ?: return Result.failure()
+
+    // Prima di prendere qualunque lavoro: quelli rimasti «in corso» da un processo morto tornano in
+    // fila. Una volta per processo, chiunque arrivi prima fra l'avvio dell'app e un worker.
+    if (runCatching { repository.requeueInterruptedOnce() }.getOrDefault(false)) wakeQueuesWithWork()
+
+    if (repository.nextQueued(providerId) == null) return finish(providerId)
+
     // Il computer di casa e' configurato ma non risponde: non si va nemmeno in primo piano. I
     // lavori restano in fila e lo dicono, e si riprova (vedi [waitForEndpoint]).
-    if (providerId == OpenAiCompatProvider.ID && repository.nextQueued(providerId) != null &&
+    if (providerId == OpenAiCompatProvider.ID &&
       repository.endpointState() == TranscriptionRepository.EndpointState.UNREACHABLE
     ) {
       return waitForEndpoint()
     }
-    setForeground(getForegroundInfo())
+
+    // Da Android 12 un servizio in primo piano non parte se l'app e' in background (un tentativo
+    // rimandato che scade mentre il telefono e' in tasca): e' un «non adesso», non un guasto. Il
+    // lavoro resta in fila e si riprova col ritardo che cresce.
+    if (!startForeground()) return Result.retry()
 
     while (true) {
       if (isStopped) return Result.retry()
@@ -81,29 +115,60 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       ) {
         return waitForEndpoint()
       }
-      val step = runCatching { process(job) }
-        .getOrElse { error ->
-          // Un guasto imprevisto non deve fermare la coda: il lavoro si segna fallito e si passa
-          // al successivo, altrimenti un file rotto blocca tutti quelli dietro di lui.
-          if (error is CancellationException && !isStopped) throw error
-          val translated = TranscriptionError.from(error)
-          // Un errore di rete verso il computer di casa, e il computer non risponde: non e' il
-          // lavoro che e' andato male, e' il computer che se n'e' andato a meta'. Si torna in fila.
-          val vanished = job.provider == OpenAiCompatProvider.ID &&
-            (translated is TranscriptionError.Network || translated is TranscriptionError.Timeout) &&
-            repository.endpointState() == TranscriptionRepository.EndpointState.UNREACHABLE
-          if (vanished) {
-            repository.requeueForEndpoint(job.id)
-            Step.WAIT
-          } else {
-            fail(job, translated)
-            Step.NEXT
-          }
+      val step = try {
+        process(job)
+      } catch (cancelled: CancellationException) {
+        // Il worker e' stato fermato: il lavoro e' gia' tornato in fila (o annullato) dentro
+        // [process]; qui si esce e basta, WorkManager sa cosa fare di un worker fermato.
+        throw cancelled
+      } catch (error: Throwable) {
+        // Un guasto imprevisto non deve fermare la coda: il lavoro si segna fallito e si passa
+        // al successivo, altrimenti un file rotto blocca tutti quelli dietro di lui.
+        val translated = TranscriptionError.from(error)
+        // Un errore di rete verso il computer di casa, e il computer non risponde: non e' il
+        // lavoro che e' andato male, e' il computer che se n'e' andato a meta'. Si torna in fila.
+        val vanished = job.provider == OpenAiCompatProvider.ID &&
+          (translated is TranscriptionError.Network || translated is TranscriptionError.Timeout) &&
+          repository.endpointState() == TranscriptionRepository.EndpointState.UNREACHABLE
+        if (vanished) {
+          repository.requeueForEndpoint(job.id)
+          Step.WaitForEndpoint
+        } else {
+          fail(job, translated)
+          Step.Next
         }
-      if (step == Step.WAIT) return waitForEndpoint()
+      }
+      when (step) {
+        Step.Next -> Unit
+        Step.WaitForEndpoint -> return waitForEndpoint()
+        is Step.ResumeAt -> {
+          scheduler.kickAfter(providerId, step.atMillis - System.currentTimeMillis())
+          return Result.success()
+        }
+      }
     }
+    return finish(providerId)
+  }
+
+  private suspend fun finish(providerId: String): Result {
     if (providerId == OpenAiCompatProvider.ID) repository.markWaitingForEndpoint(false)
     return Result.success()
+  }
+
+  /** In primo piano, se il sistema lo concede adesso. */
+  private suspend fun startForeground(): Boolean = try {
+    setForeground(getForegroundInfo())
+    true
+  } catch (refused: IllegalStateException) {
+    // `ForegroundServiceStartNotAllowedException` (API 31+) e' una IllegalStateException: catturare
+    // questa copre anche i telefoni in cui la classe non esiste.
+    false
+  }
+
+  /** La pulizia ha rimesso in fila dei lavori: le code che ne hanno si svegliano. */
+  private suspend fun wakeQueuesWithWork() {
+    if (repository.queuedCount(GroqWhisperProvider.ID) > 0) scheduler.kick(GroqWhisperProvider.ID)
+    if (repository.queuedCount(OpenAiCompatProvider.ID) > 0) scheduler.kick(OpenAiCompatProvider.ID)
   }
 
   /**
@@ -126,7 +191,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     // parallele se lo prenderebbero a vicenda mostrando due barre invece di una.
     if (job.type == JobType.REFINE) {
       refine(job)
-      return Step.NEXT
+      return Step.Next
     }
     return transcribe(job)
   }
@@ -135,24 +200,26 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     val settings = settingsStore.current()
     val provider = repository.providerFor(job.provider) ?: run {
       // Configurato ma muto: si aspetta. Mai configurato: e' un errore, e lo si dice.
-      if (job.provider == OpenAiCompatProvider.ID && settings.hasEndpoint) return Step.WAIT
+      if (job.provider == OpenAiCompatProvider.ID && settings.hasEndpoint) return Step.WaitForEndpoint
       fail(
         job,
         TranscriptionError.Unauthorized(
           applicationContext.getString(dev.pampa.pampanotes.R.string.error_provider_not_configured),
         ),
       )
-      return Step.NEXT
+      return Step.Next
     }
 
     val parts = repository.partsOf(job.sessionId)
     if (parts.isEmpty()) {
       fail(job, TranscriptionError.Decode(applicationContext.getString(dev.pampa.pampanotes.R.string.error_no_audio)))
-      return Step.NEXT
+      return Step.Next
     }
 
     val model = repository.resolveModel(provider, settings)
     val request = repository.requestFor(job.sessionId, model, settings)
+    // Annullato o tolto mentre si sceglieva il modello: non si parte.
+    if (repository.get(job.id)?.state != JobState.QUEUED) return Step.Next
     repository.update(job.copy(state = JobState.PREPARING, model = model, attempts = job.attempts + 1, phase = null, errorCode = null, errorMessage = null))
 
     // Lo stato piu' recente, aggiornato dal motore; a scriverlo ci pensa un'altra coroutine.
@@ -163,38 +230,28 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     val latest = MutableStateFlow(job.copy(state = JobState.PREPARING, model = model))
 
     try {
-      val result = coroutineScope {
-        val publisher = launch {
-          while (isActive) {
-            delay(PUBLISH_EVERY_MS)
-            runCatching { publish(latest.value) }
+      val result = watched(job, latest) {
+        // Il tetto di tempo sta qui: un `withTimeout` si annulla, e annullandosi stacca anche la
+        // connessione (`TranscriptionHttp`), che da sola aspetterebbe il suo timeout di lettura.
+        withTimeout(settings.endpointTimeoutMinutes.toLong() * 60_000L) {
+          runner.transcribeSession(
+            jobId = job.id,
+            parts = parts,
+            provider = provider,
+            request = request,
+            chunkMinutes = settings.chunkMinutes,
+          ) { progress ->
+            latest.update { it.applyProgress(progress) }
           }
-        }
-        try {
-          // Il tetto di tempo sta qui e non sulla socket: un `withTimeout` si puo' annullare, una
-          // lettura bloccata su una socket no.
-          withTimeout(settings.endpointTimeoutMinutes.toLong() * 60_000L) {
-            runner.transcribeSession(
-              jobId = job.id,
-              parts = parts,
-              provider = provider,
-              request = request,
-              chunkMinutes = settings.chunkMinutes,
-            ) { progress ->
-              latest.update { it.applyProgress(progress) }
-            }
-          }
-        } finally {
-          publisher.cancel()
         }
       }
 
       if (repository.get(job.id)?.state == JobState.CANCEL_REQUESTED) {
         cancel(job)
-        return Step.NEXT
+        return Step.Next
       }
 
-      repository.update(latest.value.copy(state = JobState.STITCHING, progress = 0.98f, phase = null))
+      repository.publishProgress(latest.value.copy(state = JobState.STITCHING, progress = 0.98f, phase = null))
       val transcript = repository.saveTranscript(job.sessionId, result)
       repository.update(
         latest.value.copy(
@@ -211,15 +268,90 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     } catch (timeout: TimeoutCancellationException) {
       if (job.provider == OpenAiCompatProvider.ID && repository.endpointState() == TranscriptionRepository.EndpointState.UNREACHABLE) {
         repository.requeueForEndpoint(job.id)
-        return Step.WAIT
+        return Step.WaitForEndpoint
       }
       fail(job, TranscriptionError.Timeout(applicationContext.getString(dev.pampa.pampanotes.R.string.error_timeout)))
+    } catch (limited: TranscriptionError.RateLimited) {
+      // Il limite chiede piu' di quanto valga la pena aspettare con la notifica accesa: il lavoro
+      // torna in fila con l'ora in cui riprovare, e la coda si risveglia da sola a quell'ora.
+      val waitMs = ((limited.retryAfterSec ?: DEFAULT_RATE_LIMIT_WAIT_SEC) * 1000).toLong()
+        .coerceIn(MIN_RESUME_DELAY_MS, MAX_RESUME_DELAY_MS)
+      val at = System.currentTimeMillis() + waitMs
+      repository.requeueUntil(job.id, at)
+      return Step.ResumeAt(at)
     } catch (cancellation: CancellationException) {
-      // Annullato dall'utente: il lavoro si chiude, i pezzi gia' fatti restano per una ripresa.
-      if (repository.get(job.id)?.state == JobState.CANCEL_REQUESTED) cancel(job) else throw cancellation
+      return cancelled(job, cancellation)
     }
-    return Step.NEXT
+    return Step.Next
   }
+
+  /**
+   * Il lavoro sotto sorveglianza: il progresso si scrive ogni mezzo secondo, e se la riga diventa
+   * `CANCEL_REQUESTED` (o sparisce) il lavoro si interrompe subito — anche a meta' upload, anche
+   * mentre il computer di casa trascrive — invece di accorgersene al pezzo successivo.
+   */
+  private suspend fun <T> watched(
+    job: JobEntity,
+    latest: MutableStateFlow<JobEntity>,
+    titleRes: Int = dev.pampa.pampanotes.R.string.notification_transcribing,
+    block: suspend () -> T,
+  ): T = coroutineScope {
+    val work: Deferred<T> = async { block() }
+    val watcher = launch {
+      repository.observeJob(job.id).first { it == null || it.state == JobState.CANCEL_REQUESTED }
+      work.cancel(JobCancelled())
+    }
+    val publisher = launch {
+      while (isActive) {
+        delay(PUBLISH_EVERY_MS)
+        runCatching { publish(latest.value, titleRes) }
+      }
+    }
+    try {
+      work.await()
+    } finally {
+      watcher.cancel()
+      publisher.cancel()
+    }
+  }
+
+  /**
+   * Una cancellazione arrivata dentro un lavoro: di chi e'?
+   *
+   * - Il worker e' stato fermato: dall'app (il tasto «Annulla» della notifica, API 31+) il lavoro si
+   *   chiude annullato; dal sistema torna in fila. In `NonCancellable`, perche' il worker fermato ha
+   *   gia' il suo contesto annullato, e senza la scrittura non partirebbe.
+   * - La riga e' `CANCEL_REQUESTED`: l'utente l'ha annullato dall'app.
+   * - La riga non c'e' piu': la sessione e' stata cancellata mentre si trascriveva.
+   */
+  private suspend fun cancelled(job: JobEntity, cancellation: CancellationException): Step {
+    if (isStopped) {
+      withContext(NonCancellable) {
+        if (stoppedByApp()) {
+          repository.markCancelled(job.id)
+          runner.cleanUp(job.id)
+        } else {
+          repository.requeueStopped(job.id)
+        }
+      }
+      throw cancellation
+    }
+    val current = withContext(NonCancellable) { repository.get(job.id) }
+    return when {
+      current == null -> {
+        runner.cleanUp(job.id)
+        Step.Next
+      }
+      current.state == JobState.CANCEL_REQUESTED -> {
+        withContext(NonCancellable) { cancel(job) }
+        Step.Next
+      }
+      else -> throw cancellation
+    }
+  }
+
+  private fun stoppedByApp(): Boolean =
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && stopReason == WorkInfo.STOP_REASON_CANCELLED_BY_APP
 
   /**
    * Ripulisce la trascrizione grezza di una sessione.
@@ -244,45 +376,36 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     }
     val options = refinement.decode(job.optionsJson)
 
+    if (repository.get(job.id)?.state != JobState.QUEUED) return
     repository.update(job.copy(state = JobState.TRANSCRIBING, model = model, attempts = job.attempts + 1, errorCode = null, errorMessage = null))
     val latest = MutableStateFlow(job.copy(state = JobState.TRANSCRIBING, model = model))
 
     try {
-      val result = coroutineScope {
-        val publisher = launch {
-          while (isActive) {
-            delay(PUBLISH_EVERY_MS)
-            runCatching { publish(latest.value, dev.pampa.pampanotes.R.string.notification_refining) }
+      val result = watched(job, latest, dev.pampa.pampanotes.R.string.notification_refining) {
+        refinement.service.refine(
+          rawText = raw.text,
+          provider = provider,
+          model = model,
+          preset = options.presetOrDefault,
+          customPrompt = options.customPrompt,
+        ) { progress ->
+          latest.update {
+            it.copy(
+              chunkTotal = progress.chunkCount,
+              chunkDone = progress.chunkIndex,
+              progress = if (progress.chunkCount <= 0) 0f else progress.chunkIndex.toFloat() / progress.chunkCount,
+              phase = if (progress.waitingSeconds > 0) {
+                "waiting:${progress.waitingSeconds}"
+              } else {
+                "refining:${progress.chunkIndex + 1}/${progress.chunkCount}"
+              },
+            )
           }
-        }
-        try {
-          refinement.service.refine(
-            rawText = raw.text,
-            provider = provider,
-            model = model,
-            preset = options.presetOrDefault,
-            customPrompt = options.customPrompt,
-          ) { progress ->
-            latest.update {
-              it.copy(
-                chunkTotal = progress.chunkCount,
-                chunkDone = progress.chunkIndex,
-                progress = if (progress.chunkCount <= 0) 0f else progress.chunkIndex.toFloat() / progress.chunkCount,
-                phase = if (progress.waitingSeconds > 0) {
-                  "waiting:${progress.waitingSeconds}"
-                } else {
-                  "refining:${progress.chunkIndex + 1}/${progress.chunkCount}"
-                },
-              )
-            }
-          }
-        } finally {
-          publisher.cancel()
         }
       }
 
       if (repository.get(job.id)?.state == JobState.CANCEL_REQUESTED) {
-        repository.update(latest.value.copy(state = JobState.CANCELLED, phase = null, finishedAt = System.currentTimeMillis()))
+        cancel(job)
         return
       }
 
@@ -306,29 +429,26 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       )
       AppNotifications.notifyRefined(applicationContext, job.id, transcript.wordCount, result.suspicious)
     } catch (cancellation: CancellationException) {
-      if (repository.get(job.id)?.state == JobState.CANCEL_REQUESTED) {
-        repository.update(latest.value.copy(state = JobState.CANCELLED, phase = null, finishedAt = System.currentTimeMillis()))
-      } else {
-        throw cancellation
-      }
+      cancelled(job, cancellation)
     } catch (error: RefinementError) {
       fail(job, TranscriptionError.from(error.cause ?: error))
     }
   }
 
   private suspend fun publish(job: JobEntity, titleRes: Int = dev.pampa.pampanotes.R.string.notification_transcribing) {
-    repository.update(job)
+    // Solo le colonne del progresso, e solo se nessuno ha chiesto di annullare: vedi `JobDao.publishProgress`.
+    if (!repository.publishProgress(job)) return
     setForeground(
       foregroundInfo(
         title = applicationContext.getString(titleRes),
-        text = job.phase,
+        text = JobPhaseText.describe(applicationContext, job),
         progress = job.progress,
       ),
     )
   }
 
   private suspend fun cancel(job: JobEntity) {
-    repository.update(job.copy(state = JobState.CANCELLED, phase = null, finishedAt = System.currentTimeMillis()))
+    repository.markCancelled(job.id)
     runner.cleanUp(job.id)
   }
 
@@ -347,7 +467,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
 
   private fun foregroundInfo(title: String, text: String?, progress: Float?): ForegroundInfo {
     val notification = AppNotifications.buildProgress(applicationContext, title, text, progress, id)
-    return if (android.os.Build.VERSION.SDK_INT >= 29) {
+    return if (Build.VERSION.SDK_INT >= 29) {
       ForegroundInfo(AppNotifications.ID_TRANSCRIPTION_FOREGROUND, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
     } else {
       ForegroundInfo(AppNotifications.ID_TRANSCRIPTION_FOREGROUND, notification)
@@ -359,6 +479,11 @@ class TranscriptionQueueWorker @AssistedInject constructor(
 
     /** Ogni mezzo secondo: piu' spesso di cosi' la barra non si muove comunque. */
     private const val PUBLISH_EVERY_MS = 500L
+
+    /** Un limite che non dice quanto aspettare: dieci minuti, poi si riprova. */
+    private const val DEFAULT_RATE_LIMIT_WAIT_SEC = 600.0
+    private const val MIN_RESUME_DELAY_MS = 60_000L
+    private const val MAX_RESUME_DELAY_MS = 24 * 60 * 60_000L
   }
 }
 

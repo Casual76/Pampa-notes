@@ -11,7 +11,23 @@ data class TranscriptionCapabilities(
   /** Serve tagliare un audio lungo prima di mandarlo. */
   val needsChunking: Boolean,
   val supportsAutoLanguage: Boolean = true,
-)
+  /**
+   * Le estensioni che il servizio prende cosi' come sono. Null: tutto quello che arriva. Un file
+   * fuori elenco non passa per la via breve anche se ci starebbe: si decodifica e si ricodifica.
+   */
+  val acceptedExtensions: Set<String>? = null,
+  /**
+   * Il pezzo piu' lungo che il servizio vuole, se ne vuole uno. Groq lo lascia alle impostazioni
+   * (`chunkMinutes`); il computer di casa lo dichiara qui quando l'utente ne ha scelto uno.
+   */
+  val maxChunkMinutes: Int? = null,
+) {
+  /** Il file si puo' mandare com'e'? Decide l'estensione del nome, che e' quello che il servizio guarda. */
+  fun acceptsAsIs(fileName: String): Boolean {
+    val accepted = acceptedExtensions ?: return true
+    return fileName.substringAfterLast('.', "").lowercase() in accepted
+  }
+}
 
 /** Cosa si chiede a una trascrizione. */
 data class TranscribeRequest(

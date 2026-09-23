@@ -39,7 +39,13 @@ class ArchiveWorker @AssistedInject constructor(
   override suspend fun doWork(): Result {
     // Spento nel frattempo: un giro periodico rimasto in coda non deve caricare lo stesso.
     if (!settingsStore.current().archiveEnabled) return Result.success()
-    setForeground(getForegroundInfo())
+    // Da Android 12 il primo piano si nega a un'app in background: e' un «non adesso», e il giro
+    // si riprova col ritardo che cresce invece di finire in errore.
+    try {
+      setForeground(getForegroundInfo())
+    } catch (refused: IllegalStateException) {
+      return Result.retry()
+    }
 
     // Il progresso arriva ogni 256 kB caricati, cioe' decine di volte al secondo: la notifica e il
     // dato del lavoro si aggiornano al massimo due volte al secondo, o si passa il tempo a
@@ -62,11 +68,13 @@ class ArchiveWorker @AssistedInject constructor(
       KEY_MISSING to outcome.missing,
       KEY_BYTES to outcome.bytes,
       KEY_ERROR to outcome.lastError,
+      KEY_SKIPPED to outcome.skipped,
     )
     // Il computer ha risposto: se c'e' una trascrizione in fila che lo aspettava, e' il momento.
-    if (!outcome.unreachable && transcription.queuedCount(OpenAiCompatProvider.ID) > 0) scheduler.wake(OpenAiCompatProvider.ID)
-    // Il server non c'era: si riprova con l'attesa che cresce. Con un tentativo fallito su dieci
-    // invece si chiude bene, e sara' il prossimo giro a riprendere quello rimasto indietro.
+    val answered = outcome.uploaded + outcome.alreadyThere > 0
+    if (answered && transcription.queuedCount(OpenAiCompatProvider.ID) > 0) scheduler.wake(OpenAiCompatProvider.ID)
+    // Il server non c'era: si riprova con l'attesa che cresce. Un server che c'e' e rifiuta un file
+    // invece chiude bene: sara' il prossimo giro a riprovare quello rimasto indietro.
     return if (outcome.unreachable) Result.retry() else Result.success(data)
   }
 
@@ -95,6 +103,7 @@ class ArchiveWorker @AssistedInject constructor(
     const val KEY_MISSING = "missing"
     const val KEY_BYTES = "bytes"
     const val KEY_ERROR = "error"
+    const val KEY_SKIPPED = "skipped"
 
     private const val PUBLISH_EVERY_MS = 500L
   }

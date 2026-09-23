@@ -44,7 +44,9 @@ class SyncWorker @AssistedInject constructor(
     if (report.ok) return Result.success(data)
     // Un token sbagliato o un protocollo diverso non si sistemano riprovando fra un minuto: si
     // chiude con l'errore scritto, e lo si legge in pagina. Il resto — rete, server giu' — si riprova.
-    val permanent = report.error?.let { it.contains("401") || it.contains("token") || it.contains("protocollo") } == true
+    // Un altro account neppure: aspetta una scelta di chi usa il telefono, non un altro tentativo.
+    val permanent = report.foreignAccount ||
+      report.error?.let { it.contains("401") || it.contains("token") || it.contains("protocollo") } == true
     return if (permanent || runAttemptCount >= MAX_ATTEMPTS) Result.success(data) else Result.retry()
   }
 

@@ -38,6 +38,8 @@ data class BackupSettings(
   val vocabulary: String = "",
   val chunkMinutes: Int = 10,
   val groqMaxUploadMb: Int = 25,
+  /** I pezzi del computer di casa: null, il file intero. */
+  val customMaxMinutes: Int? = null,
   val preferredProvider: String = "groq",
   val customOnly: Boolean = false,
   val autoTranscribeOnImport: Boolean = true,
@@ -101,6 +103,7 @@ fun PampaSettings.toBackup(): BackupSettings = BackupSettings(
   vocabulary = vocabulary,
   chunkMinutes = chunkMinutes,
   groqMaxUploadMb = groqMaxUploadMb,
+  customMaxMinutes = customMaxMinutes,
   preferredProvider = preferredProvider.id,
   customOnly = customOnly,
   autoTranscribeOnImport = autoTranscribeOnImport,

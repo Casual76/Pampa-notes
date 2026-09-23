@@ -7,7 +7,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 
@@ -17,8 +16,9 @@ import kotlinx.serialization.json.JsonElement
  * `AiHttp` dell'engine sa gia' fare multipart, e all'inizio bastava. Non basta piu' per tre motivi,
  * e sono tutti e tre conseguenze del fatto che qui i file sono grandi e le attese lunghe:
  *
- *  1. **Si deve poter annullare.** Una socket bloccata in scrittura non si interrompe: l'unico modo
- *     e' chiamare `disconnect()` da fuori. Qui la cancellazione della coroutine lo fa.
+ *  1. **Si deve poter annullare.** Una socket bloccata in scrittura o in lettura non si interrompe:
+ *     l'unico modo e' chiamare `disconnect()` da fuori. Qui la cancellazione della coroutine lo fa
+ *     ([cancellable]), anche mentre si aspetta la risposta.
  *  2. **Serve il progresso.** Mandare venti megabyte su una rete mobile dura un minuto, e un minuto
  *     davanti a uno spinner fermo e' un minuto in cui l'app sembra bloccata.
  *  3. **Il tempo di lettura non e' uno solo.** Groq risponde in secondi; il computer di casa che
@@ -35,9 +35,10 @@ class TranscriptionHttp(
   /**
    * Manda un file e restituisce il JSON della risposta.
    *
-   * @param readTimeoutMillis quanto aspettare la risposta dopo aver finito di mandare. Zero vuol
-   *   dire per sempre, ed e' il valore giusto per un server locale: il limite vero lo mette chi
-   *   chiama con un `withTimeout`, che si puo' annullare, invece che la socket, che non si annulla.
+   * @param readTimeoutMillis quanto aspettare la risposta dopo aver finito di mandare. Mai zero:
+   *   zero vuol dire per sempre, e un computer spento a meta' lavoro lasciava la coda appesa a una
+   *   socket che nessuno chiudeva. Il limite vero resta il `withTimeout` di chi chiama, che adesso
+   *   stacca anche la connessione; questo e' il paracadute.
    */
   suspend fun postAudio(
     url: String,
@@ -48,14 +49,14 @@ class TranscriptionHttp(
     fileName: String = file.name,
     readTimeoutMillis: Int,
     onProgress: (UploadProgress) -> Unit = {},
-  ): JsonElement? = withContext(io) {
+  ): JsonElement? {
     val boundary = "----PampaNotes${System.nanoTime().toString(16)}"
     val prelude = buildPrelude(boundary, fields, fileName, fileMime)
     val epilogue = "\r\n--$boundary--\r\n".toByteArray(Charsets.UTF_8)
     val total = prelude.size.toLong() + file.length() + epilogue.size
 
-    val connection = open(url, "POST", headers, readTimeoutMillis)
-    try {
+    val connection = open(url, "POST", headers, readTimeoutMillis.coerceAtLeast(1))
+    return connection.cancellable(io) { exchange(connection) {
       connection.doOutput = true
       connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
       // A lunghezza fissa e non a blocchi: cosi' la barra ha un totale da cui calcolare, e il server
@@ -80,24 +81,43 @@ class TranscriptionHttp(
         counting.flush()
       }
       readBody(connection)
-    } catch (t: Throwable) {
-      throw TranscriptionError.from(mapHttp(connection, t))
-    } finally {
-      connection.disconnect()
+    } }
+  }
+
+  suspend fun getJson(url: String, headers: Map<String, String>, readTimeoutMillis: Int = 15_000): JsonElement? {
+    val connection = open(url, "GET", headers, readTimeoutMillis)
+    return connection.cancellable(io) { exchange(connection) { readBody(connection) } }
+  }
+
+  /** Un JSON piccolo in andata e in ritorno: il biglietto per il computer di casa, chiesto al Worker. */
+  suspend fun postJson(url: String, headers: Map<String, String>, body: String, readTimeoutMillis: Int = 30_000): JsonElement? {
+    val connection = open(url, "POST", headers, readTimeoutMillis)
+    return connection.cancellable(io) {
+      exchange(connection) {
+        val bytes = body.toByteArray(Charsets.UTF_8)
+        connection.doOutput = true
+        connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        connection.setFixedLengthStreamingMode(bytes.size)
+        connection.outputStream.use { it.write(bytes) }
+        readBody(connection)
+      }
     }
   }
 
-  suspend fun getJson(url: String, headers: Map<String, String>, readTimeoutMillis: Int = 15_000): JsonElement? =
-    withContext(io) {
-      val connection = open(url, "GET", headers, readTimeoutMillis)
-      try {
-        readBody(connection)
-      } catch (t: Throwable) {
-        throw TranscriptionError.from(mapHttp(connection, t))
-      } finally {
-        connection.disconnect()
-      }
-    }
+  /**
+   * Gli errori tradotti una volta sola, e la connessione chiusa comunque vada.
+   *
+   * Annullati, non si traduce niente: [mapHttp] chiede il codice di risposta, e su una connessione
+   * appena staccata `responseCode` rifarebbe la richiesta da capo.
+   */
+  private suspend inline fun <T> exchange(connection: HttpURLConnection, block: () -> T): T = try {
+    block()
+  } catch (t: Throwable) {
+    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+    throw TranscriptionError.from(mapHttp(connection, t))
+  } finally {
+    connection.disconnect()
+  }
 
   private fun open(url: String, method: String, headers: Map<String, String>, readTimeoutMillis: Int): HttpURLConnection {
     val connection = URL(url).openConnection() as HttpURLConnection

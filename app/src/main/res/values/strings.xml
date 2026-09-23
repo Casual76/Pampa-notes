@@ -425,7 +425,7 @@
   <string name="settings_endpoint">Server personale</string>
   <string name="settings_endpoint_detail">Il tuo computer con WhisperX: nessun limite di dimensione, e i file non escono di casa.</string>
   <string name="settings_endpoint_url">Indirizzo in casa</string>
-  <string name="settings_endpoint_token">Token</string>
+  <string name="settings_endpoint_token">Codice (solo senza account)</string>
   <string name="settings_endpoint_token_hint">Solo se il server ne chiede uno</string>
   <string name="settings_endpoint_remote_url">Indirizzo fuori casa</string>
   <string name="settings_endpoint_remote_hint">Quello di Tailscale. Vuoto se non lo usi.</string>
@@ -451,6 +451,10 @@
   <string name="settings_chunk_minutes_detail">Quanto audio sta in una richiesta quando il file va tagliato</string>
   <string name="settings_groq_limit">Limite di Groq</string>
   <string name="settings_groq_limit_detail">25 MB sul piano gratuito, 100 su quello a pagamento</string>
+  <!-- Trascrizione e coda: pezzi del computer di casa, attesa del limite di Groq -->
+  <string name="settings_custom_chunk_whole">Intero</string>
+  <string name="settings_custom_chunk_detail">Quanto audio il computer di casa trascrive in una volta. Più lungo vuol dire più contesto per Whisper e meno cuciture: accorcialo solo se il PC ha poca memoria video.</string>
+  <string name="job_phase_until">In attesa del limite di Groq, fino alle %1$s</string>
   <string name="settings_vocabulary">Vocabolario</string>
   <string name="settings_vocabulary_hint">Termidoro, Monti, Feuerbach…</string>
   <string name="settings_vocabulary_detail">Nomi e termini che il modello non conosce. Vederli prima e\u0300 la differenza fra «Termidoro» e «term e d\'oro».</string>
@@ -951,4 +955,7 @@
   <string name="backup_failure_bad_manifest">Il backup ha un indice illeggibile.</string>
   <string name="backup_failure_no_database">Il backup non contiene il database.</string>
   <string name="account_no_google_account">Su questo dispositivo non c\'è un account Google: aggiungilo nelle impostazioni di Android e riprova.</string>
+  <string name="sync_foreign_title">Queste note sono di un altro account</string>
+  <string name="sync_foreign_detail">Su questo dispositivo ci sono note sincronizzate con un altro account Google. Per non mescolarle, la sincronizzazione si è fermata: rientra con l\'account di prima, oppure porta queste note nell\'account di adesso.</string>
+  <string name="sync_foreign_adopt">Porta queste note in questo account</string>
 </resources>

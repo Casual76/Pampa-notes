@@ -273,10 +273,13 @@ class SyncRepository @Inject constructor(
             else sync.upsertMeta(SyncMetaEntity(change.tbl, change.id, serverSeq = response.seq, hash = change.hash, updatedAt = change.updatedAt))
             result += Pushed(sent = 1)
           }
-          // Troppo grande per l'indice: resta nell'outbox — il giorno che si accorcia, o che il
-          // server la accetta, sale — ma non e' un conflitto, e non fa ripetere il giro.
+          // Troppo grande per l'indice: la riga resta qui, ma esce dall'outbox. Tenerla dentro
+          // voleva dire rimandare a ogni giro qualche megabyte che il server rifiuta prima di
+          // leggerlo; se cambia, i trigger la rimettono in coda e ci riprova. Non e' un conflitto,
+          // e non fa ripetere il giro.
           REASON_TOO_LARGE -> {
-            android.util.Log.w("SyncRepository", "push: ${change.tbl}/${change.id} troppo grande per l'indice (${sizes[entry.id]} byte), resta qui")
+            android.util.Log.w("SyncRepository", "push: ${change.tbl}/${change.id} troppo grande per l'indice (${sizes[entry.id]} byte), resta solo qui")
+            sync.clearOutbox(entry.tbl, entry.rowId, entry.id)
             result += Pushed(tooLarge = 1)
           }
           // Rifiutata: resta nell'outbox, sporca, cosi' il pull che segue la puo' biforcare.

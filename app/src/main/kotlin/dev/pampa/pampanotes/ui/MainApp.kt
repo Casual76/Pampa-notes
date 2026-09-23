@@ -79,6 +79,7 @@ import dev.antigravity.fluidengine.ui.theme.fluidTouchOriginTracker
 import dev.antigravity.fluidengine.ui.theme.rememberFluidTouchOrigin
 import dev.antigravity.fluidengine.ui.theme.rememberRouteMotionSignals
 import dev.pampa.pampanotes.R
+import dev.pampa.pampanotes.work.NotificationPermissionGate
 import dev.pampa.pampanotes.ui.common.LocalSubjectRegistry
 import dev.pampa.pampanotes.ui.common.SubjectRegistry
 import dev.pampa.pampanotes.ui.importing.ImportRequest
@@ -143,14 +144,19 @@ fun MainApp(
                 )
                 OnboardingRoute(onDone = viewModel::completeOnboarding)
               }
-              true -> AppShell(
-                chromeController = chromeController,
-                incomingIntents = incomingIntents,
-                onIntent = viewModel::onIntent,
-                linkApplied = viewModel.linkApplied,
-                onPickFiles = viewModel::onFilesPicked,
-                onPickerCancelled = viewModel::onPickerCancelled,
-              )
+              true -> {
+                AppShell(
+                  chromeController = chromeController,
+                  incomingIntents = incomingIntents,
+                  onIntent = viewModel::onIntent,
+                  linkApplied = viewModel.linkApplied,
+                  onPickFiles = viewModel::onFilesPicked,
+                  onPickerCancelled = viewModel::onPickerCancelled,
+                )
+                // Il permesso delle notifiche si chiede la prima volta che c'e' un lavoro in coda:
+                // prima non si capirebbe a cosa serve, e senza «fatto» e «non riuscita» non arrivano.
+                NotificationPermissionGate()
+              }
             }
           }
           val pendingLink by viewModel.pendingLink.collectAsStateWithLifecycle()

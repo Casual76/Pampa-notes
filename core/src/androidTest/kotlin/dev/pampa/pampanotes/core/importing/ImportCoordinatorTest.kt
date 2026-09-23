@@ -13,6 +13,7 @@ import dev.pampa.pampanotes.core.db.SourceKind
 import dev.pampa.pampanotes.core.db.SourceStatus
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.repo.NoteRepository
+import dev.pampa.pampanotes.core.transcription.ComputerAuth
 import dev.pampa.pampanotes.core.repo.StorageRepository
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.transcription.EndpointResolver
@@ -57,8 +58,10 @@ class ImportCoordinatorTest {
     val settings = PampaSettingsStore(context)
     val resolver = EndpointResolver()
     val http = ArchiveHttp(userAgent = "PampaNotes-test")
-    val archive = ArchiveRepository(db.audioParts(), db.sources(), files, settings, resolver, http)
-    val fetcher = ArchiveFetcher(files, settings, resolver, http, db.audioParts(), db.sources())
+    // Senza account e senza codice: il companion qui non viene mai chiamato.
+    val auth = ComputerAuth(account = { null }, manualCode = { null }, fetch = { _, _ -> error("nessun Worker nei test") }, clock = System::currentTimeMillis)
+    val archive = ArchiveRepository(db.audioParts(), db.sources(), files, settings, resolver, http, auth)
+    val fetcher = ArchiveFetcher(files, settings, resolver, http, db.audioParts(), db.sources(), auth)
     coordinator = ImportCoordinator(
       context = context,
       files = files,
