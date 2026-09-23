@@ -19,13 +19,19 @@ import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
+import dev.pampa.pampanotes.core.transcription.CompanionSaveResult
+import dev.pampa.pampanotes.core.transcription.CompanionSettings
+import dev.pampa.pampanotes.core.transcription.CompanionSettingsApi
+import dev.pampa.pampanotes.core.transcription.CompanionStatus
 import dev.pampa.pampanotes.core.transcription.EndpointHealth
+import dev.pampa.pampanotes.core.transcription.VramEstimate
 import dev.pampa.pampanotes.core.transcription.EndpointResolver
 import dev.pampa.pampanotes.core.transcription.GroqWhisperProvider
 import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
 import dev.pampa.pampanotes.core.transcription.TranscriptionError
 import dev.pampa.pampanotes.core.transcription.TranscriptionHttp
 import javax.inject.Inject
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -65,6 +71,29 @@ data class ServicesUiState(
   val refinementAuto: String? = null,
 )
 
+/**
+ * La memoria video del computer di casa, com'e' e come la si sta cambiando.
+ *
+ * @param draft le impostazioni come l'utente le sta scegliendo; si confrontano con quelle di
+ *   [status] per sapere se c'e' qualcosa da salvare.
+ * @param preview la stima del companion per [draft], prima di salvare. Null finche' non arriva, o se
+ *   il companion non sa farla: allora vale quella di [status].
+ */
+data class CompanionUiState(
+  val loading: Boolean = false,
+  val status: CompanionStatus? = null,
+  val draft: CompanionSettings? = null,
+  val preview: VramEstimate? = null,
+  val saving: Boolean = false,
+  val saveResult: CompanionSaveResult? = null,
+) {
+  val saved: CompanionSettings? get() = (status as? CompanionStatus.Ready)?.settings
+  val dirty: Boolean get() = draft != null && draft != saved
+
+  /** La stima da mostrare: quella delle scelte fatte adesso, se c'e', altrimenti quella del companion. */
+  val shownEstimate: VramEstimate? get() = preview ?: (status as? CompanionStatus.Ready)?.vram
+}
+
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
   private val engineSettingsStore: EngineSettingsStore,
@@ -77,6 +106,7 @@ class SettingsViewModel @Inject constructor(
   private val refinement: RefinementRepository,
   private val scheduler: dev.pampa.pampanotes.work.WorkScheduler,
   private val computerAuth: dev.pampa.pampanotes.core.transcription.ComputerAuth,
+  private val companionApi: CompanionSettingsApi,
 ) : ViewModel() {
 
   companion object {
@@ -278,6 +308,67 @@ class SettingsViewModel @Inject constructor(
 
   /** I pezzi del computer di casa: null, il file intero. */
   fun setCustomMaxMinutes(minutes: Int?) = viewModelScope.launch { settingsStore.setCustomMaxMinutes(minutes) }
+
+  // --- Memoria video del computer di casa ---
+  private val _companion = MutableStateFlow(CompanionUiState())
+  val companionState: StateFlow<CompanionUiState> = _companion.asStateFlow()
+  private var estimateJob: Job? = null
+
+  /**
+   * Chiede al computer come sta: scheda, stima, impostazioni. Si chiama entrando nella pagina, e
+   * non prima: e' una richiesta di rete verso un PC che puo' essere spento, e la pagina Trascrizione
+   * e' l'unico posto in cui la risposta serve.
+   */
+  fun loadCompanion() {
+    if (_companion.value.loading) return
+    viewModelScope.launch {
+      _companion.update { it.copy(loading = true, saveResult = null) }
+      val status = companionApi.status()
+      _companion.update {
+        CompanionUiState(status = status, draft = (status as? CompanionStatus.Ready)?.settings)
+      }
+    }
+  }
+
+  /**
+   * Una scelta cambiata: si ricalcola la stima col companion, senza salvare.
+   *
+   * La richiesta prima si annulla: chi passa da «large-v3» a «small» passando per «medium» vuole la
+   * stima di «small», e una risposta di «medium» arrivata tardi la coprirebbe.
+   */
+  fun updateCompanionDraft(transform: (CompanionSettings) -> CompanionSettings) {
+    val current = _companion.value.draft ?: return
+    val next = transform(current)
+    if (next == current) return
+    _companion.update { it.copy(draft = next, preview = null, saveResult = null) }
+    estimateJob?.cancel()
+    estimateJob = viewModelScope.launch {
+      val estimate = if (next == _companion.value.saved) null else companionApi.estimate(next)
+      _companion.update { if (it.draft == next) it.copy(preview = estimate) else it }
+    }
+  }
+
+  fun saveCompanion() {
+    val draft = _companion.value.draft ?: return
+    viewModelScope.launch {
+      _companion.update { it.copy(saving = true, saveResult = null) }
+      val result = companionApi.save(draft)
+      _companion.update { state ->
+        val status = state.status
+        if (result is CompanionSaveResult.Saved && status is CompanionStatus.Ready) {
+          // Salvato: le scelte diventano quelle del computer, e la stima quella che ha rifatto lui.
+          state.copy(
+            saving = false,
+            saveResult = result,
+            status = status.copy(settings = draft, vram = result.estimate ?: state.preview ?: status.vram),
+            preview = null,
+          )
+        } else {
+          state.copy(saving = false, saveResult = result)
+        }
+      }
+    }
+  }
   fun setAutoTranscribe(enabled: Boolean) = viewModelScope.launch { settingsStore.setAutoTranscribeOnImport(enabled) }
 
   /** La cartella dove finiscono backup ed export. La sceglie anche il primo avvio. */

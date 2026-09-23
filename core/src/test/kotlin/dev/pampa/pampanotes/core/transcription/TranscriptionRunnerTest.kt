@@ -2,6 +2,7 @@ package dev.pampa.pampanotes.core.transcription
 
 import android.content.Context
 import dev.pampa.pampanotes.core.archive.ArchiveFetcher
+import dev.pampa.pampanotes.core.audio.ChunkDecision
 import dev.pampa.pampanotes.core.db.AudioPartEntity
 import dev.pampa.pampanotes.core.files.AppFiles
 import io.mockk.every
@@ -10,7 +11,6 @@ import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -47,32 +47,56 @@ class TranscriptionRunnerTest {
 
   private val minute = 60_000L
 
+  private fun decide(caps: TranscriptionCapabilities, name: String, bytes: Long, durationMs: Long, groqMinutes: Int = 10) =
+    TranscriptionRunner.chunkDecision(caps, name, bytes, durationMs, groqChunkMinutes = groqMinutes)
+
   @Test
   fun `un m4a piccolo e corto va a Groq intero`() {
-    assertNull(TranscriptionRunner.chunkTargetMs(groq, "p.m4a", 3_000_000, 8 * minute, groqChunkMinutes = 10))
+    assertEquals(ChunkDecision.Whole, decide(groq, "p.m4a", 3_000_000, 8 * minute))
+    // Due minuti oltre il tetto restano interi, se il peso ci sta.
+    assertEquals(ChunkDecision.Whole, decide(groq, "p.m4a", 4_000_000, 12 * minute))
   }
 
   @Test
-  fun `un formato che Groq non prende si ricodifica anche se ci starebbe`() {
-    assertEquals(10 * minute, TranscriptionRunner.chunkTargetMs(groq, "p.amr", 300_000, 2 * minute, groqChunkMinutes = 10))
-    assertEquals(10 * minute, TranscriptionRunner.chunkTargetMs(groq, "p.3gp", 300_000, 2 * minute, groqChunkMinutes = 10))
+  fun `un formato che Groq non prende si ricodifica intero anche se ci starebbe`() {
+    assertEquals(ChunkDecision.Split(1, 2 * minute), decide(groq, "p.amr", 300_000, 2 * minute))
+    assertEquals(ChunkDecision.Split(1, 2 * minute), decide(groq, "p.3gp", 300_000, 2 * minute))
   }
 
   @Test
-  fun `troppo lungo o troppo pesante per Groq si divide coi minuti delle impostazioni`() {
-    assertEquals(5 * minute, TranscriptionRunner.chunkTargetMs(groq, "p.m4a", 3_000_000, 60 * minute, groqChunkMinutes = 5))
-    assertEquals(10 * minute, TranscriptionRunner.chunkTargetMs(groq, "p.m4a", 30L * 1024 * 1024, 8 * minute, groqChunkMinutes = 10))
+  fun `troppo lungo per Groq si divide in pezzi uguali coi minuti delle impostazioni`() {
+    assertEquals(ChunkDecision.Split(12, 5 * minute), decide(groq, "p.m4a", 3_000_000, 60 * minute, groqMinutes = 5))
+    // Tredici minuti con un tetto di dieci: due da sei e mezzo, non dieci piu' tre.
+    assertEquals(ChunkDecision.Split(2, 390_000), decide(groq, "p.m4a", 5_000_000, 13 * minute))
+  }
+
+  @Test
+  fun `troppo pesante per Groq si ricodifica anche se la durata ci starebbe`() {
+    assertEquals(ChunkDecision.Split(1, 8 * minute), decide(groq, "p.m4a", 30L * 1024 * 1024, 8 * minute))
   }
 
   @Test
   fun `il computer di casa senza tetto prende tutto intero`() {
-    assertNull(TranscriptionRunner.chunkTargetMs(home, "p.amr", 900_000_000, 180 * minute, groqChunkMinutes = 10))
+    assertEquals(ChunkDecision.Whole, decide(home, "p.amr", 900_000_000, 180 * minute))
   }
 
   @Test
   fun `il computer di casa con un tetto divide coi suoi minuti, non con quelli di Groq`() {
-    assertEquals(30 * minute, TranscriptionRunner.chunkTargetMs(homeWithCap(30), "p.m4a", 90_000_000, 120 * minute, groqChunkMinutes = 10))
-    assertNull(TranscriptionRunner.chunkTargetMs(homeWithCap(60), "p.m4a", 90_000_000, 45 * minute, groqChunkMinutes = 10))
+    assertEquals(ChunkDecision.Split(4, 30 * minute), decide(homeWithCap(30), "p.m4a", 90_000_000, 120 * minute))
+    assertEquals(ChunkDecision.Whole, decide(homeWithCap(60), "p.m4a", 90_000_000, 45 * minute))
+  }
+
+  @Test
+  fun `il computer di casa tiene intero fino a dieci minuti oltre il tetto`() {
+    assertEquals(ChunkDecision.Whole, decide(homeWithCap(30), "p.m4a", 40_000_000, 40 * minute))
+    assertEquals(ChunkDecision.Split(2, 1_230_000), decide(homeWithCap(30), "p.m4a", 41_000_000, 41 * minute))
+  }
+
+  @Test
+  fun `i pezzi di un audio decodificato si contano sulla durata vera`() {
+    assertEquals(4, TranscriptionRunner.piecesFor(homeWithCap(30), 95 * minute, groqChunkMinutes = 10))
+    assertEquals(1, TranscriptionRunner.piecesFor(homeWithCap(30), 38 * minute, groqChunkMinutes = 10))
+    assertEquals(6, TranscriptionRunner.piecesFor(groq, 60 * minute, groqChunkMinutes = 10))
   }
 
   @Test

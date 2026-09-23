@@ -179,6 +179,11 @@ class ImportCoordinator @Inject constructor(
         .firstOrNull { note -> sources.byNote(note.id).any { it.kind == SourceKind.SDOCX } }
     }
 
+    // Per l'audio, durata e giorno della registrazione in una lettura sola. La data di modifica si
+    // chiede adesso al provider: dopo, l'unico file che resta e' la copia nostra, che e' di oggi.
+    val probe = if (kind == SourceKind.AUDIO) audioImporter.probe(temp) else null
+    val recordedOn = probe?.let { RecordingDate.resolve(it.metadataDate, displayName, queryLastModified(uri)) }
+
     return ImportCandidate(
       id = Ids.newId(),
       uri = uri,
@@ -190,12 +195,13 @@ class ImportCoordinator @Inject constructor(
       sha256 = sha,
       duplicateOfNoteId = duplicateNoteId,
       duplicateOfNoteTitle = duplicateNoteId?.let { noteDao.get(it)?.title },
-      durationMs = if (kind == SourceKind.AUDIO) audioImporter.probeDuration(temp) else 0,
+      durationMs = probe?.durationMs ?: 0,
       // Si legge subito, all'ispezione: un file che non si capisce resta un allegato, e uno che si
       // capisce diventa una nota con un titolo, prima ancora di premere niente.
       sdocx = sdocx,
       updateOfNoteId = updateOf?.id,
       updateOfNoteTitle = updateOf?.title,
+      recordedOn = recordedOn,
     )
   }
 
@@ -409,7 +415,7 @@ class ImportCoordinator @Inject constructor(
       val sessionPlacement = when (placement) {
         is AudioPlacement.Append -> placement
         is AudioPlacement.NewSession -> AudioPlacement.NewSession(
-          date = doc.recordings.firstNotNullOfOrNull { it.createdAtMillis }?.let { Dates.fromMillis(it) } ?: placement.date,
+          date = doc.recordings.firstNotNullOfOrNull { it.createdAtMillis }?.let { Dates.fromMillis(it) } ?: placement.date ?: Dates.today(),
           title = placement.title,
         )
       }
@@ -470,6 +476,30 @@ class ImportCoordinator @Inject constructor(
       if (cursor.moveToFirst()) cursor.getString(0) else null
     }
   }.getOrNull()
+
+  /**
+   * Quando il file e' stato modificato l'ultima volta, secondo chi lo condivide.
+   *
+   * Non c'e' una colonna che tutti i provider abbiano: i documenti (SAF) hanno `last_modified` in
+   * millisecondi, MediaStore `date_modified` in secondi, un file aperto per percorso ha il file.
+   * Si prova in quest'ordine, e una colonna che il provider non conosce e' un'eccezione da
+   * inghiottire, non un import fallito.
+   */
+  private fun queryLastModified(uri: Uri): Long? {
+    if (uri.scheme == "file") return uri.path?.let { File(it).lastModified() }?.takeIf { it > 0 }
+    val columns = listOf(
+      android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED to 1L,
+      android.provider.MediaStore.MediaColumns.DATE_MODIFIED to 1000L,
+    )
+    columns.forEach { (column, toMillis) ->
+      runCatching {
+        context.contentResolver.query(uri, arrayOf(column), null, null, null)?.use { cursor ->
+          if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0).takeIf { it > 0 }?.times(toMillis) else null
+        }
+      }.getOrNull()?.let { return it }
+    }
+    return null
+  }
 
   private fun zipEntryNames(file: File): List<String> =
     java.util.zip.ZipFile(file).use { zip -> zip.entries().toList().map { it.name } }

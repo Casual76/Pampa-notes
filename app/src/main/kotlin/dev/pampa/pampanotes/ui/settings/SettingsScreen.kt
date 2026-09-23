@@ -1,7 +1,17 @@
 package dev.pampa.pampanotes.ui.settings
 
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.unit.dp
+import dev.antigravity.fluidengine.ui.fluid.FluidChip
+import dev.pampa.pampanotes.core.audio.ChunkPolicy
+import dev.pampa.pampanotes.core.transcription.CompanionSaveResult
+import dev.pampa.pampanotes.core.transcription.CompanionStatus
+import dev.pampa.pampanotes.core.transcription.VramMode
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -172,8 +182,15 @@ private fun PreferencesSectionRoute(
   var endpointRemoteUrl by remember(settings.endpointRemoteUrl) { mutableStateOf(settings.endpointRemoteUrl) }
   var endpointToken by remember { mutableStateOf("") }
 
+  val companion by viewModel.companionState.collectAsStateWithLifecycle()
+
   if (section == SettingsSection.REFINEMENT) {
     LaunchedEffect(Unit) { viewModel.loadRefinementModels() }
+  }
+  // La memoria video si chiede al computer entrando in Trascrizione, e solo se un computer c'e':
+  // le impostazioni arrivano da DataStore un attimo dopo la pagina, da qui la chiave.
+  if (section == SettingsSection.TRANSCRIPTION) {
+    LaunchedEffect(settings.hasEndpoint) { if (settings.hasEndpoint) viewModel.loadCompanion() }
   }
 
   FluidScreen(
@@ -204,7 +221,7 @@ private fun PreferencesSectionRoute(
         },
       )
 
-      SettingsSection.TRANSCRIPTION -> transcriptionSection(settings = settings, viewModel = viewModel)
+      SettingsSection.TRANSCRIPTION -> transcriptionSection(settings = settings, companion = companion, viewModel = viewModel)
       SettingsSection.REFINEMENT -> refinementSection(settings = settings, services = services, viewModel = viewModel)
       SettingsSection.APPEARANCE -> appearanceSection(engine = engine, viewModel = viewModel)
       SettingsSection.ABOUT -> aboutSection()
@@ -367,7 +384,7 @@ private fun LazyListScope.servicesSection(
 // Trascrizione
 // -------------------------------------------------------------------------------------------------
 
-private fun LazyListScope.transcriptionSection(settings: PampaSettings, viewModel: SettingsViewModel) {
+private fun LazyListScope.transcriptionSection(settings: PampaSettings, companion: CompanionUiState, viewModel: SettingsViewModel) {
   // Con «solo il computer di casa» la scelta non esiste piu': il selettore sparisce invece di
   // restare li' a proporre Groq come se contasse.
   if (!settings.customOnly) {
@@ -443,19 +460,33 @@ private fun LazyListScope.transcriptionSection(settings: PampaSettings, viewMode
         label = { "$it MB" },
       )
     }
+    item { FluidSectionFootnote(text = stringResource(R.string.settings_groq_chunk_rule)) }
   }
 
-  item { FluidSectionHeader(title = stringResource(R.string.provider_custom)) }
+  item { FluidSectionHeader(title = stringResource(R.string.provider_custom), detail = stringResource(R.string.settings_custom_chunk_detail)) }
+  // Una riga per scelta, con quello che vuol dire: un segmentato con «Intero · 30 · 60 · 120» non
+  // diceva ne' che intero e' il meglio per Whisper, ne' che un tetto lascia intera una lezione
+  // appena piu' lunga.
   item {
-    val whole = stringResource(R.string.settings_custom_chunk_whole)
-    FluidSegmentedControl(
-      options = listOf<Int?>(null, 30, 60, 120),
-      selected = settings.customMaxMinutes,
-      onSelect = viewModel::setCustomMaxMinutes,
-      label = { minutes -> minutes?.let { "$it min" } ?: whole },
-    )
+    val chosen: @Composable () -> Unit = {
+      FluidStatusBadge(label = stringResource(R.string.settings_model_chosen), tone = FluidTone.Success)
+    }
+    FluidListGroup {
+      listOf<Int?>(null, 30, 60, 120).forEachIndexed { index, minutes ->
+        if (index > 0) FluidListDivider()
+        FluidListRow(
+          title = minutes?.let { stringResource(R.string.settings_custom_chunk_title, it) } ?: stringResource(R.string.settings_custom_chunk_whole),
+          subtitle = minutes?.let {
+            stringResource(R.string.settings_custom_chunk_capped, it + (ChunkPolicy.COMPUTER_TOLERANCE_MS / 60_000L).toInt(), it)
+          } ?: stringResource(R.string.settings_custom_chunk_whole_detail),
+          onClick = { viewModel.setCustomMaxMinutes(minutes) },
+          badge = if (settings.customMaxMinutes == minutes) chosen else null,
+        )
+      }
+    }
   }
-  item { FluidSectionFootnote(text = stringResource(R.string.settings_custom_chunk_detail)) }
+
+  if (settings.hasEndpoint) vramSection(companion, viewModel)
 
   item {
     val autoLabel = stringResource(R.string.language_auto)
@@ -480,6 +511,202 @@ private fun LazyListScope.transcriptionSection(settings: PampaSettings, viewMode
     )
   }
   item { FluidSectionFootnote(text = stringResource(R.string.settings_vocabulary_detail)) }
+}
+
+/** I modelli che la pagina propone, dal piu' preciso al piu' leggero, con la riga che li distingue. */
+private val vramModels = listOf(
+  "large-v3" to R.string.settings_vram_model_large,
+  "medium" to R.string.settings_vram_model_medium,
+  "small" to R.string.settings_vram_model_small,
+)
+
+/** I tetti che si possono indicare a mano, fino alla scheda che c'e'. */
+private val vramChoicesGb = listOf(2.0, 3.0, 4.0, 6.0, 8.0, 10.0, 12.0, 16.0, 20.0, 24.0, 32.0, 48.0)
+
+/**
+ * La memoria video del computer di casa: che scheda c'e', quanto si pensa di usare, e le due scelte
+ * che la cambiano — il tetto e il modello.
+ *
+ * Tutto quello che arriva dal companion e' facoltativo: se non risponde, o e' di prima, una riga lo
+ * dice e la sezione finisce li'. Le scelte si provano con la stima del companion prima di salvarle,
+ * perche' «large-v3 non ci sta» e' una cosa da sapere prima, non alla prossima lezione.
+ */
+private fun LazyListScope.vramSection(companion: CompanionUiState, viewModel: SettingsViewModel) {
+  item { FluidSectionHeader(title = stringResource(R.string.settings_vram_header), detail = stringResource(R.string.settings_vram_length)) }
+
+  val status = companion.status
+  if (companion.loading || status == null) {
+    item { FluidSectionFootnote(text = stringResource(R.string.settings_vram_loading)) }
+    return
+  }
+  when (status) {
+    CompanionStatus.Unconfigured -> return
+    CompanionStatus.Unreachable -> {
+      item { FluidSectionFootnote(text = stringResource(R.string.settings_vram_unreachable)) }
+      return
+    }
+    CompanionStatus.Unsupported -> {
+      item { FluidSectionFootnote(text = stringResource(R.string.settings_vram_unsupported)) }
+      return
+    }
+    is CompanionStatus.Ready -> Unit
+  }
+  val ready = status as CompanionStatus.Ready
+  val estimate = companion.shownEstimate
+  val draft = companion.draft
+
+  item {
+    FluidListGroup {
+      val gpu = ready.gpu
+      FluidListRow(
+        title = if (gpu != null) {
+          stringResource(R.string.settings_vram_card, listOfNotNull(gpuShortName(gpu.name), gpu.totalGb?.let { gigabytes(it) }).joinToString(" · "))
+        } else {
+          stringResource(R.string.settings_vram_no_gpu)
+        },
+        subtitle = when {
+          gpu == null -> stringResource(R.string.settings_vram_cpu)
+          gpu.freeGb != null -> stringResource(R.string.settings_vram_free, gigabytes(gpu.freeGb!!))
+          else -> gpu.name
+        },
+      )
+      if (estimate != null) {
+        FluidListDivider()
+        val model = draft?.model ?: estimate.model
+        val detail = buildList {
+          if (model != null && estimate.batchSize != null) add(stringResource(R.string.settings_vram_estimate_detail, model, estimate.batchSize!!))
+          else if (model != null) add(model)
+          estimate.budgetGb?.let { add(stringResource(R.string.settings_vram_estimate_budget, gigabytes(it))) }
+        }.joinToString(" · ")
+        FluidListRow(
+          title = stringResource(R.string.settings_vram_estimate, gigabytes(estimate.estimateGb)),
+          subtitle = detail.ifBlank { stringResource(R.string.settings_vram_header) },
+          tone = if (estimate.exceedsBudget) FluidTone.Warning else FluidTone.Neutral,
+        )
+      }
+    }
+  }
+
+  if (estimate?.exceedsBudget == true) {
+    item {
+      FluidInlineMessage(
+        message = stringResource(R.string.settings_vram_over),
+        title = stringResource(R.string.settings_vram_header),
+        tone = FluidTone.Warning,
+      )
+    }
+  }
+
+  if (!ready.canEdit || draft == null) {
+    item { FluidSectionFootnote(text = stringResource(R.string.settings_vram_read_only)) }
+    return
+  }
+
+  item {
+    val labels = mapOf(
+      VramMode.AUTO to stringResource(R.string.settings_vram_mode_auto),
+      VramMode.MANUAL to stringResource(R.string.settings_vram_mode_manual),
+    )
+    FluidSegmentedControl(
+      options = VramMode.entries.toList(),
+      selected = draft.vramMode,
+      onSelect = { mode ->
+        viewModel.updateCompanionDraft { current ->
+          // Passando a mano si parte da un numero sensato: quello di prima, o quanto la scheda ha.
+          val gb = current.vramGb ?: ready.vram?.budgetGb?.let { kotlin.math.floor(it) } ?: ready.gpu?.totalGb?.let { kotlin.math.floor(it) }
+          current.copy(vramMode = mode, vramGb = if (mode == VramMode.MANUAL) gb else current.vramGb)
+        }
+      },
+      label = { labels.getValue(it) },
+    )
+  }
+  if (draft.vramMode == VramMode.AUTO) {
+    item { FluidSectionFootnote(text = stringResource(R.string.settings_vram_mode_auto_detail)) }
+  } else {
+    item { FluidSectionFootnote(text = stringResource(R.string.settings_vram_mode_manual_detail)) }
+    item {
+      val total = ready.gpu?.totalGb
+      val choices = (vramChoicesGb.filter { total == null || it <= total + 0.5 } + listOfNotNull(draft.vramGb)).distinct().sorted()
+      Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        choices.forEach { gb ->
+          FluidChip(
+            label = gigabytes(gb),
+            selected = draft.vramGb == gb,
+            onClick = { viewModel.updateCompanionDraft { it.copy(vramGb = gb) } },
+          )
+        }
+      }
+    }
+  }
+
+  item { FluidSectionHeader(title = stringResource(R.string.settings_vram_model)) }
+  item {
+    val chosen: @Composable () -> Unit = {
+      FluidStatusBadge(label = stringResource(R.string.settings_model_chosen), tone = FluidTone.Success)
+    }
+    // Un modello scelto sul computer che non e' fra i tre (un «large-v3-turbo») resta visibile:
+    // sparire vorrebbe dire far credere che sia stato cambiato.
+    val known = vramModels.map { it.first }
+    val models = vramModels + listOfNotNull(companion.saved?.model?.takeIf { it !in known }?.let { it to R.string.settings_vram_model_other })
+    FluidListGroup {
+      models.forEachIndexed { index, (model, detail) ->
+        if (index > 0) FluidListDivider()
+        FluidListRow(
+          title = model,
+          subtitle = stringResource(detail),
+          onClick = { viewModel.updateCompanionDraft { it.copy(model = model) } },
+          badge = if (draft.model == model) chosen else null,
+        )
+      }
+    }
+  }
+
+  item {
+    FluidButton(
+      text = stringResource(R.string.settings_vram_save),
+      onClick = viewModel::saveCompanion,
+      enabled = companion.dirty && !companion.saving,
+      loading = companion.saving,
+      style = FluidButtonStyle.Tinted,
+      fillWidth = true,
+      modifier = Modifier.fillMaxWidth(),
+    )
+  }
+  when (val result = companion.saveResult) {
+    is CompanionSaveResult.Saved -> item {
+      FluidInlineMessage(message = stringResource(R.string.settings_vram_saved), title = stringResource(R.string.settings_vram_header), tone = FluidTone.Success)
+    }
+    CompanionSaveResult.Forbidden -> item {
+      FluidInlineMessage(message = stringResource(R.string.settings_vram_forbidden), title = stringResource(R.string.settings_vram_header), tone = FluidTone.Danger)
+    }
+    is CompanionSaveResult.Failed -> item {
+      FluidInlineMessage(
+        message = stringResource(R.string.settings_vram_failed, jobErrorText(result.code, null)),
+        title = stringResource(R.string.settings_vram_header),
+        tone = FluidTone.Danger,
+      )
+    }
+    null -> Unit
+  }
+}
+
+/** «NVIDIA GeForce RTX 4070 Ti» → «RTX 4070 Ti»: la marca non aiuta a riconoscere la scheda. */
+private fun gpuShortName(name: String): String =
+  name.replace(Regex("^(NVIDIA\\s+)?(GeForce\\s+)?|^AMD\\s+(Radeon\\s+)?", RegexOption.IGNORE_CASE), "").trim().ifEmpty { name }
+
+/** «12 GB», «5,9 GB»: un decimale solo quando dice qualcosa, nella lingua del telefono. */
+@Composable
+private fun gigabytes(value: Double): String {
+  val rounded = kotlin.math.round(value)
+  val number = if (kotlin.math.abs(value - rounded) < 0.05) {
+    rounded.toLong().toString()
+  } else {
+    String.format(java.util.Locale.getDefault(), "%.1f", value)
+  }
+  return stringResource(R.string.settings_gb, number)
 }
 
 // -------------------------------------------------------------------------------------------------

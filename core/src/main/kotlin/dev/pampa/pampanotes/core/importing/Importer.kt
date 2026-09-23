@@ -43,6 +43,11 @@ data class ImportCandidate(
    */
   val updateOfNoteId: String? = null,
   val updateOfNoteTitle: String? = null,
+  /**
+   * Il giorno della registrazione, per l'audio: letto all'ispezione, perche' la data di modifica
+   * del file la sa solo chi lo condivide, e la copia nostra e' di adesso. Vedi [RecordingDate].
+   */
+  val recordedOn: RecordedOn? = null,
 ) {
   val isAudio: Boolean get() = kind == SourceKind.AUDIO
 
