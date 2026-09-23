@@ -13,6 +13,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import dev.antigravity.fluidengine.ui.fluid.fluidRowPressable
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -596,7 +597,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sessionDateSection(
           else -> stringResource(R.string.date_today)
         },
         subtitle = recordedSourceText(state.recordedSource),
-        onClick = { onSessionDate(null) },
+        // Una scelta, non una pagina: senza la freccia che FluidListRow mette a chi ha onClick.
+        modifier = Modifier.fluidRowPressable(onClick = { onSessionDate(null) }),
         tone = FluidTone.Primary,
         badge = if (state.sessionDate == null) {
           { FluidStatusBadge(label = stringResource(R.string.import_chosen), tone = FluidTone.Primary) }
@@ -636,7 +638,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sessionDateSection(
         if (Dates.parseOrNull(text.trim()) != null) onSessionDate(text.trim())
       },
       label = stringResource(R.string.session_date_custom),
-      placeholder = "2025-09-22",
+      // Un esempio di oggi: una data di un anno fa suggeriva di scrivere proprio quella.
+      placeholder = remember { Formats.isoDate(java.time.LocalDate.now()) },
       modifier = Modifier.fillMaxWidth(),
     )
   }

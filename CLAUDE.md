@@ -635,6 +635,23 @@ lento, quindi la stima e' la protezione vera; il ripiego sul processore resta pe
 Impostazioni → Trascrizione mostra scheda e stima (`/health`) e le cambia sul computer
 (`GET/POST /v1/admin/settings`, `POST /v1/admin/estimate`, solo il proprietario).
 
+Tre cose imparate il 23/09, dopo un riavvio del PC con ogni lezione finita sul processore e, prima,
+quattro gigabyte nella memoria condivisa:
+- **La scheda si legge dal driver** (`nvidia_query`, cioe' `nvidia-smi`), mai con torch all'avvio:
+  un contesto CUDA aperto appena entrati in Windows restava convinto che la scheda fosse piena
+  (0 GB liberi con 10,8 liberi davvero). Se succede lo stesso — il driver dice che la memoria c'e',
+  il processo no — il companion si riavvia da se' a lavoro finito (`restart_when_idle`,
+  `avvio.pyw --dopo`), e nel frattempo risponde `503 restarting` prima di leggere il corpo.
+- **In automatico il budget e' la VRAM libera**, non il totale: totale meno quello che occupano gli
+  altri (`others_gb`: occupata meno la nostra, misurata al caricamento), rimisurato prima di ogni
+  lezione (`replan_for_job`). Le costanti vengono da misure vere su una lezione a pezzi (0,32 GB a
+  elemento del lotto, 0,9 di contesto, 0,9 di allineamento), e dopo ogni allineamento la riserva di
+  torch si restituisce, o resta sotto il pezzo dopo (da 10,6 a 9,0 GB di picco col lotto da 7).
+- **Scaricare il modello restituisce la scheda.** Un errore d'import che pyannote tiene da parte
+  col suo traceback teneva in vita i frame di `run_job`, e con loro modello e audio: restavano 2–4
+  GB, che il budget contava come «altri». Le variabili grandi si azzerano prima di uscire, e
+  WhisperX si importa all'avvio su un thread suo (`warm_imports`). Resta il contesto CUDA, 250 MB.
+
 **Il PC riconosce l'account.** Verso il companion non viaggia mai il token del sync (in casa e' http
 in chiaro, e apre tutte le note): l'app chiede al Worker un **biglietto per il PC**
 (`POST /v1/computer/ticket`, `pt_…`, firmato con una chiave derivata da `COMPUTER_KEY`, dura dodici
@@ -707,6 +724,23 @@ silenzio calcolati sull'array gia' in memoria; `GET /v1/jobs` dice `chunk`/`chun
 (`blob_missing`) ricade sul caricamento, un ospite (`owner_only`: un'impronta non deve dire cosa c'e'
 nell'archivio di un altro) e un companion vecchio sulla strada di prima. Il «Vocabolario» (`prompt`)
 arriva a WhisperX come `initial_prompt` per quella sola richiesta: prima il companion lo ignorava.
+
+**I pezzi, in automatico.** Impostazioni → Trascrizione ha «Automatico» (di serie, tranne per chi
+aveva gia' scelto un tetto) e uno `FluidSlider` da 10 a 120 minuti e «intera». Acceso, l'app manda
+`max_minutes=auto`: il companion sceglie dopo aver decodificato, dalla velocita' misurata sulle
+ultime lezioni senza il caricamento del modello (`auto_piece_minutes`: circa quattro minuti di lavoro
+per pezzo, fra 15 e 120 minuti di audio — sulla scheda le lezioni vanno intere, sul processore a
+pezzi), e risponde `max_minutes_used`, che lo slider fermo mostra come «Ultima lezione: …».
+
+**Annullare, perdersi, ripetersi.** Ogni trascrizione sul companion e' un lavoro condiviso
+(`SharedWork`) con chi lo aspetta: due richieste uguali (stessa impronta, lingua, vocabolario,
+tetto) — il tablet che non sapeva, il telefono che rimanda — ne fanno una sola, e ricevono lo
+stesso risultato. «Annulla» manda `DELETE /v1/jobs/{id}` (anche la connessione chiusa vale):
+quella richiesta si stacca, e il computer si ferma al lotto dopo solo quando non la aspetta piu'
+nessuno. `/health` e i lavori portano `instance`, diverso a ogni avvio del companion: l'app rimanda
+una lezione solo se il lavoro e' sparito **e** l'`instance` e' cambiato (riavvio), o se dopo 90
+secondi di silenzio non risponde neanche `/health`; prima di rimandarla annulla quella vecchia. Il
+registro dei lavori non dimentica mai uno in corso, neanche oltre il limite o dopo sei ore.
 
 Il raffinamento passa da `ChatProvider.complete` di `engine-ai` su Groq. Non è un assistente: è un
 passaggio che toglie intercalari e rimette la punteggiatura senza cambiare il contenuto.
