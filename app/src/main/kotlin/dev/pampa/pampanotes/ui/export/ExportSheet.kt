@@ -27,22 +27,24 @@ import dev.antigravity.fluidengine.ui.fluid.FluidGlassModalPortal
 import dev.antigravity.fluidengine.ui.fluid.FluidGlassModalPresentation
 import dev.antigravity.fluidengine.ui.fluid.FluidProgressBar
 import dev.antigravity.fluidengine.ui.fluid.FluidSectionFootnote
-import dev.antigravity.fluidengine.ui.fluid.FluidSegmentedControl
-import dev.antigravity.fluidengine.ui.fluid.FluidSwitch
 import dev.antigravity.fluidengine.ui.theme.FluidInlineMessage
 import dev.antigravity.fluidengine.ui.theme.FluidListDivider
 import dev.antigravity.fluidengine.ui.theme.FluidListGroup
 import dev.antigravity.fluidengine.ui.theme.FluidListRow
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
+import dev.pampa.pampanotes.core.export.ExportEstimate
 import dev.pampa.pampanotes.core.export.ExportFailure
-import dev.pampa.pampanotes.core.export.ExportFormat
-import dev.pampa.pampanotes.core.export.ExportOptions
+import dev.pampa.pampanotes.core.export.ExportFileKind
 import dev.pampa.pampanotes.core.export.ExportScope
-import dev.pampa.pampanotes.core.export.TranscriptChoice
+import dev.pampa.pampanotes.core.export.ExportTarget
+import dev.pampa.pampanotes.core.export.ExportWarning
+import dev.pampa.pampanotes.core.export.MissingGroup
+import dev.pampa.pampanotes.core.export.MissingReason
 import dev.pampa.pampanotes.ui.common.Formats
 import dev.pampa.pampanotes.ui.common.PageActions
 import dev.pampa.pampanotes.ui.common.SheetBody
+import java.util.Locale
 
 /**
  * Il pannello che prepara un pacchetto.
@@ -83,10 +85,12 @@ fun ExportSheet(
     viewModel.shareIntent(result)?.let { context.startActivity(Intent.createChooser(it, null)) }
   }
 
+  val busy = state.stage == ExportStage.RUNNING || state.stage == ExportStage.FETCHING
   FluidGlassModalPortal(
     visible = true,
-    // Chiudere a meta' scrittura lascerebbe un file rotto: finche' scrive, il pannello resta.
-    onDismissRequest = { if (state.stage != ExportStage.RUNNING) onDismiss() },
+    // Chiudere a meta' lavoro lascerebbe un file rotto, o un download a meta': finche' lavora, il
+    // pannello resta, e «Annulla» e' il modo di uscire.
+    onDismissRequest = { if (!busy) onDismiss() },
     // Una pagina intera: le scelte sono piu' di tre, e i tasti in fondo restano fermi mentre
     // le scelte scorrono.
     presentation = FluidGlassModalPresentation.FullScreen,
@@ -94,13 +98,15 @@ fun ExportSheet(
     footer = {
       PageActions {
         when (state.stage) {
-          ExportStage.RUNNING -> FluidButton(
+          ExportStage.RUNNING, ExportStage.FETCHING -> FluidButton(
             text = stringResource(R.string.action_cancel),
             onClick = viewModel::cancel,
             style = FluidButtonStyle.Plain,
             fillWidth = true,
             modifier = Modifier.fillMaxWidth(),
           )
+
+          ExportStage.MISSING -> MissingActions(onExportWithout = viewModel::exportWithoutMissing, onCancel = viewModel::cancel)
 
           ExportStage.DONE -> DoneActions(
             state = state,
@@ -127,9 +133,11 @@ fun ExportSheet(
   ) {
     SheetBody(scrollable = false) {
       when (state.stage) {
+        ExportStage.FETCHING -> FetchingBody(state)
+        ExportStage.MISSING -> MissingBody(state)
         ExportStage.RUNNING -> RunningBody(state)
         ExportStage.DONE -> DoneBody(state)
-        else -> ConfiguringBody(state, viewModel::setOptions)
+        else -> ConfiguringBody(state, viewModel)
       }
     }
   }
@@ -140,8 +148,7 @@ fun ExportSheet(
 // -------------------------------------------------------------------------------------------------
 
 @Composable
-private fun ColumnScope.ConfiguringBody(state: ExportUiState, onOptions: (ExportOptions) -> Unit) {
-  val options = state.options
+private fun ColumnScope.ConfiguringBody(state: ExportUiState, viewModel: ExportViewModel) {
   val set = state.set
 
   // Cosa si sta per esportare, in due righe. E' il momento in cui ci si accorge di aver aperto il
@@ -157,87 +164,47 @@ private fun ColumnScope.ConfiguringBody(state: ExportUiState, onOptions: (Export
     color = MaterialTheme.colorScheme.onSurfaceVariant,
   )
 
-  val formatLabels = mapOf(
-    ExportFormat.BUNDLE to stringResource(R.string.export_format_bundle),
-    ExportFormat.FILES to stringResource(R.string.export_format_files),
-    ExportFormat.SINGLE to stringResource(R.string.export_format_single),
-  )
-  FluidSectionFootnote(text = stringResource(R.string.export_format_label))
-  FluidSegmentedControl(
-    options = listOf(ExportFormat.BUNDLE, ExportFormat.FILES, ExportFormat.SINGLE),
-    selected = options.format,
-    onSelect = { onOptions(options.copy(format = it)) },
-    label = { formatLabels.getValue(it) },
-    modifier = Modifier.fillMaxWidth(),
-  )
-  FluidSectionFootnote(
-    text = stringResource(
-      when (options.format) {
-        ExportFormat.BUNDLE -> R.string.export_format_bundle_detail
-        ExportFormat.FILES -> R.string.export_format_files_detail
-        ExportFormat.SINGLE -> R.string.export_format_single_detail
-      },
-    ),
+  ExportChoices(
+    options = state.options,
+    onOptions = viewModel::setOptions,
+    audioDurationMs = set?.audioDurationMs,
   )
 
-  val bestLabel = stringResource(R.string.export_transcript_best)
-  val rawLabel = stringResource(R.string.export_transcript_raw)
-  FluidSectionFootnote(text = stringResource(R.string.export_transcript_label))
-  FluidSegmentedControl(
-    options = listOf(TranscriptChoice.BEST, TranscriptChoice.RAW),
-    selected = options.transcript,
-    onSelect = { onOptions(options.copy(transcript = it)) },
-    label = { if (it == TranscriptChoice.BEST) bestLabel else rawLabel },
-    modifier = Modifier.fillMaxWidth(),
-  )
-
-  FluidListGroup(modifier = Modifier.padding(top = 4.dp)) {
-    SwitchRow(
-      title = stringResource(R.string.export_timestamps),
-      subtitle = stringResource(R.string.export_timestamps_detail),
-      checked = options.timestamps,
-      onChange = { onOptions(options.copy(timestamps = it)) },
+  // Il peso prima di esportare: e' qui che si capisce se una chat lo prendera' o no.
+  state.estimate?.let { estimate ->
+    Text(
+      text = stringResource(R.string.export_estimate, Formats.bytes(estimate.bytes), tokens(estimate.tokens)),
+      style = MaterialTheme.typography.bodyMedium,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    // Un file singolo e' un testo da incollare: non ha una cartella dove mettere un PDF, e le regole
-    // ci stanno gia' dentro in cima. I file sciolti hanno le regole sempre e niente allegati: vanno
-    // in un Progetto, che vuole testo.
-    if (options.format == ExportFormat.BUNDLE) {
-      FluidListDivider()
-      SwitchRow(
-        title = stringResource(R.string.export_skill),
-        subtitle = stringResource(R.string.export_skill_detail),
-        checked = options.includeSkill,
-        onChange = { onOptions(options.copy(includeSkill = it)) },
-      )
-      FluidListDivider()
-      SwitchRow(
-        title = stringResource(R.string.export_sources),
-        subtitle = stringResource(R.string.export_sources_detail),
-        checked = options.includeSources,
-        onChange = { onOptions(options.copy(includeSources = it)) },
-      )
-      FluidListDivider()
-      SwitchRow(
-        title = stringResource(R.string.export_audio),
-        subtitle = if (set != null && set.audioDurationMs > 0) {
-          stringResource(R.string.export_audio_detail_size, Formats.durationShort(set.audioDurationMs))
-        } else {
-          stringResource(R.string.export_audio_detail)
-        },
-        checked = options.includeAudio,
-        onChange = { onOptions(options.copy(includeAudio = it)) },
-      )
-    }
   }
+  state.warnings.forEach { warning -> WarningMessage(warning, state.estimate) }
 
-  val failureText = state.failure?.let { exportFailureText(it) } ?: state.error
-  failureText?.let { error ->
+  if (state.stage == ExportStage.FAILED) {
+    val fallback = stringResource(R.string.export_failure_write)
     FluidInlineMessage(
       title = stringResource(R.string.export_failed),
-      message = error,
+      message = state.failure?.let { exportFailureText(it) } ?: state.error?.takeIf { it.isNotBlank() } ?: fallback,
       tone = FluidTone.Danger,
     )
   }
+}
+
+@Composable
+private fun WarningMessage(warning: ExportWarning, estimate: ExportEstimate?) {
+  val tokenText = tokens(estimate?.tokens ?: 0)
+  val (title, message) = when (warning) {
+    ExportWarning.CHAT_TOO_HEAVY -> stringResource(R.string.export_warn_heavy_title) to
+      stringResource(R.string.export_warn_heavy)
+    ExportWarning.CHAT_TOO_LONG -> stringResource(R.string.export_warn_long_title) to
+      stringResource(R.string.export_warn_long, tokenText)
+    ExportWarning.PASTE_TOO_LONG -> stringResource(R.string.export_warn_long_title) to
+      stringResource(R.string.export_warn_paste_long, tokenText)
+    ExportWarning.AUDIO_HEAVY -> stringResource(R.string.export_warn_audio_title) to
+      stringResource(R.string.export_warn_audio, Formats.bytes(estimate?.audioBytes ?: 0))
+  }
+  // Informazioni, non allarmi: il pacchetto si puo' fare lo stesso, e la persona decide.
+  FluidInlineMessage(title = title, message = message, tone = FluidTone.Info)
 }
 
 @Composable
@@ -259,26 +226,24 @@ private fun ColumnScope.ConfiguringActions(
   onPickFolder: () -> Unit,
 ) {
   val enabled = state.ready && state.noteCount > 0
+  val saveText = if (state.folderName.isNotBlank()) {
+    stringResource(R.string.export_save_in, state.folderName)
+  } else {
+    stringResource(R.string.export_save_folder)
+  }
+  val onSave = if (state.folderName.isNotBlank()) onSaveHere else onPickFolder
+  // Per un Progetto si salva: venti file condivisi insieme a un'app di chat arrivano spesso a meta',
+  // e da una cartella (Drive, il telefono) si caricano tutti e si ricaricano quando serve.
+  val saveFirst = state.options.target == ExportTarget.PROJECT
+  if (saveFirst) FluidSectionFootnote(text = stringResource(R.string.export_project_save_hint))
   Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-    FluidButton(
-      text = stringResource(R.string.export_share),
-      onClick = onShare,
-      style = FluidButtonStyle.Tinted,
-      enabled = enabled,
-      fillWidth = true,
-      modifier = Modifier.weight(1f),
-    )
-    FluidButton(
-      text = if (state.folderName.isNotBlank()) {
-        stringResource(R.string.export_save_in, state.folderName)
-      } else {
-        stringResource(R.string.export_save_folder)
-      },
-      onClick = if (state.folderName.isNotBlank()) onSaveHere else onPickFolder,
-      enabled = enabled,
-      fillWidth = true,
-      modifier = Modifier.weight(1f),
-    )
+    if (saveFirst) {
+      FluidButton(text = saveText, onClick = onSave, style = FluidButtonStyle.Tinted, enabled = enabled, fillWidth = true, modifier = Modifier.weight(1f))
+      FluidButton(text = stringResource(R.string.export_share), onClick = onShare, enabled = enabled, fillWidth = true, modifier = Modifier.weight(1f))
+    } else {
+      FluidButton(text = stringResource(R.string.export_share), onClick = onShare, style = FluidButtonStyle.Tinted, enabled = enabled, fillWidth = true, modifier = Modifier.weight(1f))
+      FluidButton(text = saveText, onClick = onSave, enabled = enabled, fillWidth = true, modifier = Modifier.weight(1f))
+    }
   }
   if (state.folderName.isNotBlank()) {
     FluidButton(
@@ -290,6 +255,93 @@ private fun ColumnScope.ConfiguringActions(
     )
   }
 }
+
+// -------------------------------------------------------------------------------------------------
+// I file dal computer di casa
+// -------------------------------------------------------------------------------------------------
+
+@Composable
+private fun ColumnScope.FetchingBody(state: ExportUiState) {
+  val fetch = state.fetch
+  val total = fetch?.total ?: 0
+  // Il file che sta arrivando, contato da uno: «1 di 12» mentre scarica il primo.
+  val current = ((fetch?.done ?: 0) + 1).coerceAtMost(total.coerceAtLeast(1))
+  Text(text = stringResource(R.string.export_fetching, current, total), style = MaterialTheme.typography.titleLarge)
+  fetch?.label?.takeIf { it.isNotBlank() }?.let { name ->
+    Text(text = name, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+  }
+  FluidProgressBar(progress = { fetch?.fraction ?: 0f }, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
+  FluidSectionFootnote(text = stringResource(R.string.export_fetching_detail))
+}
+
+@Composable
+private fun ColumnScope.MissingBody(state: ExportUiState) {
+  Text(text = stringResource(R.string.export_missing_title), style = MaterialTheme.typography.titleLarge)
+  Text(
+    text = stringResource(R.string.export_missing_detail),
+    style = MaterialTheme.typography.bodyMedium,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+  )
+  MissingList(state.missing)
+  if (state.fetched > 0) {
+    FluidSectionFootnote(text = pluralStringResource(R.plurals.export_fetched, state.fetched, state.fetched))
+  }
+  FluidSectionFootnote(
+    text = stringResource(if (state.computerSilent) R.string.export_missing_retry else R.string.export_missing_without),
+  )
+}
+
+@Composable
+private fun MissingList(groups: List<MissingGroup>) {
+  FluidListGroup {
+    groups.forEachIndexed { index, group ->
+      if (index > 0) FluidListDivider()
+      FluidListRow(
+        title = kindCount(group.kind, group.count),
+        subtitle = reasonText(group.reason),
+        tone = if (group.reason == MissingReason.NOT_ARCHIVED) FluidTone.Neutral else FluidTone.Warning,
+      )
+    }
+  }
+}
+
+@Composable
+private fun ColumnScope.MissingActions(onExportWithout: () -> Unit, onCancel: () -> Unit) {
+  FluidButton(
+    text = stringResource(R.string.export_missing_continue),
+    onClick = onExportWithout,
+    style = FluidButtonStyle.Tinted,
+    fillWidth = true,
+    modifier = Modifier.fillMaxWidth(),
+  )
+  FluidButton(
+    text = stringResource(R.string.action_cancel),
+    onClick = onCancel,
+    style = FluidButtonStyle.Plain,
+    fillWidth = true,
+    modifier = Modifier.fillMaxWidth(),
+  )
+}
+
+@Composable
+private fun kindCount(kind: ExportFileKind, count: Int): String = pluralStringResource(
+  when (kind) {
+    ExportFileKind.AUDIO -> R.plurals.export_recordings
+    ExportFileKind.SOURCE -> R.plurals.export_originals
+    ExportFileKind.PAGE -> R.plurals.export_handwritten_pages
+  },
+  count,
+  count,
+)
+
+@Composable
+private fun reasonText(reason: MissingReason): String = stringResource(
+  when (reason) {
+    MissingReason.NOT_ARCHIVED -> R.string.export_missing_not_archived
+    MissingReason.UNREACHABLE -> R.string.export_missing_unreachable
+    MissingReason.FAILED -> R.string.export_missing_failed
+  },
+)
 
 // -------------------------------------------------------------------------------------------------
 // Mentre scrive, e quando ha finito
@@ -309,18 +361,46 @@ private fun ColumnScope.RunningBody(state: ExportUiState) {
 @Composable
 private fun ColumnScope.DoneBody(state: ExportUiState) {
   Text(text = stringResource(R.string.export_done), style = MaterialTheme.typography.titleLarge)
-  state.result?.let { result ->
+  val result = state.result ?: return
+  Text(
+    text = result.displayName,
+    style = MaterialTheme.typography.bodyMedium,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+  )
+  Text(
+    text = pluralStringResource(R.plurals.export_done_detail, result.noteCount, result.noteCount) +
+      " · " + Formats.bytes(result.sizeBytes),
+    style = MaterialTheme.typography.bodySmall,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+  )
+
+  // Cosa c'e' dentro, contato sul pacchetto scritto: e' la risposta a «li ha messi o no?».
+  val inside = buildList {
+    if (result.includedAudio > 0) add(kindCount(ExportFileKind.AUDIO, result.includedAudio))
+    if (result.includedSources > 0) add(kindCount(ExportFileKind.SOURCE, result.includedSources))
+    if (result.includedPages > 0) add(kindCount(ExportFileKind.PAGE, result.includedPages))
+  }
+  if (inside.isNotEmpty()) {
     Text(
-      text = result.displayName,
-      style = MaterialTheme.typography.bodyMedium,
-      color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    Text(
-      text = pluralStringResource(R.plurals.export_done_detail, result.noteCount, result.noteCount) +
-        " · " + Formats.bytes(result.sizeBytes),
+      text = stringResource(R.string.export_done_inside, inside.joinToString(" · ")),
       style = MaterialTheme.typography.bodySmall,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+  }
+  if (state.fetched > 0) {
+    Text(
+      text = pluralStringResource(R.plurals.export_fetched, state.fetched, state.fetched),
+      style = MaterialTheme.typography.bodySmall,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+  }
+
+  if (state.missing.isNotEmpty()) {
+    FluidSectionFootnote(text = stringResource(R.string.export_done_missing))
+    MissingList(state.missing)
+  } else {
+    // Mancanti scoperti solo scrivendo (un file sparito fra il controllo e la scrittura): si dicono
+    // lo stesso, con le frasi di prima.
     if (result.skippedAudio > 0) {
       Text(
         text = pluralStringResource(R.plurals.export_skipped_audio, result.skippedAudio, result.skippedAudio),
@@ -374,16 +454,6 @@ private fun ColumnScope.DoneActions(
 // -------------------------------------------------------------------------------------------------
 
 @Composable
-private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-  FluidListRow(
-    title = title,
-    subtitle = subtitle,
-    onClick = { onChange(!checked) },
-    badge = { FluidSwitch(checked = checked, onCheckedChange = onChange) },
-  )
-}
-
-@Composable
 private fun summaryOf(notes: Int, sessions: Int, audioMs: Long): String {
   val pieces = buildList {
     add(pluralStringResource(R.plurals.export_notes, notes, notes))
@@ -391,4 +461,14 @@ private fun summaryOf(notes: Int, sessions: Int, audioMs: Long): String {
     if (audioMs > 0) add(Formats.durationShort(audioMs))
   }
   return pieces.joinToString(" · ")
+}
+
+/**
+ * «90k», «1,2M»: un conto di token si legge a occhio, e la precisione sarebbe finta — e' una stima
+ * fatta dalle parole.
+ */
+private fun tokens(value: Long): String = when {
+  value < 1_000 -> value.toString()
+  value < 1_000_000 -> "${(value + 500) / 1_000}k"
+  else -> String.format(Locale.getDefault(), "%.1fM", value / 1_000_000.0)
 }

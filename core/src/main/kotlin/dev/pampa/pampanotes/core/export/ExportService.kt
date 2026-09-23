@@ -4,6 +4,12 @@ import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.pampa.pampanotes.core.archive.ArchiveFetcher
+import dev.pampa.pampanotes.core.archive.ArchiveMismatch
+import dev.pampa.pampanotes.core.archive.ArchiveMissing
+import dev.pampa.pampanotes.core.archive.ArchiveRepository
+import dev.pampa.pampanotes.core.archive.FetchProgress
+import dev.pampa.pampanotes.core.db.AudioPartDao
 import dev.pampa.pampanotes.core.db.FolderDao
 import dev.pampa.pampanotes.core.db.FolderEntity
 import dev.pampa.pampanotes.core.db.NoteDao
@@ -63,6 +69,19 @@ data class ExportResult(
   val skippedAudio: Int = 0,
   /** Originali chiesti e non entrati, per lo stesso motivo. */
   val skippedSources: Int = 0,
+  /** Registrazioni, originali e pagine a mano che sono dentro davvero: la schermata dice questi. */
+  val includedAudio: Int = 0,
+  val includedSources: Int = 0,
+  val includedPages: Int = 0,
+  /** Pagine scritte a mano che non sono entrate, per lo stesso motivo delle registrazioni. */
+  val skippedPages: Int = 0,
+)
+
+/** Com'e' andato il prelievo dal computer di casa prima di scrivere. */
+data class ExportFetchOutcome(
+  val fetched: Int,
+  /** Quelli che non sono arrivati, col perche'. Comprende quelli che non si potevano nemmeno chiedere. */
+  val missing: List<MissingFile>,
 )
 
 /**
@@ -101,7 +120,9 @@ class ExportService @Inject constructor(
   private val transcripts: TranscriptDao,
   private val segments: SegmentDao,
   private val sources: SourceDao,
+  private val audioParts: AudioPartDao,
   private val files: AppFiles,
+  private val fetcher: ArchiveFetcher,
 ) {
 
   private val io = Dispatchers.IO
@@ -159,6 +180,67 @@ class ExportService @Inject constructor(
     )
   }
 
+  /** Vero se il file e' gia' su questo dispositivo. */
+  private fun isPresent(file: ExportFileRef): Boolean = when (file.kind) {
+    ExportFileKind.AUDIO -> files.audioFile(file.fileName).exists()
+    ExportFileKind.SOURCE, ExportFileKind.PAGE -> files.sourceFile(file.fileName).exists()
+  }
+
+  /** Quali file chiesti mancano qui, e quali di questi il computer di casa puo' dare. */
+  suspend fun plan(set: ExportSet, options: ExportOptions): ExportFetchPlan = withContext(io) {
+    ExportFiles.plan(set, options, ::isPresent)
+  }
+
+  /**
+   * Scarica dal computer di casa quello che [plan] ha trovato da scaricare.
+   *
+   * Prima di scrivere e non durante: se il computer non risponde lo si sa prima che esista un file a
+   * meta', e la persona puo' scegliere se esportare senza. Al primo «non risponde» ci si ferma — e'
+   * lo stesso computer per tutti, e gli altri aspetterebbero ognuno il suo timeout per fallire uguale.
+   * Un file che il computer dice di non avere, o che arriva diverso, riguarda quel file solo.
+   */
+  suspend fun fetchMissing(plan: ExportFetchPlan, onProgress: (FetchProgress) -> Unit = {}): ExportFetchOutcome = withContext(io) {
+    val missing = plan.unobtainable.toMutableList()
+    val total = plan.toFetch.size
+    var fetched = 0
+    var unreachable = false
+    plan.toFetch.forEachIndexed { index, file ->
+      if (unreachable) {
+        missing += MissingFile(file, MissingReason.UNREACHABLE)
+        return@forEachIndexed
+      }
+      onProgress(FetchProgress(index, total, file.name, index.toFloat() / total))
+      val within: (Long, Long) -> Unit = { received, size ->
+        val part = if (size > 0) (received.toFloat() / size).coerceIn(0f, 1f) else 0f
+        onProgress(FetchProgress(index, total, file.name, (index + part) / total))
+      }
+      try {
+        when (file.kind) {
+          ExportFileKind.AUDIO -> {
+            val row = audioParts.get(file.id) ?: throw ArchiveMissing(file.name)
+            fetcher.fetchPart(row, within)
+          }
+
+          ExportFileKind.SOURCE, ExportFileKind.PAGE -> {
+            val row = sources.get(file.id) ?: throw ArchiveMissing(file.name)
+            fetcher.fetchSource(row, within)
+          }
+        }
+        fetched++
+      } catch (error: IOException) {
+        val reason = when {
+          error is ArchiveMissing -> MissingReason.NOT_ARCHIVED
+          error !is ArchiveMismatch && ArchiveRepository.isUnreachable(error) -> MissingReason.UNREACHABLE
+          else -> MissingReason.FAILED
+        }
+        if (reason == MissingReason.UNREACHABLE) unreachable = true
+        missing += MissingFile(file, reason)
+      }
+    }
+    onProgress(FetchProgress(total, total, "", 1f))
+    ExportFetchOutcome(fetched, missing)
+  }
+
   /** Scrive il pacchetto e torna dove lo ha messo. */
   suspend fun export(
     set: ExportSet,
@@ -167,6 +249,32 @@ class ExportService @Inject constructor(
     labels: ExportLabels = ExportLabels(),
     onProgress: (Float) -> Unit = {},
   ): ExportResult = withContext(io) {
+    val result = write(
+      set = ExportFiles.withoutMissingPages(set) { files.sourceFile(it.storedFileName).exists() },
+      options = options,
+      destination = destination,
+      labels = labels,
+      onProgress = onProgress,
+    )
+    // Quello che e' dentro davvero, contato adesso che e' scritto: la schermata dice questo, non
+    // quello che si era chiesto.
+    val wanted = ExportFiles.wanted(set, options)
+    fun count(kind: ExportFileKind, present: Boolean) = wanted.count { it.kind == kind && isPresent(it) == present }
+    result.copy(
+      includedAudio = count(ExportFileKind.AUDIO, true),
+      includedSources = count(ExportFileKind.SOURCE, true),
+      includedPages = count(ExportFileKind.PAGE, true),
+      skippedPages = count(ExportFileKind.PAGE, false),
+    )
+  }
+
+  private suspend fun write(
+    set: ExportSet,
+    options: ExportOptions,
+    destination: ExportDestination,
+    labels: ExportLabels,
+    onProgress: (Float) -> Unit,
+  ): ExportResult {
     // «Annulla» deve fermare davvero: la scrittura e' codice bloccante, che da solo non si accorge
     // che la coroutine e' stata annullata. Il writer chiede a ogni file (e a ogni blocco di un file
     // lungo) se deve continuare, e un annullamento arriva come CancellationException.
@@ -188,11 +296,11 @@ class ExportService @Inject constructor(
       0
     }
 
-    if (format == ExportFormat.FILES) return@withContext exportLoose(set, options, destination, writer, name, onProgress, checkpoint)
+    if (format == ExportFormat.FILES) return exportLoose(set, options, destination, writer, name, onProgress, checkpoint)
 
     val single = format == ExportFormat.SINGLE
     val mime = if (single) "text/markdown" else "application/zip"
-    when (destination) {
+    return when (destination) {
       is ExportDestination.Share -> {
         val target = File(files.exports, name)
         // Si scrive con un altro nome e si rinomina solo alla fine: un file col nome buono e' un
@@ -337,6 +445,7 @@ class ExportService @Inject constructor(
           durationMs = part.durationMs,
           startMs = start,
           sizeBytes = part.sizeBytes,
+          archived = part.archivedAt > 0,
         )
       }
 
@@ -362,15 +471,21 @@ class ExportService @Inject constructor(
     }
 
     val allSources = sources.byNote(note.id)
-    // Le pagine scritte a mano sono contenuto, non provenienza: vanno negli appunti, sempre. Solo
-    // quelle che stanno qui: un collegamento a un'immagine che non c'e' e' peggio di niente.
-    val pages = allSources.filter { it.derivedFromId != null && it.storedFileName?.let { name -> files.sourceFile(name).exists() } == true }
-      .sortedWith(compareBy({ it.importedAt }, { it.originalName }))
+    // Le pagine scritte a mano sono contenuto, non provenienza: vanno negli appunti, sempre. Quelle
+    // che stanno qui, e quelle che il computer di casa ha: queste si scaricano prima di scrivere, e
+    // se non arrivano escono dal pacchetto (un collegamento a un'immagine che non c'e' e' peggio di
+    // niente). Una pagina che non sta da nessuna delle due parti non si promette nemmeno.
+    val pages = allSources.filter { source ->
+      source.derivedFromId != null &&
+        source.storedFileName?.let { name -> files.sourceFile(name).exists() || source.archivedAt > 0 } == true
+    }.sortedWith(compareBy({ it.importedAt }, { it.originalName }))
     return ExportNote(
       note = note,
       folderPath = folderPath,
       tags = tags.tags(note.id),
-      handwriting = pages.mapIndexed { index, page -> ExportImage(page.storedFileName!!, index + 1, page.sizeBytes) },
+      handwriting = pages.mapIndexed { index, page ->
+        ExportImage(page.storedFileName!!, index + 1, page.sizeBytes, id = page.id, archived = page.archivedAt > 0)
+      },
       sources = allSources.filter { it.derivedFromId == null }.map { source ->
         ExportSource(
           originalName = source.originalName,
@@ -380,6 +495,8 @@ class ExportService @Inject constructor(
           storedFileName = source.storedFileName,
           status = source.status,
           extractedChars = source.extractedChars,
+          id = source.id,
+          archived = source.archivedAt > 0,
         )
       },
       sessions = gatheredSessions,

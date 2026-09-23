@@ -537,8 +537,6 @@
   <string name="export_label_words">parole</string>
   <string name="export_label_note">nota</string>
   <string name="export_label_notes_plural">note</string>
-  <string name="export_format_files_detail">Gli stessi file senza ZIP, da caricare tutti insieme in un Progetto di Claude o in ChatGPT. Le regole stanno in instructions.md, da incollare nelle istruzioni del Progetto.</string>
-  <string name="export_format_files">File sciolti</string>
   <string name="export_label_index_how_to">Ogni nota ha un file di appunti e un file per ogni lezione registrata; le lezioni lunghe sono divise in parti. Scegli per titolo e per data, e apri solo i file che servono alla domanda.</string>
   <string name="export_label_page_singular">pagina a mano</string>
   <string name="export_label_pages">pagine a mano</string>
@@ -556,11 +554,6 @@
   <!-- Export: il pannello -->
   <string name="export_scope_everything">Tutto l\'archivio</string>
   <string name="export_counting">Sto guardando cosa c\'è…</string>
-  <string name="export_format_label">Formato</string>
-  <string name="export_format_bundle">Pacchetto</string>
-  <string name="export_format_single">File singolo</string>
-  <string name="export_format_bundle_detail">Uno ZIP con dentro una cartella: l\'indice, le regole, gli appunti di ogni nota e un file per ogni lezione. Claude lo carica come skill, ChatGPT e un agente lo estraggono e partono dall\'indice.</string>
-  <string name="export_format_single_detail">Un Markdown solo, da incollare in una conversazione.</string>
   <string name="export_transcript_label">Quale trascrizione</string>
   <string name="export_transcript_best">La migliore</string>
   <string name="export_transcript_raw">Sempre la grezza</string>
@@ -575,12 +568,8 @@
     <item quantity="one">Una registrazione non è nel pacchetto: non è su questo dispositivo.</item>
     <item quantity="other">%d registrazioni non sono nel pacchetto: non sono su questo dispositivo.</item>
   </plurals>
-  <string name="export_skill_detail">SKILL.md per Claude, instructions.md per ChatGPT e Gemini</string>
   <string name="export_sources">Documenti originali</string>
-  <string name="export_sources_detail">I PDF e i file da cui le note sono state importate</string>
   <string name="export_audio">Registrazioni</string>
-  <string name="export_audio_detail">I file audio. Pesano.</string>
-  <string name="export_audio_detail_size">I file audio: %1$s di registrazioni</string>
   <string name="export_share">Condividi</string>
   <string name="export_save_folder">Salva in una cartella</string>
   <string name="export_save_in">Salva in %1$s</string>
@@ -958,4 +947,67 @@
   <string name="sync_foreign_title">Queste note sono di un altro account</string>
   <string name="sync_foreign_detail">Su questo dispositivo ci sono note sincronizzate con un altro account Google. Per non mescolarle, la sincronizzazione si è fermata: rientra con l\'account di prima, oppure porta queste note nell\'account di adesso.</string>
   <string name="sync_foreign_adopt">Porta queste note in questo account</string>
+  <!-- Esportazione: «Dove lo usi?», Personalizza, peso, file dal computer di casa -->
+  <string name="export_where_title">Dove lo usi?</string>
+  <string name="export_target_chat">Chat di Claude o ChatGPT</string>
+  <string name="export_target_chat_detail">Uno ZIP leggero: testo e pagine a mano. Lo alleghi alla chat e chiedi.</string>
+  <string name="export_target_project">Progetto di Claude o ChatGPT</string>
+  <string name="export_target_project_detail">File sciolti da caricare nel progetto.</string>
+  <string name="export_target_agent">Agente (Claude Code, Codex)</string>
+  <string name="export_target_agent_detail">ZIP completo, anche registrazioni e originali.</string>
+  <string name="export_target_paste">Incolla in una chat</string>
+  <string name="export_target_paste_detail">Un solo testo, niente allegati.</string>
+  <string name="export_customize">Personalizza</string>
+  <string name="export_customized">personalizzato</string>
+  <string name="export_yes">sì</string>
+  <string name="export_no">no</string>
+  <string name="export_summary_transcript">Trascrizione: %1$s</string>
+  <string name="export_summary_best">la migliore</string>
+  <string name="export_summary_raw">la grezza</string>
+  <string name="export_summary_timestamps">Tempi: %1$s</string>
+  <string name="export_summary_audio">Registrazioni: %1$s</string>
+  <string name="export_summary_sources">Originali: %1$s</string>
+  <string name="export_summary_no_rules">senza regole</string>
+  <string name="export_transcript_best_effect">Quella che vedi nell\'app: la ripulita se c\'è, altrimenti la grezza.</string>
+  <string name="export_transcript_raw_effect">Sempre quella di Whisper: l\'unica con i tempi, e che nessun modello ha riscritto.</string>
+  <string name="export_skill_effect">Dicono all\'assistente cosa sono appunti e trascrizioni, e come citarli. SKILL.md per Claude, instructions.md per gli altri.</string>
+  <string name="export_audio_effect">I file audio, per chi vuole riascoltare. Pesano; quelli che stanno sul computer di casa li scarico prima.</string>
+  <string name="export_audio_effect_size">%1$s di audio, per chi vuole riascoltare. Pesano; quelli che stanno sul computer di casa li scarico prima.</string>
+  <string name="export_sources_effect">I PDF e i documenti importati, così com\'erano. Quelli che stanno sul computer di casa li scarico prima.</string>
+  <string name="export_files_no_attachments">Un Progetto prende testo: registrazioni e originali restano fuori. Le regole sono in instructions.md, da incollare nelle istruzioni del Progetto.</string>
+  <string name="export_single_no_attachments">Un testo da incollare non porta allegati né pagine a mano; le regole stanno in cima.</string>
+  <string name="export_reset_to">Torna alle scelte per «%1$s»</string>
+  <string name="export_estimate">≈ %1$s · circa %2$s token</string>
+  <string name="export_warn_heavy_title">Pesante per una chat</string>
+  <string name="export_warn_heavy">Oltre i 25 MB il caricamento in una chat spesso si interrompe. Togli registrazioni o originali, oppure scegli Agente.</string>
+  <string name="export_warn_long_title">Lungo per una chat</string>
+  <string name="export_warn_long">Circa %1$s token: più di quanti una conversazione ne tenga insieme alla domanda. Meglio un Progetto, o una cartella alla volta.</string>
+  <string name="export_warn_paste_long">Circa %1$s token: troppo per un messaggio solo. Meglio un Progetto, o una cartella alla volta.</string>
+  <string name="export_warn_audio_title">Con le registrazioni</string>
+  <string name="export_warn_audio">Le registrazioni pesano %1$s: con un semestre si arriva ai gigabyte. Serve spazio, e un po\' di pazienza.</string>
+  <string name="export_project_save_hint">Per un Progetto conviene salvarli in una cartella e caricarli da lì: condivisi tutti insieme, a volte qualcuno si perde.</string>
+  <string name="export_fetching">Scarico dal computer di casa: %1$d di %2$d</string>
+  <string name="export_fetching_detail">Sono i file che hai chiesto e che su questo dispositivo non ci sono. Poi scrivo il pacchetto.</string>
+  <string name="export_missing_title">Non riesco a prendere tutto</string>
+  <string name="export_missing_detail">Questi file li hai chiesti, ma adesso non si possono avere:</string>
+  <string name="export_missing_not_archived">si trovano solo su un altro dispositivo</string>
+  <string name="export_missing_unreachable">il computer di casa non risponde</string>
+  <string name="export_missing_failed">il download dal computer di casa non è riuscito</string>
+  <string name="export_missing_retry">Puoi esportare senza, e il risultato dirà cosa manca; oppure annullare e riprovare col computer di casa acceso.</string>
+  <string name="export_missing_without">Puoi esportare senza: il resto c\'è tutto, e il risultato dirà cosa manca.</string>
+  <string name="export_missing_continue">Esporta senza</string>
+  <string name="export_done_inside">Dentro anche: %1$s</string>
+  <string name="export_done_missing">Non ci sono:</string>
+  <plurals name="export_fetched">
+    <item quantity="one">Un file scaricato dal computer di casa.</item>
+    <item quantity="other">%d file scaricati dal computer di casa.</item>
+  </plurals>
+  <plurals name="export_originals">
+    <item quantity="one">%d originale</item>
+    <item quantity="other">%d originali</item>
+  </plurals>
+  <plurals name="export_handwritten_pages">
+    <item quantity="one">%d pagina a mano</item>
+    <item quantity="other">%d pagine a mano</item>
+  </plurals>
 </resources>
