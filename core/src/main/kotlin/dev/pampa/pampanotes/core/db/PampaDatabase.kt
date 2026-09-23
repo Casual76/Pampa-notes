@@ -16,7 +16,7 @@ import javax.inject.Singleton
 /**
  * Il database: entita', DAO e l'indice di ricerca.
  *
- * Versione 5. Le aggiunte di colonna e di tabella passano da `@AutoMigration`; tutto il resto si
+ * Versione 6. Le aggiunte di colonna e di tabella passano da `@AutoMigration`; tutto il resto si
  * scrive a mano in [Migrations] e si prova con `MigrationTest` sugli schemi esportati in
  * `core/schemas`.
  *
@@ -29,6 +29,9 @@ import javax.inject.Singleton
  * all'apertura come quelli dell'indice di ricerca.
  * 4 -> 5: `derivedFromId` sulle sorgenti, per le pagine scritte a mano disegnate da un `.sdocx`.
  * Una colonna che puo' essere nulla, e nulla e' giusto per tutte le righe di prima.
+ * 5 -> 6: `transcription_runs`, i numeri di ogni trascrizione finita su questo dispositivo (vedi
+ * `StatsEntities.kt`). Una tabella nuova e basta, e fuori dalla sincronizzazione: parte vuota, e le
+ * trascrizioni di prima contano lo stesso nella home, che ore e parole le prende da `transcripts`.
  */
 @Database(
   entities = [
@@ -49,10 +52,11 @@ import javax.inject.Singleton
     SyncGuardEntity::class,
     SyncMetaEntity::class,
     SyncOriginEntity::class,
+    TranscriptionRunEntity::class,
   ],
-  version = 5,
+  version = 6,
   exportSchema = true,
-  autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5)],
+  autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6)],
 )
 abstract class PampaDatabase : RoomDatabase() {
   abstract fun folders(): FolderDao
@@ -67,6 +71,7 @@ abstract class PampaDatabase : RoomDatabase() {
   abstract fun exportPresets(): ExportPresetDao
   abstract fun search(): SearchDao
   abstract fun sync(): SyncDao
+  abstract fun stats(): StatsDao
 
   companion object {
     const val NAME = "pampa_notes.db"
@@ -216,4 +221,5 @@ object DatabaseModule {
   @Provides fun exportPresets(db: PampaDatabase): ExportPresetDao = db.exportPresets()
   @Provides fun search(db: PampaDatabase): SearchDao = db.search()
   @Provides fun sync(db: PampaDatabase): SyncDao = db.sync()
+  @Provides fun stats(db: PampaDatabase): StatsDao = db.stats()
 }

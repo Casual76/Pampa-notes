@@ -12,6 +12,8 @@ import androidx.work.WorkManager
 import java.util.UUID
 import dev.pampa.pampanotes.MainActivity
 import dev.pampa.pampanotes.R
+import dev.pampa.pampanotes.core.db.TranscriptionRunEntity
+import dev.pampa.pampanotes.ui.common.RunText
 
 /** I canali di notifica: uno per i lavori in corso (silenzioso), uno per gli esiti. */
 object AppNotifications {
@@ -74,12 +76,18 @@ object AppNotifications {
     return builder.build()
   }
 
-  fun notifyDone(context: Context, jobId: String, wordCount: Int) {
+  /**
+   * La trascrizione e' pronta, e com'e' andata: «40 min in 48 s — 50× il tempo reale · 5.214
+   * parole». E' il momento in cui la velocita' interessa, quindi si dice qui e non solo nella home.
+   *
+   * @param run i numeri appena scritti; null se non si sono potuti scrivere, e allora le sole parole.
+   */
+  fun notifyDone(context: Context, jobId: String, wordCount: Int, run: TranscriptionRunEntity? = null) {
     notify(
       context = context,
       jobId = jobId,
       title = context.getString(R.string.notification_done_title),
-      text = context.resources.getQuantityString(R.plurals.notification_done_words, wordCount, wordCount),
+      text = RunText.notification(context.resources, run, wordCount),
     )
   }
 
@@ -116,6 +124,8 @@ object AppNotifications {
     val notification = NotificationCompat.Builder(context, CHANNEL_RESULTS)
       .setContentTitle(title)
       .setContentText(text)
+      // Due righe invece di una troncata: la frase con la velocita' e' lunga, e la fine e' il bello.
+      .setStyle(NotificationCompat.BigTextStyle().bigText(text))
       .setSmallIcon(android.R.drawable.stat_notify_chat)
       .setAutoCancel(true)
       .setContentIntent(openApp(context))

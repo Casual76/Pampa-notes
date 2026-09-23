@@ -41,6 +41,10 @@ object VerboseJson {
       throw TranscriptionError.NoSpeech("il servizio non ha riconosciuto parole")
     }
 
+    // Su cosa ha girato e quanto ci ha messo, se il computer di casa lo dice: finisce nelle
+    // statistiche della trascrizione (vedi [ServerReports]). Groq non lo dice, e non succede niente.
+    serverReport(root)?.let(ServerReports::publish)
+
     return TranscriptResult(
       // Quando i segmenti ci sono, il testo si ricompone da loro: e' l'unico modo di essere sicuri
       // che testo e tempi raccontino la stessa cosa dopo che i segmenti sono stati filtrati.
@@ -49,6 +53,23 @@ object VerboseJson {
       language = language,
       durationMs = durationMs ?: segments.maxOfOrNull { it.endMs },
     )
+  }
+
+  /**
+   * I tre campi che il companion aggiunge alla risposta: `processing_s`, `audio_s`, `device_used`.
+   * Null quando non ce n'e' nessuno; tollerante a numeri scritti come stringhe e a valori
+   * impossibili (negativi, non finiti), che si lasciano fuori invece di falsare una media.
+   */
+  fun serverReport(root: JsonObject): ServerReport? {
+    fun seconds(key: String): Long? = root[key].asDouble()
+      ?.takeIf { it.isFinite() && it >= 0.0 }
+      ?.let { (it * 1000).roundToLong() }
+    val report = ServerReport(
+      processingMs = seconds("processing_s"),
+      audioMs = seconds("audio_s"),
+      device = root["device_used"].asString()?.trim()?.lowercase()?.takeIf { it.isNotEmpty() },
+    )
+    return report.takeIf { it.processingMs != null || it.audioMs != null || it.device != null }
   }
 
   private fun parseSegment(element: JsonElement): RawSegment? {
