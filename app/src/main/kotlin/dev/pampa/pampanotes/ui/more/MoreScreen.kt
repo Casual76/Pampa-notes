@@ -104,7 +104,7 @@ fun MoreRoute(
           title = stringResource(R.string.settings_version),
           subtitle = state.versionName,
           leading = { RowIcon(Icons.Rounded.Info, FluidTone.Neutral) },
-          meta = state.engineVersion,
+          meta = "Fluid Engine ${state.engineVersion}",
         )
       }
     }

@@ -27,6 +27,8 @@ import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.db.JobState
+import dev.pampa.pampanotes.core.model.Dates
+import dev.pampa.pampanotes.ui.common.Formats
 import dev.pampa.pampanotes.ui.common.jobErrorText
 import dev.pampa.pampanotes.ui.common.jobPhaseText
 import dev.pampa.pampanotes.ui.common.jobStateLabel
@@ -76,7 +78,7 @@ fun JobsRoute(
               title = row.noteTitle.ifBlank { stringResource(R.string.jobs_unknown_note) },
               subtitle = row.job.errorCode?.let { jobErrorText(it, row.job.errorMessage) }
                 ?: jobStateLabel(row.job.state),
-              eyebrow = row.sessionDate.takeIf { it.isNotBlank() },
+              eyebrow = sessionDateLabel(row.sessionDate),
               tone = when (row.job.state) {
                 JobState.DONE -> FluidTone.Success
                 JobState.FAILED -> FluidTone.Danger
@@ -95,10 +97,13 @@ fun JobsRoute(
           }
         }
       }
-      if (state.finished.count { it.job.state == JobState.FAILED } > 1) {
+      // Anche per uno solo: «Riprova» stava solo nel menu che si apre tenendo premuto, e un lavoro
+      // fallito senza un tasto sotto sembra un lavoro da buttare.
+      val failed = state.finished.count { it.job.state == JobState.FAILED }
+      if (failed > 0) {
         item {
           FluidButton(
-            text = stringResource(R.string.jobs_retry_failed),
+            text = stringResource(if (failed == 1) R.string.action_retry else R.string.jobs_retry_failed),
             onClick = viewModel::retryAllFailed,
             style = FluidButtonStyle.Tinted,
             fillWidth = true,
@@ -126,7 +131,7 @@ private fun ActiveJobCard(row: JobRow, onCancel: () -> Unit, cancelLabel: String
       title = row.noteTitle.ifBlank { stringResource(R.string.jobs_unknown_note) },
       subtitle = jobPhaseText(row.job),
       eyebrow = jobStateLabel(row.job.state),
-      meta = row.sessionDate.takeIf { it.isNotBlank() },
+      meta = sessionDateLabel(row.sessionDate),
     )
     // Una barra determinata quando il progresso significa qualcosa, indeterminata quando si sta
     // solo aspettando una risposta: fingere una percentuale mentre il server pensa e' peggio che
@@ -152,4 +157,11 @@ private fun toneOf(state: JobState): FluidTone = when (state) {
   JobState.FAILED -> FluidTone.Danger
   JobState.CANCELLED -> FluidTone.Neutral
   else -> FluidTone.Info
+}
+
+/** «oggi», «ieri», «14 mar»: la data di una sessione e' salvata come `2026-09-23`, e cosi' si leggeva. */
+@Composable
+private fun sessionDateLabel(iso: String): String? {
+  if (iso.isBlank()) return null
+  return Dates.parseOrNull(iso)?.let { Formats.relativeDate(it) } ?: iso
 }
