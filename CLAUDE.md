@@ -189,6 +189,7 @@ Quattro cose non ovvie, tutte in `core/backup/`:
 | M15 export per agenti (una cartella, un file per lezione, file sciolti), pagine scritte a mano come immagini, il computer di casa segue l'account, accesso Google nel primo avvio | fatto |
 | M16 caccia ai problemi: sync senza corse ne' orfani, coda che si annulla e non si appende, il PC riconosce l'account, parole allineate in italiano, link che chiedono conferma | fatto |
 | M17 export per destinazione, tre pallini al tocco, data vera delle registrazioni, pezzi uguali, VRAM stimata, avanzamento in tempo reale dal computer, statistiche | fatto |
+| M18 il PC trascrive per impronta e taglia da se', «solo sul computer», date vere delle note, home con «Da fare» e «Riprendi ad ascoltare», statistiche sincronizzate | fatto |
 
 Dopo M7, il rifacimento dell'interfaccia (engine 1.32–1.35): misura di lettura e pagine intere,
 vetro solo sugli elementi piccoli, tre pannelli sul tablet, la materia che colora l'app, il testo
@@ -305,6 +306,16 @@ perche' un PDF si riapre in un secondo e una lezione da un'ora senza il PC non s
 (`StorageRepository.evictArchived`; non tocca una registrazione con un lavoro in corso). Le righe
 restano: e' lo stesso stato «il file non c'e'» di una riga arrivata dal sync, e tutto quello che
 segue vale anche qui. L'export dichiara anche gli originali saltati (`skippedSources`).
+
+**Solo sul computer** e' il contrario per una cartella o una nota sola, **per dispositivo**
+(`computerOnlyFolders`/`computerOnlyNotes` in DataStore, non si sincronizza: il tablet puo' tenere
+tutto e il telefono solo le materie di quest'anno). Una cartella vale con le sottocartelle
+(`FolderRepository.descendants`, che ha sostituito due copie private); `ComputerOnlyScope` ne ricava
+parti e fonti. Il mirror le salta, e `StorageRepository.evictComputerOnly` le toglie dal dispositivo
+quando il computer le ha: dopo ogni archiviazione riuscita e alla conferma della regola. Non tocca
+una sessione con un lavoro in corso, le pagine a mano, ne' la lezione ascoltata nelle ultime 24 ore
+(`protectedSessionIds`, collegato a «Riprendi ad ascoltare» in `PampaNotesApp`). Aprirle le scarica
+come sempre.
 
 **Tieni tutto anche qui** (Archiviazione, `mirrorEnabled`) e' il verso opposto per chi vuole
 consultare offline: `FetchWorker` — in primo piano, come l'archivio — scarica tutto quello che il
@@ -490,6 +501,16 @@ stringhe della sua lingua: i writer stanno in `:core` e non possono leggere `res
 
 ## Import
 
+**Le date vere della nota.** `updatedAt` e' l'ultima modifica *vera*, non l'import: un `.sdocx` la
+porta in `end_tag.bin` (int64 in microsecondi: modifica a +8, creazione a +46; le stesse in
+`note.note` a +32 e +24 — le date dello zip sono quelle della condivisione). Una nota importata
+prende creazione e modifica dal `.sdocx` e dall'ultima registrazione (`NoteDates`), una modifica
+fatta nell'app e' «adesso», e una trascrizione non tocca piu' la nota (prima la riportava a oggi).
+Le note gia' importate le corregge `RealDatesBackfill` all'avvio, solo se non toccate dopo l'import:
+il `.sdocx` qui si legge con un accesso diretto allo zip, quello che sta solo sul PC lo legge il PC
+(`GET /v1/files/{sha}/meta`, `FileMetaApi`); col PC spento resta in attesa. Anche le sessioni datate
+col giorno dell'import prendono il giorno della registrazione.
+
 Gli URI di una condivisione si copiano subito (vedi sopra) e poi si legge la copia. **La data di una
 registrazione** e' quella in cui e' stata fatta, non quella dell'import (`RecordingDate`): prima la
 data dei metadati del contenitore, poi una data nel nome del file (Registratore Samsung, WhatsApp,
@@ -638,6 +659,20 @@ a metterle nell'outbox. Non ha chiavi esterne: una sessione cancellata non si po
 la velocita', perche' ha saltato i pezzi gia' fatti. Tutto il resto della home (ore, parole, ritmo,
 lezione piu' lunga) si conta dalle trascrizioni grezze, quindi vale anche per quelle arrivate dal
 sync. I conti stanno in `TranscriptionStats.aggregate`, puro.
+
+**Il computer lavora, il telefono chiede.** La preparazione — scaricare dal PC una registrazione
+per rimandargliela, decodificarla in PCM, tagliarla e ricodificare i pezzi — costava piu' della
+trascrizione. Con un companion che in `/health` dichiara `features` (`by_ref`, `archive_upload`,
+`server_chunks`, `file_meta`, `prompt`) il telefono non decodifica niente (`CompanionTranscription`):
+una parte che il PC ha gia' (`archivedAt > 0`) si manda **per impronta** (`source_sha256`, nessun
+file: il companion la prende da `Archive.get`); una parte che sta solo qui si carica intera, con
+`archive=1` se l'archivio e' acceso — il PC la conserva, verifica l'impronta e risponde `archived`,
+e la parte si marca archiviata — altrimenti resta temporanea e si cancella a fine lavoro. Il tetto
+dei pezzi (`max_minutes`) lo applica il PC, con la stessa regola di `ChunkPolicy` e i tagli nel
+silenzio calcolati sull'array gia' in memoria; `GET /v1/jobs` dice `chunk`/`chunks`. Un blob sparito
+(`blob_missing`) ricade sul caricamento, un ospite (`owner_only`: un'impronta non deve dire cosa c'e'
+nell'archivio di un altro) e un companion vecchio sulla strada di prima. Il «Vocabolario» (`prompt`)
+arriva a WhisperX come `initial_prompt` per quella sola richiesta: prima il companion lo ignorava.
 
 Il raffinamento passa da `ChatProvider.complete` di `engine-ai` su Groq. Non è un assistente: è un
 passaggio che toglie intercalari e rimette la punteggiatura senza cambiare il contenuto.
