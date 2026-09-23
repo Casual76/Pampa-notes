@@ -20,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -704,7 +705,7 @@ private fun gigabytes(value: Double): String {
   val number = if (kotlin.math.abs(value - rounded) < 0.05) {
     rounded.toLong().toString()
   } else {
-    String.format(java.util.Locale.getDefault(), "%.1f", value)
+    String.format(LocalConfiguration.current.locales[0], "%.1f", value)
   }
   return stringResource(R.string.settings_gb, number)
 }

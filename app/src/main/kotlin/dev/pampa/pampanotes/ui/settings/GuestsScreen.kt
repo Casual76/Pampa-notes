@@ -16,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -57,13 +58,15 @@ fun GuestsSectionRoute(
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
   val context = LocalContext.current
+  // Le stringhe dalle risorse osservabili, non dal contesto: cambiano con la lingua e il tema.
+  val resources = LocalResources.current
   var name by remember { mutableStateOf("") }
   val copied = stringResource(R.string.share_copied)
   val revokeLabel = stringResource(R.string.guests_revoke)
 
-  fun inviteText(invite: GuestInvite): String = context.getString(
+  fun inviteText(invite: GuestInvite): String = resources.getString(
     R.string.guests_invite_text,
-    state.owner.ifBlank { context.getString(R.string.guests_invite_owner_fallback) },
+    state.owner.ifBlank { resources.getString(R.string.guests_invite_owner_fallback) },
     invite.computerUrl,
     invite.token,
     "pampanotes://endpoint?url=${invite.computerUrl}&token=${invite.token}",

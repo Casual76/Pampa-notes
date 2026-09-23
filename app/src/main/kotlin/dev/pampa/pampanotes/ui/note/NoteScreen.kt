@@ -59,6 +59,7 @@ import dev.pampa.pampanotes.ui.common.Formats
 import dev.pampa.pampanotes.ui.common.MarkdownText
 import dev.pampa.pampanotes.ui.common.OverflowMenuButton
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import dev.antigravity.fluidengine.ui.fluid.FluidSectionFootnote
 import dev.pampa.pampanotes.ui.common.ReportSubject
 import dev.pampa.pampanotes.ui.common.asSubject
@@ -75,6 +76,8 @@ fun NoteRoute(
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
   val context = LocalContext.current
+  // Le stringhe dalle risorse osservabili, non dal contesto: cambiano con la lingua e il tema.
+  val resources = LocalResources.current
   NoteScreen(
     state = state,
     initialTab = tabFromRoute(initialTab),
@@ -92,21 +95,21 @@ fun NoteRoute(
       viewModel.openSource(
         source,
         onReady = { openWithSystem(context, it, source.mime) },
-        onError = { Toast.makeText(context, context.getString(R.string.note_source_fetch_failed, it), Toast.LENGTH_LONG).show() },
+        onError = { Toast.makeText(context, resources.getString(R.string.note_source_fetch_failed, it), Toast.LENGTH_LONG).show() },
         // Una pagina a mano e' sempre toccabile — e' una scheda, non una riga spenta — quindi un
         // tocco che non puo' fare niente deve almeno dire perche'.
-        onUnavailable = { Toast.makeText(context, context.getString(R.string.note_handwriting_unavailable), Toast.LENGTH_LONG).show() },
+        onUnavailable = { Toast.makeText(context, resources.getString(R.string.note_handwriting_unavailable), Toast.LENGTH_LONG).show() },
       )
     },
     onRederiveHandwriting = {
-      Toast.makeText(context, context.getString(R.string.note_handwriting_working), Toast.LENGTH_SHORT).show()
+      Toast.makeText(context, resources.getString(R.string.note_handwriting_working), Toast.LENGTH_SHORT).show()
       viewModel.rederiveHandwriting(
         onDone = { count ->
-          val message = if (count == 0) context.getString(R.string.note_handwriting_none)
-          else context.resources.getQuantityString(R.plurals.note_handwriting_done, count, count)
+          val message = if (count == 0) resources.getString(R.string.note_handwriting_none)
+          else resources.getQuantityString(R.plurals.note_handwriting_done, count, count)
           Toast.makeText(context, message, Toast.LENGTH_LONG).show()
         },
-        onError = { Toast.makeText(context, context.getString(R.string.note_source_fetch_failed, it), Toast.LENGTH_LONG).show() },
+        onError = { Toast.makeText(context, resources.getString(R.string.note_source_fetch_failed, it), Toast.LENGTH_LONG).show() },
       )
     },
   )

@@ -7,6 +7,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import dev.pampa.pampanotes.core.transcription.SessionAssembler
@@ -51,8 +52,12 @@ data class PlaybackState(
  * La posizione si legge a intervalli invece di arrivare da sola: ExoPlayer non emette il tempo che
  * scorre, lo tiene e lo si chiede. Si chiede solo mentre suona, perche' un lettore in pausa che
  * sveglia la UI cinque volte al secondo e' batteria buttata.
+ *
+ * `@OptIn` e non `@UnstableApi`: l'API sperimentale di media3 la usa questa classe, e se ne prende
+ * lei la responsabilita'. Marcata `@UnstableApi` passava l'obbligo a chiunque la toccasse — il
+ * ViewModel, la barra del lettore — e il lint rifiutava la build di release per ognuno di loro.
  */
-@UnstableApi
+@OptIn(UnstableApi::class)
 class SessionPlayer(
   context: Context,
   private val scope: CoroutineScope,
