@@ -46,6 +46,18 @@ sealed class TranscriptionError(message: String, cause: Throwable? = null) : Exc
 
   class Cancelled : TranscriptionError("annullato")
 
+  /**
+   * Il computer di casa non ha nell'archivio il file che gli si e' chiesto per impronta (404
+   * `blob_missing`): chi l'ha chiesto lo carica, se ce l'ha.
+   */
+  class BlobMissing(message: String) : TranscriptionError(message)
+
+  /**
+   * Un ospite ha chiesto una cosa che vale solo per il proprietario (403 `owner_only`): trascrivere
+   * dall'archivio o tenerci un file. Si ripiega sul caricamento di sempre.
+   */
+  class OwnerOnly(message: String) : TranscriptionError(message)
+
   /** Il codice con cui l'errore si salva sul lavoro, e da cui la UI ripesca la frase. */
   val code: String
     get() = when (this) {
@@ -60,6 +72,8 @@ sealed class TranscriptionError(message: String, cause: Throwable? = null) : Exc
       is NoSpeech -> "no_speech"
       is UnknownModel -> "unknown_model"
       is Cancelled -> "cancelled"
+      is BlobMissing -> "blob_missing"
+      is OwnerOnly -> "owner_only"
     }
 
   /**

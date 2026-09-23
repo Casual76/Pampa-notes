@@ -73,6 +73,10 @@ data class TranscriptResult(
   val segments: List<RawSegment>,
   val language: String?,
   val durationMs: Long?,
+  /** Il computer di casa ha tenuto il file nel suo archivio (`archive=1`): la parte si segna archiviata. */
+  val archived: Boolean = false,
+  /** In quanti pezzi il computer ha diviso la registrazione da se' (`max_minutes`); null se non l'ha detto. */
+  val serverChunks: Int? = null,
 )
 
 /** A che punto e' l'invio di un file: la barra di avanzamento ha bisogno di questo, non di uno spinner. */
@@ -121,6 +125,12 @@ data class RemoteProgress(
   /** "cuda" o "cpu": la stessa lezione sul processore dura dieci volte tanto, e va detto. */
   val device: String? = null,
   val detail: String? = null,
+  /**
+   * Il pezzo su cui sta lavorando, da uno, quando la registrazione la divide lui (`max_minutes`):
+   * il telefono non ha tagliato niente e non saprebbe dirlo da se'.
+   */
+  val chunk: Int? = null,
+  val chunks: Int? = null,
 )
 
 /** Se il server risponde, e cosa dice di se'. */
@@ -130,6 +140,8 @@ data class EndpointHealth(
   val models: List<String> = emptyList(),
   val serverName: String? = null,
   val detail: String? = null,
+  /** Cosa il companion sa fare oltre all'API di OpenAI (vedi [CompanionFeatures]). Vuoto: un server qualsiasi, o un companion vecchio. */
+  val features: Set<String> = emptySet(),
 )
 
 /**
@@ -159,6 +171,66 @@ interface TranscriptionProvider {
     file: File,
     mime: String,
     request: TranscribeRequest,
+    onProgress: (UploadProgress) -> Unit = {},
+    onRemote: (RemoteProgress) -> Unit = {},
+  ): TranscriptResult
+}
+
+/**
+ * Le voci di `features` in `GET /health` del companion: cose che un server compatibile OpenAI
+ * qualsiasi non fa, e che quindi si chiedono solo a chi le dichiara.
+ */
+object CompanionFeatures {
+  /** Trascrive un file del suo archivio, indicato con lo sha256: niente da caricare. */
+  const val BY_REF = "by_ref"
+
+  /** Tiene nell'archivio il file appena caricato (`archive=1`), invece di buttarlo a fine lavoro. */
+  const val ARCHIVE_UPLOAD = "archive_upload"
+
+  /** Divide da se' una registrazione lunga (`max_minutes`), con la stessa regola di `ChunkPolicy`. */
+  const val SERVER_CHUNKS = "server_chunks"
+}
+
+/** Come caricare un file al companion quando sa fare di piu' di un server qualsiasi. */
+data class CompanionUpload(
+  /** L'impronta del file, minuscola: e' il nome con cui l'archivio lo terra'. */
+  val sha256: String?,
+  /** Il nome che l'archivio mostrera' (quello originale della registrazione). */
+  val name: String?,
+  /** Tenerlo nell'archivio dopo averlo trascritto. */
+  val archive: Boolean,
+  /** Il tetto dei pezzi, che il computer applica da se'; null: intero. */
+  val maxMinutes: Int?,
+)
+
+/**
+ * Il computer di casa che lavora da se': la registrazione la prende dal suo archivio, e se va divisa
+ * la divide lui. Lo implementa [OpenAiCompatProvider]; [TranscriptionRunner] lo usa solo se il
+ * companion dichiara [CompanionFeatures.BY_REF].
+ */
+interface CompanionTranscription {
+  /** Le [CompanionFeatures] del companion, lette da `/health` una volta e poi ricordate. Vuoto se non risponde. */
+  suspend fun features(): Set<String>
+
+  /**
+   * Trascrive il file che l'archivio del computer tiene sotto [sha256], senza caricare niente.
+   *
+   * @throws TranscriptionError.BlobMissing se l'archivio non ce l'ha.
+   * @throws TranscriptionError.OwnerOnly se chi chiede e' un ospite.
+   */
+  suspend fun transcribeByRef(
+    sha256: String,
+    request: TranscribeRequest,
+    maxMinutes: Int?,
+    onRemote: (RemoteProgress) -> Unit = {},
+  ): TranscriptResult
+
+  /** Carica e trascrive, chiedendo al computer di tenerlo e di dividerlo da se' ([upload]). */
+  suspend fun transcribeUpload(
+    file: File,
+    mime: String,
+    request: TranscribeRequest,
+    upload: CompanionUpload,
     onProgress: (UploadProgress) -> Unit = {},
     onRemote: (RemoteProgress) -> Unit = {},
   ): TranscriptResult

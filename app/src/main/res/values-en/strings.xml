@@ -1170,4 +1170,6 @@
   <!-- statsync -->
   <string name="home_stats_speed_detail_elsewhere">real time on average · record %1$s (%2$s)</string>
   <string name="home_stats_speed_detail_single_elsewhere">real time, on %1$s</string>
+  <!-- apptx -->
+  <string name="settings_custom_chunk_on_computer">With an up-to-date companion the computer cuts the pieces itself, and a recording already in its archive does not go through the phone: nothing is decoded here.</string>
 </resources>

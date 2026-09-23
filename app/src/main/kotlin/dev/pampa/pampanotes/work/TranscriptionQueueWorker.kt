@@ -243,6 +243,10 @@ class TranscriptionQueueWorker @AssistedInject constructor(
             provider = provider,
             request = request,
             chunkMinutes = settings.chunkMinutes,
+            // Col computer che lavora da se', quello che sale per la trascrizione resta nel suo
+            // archivio (se l'archivio e' acceso): una lezione non viaggia due volte.
+            archiveUploads = settings.archiveEnabled,
+            onArchived = repository::markPartArchived,
           ) { progress ->
             latest.update { it.applyProgress(progress) }
           }

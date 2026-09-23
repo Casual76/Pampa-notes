@@ -5,6 +5,7 @@ import dev.pampa.pampanotes.core.archive.ArchiveFetcher
 import dev.pampa.pampanotes.core.audio.ChunkDecision
 import dev.pampa.pampanotes.core.db.AudioPartEntity
 import dev.pampa.pampanotes.core.files.AppFiles
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import java.io.File
@@ -23,6 +24,7 @@ class TranscriptionRunnerTest {
   @get:Rule val temp = TemporaryFolder()
 
   private lateinit var files: AppFiles
+  private lateinit var fetcher: ArchiveFetcher
   private lateinit var runner: TranscriptionRunner
 
   @Before
@@ -31,7 +33,8 @@ class TranscriptionRunnerTest {
     every { context.filesDir } returns temp.newFolder("files")
     every { context.cacheDir } returns temp.newFolder("cache")
     files = AppFiles(context)
-    runner = TranscriptionRunner(files, mockk<ArchiveFetcher>(relaxed = true))
+    fetcher = mockk(relaxed = true)
+    runner = TranscriptionRunner(files, fetcher)
   }
 
   // --- quando si divide ---
@@ -185,5 +188,214 @@ class TranscriptionRunnerTest {
     assertTrue(TranscriptionRunner.exceedsWaitCap(TranscriptionError.RateLimited(3600.0, "")))
     assertEquals(false, TranscriptionRunner.exceedsWaitCap(TranscriptionError.RateLimited(30.0, "")))
     assertEquals(false, TranscriptionRunner.exceedsWaitCap(TranscriptionError.RateLimited(null, "")))
+  }
+
+  // --- il computer di casa che lavora da se' ---
+
+  /** Un companion finto: dice cosa sa fare, e si ricorda come e' stato chiamato. */
+  private class FakeCompanion(
+    private val features: Set<String>,
+    maxChunkMinutes: Int? = null,
+    val byRef: (String) -> TranscriptResult = { spokenResult("dall'archivio") },
+    val upload: (CompanionUpload) -> TranscriptResult = { spokenResult("caricata") },
+    val plain: (File) -> TranscriptResult = { spokenResult("strada di sempre") },
+  ) : TranscriptionProvider, CompanionTranscription {
+    val byRefCalls = mutableListOf<Pair<String, Int?>>()
+    val uploadCalls = mutableListOf<CompanionUpload>()
+    val plainCalls = mutableListOf<File>()
+    var remoteToSend: List<RemoteProgress> = emptyList()
+
+    override val id = OpenAiCompatProvider.ID
+    override val capabilities = TranscriptionCapabilities(
+      maxUploadBytes = null, supportsSegments = true, needsChunking = maxChunkMinutes != null, maxChunkMinutes = maxChunkMinutes,
+    )
+    override suspend fun listModels() = emptyList<String>()
+    override suspend fun health() = EndpointHealth(reachable = true, latencyMs = 0, features = features)
+    override suspend fun features() = features
+
+    override suspend fun transcribe(
+      file: File,
+      mime: String,
+      request: TranscribeRequest,
+      onProgress: (UploadProgress) -> Unit,
+      onRemote: (RemoteProgress) -> Unit,
+    ): TranscriptResult {
+      plainCalls += file
+      return plain(file)
+    }
+
+    override suspend fun transcribeByRef(
+      sha256: String,
+      request: TranscribeRequest,
+      maxMinutes: Int?,
+      onRemote: (RemoteProgress) -> Unit,
+    ): TranscriptResult {
+      byRefCalls += sha256 to maxMinutes
+      remoteToSend.forEach(onRemote)
+      return byRef(sha256)
+    }
+
+    override suspend fun transcribeUpload(
+      file: File,
+      mime: String,
+      request: TranscribeRequest,
+      upload: CompanionUpload,
+      onProgress: (UploadProgress) -> Unit,
+      onRemote: (RemoteProgress) -> Unit,
+    ): TranscriptResult {
+      uploadCalls += upload
+      onProgress(UploadProgress(16, 16))
+      remoteToSend.forEach(onRemote)
+      return upload(upload)
+    }
+
+    companion object {
+      fun spokenResult(text: String, archived: Boolean = false, chunks: Int? = null) =
+        TranscriptResult(text, listOf(RawSegment(0, 5_000, text)), "it", 60_000, archived = archived, serverChunks = chunks)
+    }
+  }
+
+  private val allFeatures = setOf(CompanionFeatures.BY_REF, CompanionFeatures.ARCHIVE_UPLOAD, CompanionFeatures.SERVER_CHUNKS)
+
+  /** Una parte che il computer ha gia'; [local] dice se il file e' anche qui. */
+  private fun archivedPart(id: String, position: Int = 0, local: Boolean = false): AudioPartEntity {
+    val base = part(id, position)
+    if (!local) File(files.audio, base.fileName).delete()
+    return base.copy(sha256 = "ABC$id", archivedAt = 1_000, originalName = "Voce $id.m4a")
+  }
+
+  @Test
+  fun `una parte archiviata si trascrive per impronta, senza scaricarla e senza pezzi sul telefono`() = runBlocking {
+    val companion = FakeCompanion(allFeatures, maxChunkMinutes = 30)
+    companion.remoteToSend = listOf(
+      RemoteProgress(RemoteStage.TRANSCRIBING, 0.5f, chunk = 2, chunks = 2),
+      RemoteProgress(RemoteStage.DONE, 1f, chunk = 2, chunks = 2),
+    )
+    val events = mutableListOf<TranscriptionProgress>()
+
+    val result = runner.transcribeSession("job", listOf(archivedPart("a")), companion, TranscribeRequest("m"), chunkMinutes = 10) {
+      events += it
+    }
+
+    assertEquals("dall'archivio", result.text)
+    assertEquals(listOf("abca" to 30), companion.byRefCalls)
+    assertTrue(companion.uploadCalls.isEmpty() && companion.plainCalls.isEmpty())
+    coVerify(exactly = 0) { fetcher.fetchPart(any(), any()) }
+    // Niente da caricare: la prima cosa che si dice e' che il computer l'ha ricevuta, con la barra a zero.
+    val first = events.first() as TranscriptionProgress.Remote
+    assertEquals(RemoteStage.RECEIVED, first.remote.stage)
+    assertEquals(0f, first.overall!!, 0.001f)
+    assertTrue(events.none { it is TranscriptionProgress.Uploading || it is TranscriptionProgress.Preparing })
+    // I pezzi li conta il computer, e arrivano nella fase: «pezzo 2 di 2».
+    val working = events.filterIsInstance<TranscriptionProgress.Remote>().first { it.remote.stage == RemoteStage.TRANSCRIBING }
+    assertEquals(2, working.chunkIndex)
+    assertEquals(2, working.chunkCount)
+    val phase = JobPhase.Remote(working.remote.stage, 1, 1, 50, chunk = working.chunkIndex, chunks = working.chunkCount)
+    assertEquals(phase, JobPhase.parse(phase.encode()))
+    // Il secondo pezzo a meta' sta a tre quarti della parte: meta' per il primo, un quarto dentro il secondo.
+    val expected = ProgressScale.MAX * (1f + ProgressScale.TRANSCRIBE_SHARE * 0.5f) / 2f
+    assertEquals(expected, working.overall!!, 0.001f)
+  }
+
+  @Test
+  fun `se il computer non ha piu' il file e il file e' qui, si carica e lo si fa tenere`() = runBlocking {
+    val companion = FakeCompanion(
+      allFeatures,
+      maxChunkMinutes = 60,
+      byRef = { throw TranscriptionError.BlobMissing("blob_missing") },
+    )
+
+    val result = runner.transcribeSession(
+      "job", listOf(archivedPart("a", local = true)), companion, TranscribeRequest("m"), chunkMinutes = 10, archiveUploads = true,
+    )
+
+    assertEquals("caricata", result.text)
+    assertEquals(1, companion.byRefCalls.size)
+    assertEquals(listOf(CompanionUpload("abca", "Voce a.m4a", archive = true, maxMinutes = 60)), companion.uploadCalls)
+    assertTrue(companion.plainCalls.isEmpty())
+  }
+
+  @Test
+  fun `se il computer non ha il file e non e' neanche qui, non e' da nessuna parte`() {
+    val companion = FakeCompanion(allFeatures, byRef = { throw TranscriptionError.BlobMissing("blob_missing") })
+    val error = runCatching {
+      runBlocking { runner.transcribeSession("job", listOf(archivedPart("a")), companion, TranscribeRequest("m"), chunkMinutes = 10) }
+    }.exceptionOrNull()
+    assertTrue("era $error", error is TranscriptionError.Decode)
+    assertTrue(companion.uploadCalls.isEmpty())
+    coVerify(exactly = 0) { fetcher.fetchPart(any(), any()) }
+  }
+
+  @Test
+  fun `una parte che il computer tiene si segna archiviata`() = runBlocking {
+    val companion = FakeCompanion(allFeatures, upload = { FakeCompanion.spokenResult("tenuta", archived = true) })
+    val archived = mutableListOf<String>()
+
+    runner.transcribeSession(
+      "job", listOf(part("a", 0)), companion, TranscribeRequest("m"), chunkMinutes = 10,
+      archiveUploads = true, onArchived = { id, _ -> archived += id },
+    )
+
+    assertEquals(listOf("a"), archived)
+    val upload = companion.uploadCalls.single()
+    assertEquals("a", upload.sha256)
+    assertTrue(upload.archive)
+    assertEquals(null, upload.maxMinutes)
+    assertTrue(companion.byRefCalls.isEmpty())
+  }
+
+  @Test
+  fun `con l'archivio spento il computer non tiene niente`() = runBlocking {
+    val companion = FakeCompanion(allFeatures)
+    runner.transcribeSession("job", listOf(part("a", 0)), companion, TranscribeRequest("m"), chunkMinutes = 10, archiveUploads = false)
+    assertEquals(false, companion.uploadCalls.single().archive)
+  }
+
+  @Test
+  fun `un companion vecchio segue la strada di sempre`() = runBlocking {
+    val companion = FakeCompanion(features = emptySet())
+
+    val result = runner.transcribeSession("job", listOf(archivedPart("a", local = true)), companion, TranscribeRequest("m"), chunkMinutes = 10)
+
+    assertEquals("strada di sempre", result.text)
+    assertEquals(1, companion.plainCalls.size)
+    assertTrue(companion.byRefCalls.isEmpty() && companion.uploadCalls.isEmpty())
+  }
+
+  @Test
+  fun `un companion vecchio scarica dal computer una parte che qui non c'e'`() = runBlocking {
+    val companion = FakeCompanion(features = emptySet())
+    runner.transcribeSession("job", listOf(archivedPart("a")), companion, TranscribeRequest("m"), chunkMinutes = 10)
+    coVerify(exactly = 1) { fetcher.fetchPart(any(), any()) }
+    assertEquals(1, companion.plainCalls.size)
+  }
+
+  @Test
+  fun `un ospite torna alla strada di sempre, e non ci riprova a ogni parte`() = runBlocking {
+    val companion = FakeCompanion(allFeatures, upload = { throw TranscriptionError.OwnerOnly("owner_only") })
+
+    val result = runner.transcribeSession("job", listOf(part("a", 0), part("b", 1)), companion, TranscribeRequest("m"), chunkMinutes = 10)
+
+    assertEquals(1, companion.uploadCalls.size)
+    assertEquals(2, companion.plainCalls.size)
+    assertEquals(listOf("a", "b"), result.segments.map { it.partId }.distinct())
+  }
+
+  @Test
+  fun `un ospite con una parte archiviata passa dallo scaricamento di sempre`() = runBlocking {
+    val companion = FakeCompanion(allFeatures, byRef = { throw TranscriptionError.OwnerOnly("owner_only") })
+    runner.transcribeSession("job", listOf(archivedPart("a")), companion, TranscribeRequest("m"), chunkMinutes = 10)
+    coVerify(exactly = 1) { fetcher.fetchPart(any(), any()) }
+    assertEquals(1, companion.plainCalls.size)
+  }
+
+  @Test
+  fun `Groq non passa mai dal computer`() = runBlocking {
+    val groqLike = object : TranscriptionProvider by FakeCompanion(allFeatures) {
+      override val id = GroqWhisperProvider.ID
+    }
+    // Il delegato risponde ai metodi, ma l'id e' quello di Groq: la strada e' quella di sempre.
+    val result = runner.transcribeSession("job", listOf(part("a", 0)), groqLike, TranscribeRequest("m"), chunkMinutes = 10)
+    assertEquals("strada di sempre", result.text)
   }
 }
