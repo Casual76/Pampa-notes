@@ -7,6 +7,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import dev.pampa.pampanotes.core.archive.ArchiveFetcher
 import dev.pampa.pampanotes.core.archive.ArchiveHttp
 import dev.pampa.pampanotes.core.archive.ArchiveRepository
+import dev.pampa.pampanotes.core.archive.ComputerOnlyScope
 import dev.pampa.pampanotes.core.db.FolderEntity
 import dev.pampa.pampanotes.core.db.PampaDatabase
 import dev.pampa.pampanotes.core.db.SourceKind
@@ -49,19 +50,20 @@ class ImportCoordinatorTest {
     files = AppFiles(context)
     workDir = File(context.cacheDir, "import-test").apply { deleteRecursively(); mkdirs() }
 
-    val storage = StorageRepository(db.audioParts(), db.sources(), db.jobs(), files)
-    val notes = NoteRepository(db.notes(), db.tags(), storage)
-    val extractors = TextExtractorRegistry(PlainTextExtractor(), PdfTextExtractor(context), DocxTextExtractor())
-    val audio = AudioImporter(files, db.sessions(), db.audioParts())
     // Il computer di casa qui non c'e': nessun indirizzo configurato, quindi archivio e download non
     // fanno richieste. Servono solo perche' le pagine a mano sanno dove chiedere un originale.
     val settings = PampaSettingsStore(context)
+    val computerOnly = ComputerOnlyScope(settings, db.folders(), db.sync())
+    val storage = StorageRepository(db.audioParts(), db.sources(), db.jobs(), files, computerOnly)
+    val notes = NoteRepository(db.notes(), db.tags(), storage)
+    val extractors = TextExtractorRegistry(PlainTextExtractor(), PdfTextExtractor(context), DocxTextExtractor())
+    val audio = AudioImporter(files, db.sessions(), db.audioParts())
     val resolver = EndpointResolver()
     val http = ArchiveHttp(userAgent = "PampaNotes-test")
     // Senza account e senza codice: il companion qui non viene mai chiamato.
     val auth = ComputerAuth(account = { null }, manualCode = { null }, fetch = { _, _ -> error("nessun Worker nei test") }, clock = System::currentTimeMillis)
     val archive = ArchiveRepository(db.audioParts(), db.sources(), files, settings, resolver, http, auth)
-    val fetcher = ArchiveFetcher(files, settings, resolver, http, db.audioParts(), db.sources(), auth)
+    val fetcher = ArchiveFetcher(files, settings, resolver, http, db.audioParts(), db.sources(), auth, computerOnly)
     coordinator = ImportCoordinator(
       context = context,
       files = files,

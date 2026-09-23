@@ -4,12 +4,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Computer
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DriveFileMove
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Upload
 import dev.pampa.pampanotes.ui.common.FolderPickerSheet
 import dev.pampa.pampanotes.ui.common.SelectionMark
+import dev.pampa.pampanotes.ui.common.rememberComputerOnly
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -118,6 +120,7 @@ private fun FolderScreen(
   var exporting by remember { mutableStateOf(false) }
   // Una riga tenuta premuta: la sottocartella o la nota da dare all'assistente.
   var exportingScope by remember { mutableStateOf<ExportScope?>(null) }
+  val computerOnly = rememberComputerOnly()
 
   // Le etichette dei menu si leggono qui: le lambda che le ricevono non sono composable.
   val renameLabel = stringResource(R.string.action_rename)
@@ -155,6 +158,9 @@ private fun FolderScreen(
         }
         FluidBarAction(icon = Icons.Rounded.DriveFileMove, contentDescription = moveLabel, enabled = selected.isNotEmpty(), onClick = { movingMany = true })
         FluidBarAction(icon = Icons.Rounded.Upload, contentDescription = exportLabel, enabled = selected.isNotEmpty(), onClick = { exportingMany = true })
+        computerOnly.selectionToggle(selected, state.folder?.id, afterClick = exitSelection).let { toggle ->
+          FluidBarAction(icon = Icons.Rounded.Computer, contentDescription = toggle.label, enabled = toggle.enabled, onClick = toggle.onClick)
+        }
         FluidBarAction(icon = Icons.Rounded.Delete, contentDescription = deleteLabel, enabled = selected.isNotEmpty(), onClick = { confirmingDeleteMany = true })
       } else {
         FluidBarAction(
@@ -172,6 +178,7 @@ private fun FolderScreen(
               if (state.notes.isNotEmpty()) add(FluidContextAction(label = selectLabel) { selecting = true })
               add(FluidContextAction(label = exportLabel) { exporting = true })
               state.folder?.let { folder ->
+                add(computerOnly.folderAction(folder.id, folder.name))
                 add(FluidContextAction(label = editFolderLabel) { renaming = FolderRow(folder, 0, 0) })
                 add(FluidContextAction(label = deleteFolderLabel, destructive = true) { pendingFolderDelete = FolderRow(folder, 0, 0) })
               }
@@ -189,7 +196,7 @@ private fun FolderScreen(
             val checked = row.note.id in selected
             FluidListRow(
               title = row.note.title,
-              subtitle = noteSubtitle(row),
+              subtitle = computerOnly.noteSubtitle(row.note.id, row.note.folderId, noteSubtitle(row)),
               meta = Formats.relativeDate(row.note.updatedAt),
               badge = noteBadge(row),
               tone = if (checked) FluidTone.Primary else FluidTone.Neutral,
@@ -221,13 +228,14 @@ private fun FolderScreen(
             if (index > 0) FluidListDivider()
             FluidListRow(
               title = row.folder.name,
-              subtitle = folderSubtitle(row),
+              subtitle = computerOnly.folderSubtitle(row.folder.id, folderSubtitle(row)),
               tone = toneFromName(row.folder.tone),
               onClick = { onOpenFolder(row.folder.id) },
               contextActions = {
                 listOf(
                   FluidContextAction(label = renameLabel) { renaming = row },
                   FluidContextAction(label = exportLabel) { exportingScope = ExportScope.Folder(row.folder.id) },
+                  computerOnly.folderAction(row.folder.id, row.folder.name),
                   FluidContextAction(label = deleteLabel, destructive = true) { pendingFolderDelete = row },
                 )
               },
@@ -248,7 +256,7 @@ private fun FolderScreen(
             if (index > 0) FluidListDivider()
             FluidListRow(
               title = row.note.title,
-              subtitle = noteSubtitle(row),
+              subtitle = computerOnly.noteSubtitle(row.note.id, row.note.folderId, noteSubtitle(row)),
               eyebrow = if (row.note.pinned) stringResource(R.string.note_pinned) else null,
               meta = Formats.relativeDate(row.note.updatedAt),
               badge = noteBadge(row),
@@ -259,6 +267,7 @@ private fun FolderScreen(
                     onTogglePinned(row.note.id, !row.note.pinned)
                   },
                   FluidContextAction(label = exportLabel) { exportingScope = ExportScope.Note(row.note.id) },
+                  computerOnly.noteAction(row.note.id, row.note.folderId, row.note.title),
                   FluidContextAction(label = deleteLabel, destructive = true) { pendingNoteDelete = row },
                 )
               },

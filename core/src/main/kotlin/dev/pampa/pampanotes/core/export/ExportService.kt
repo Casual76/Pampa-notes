@@ -11,7 +11,6 @@ import dev.pampa.pampanotes.core.archive.ArchiveRepository
 import dev.pampa.pampanotes.core.archive.FetchProgress
 import dev.pampa.pampanotes.core.db.AudioPartDao
 import dev.pampa.pampanotes.core.db.FolderDao
-import dev.pampa.pampanotes.core.db.FolderEntity
 import dev.pampa.pampanotes.core.db.NoteDao
 import dev.pampa.pampanotes.core.db.NoteEntity
 import dev.pampa.pampanotes.core.db.NoteTagDao
@@ -22,6 +21,7 @@ import dev.pampa.pampanotes.core.db.TranscriptDao
 import dev.pampa.pampanotes.core.db.TranscriptKind
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.model.slugify
+import dev.pampa.pampanotes.core.repo.FolderRepository
 import java.io.File
 import java.io.IOException
 import java.time.Instant
@@ -162,7 +162,7 @@ class ExportService @Inject constructor(
       is ExportScope.Folder -> {
         // La cartella e tutte quelle che contiene: esportare "Storia" e non prendere "Storia /
         // Novecento" sarebbe una sorpresa, non una scelta.
-        val wanted = descendants(scope.id, all.values.toList())
+        val wanted = FolderRepository.descendants(scope.id, all.values.toList())
         notes.all().filter { it.folderId in wanted } to (all[scope.id]?.name ?: everythingLabel)
       }
     }
@@ -501,19 +501,6 @@ class ExportService @Inject constructor(
       },
       sessions = gatheredSessions,
     )
-  }
-
-  /** Una cartella e tutte quelle che contiene, a qualunque profondita'. */
-  private fun descendants(rootId: String, all: List<FolderEntity>): Set<String> {
-    val byParent = all.groupBy { it.parentId }
-    val result = mutableSetOf<String>()
-    val queue = ArrayDeque(listOf(rootId))
-    while (queue.isNotEmpty()) {
-      val id = queue.removeFirst()
-      if (!result.add(id)) continue
-      byParent[id]?.forEach { queue.addLast(it.id) }
-    }
-    return result
   }
 
   private fun empty(label: String, generator: String) = ExportSet(

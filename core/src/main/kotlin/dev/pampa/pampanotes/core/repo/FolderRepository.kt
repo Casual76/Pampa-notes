@@ -99,6 +99,29 @@ class FolderRepository @Inject constructor(
    */
   suspend fun parentPathString(id: String): String = pathTo(id).dropLast(1).joinToString("/") { it.name }
 
+  /** La cartella e tutte quelle dentro, a qualunque profondita', la cartella per prima. */
+  suspend fun descendantIds(rootId: String): Set<String> = descendants(rootId, folders.all())
+
+  companion object {
+    /**
+     * La cartella e tutte quelle dentro, a qualunque profondita': la cartella per prima, poi un
+     * livello alla volta. Le cartelle sono poche, e chi chiama le ha gia' lette tutte. Un ciclo
+     * nei genitori — che `move` rifiuta, ma che un sync fatto male potrebbe portare — non gira
+     * per sempre: una cartella gia' vista non si rivisita.
+     */
+    fun descendants(rootId: String, all: List<FolderEntity>): Set<String> {
+      val byParent = all.groupBy { it.parentId }
+      val result = LinkedHashSet<String>()
+      val queue = ArrayDeque(listOf(rootId))
+      while (queue.isNotEmpty()) {
+        val id = queue.removeFirst()
+        if (!result.add(id)) continue
+        byParent[id]?.forEach { queue.addLast(it.id) }
+      }
+      return result
+    }
+  }
+
   private fun uniqueName(name: String, taken: List<String>): String {
     if (taken.none { it.equals(name, ignoreCase = true) }) return name
     var n = 2

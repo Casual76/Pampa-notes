@@ -1,5 +1,7 @@
 package dev.pampa.pampanotes.core.repo
 
+import dev.pampa.pampanotes.core.archive.ComputerOnlyItems
+import dev.pampa.pampanotes.core.archive.ComputerOnlyScope
 import dev.pampa.pampanotes.core.db.AudioPartDao
 import dev.pampa.pampanotes.core.db.JobDao
 import dev.pampa.pampanotes.core.db.SizeTotal
@@ -35,6 +37,19 @@ data class StorageUsage(
 }
 
 /**
+ * Cosa succederebbe accendendo una regola «solo sul computer», per la conferma: quante
+ * registrazioni e quanti originali sono qui adesso, e quanti di quelli se ne andrebbero subito
+ * perche' il computer li ha gia'. Gli altri aspettano l'archiviazione.
+ */
+data class ComputerOnlyPreview(
+  val recordings: SizeTotal = SizeTotal(0, 0),
+  val originals: SizeTotal = SizeTotal(0, 0),
+  val leavingNow: SizeTotal = SizeTotal(0, 0),
+) {
+  val here: SizeTotal get() = SizeTotal(recordings.count + originals.count, recordings.bytes + originals.bytes)
+}
+
+/**
  * I file su disco e il loro rapporto con le righe del database.
  *
  * Sta a se' perche' e' l'unico posto che deve conoscere audio, fonti e lavori insieme: mettere la
@@ -46,7 +61,16 @@ class StorageRepository @Inject constructor(
   private val sources: SourceDao,
   private val jobs: JobDao,
   private val files: AppFiles,
+  private val computerOnly: ComputerOnlyScope,
 ) {
+  /**
+   * Le sessioni che [evictComputerOnly] non tocca anche se la regola le copre: quella che si stava
+   * ascoltando, che chi la riapre si aspetta di ritrovare li' dov'era. Vuoto finche' qualcuno non
+   * lo collega (vedi «Riprendi ad ascoltare»).
+   */
+  @Volatile
+  var protectedSessionIds: suspend () -> Set<String> = { emptySet() }
+
   fun observeAudioTotal(): Flow<SizeTotal> = audioParts.observeTotal()
   fun observeSourcesTotal(): Flow<SizeTotal> = sources.observeTotal()
 
@@ -123,6 +147,52 @@ class StorageRepository @Inject constructor(
     }
     SizeTotal(count, bytes)
   }
+
+  /**
+   * Toglie da qui i file che una regola «solo sul computer» copre e che il computer ha gia'.
+   *
+   * Le stesse guardie di [evictArchived] — non una registrazione che la coda sta leggendo, non le
+   * pagine a mano (che [ComputerOnlyScope] non mette nemmeno nell'insieme) — piu' le sessioni di
+   * [protectedSessionIds]. Quello che non e' ancora archiviato resta finche' l'archivio non l'ha
+   * preso: non si perde niente. Gira dopo ogni archiviazione riuscita e quando si accende una regola.
+   */
+  suspend fun evictComputerOnly(): SizeTotal = withContext(Dispatchers.IO) {
+    val scope = computerOnly.current()
+    if (scope.isEmpty) return@withContext SizeTotal(0, 0)
+    val guarded = busySessions() + runCatching { protectedSessionIds() }.getOrDefault(emptySet())
+    var count = 0
+    var bytes = 0L
+    fun drop(file: java.io.File) {
+      if (!file.exists()) return
+      val size = file.length()
+      if (file.delete()) { count++; bytes += size }
+    }
+    scope.parts.filter { it.archivedAt > 0 && it.sessionId !in guarded }.forEach { drop(files.audioFile(it.fileName)) }
+    scope.sources.filter { it.archivedAt > 0 }.forEach { drop(files.sourceFile(it.storedFileName!!)) }
+    SizeTotal(count, bytes)
+  }
+
+  /** Quello che accendere queste regole toglierebbe da qui: la conferma lo dice prima. */
+  suspend fun computerOnlyPreview(folderIds: Set<String>, noteIds: Set<String>): ComputerOnlyPreview = withContext(Dispatchers.IO) {
+    val scope = computerOnly.resolve(folderIds, noteIds)
+    val guarded = busySessions() + runCatching { protectedSessionIds() }.getOrDefault(emptySet())
+    val parts = scope.parts.filter { files.audioFile(it.fileName).exists() }
+    val docs = scope.sources.filter { files.sourceFile(it.storedFileName!!).exists() }
+    val now = parts.filter { it.archivedAt > 0 && it.sessionId !in guarded }.map { it.sizeBytes } + docs.filter { it.archivedAt > 0 }.map { it.sizeBytes }
+    ComputerOnlyPreview(
+      recordings = SizeTotal(parts.size, parts.sumOf { it.sizeBytes }),
+      originals = SizeTotal(docs.size, docs.sumOf { it.sizeBytes }),
+      leavingNow = SizeTotal(now.size, now.sum()),
+    )
+  }
+
+  /** Quanti file le regole di adesso tengono sul computer, e quanto pesano: la riga di Archiviazione. */
+  suspend fun computerOnlyTotal(): SizeTotal = withContext(Dispatchers.IO) {
+    val scope: ComputerOnlyItems = computerOnly.current()
+    SizeTotal(scope.parts.size + scope.sources.size, scope.bytes)
+  }
+
+  private suspend fun busySessions(): Set<String> = jobs.all().filter { !it.state.isTerminal }.mapTo(HashSet()) { it.sessionId }
 
   /** Elimina i file che nessuna riga cita piu'. Torna quanti ne ha tolti. */
   suspend fun sweepOrphans(): Int = withContext(Dispatchers.IO) {

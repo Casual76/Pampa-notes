@@ -1202,4 +1202,46 @@
   <string name="home_stats_speed_detail_single_elsewhere">il tempo reale, da %1$s</string>
   <!-- apptx -->
   <string name="settings_custom_chunk_on_computer">Con il companion aggiornato i pezzi li taglia il computer, e una registrazione che ha già nel suo archivio non passa dal telefono: qui non si decodifica niente.</string>
+
+  <!-- compOnly -->
+  <string name="computer_only_on">Solo sul computer</string>
+  <string name="computer_only_off">Tieni anche qui</string>
+  <string name="computer_only_unavailable">Solo sul computer · serve un computer collegato</string>
+  <string name="computer_only_inherited">Sul computer con la cartella</string>
+  <string name="computer_only_marker">sul computer</string>
+  <string name="computer_only_confirm_title">Solo sul computer: «%1$s»</string>
+  <plurals name="computer_only_confirm_title_notes">
+    <item quantity="one">Solo sul computer: %d nota</item>
+    <item quantity="other">Solo sul computer: %d note</item>
+  </plurals>
+  <plurals name="computer_only_recordings">
+    <item quantity="one">%d registrazione</item>
+    <item quantity="other">%d registrazioni</item>
+  </plurals>
+  <plurals name="computer_only_originals">
+    <item quantity="one">%d originale</item>
+    <item quantity="other">%d originali</item>
+  </plurals>
+  <string name="computer_only_and">" e "</string>
+  <string name="computer_only_confirm_message">%1$s, %2$s qui: quelli già sul computer (%3$d) se ne vanno adesso, gli altri dopo l\'archiviazione. Si possono sempre riascoltare: si scaricano quando servono.</string>
+  <string name="computer_only_confirm_message_all">%1$s, %2$s qui: sono già tutti sul computer e se ne vanno adesso. Si possono sempre riascoltare: si scaricano quando servono.</string>
+  <string name="computer_only_confirm_message_later">%1$s, %2$s qui: se ne vanno dopo l\'archiviazione, quando il computer li avrà. Si possono sempre riascoltare: si scaricano quando servono.</string>
+  <string name="computer_only_confirm_nothing">Qui non c\'è niente da togliere. Da adesso registrazioni e originali restano sul computer e «Tieni tutto anche qui» non li scarica: si possono sempre riascoltare, si scaricano quando servono.</string>
+  <string name="computer_only_header">Solo sul computer</string>
+  <string name="computer_only_header_detail">Le cartelle e le note le cui registrazioni e i cui originali stanno sul computer e non qui. Vale solo per questo dispositivo.</string>
+  <string name="computer_only_row_empty">Nessuna. Tieni premuta una cartella o una nota e scegli «Solo sul computer».</string>
+  <plurals name="computer_only_folders">
+    <item quantity="one">%d cartella</item>
+    <item quantity="other">%d cartelle</item>
+  </plurals>
+  <plurals name="computer_only_notes">
+    <item quantity="one">%d nota</item>
+    <item quantity="other">%d note</item>
+  </plurals>
+  <string name="computer_only_row_none">Nessuna cartella e nessuna nota</string>
+  <string name="computer_only_row_open">Tocca per vederle, e per tenerne una anche qui</string>
+  <string name="computer_only_rule_folder">Cartella, con le sottocartelle</string>
+  <string name="computer_only_rule_note">Nota</string>
+  <string name="computer_only_keep_title">Tieni anche qui «%1$s»?</string>
+  <string name="computer_only_keep_message">Le registrazioni e gli originali torneranno qui quando servono, o subito se «Tieni tutto anche qui» è acceso.</string>
 </resources>

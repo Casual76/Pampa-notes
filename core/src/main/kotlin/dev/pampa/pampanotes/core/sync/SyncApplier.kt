@@ -14,6 +14,7 @@ import dev.pampa.pampanotes.core.db.SyncOutboxEntity
 import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.model.Ids
+import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.sync.SyncMerge.Decision
 import dev.pampa.pampanotes.core.sync.SyncMerge.LocalView
 import java.io.File
@@ -306,17 +307,7 @@ class SyncApplier @Inject constructor(
   }
 
   /** La cartella e tutte quelle dentro, a qualunque profondita'. Le cartelle sono poche: si leggono tutte. */
-  private suspend fun folderTree(rootId: String): List<String> {
-    val byParent = db.folders().all().groupBy { it.parentId }
-    val result = mutableListOf(rootId)
-    val seen = mutableSetOf(rootId)
-    var frontier = listOf(rootId)
-    while (frontier.isNotEmpty()) {
-      frontier = frontier.flatMap { parent -> byParent[parent].orEmpty().map { it.id } }.filter { seen.add(it) }
-      result += frontier
-    }
-    return result
-  }
+  private suspend fun folderTree(rootId: String): List<String> = FolderRepository.descendants(rootId, db.folders().all()).toList()
 
   /** Una `IN (...)` a pezzi: SQLite su Android vecchi non accetta piu' di 999 parametri. */
   private suspend fun <T> inChunks(ids: List<String>, query: suspend (List<String>) -> List<T>): List<T> =

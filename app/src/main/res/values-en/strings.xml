@@ -1172,4 +1172,46 @@
   <string name="home_stats_speed_detail_single_elsewhere">real time, on %1$s</string>
   <!-- apptx -->
   <string name="settings_custom_chunk_on_computer">With an up-to-date companion the computer cuts the pieces itself, and a recording already in its archive does not go through the phone: nothing is decoded here.</string>
+
+  <!-- compOnly -->
+  <string name="computer_only_on">Computer only</string>
+  <string name="computer_only_off">Keep here too</string>
+  <string name="computer_only_unavailable">Computer only · needs a connected computer</string>
+  <string name="computer_only_inherited">On the computer with its folder</string>
+  <string name="computer_only_marker">on computer</string>
+  <string name="computer_only_confirm_title">Computer only: “%1$s”</string>
+  <plurals name="computer_only_confirm_title_notes">
+    <item quantity="one">Computer only: %d note</item>
+    <item quantity="other">Computer only: %d notes</item>
+  </plurals>
+  <plurals name="computer_only_recordings">
+    <item quantity="one">%d recording</item>
+    <item quantity="other">%d recordings</item>
+  </plurals>
+  <plurals name="computer_only_originals">
+    <item quantity="one">%d original</item>
+    <item quantity="other">%d originals</item>
+  </plurals>
+  <string name="computer_only_and">" and "</string>
+  <string name="computer_only_confirm_message">%1$s, %2$s here: the ones already on the computer (%3$d) leave now, the rest after archiving. You can always listen again: they download when needed.</string>
+  <string name="computer_only_confirm_message_all">%1$s, %2$s here: all already on the computer, so they leave now. You can always listen again: they download when needed.</string>
+  <string name="computer_only_confirm_message_later">%1$s, %2$s here: they leave after archiving, once the computer has them. You can always listen again: they download when needed.</string>
+  <string name="computer_only_confirm_nothing">Nothing to remove here. From now on recordings and originals stay on the computer and “Keep everything here too” won\'t download them: you can always listen again, they download when needed.</string>
+  <string name="computer_only_header">Computer only</string>
+  <string name="computer_only_header_detail">Folders and notes whose recordings and originals stay on the computer, not here. Applies to this device only.</string>
+  <string name="computer_only_row_empty">None. Long-press a folder or a note and choose “Computer only”.</string>
+  <plurals name="computer_only_folders">
+    <item quantity="one">%d folder</item>
+    <item quantity="other">%d folders</item>
+  </plurals>
+  <plurals name="computer_only_notes">
+    <item quantity="one">%d note</item>
+    <item quantity="other">%d notes</item>
+  </plurals>
+  <string name="computer_only_row_none">No folders and no notes</string>
+  <string name="computer_only_row_open">Tap to see them, and to keep one here too</string>
+  <string name="computer_only_rule_folder">Folder, with its subfolders</string>
+  <string name="computer_only_rule_note">Note</string>
+  <string name="computer_only_keep_title">Keep “%1$s” here too?</string>
+  <string name="computer_only_keep_message">Recordings and originals will come back here when needed, or right away if “Keep everything here too” is on.</string>
 </resources>

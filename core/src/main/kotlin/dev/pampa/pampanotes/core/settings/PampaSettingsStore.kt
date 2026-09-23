@@ -406,6 +406,25 @@ class PampaSettingsStore(
     if (failures.isEmpty()) prefs.remove(ArchiveFailures) else prefs[ArchiveFailures] = failures.map { it.encode() }.toSet()
   }
 
+  /**
+   * «Solo sul computer»: le cartelle (con tutto quello che hanno dentro) e le note singole le cui
+   * registrazioni e i cui originali non stanno su questo dispositivo. E' una scelta di questo
+   * dispositivo — il telefono con poco spazio, non il tablet — quindi non sale sull'indice.
+   */
+  val computerOnlyFolders: Flow<Set<String>> = store.data.map { it[ComputerOnlyFolders] ?: emptySet() }
+  val computerOnlyNotes: Flow<Set<String>> = store.data.map { it[ComputerOnlyNotes] ?: emptySet() }
+
+  suspend fun setComputerOnlyFolder(folderId: String, on: Boolean) = edit { it.toggle(ComputerOnlyFolders, folderId, on) }
+  suspend fun setComputerOnlyNote(noteId: String, on: Boolean) = edit { it.toggle(ComputerOnlyNotes, noteId, on) }
+  suspend fun setComputerOnlyNotes(noteIds: Collection<String>, on: Boolean) = edit { prefs ->
+    noteIds.forEach { prefs.toggle(ComputerOnlyNotes, it, on) }
+  }
+
+  private fun MutablePreferences.toggle(key: Preferences.Key<Set<String>>, id: String, on: Boolean) {
+    val next = (this[key] ?: emptySet()).let { if (on) it + id else it - id }
+    if (next.isEmpty()) remove(key) else this[key] = next
+  }
+
   private suspend fun edit(block: (MutablePreferences) -> Unit) {
     store.edit(block)
   }
@@ -509,6 +528,10 @@ class PampaSettingsStore(
     val CustomMaxMinutes = intPreferencesKey("custom_max_minutes")
     val NotificationPermissionAsked = booleanPreferencesKey("notification_permission_asked")
     val ArchiveFailures = stringSetPreferencesKey("archive_failures")
+
+    // «Solo sul computer», per dispositivo.
+    val ComputerOnlyFolders = stringSetPreferencesKey("computer_only_folders")
+    val ComputerOnlyNotes = stringSetPreferencesKey("computer_only_notes")
   }
 }
 
