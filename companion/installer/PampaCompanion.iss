@@ -155,6 +155,10 @@ begin
     Params := Params + ' --upgrade';
   if WizardSilent then
     Params := Params + ' --silent';
+  { Per le prove: /INSTALLARGS="--port 8799 --no-autostart --no-firewall --no-start" arriva a
+    install.py com'e', cosi' un setup si prova su un PC che ha gia' il suo companion senza toccarlo. }
+  if ExpandConstant('{param:INSTALLARGS|}') <> '' then
+    Params := Params + ' ' + ExpandConstant('{param:INSTALLARGS|}');
   WizardForm.StatusLabel.Caption := 'Installo WhisperX, torch e il modello: segui la finestra del companion...';
   if not Exec(AppPath('.venv\Scripts\pythonw.exe'), Params, AppPath(''), SW_SHOWNORMAL, ewWaitUntilTerminated, Code) then
   begin
