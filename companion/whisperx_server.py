@@ -198,6 +198,48 @@ class PriorityGate:
 GATE = PriorityGate()
 
 
+class RequestCounter:
+    """
+    Quante richieste sono a meta' adesso: entrate da [AuthGate] e non ancora finite di rispondere.
+
+    «Sta trascrivendo» ([STATE] `busy`) e «qualcuno in fila» ([PriorityGate]) non bastano per dire
+    che il computer e' libero: un telefono che sta ancora caricando un'ora di audio non e' ne' l'uno
+    ne' l'altro, e neanche un `PUT` nell'archivio, o la risposta di una lezione appena finita che sta
+    ancora viaggiando verso un telefono con due tacche. Fermare il server in quel momento buttava via
+    tutto, e lasciava un `.part` a meta' nell'archivio. Lo guardano il riavvio da se'
+    ([restart_when_idle]), l'aggiornamento dall'icona e l'installer (`inflight` in /health).
+
+    Il ciclo di eventi scrive, gli altri thread leggono: un lucchetto perche' `+=` non e' atomico.
+    """
+
+    def __init__(self) -> None:
+        self._count = 0
+        self._lock = threading.Lock()
+
+    def enter(self) -> None:
+        with self._lock:
+            self._count += 1
+
+    def leave(self) -> None:
+        with self._lock:
+            self._count = max(0, self._count - 1)
+
+    @property
+    def count(self) -> int:
+        return self._count
+
+
+REQUESTS = RequestCounter()
+
+# Il server uvicorn in cui gira l'app, quando chi l'ha lanciato lo registra (`main`, l'icona): il
+# riavvio da se' lo chiude con garbo invece di staccare la spina al processo. E quello che chi lo ha
+# lanciato vuole fare prima di uscire (l'icona: togliersi dall'area di notifica).
+SERVER: Any = None
+ON_EXIT: Callable[[], None] | None = None
+# Il server ha finito di chiudersi: [lifespan] l'ha visto uscire.
+STOPPED = threading.Event()
+
+
 # --- a che punto e' una trascrizione -------------------------------------------------------------
 #
 # Dal telefono una lezione mandata al computer era un'attesa muta: la barra arrivava al 100% del
@@ -506,7 +548,7 @@ NEGATIVE_S = 60
 WORKER_USER_AGENT = "PampaNotes-companion/1.0"
 
 
-def vram_gb() -> float:
+def vram_gb(max_age_s: float = 0.0, allow_torch: bool = True) -> float:
     """
     Quanta memoria della scheda risulta occupata, in tutto.
 
@@ -516,12 +558,18 @@ def vram_gb() -> float:
 
     E' il totale della scheda, non solo di questo processo: comprende il desktop e tutto il resto.
     Per la domanda a cui serve rispondere — "la memoria e' tornata libera?" — e' il numero giusto.
+
+    Di serie una misura fresca, perche' chi la chiede di solito confronta un prima e un dopo.
+    `/health` invece si accontenta di una di qualche secondo fa e non passa mai da torch: vedi
+    [HEALTH_DRIVER_AGE_S].
     """
     if STATE["device"] != "cuda":
         return 0.0
-    driver = nvidia_query(max_age_s=0)
+    driver = nvidia_query(max_age_s=max_age_s)
     if driver is not None:
         return driver["used_gb"]
+    if not allow_torch:
+        return 0.0
     try:
         import torch
 
@@ -738,6 +786,16 @@ def plan_vram(model: str, compute_type: str, batch_max: int, budget_gb: float) -
 
 
 _NVSMI: dict[str, Any] = {"at": -1e9, "value": None}
+# Una domanda al driver alla volta: dieci `/health` arrivati insieme a cache scaduta lanciavano dieci
+# `nvidia-smi`. Cosi' il primo chiede e gli altri leggono la sua risposta.
+_NVSMI_LOCK = threading.Lock()
+
+# Quanto puo' essere vecchia la misura della scheda che `/health` riporta. `/health` e' aperto a
+# tutti e l'app lo chiede spesso (la sonda, il «Prova», ogni lavoro): con una misura fresca a ogni
+# chiamata chiunque sulla rete faceva girare `nvidia-smi` a comando, e senza il driver il ripiego su
+# torch apriva un contesto CUDA — proprio quello che all'accensione del PC resta convinto che la
+# scheda sia piena (vedi [nvidia_query]). Qualche secondo di ritardo nel numero non lo vede nessuno.
+HEALTH_DRIVER_AGE_S = 5.0
 
 
 def nvidia_query(max_age_s: float = 2.0) -> dict[str, Any] | None:
@@ -751,6 +809,11 @@ def nvidia_query(max_age_s: float = 2.0) -> dict[str, Any] | None:
     (23/09, dopo un riavvio). E il driver vede tutti i processi, che e' quello che serve per sapere
     quanto lasciano libero gli altri. Tenuto per [max_age_s]: `/health` lo chiede spesso.
     """
+    with _NVSMI_LOCK:
+        return _nvidia_query_locked(max_age_s)
+
+
+def _nvidia_query_locked(max_age_s: float) -> dict[str, Any] | None:
     now = time.monotonic()
     if now - _NVSMI["at"] < max_age_s:
         return _NVSMI["value"]
@@ -797,7 +860,7 @@ def gpu_status() -> dict[str, Any] | None:
     gpu = STATE.get("gpu")
     if STATE["device"] != "cuda" or not gpu:
         return None
-    driver = nvidia_query()
+    driver = nvidia_query(max_age_s=HEALTH_DRIVER_AGE_S)
     free = round(driver["free_gb"], 1) if driver is not None else None
     return {"name": gpu["name"], "total_gb": gpu["total_gb"], "free_gb": free}
 
@@ -866,13 +929,21 @@ def others_gb() -> float | None:
     """
     Quanta VRAM occupano gli altri programmi: tutta quella occupata meno la nostra.
 
-    La nostra si misura quando il modello si carica ([ensure_model]); a modello scaricato e' zero.
-    None se il driver non risponde: allora si conta sul totale, come prima.
+    La nostra si misura quando i modelli si caricano: quello grande in [ensure_model], l'allineatore
+    in [align_model_for]. A modello scaricato e' zero. None se il driver non risponde: allora si
+    conta sul totale, come prima.
+
+    L'allineatore conta anche lui. Prima si misurava solo il modello grande, e dalla seconda lezione
+    l'allineatore rimasto in memoria finiva fra «gli altri» — e il piano, che l'allineamento lo
+    aggiunge gia' da se' ([ALIGN_GB]), lo pagava due volte: un gigabyte di lotto in meno a ogni
+    lezione, per niente.
     """
     driver = nvidia_query()
     if driver is None:
         return None
     mine = STATE.get("own_gb", 0.0) if STATE.get("model") is not None else 0.0
+    if STATE.get("align"):
+        mine += STATE.get("align_gb", 0.0)
     return max(0.0, driver["used_gb"] - mine)
 
 
@@ -917,7 +988,7 @@ def apply_plan(plan: dict[str, Any]) -> None:
     STATE["batch_size"] = plan["batch_size"]
 
 
-def ensure_model() -> None:
+def ensure_model(name: str | None = None, compute_type: str | None = None) -> None:
     """
     Carica il modello se non c'e'. Chiamato dalla richiesta, non dall'avvio.
 
@@ -931,8 +1002,14 @@ def ensure_model() -> None:
     mentre si trascriveva), quello in memoria se ne va e si carica quello giusto. Qui e non nella
     richiesta che cambia le impostazioni perche' questa gira dentro il turno della fila: il modello
     non sparisce mai sotto una lezione a meta'.
+
+    `name` e `compute_type`, se ci sono, sono quelli fissati all'inizio del lavoro ([Engine]): una
+    lezione a pezzi chiama questa funzione una volta per pezzo, e le impostazioni cambiate dall'app
+    fra un pezzo e l'altro non devono far ricaricare un altro modello a meta' lezione.
     """
-    wanted = (STATE["name"], STATE["device"], STATE["compute_type"])
+    name = name or STATE["name"]
+    compute_type = compute_type or STATE["compute_type"]
+    wanted = (name, STATE["device"], compute_type)
     if STATE["model"] is not None:
         if STATE["loaded_as"] in (None, wanted):
             return
@@ -941,11 +1018,11 @@ def ensure_model() -> None:
 
     started = time.time()
     before_gb = vram_gb()
-    log.info("carico %s su %s (%s)...", STATE["name"], STATE["device"], STATE["compute_type"])
+    log.info("carico %s su %s (%s)...", name, STATE["device"], compute_type)
     STATE["model"] = whisperx.load_model(
-        STATE["name"],
+        name,
         device=STATE["device"],
-        compute_type=STATE["compute_type"],
+        compute_type=compute_type,
     )
     STATE["loaded_as"] = wanted
     # Quanto e' nostro, per sapere poi quanto e' degli altri ([others_gb]).
@@ -977,25 +1054,81 @@ def warm_imports() -> None:
     threading.Thread(target=run, name="warm-imports", daemon=True).start()
 
 
+# Il riavvio da se' ([restart_when_idle]). Ogni quanto si guarda se le richieste a meta' sono finite;
+# quanto al massimo si aspetta che finiscano — una lezione gia' in caricamento quando si e' deciso
+# puo' durare ore, ma una connessione rimasta appesa non deve tenere il computer in «restarting» per
+# sempre, rifiutando tutto; e quanto si lascia a uvicorn per chiudersi prima di staccare la spina.
+RESTART_POLL_S = 0.5
+RESTART_DRAIN_MAX_S = 3 * 3600
+RESTART_SHUTDOWN_S = 30.0
+
+
 def restart_when_idle() -> None:
     """
     Riparte con un processo nuovo, se lo si e' chiesto ([run_job]) e nessuno aspetta.
 
-    Il processo che parte e' `avvio.pyw --dopo`: aspetta che questo lasci la porta e poi rilancia
-    l'icona, come all'accensione. Qualche secondo di ritardo, perche' la risposta della lezione
-    appena finita deve fare in tempo a partire.
+    Da qui in poi le richieste nuove si sentono dire `503 restarting` ([AuthGate]), e il riavvio
+    vero lo fa [_drain_and_restart] su un thread suo, quando anche l'ultima richiesta a meta' ha
+    finito ([REQUESTS]). Prima si usciva tre secondi dopo la lezione che l'aveva chiesto, a orologio:
+    la sua risposta — un JSON grosso verso un telefono sotto rete mobile — poteva non essere ancora
+    arrivata, e un altro telefono che stava caricando una lezione, o un file nell'archivio, veniva
+    tagliato a meta'.
     """
-    if not STATE.get("restart_wanted") or STATE.get("busy") or GATE.waiting:
+    if not STATE.get("restart_wanted") or STATE.get("restarting") or STATE.get("busy") or GATE.waiting:
+        return
+    launcher = Path(__file__).with_name("avvio.pyw")
+    if not launcher.exists():
+        STATE["restart_wanted"] = False
+        log.warning("vorrei ripartire ma avvio.pyw non c'e': riavvia il companion a mano")
         return
     STATE["restart_wanted"] = False
     STATE["restarting"] = True
-    launcher = Path(__file__).with_name("avvio.pyw")
+    log.warning("riparto con un processo nuovo, per ritrovare la scheda: aspetto le richieste a meta'")
+    threading.Thread(target=_drain_and_restart, args=(launcher,), daemon=True, name="riavvio").start()
+
+
+def idle_now() -> bool:
+    """Niente in corso: ne' una trascrizione, ne' qualcuno in fila, ne' una richiesta a meta'."""
+    return not STATE.get("busy") and GATE.waiting == 0 and REQUESTS.count == 0
+
+
+def _drain_and_restart(launcher: Path) -> None:
+    """
+    Aspetta che il server sia libero ([idle_now]), poi lancia `avvio.pyw --dopo` e chiude.
+
+    Il lanciatore parte solo adesso, non all'inizio dell'attesa: aspetta un minuto che questo processo
+    lasci la porta, e un'attesa di mezz'ora dietro a un caricamento lo farebbe arrivare quando la
+    porta e' ancora presa — l'icona nuova troverebbe il server vecchio, e se ne andrebbe.
+
+    La chiusura e' quella di uvicorn ([SERVER] `should_exit`): smette di ascoltare, lascia finire le
+    connessioni e fa girare [lifespan], che restituisce la scheda. `os._exit` resta come ultima
+    strada: se il server non e' registrato, o non si chiude in [RESTART_SHUTDOWN_S], o se l'icona
+    tiene in piedi il processo dopo che il server e' uscito.
+    """
+    deadline = time.monotonic() + RESTART_DRAIN_MAX_S
+    while not idle_now():
+        if time.monotonic() > deadline:
+            log.warning("dopo %d minuti c'e' ancora qualcosa a meta': riparto lo stesso", RESTART_DRAIN_MAX_S // 60)
+            break
+        time.sleep(RESTART_POLL_S)
+    log.warning("nessuna richiesta a meta': riparto")
+    _spawn_launcher(launcher)
+    server = SERVER
+    if server is not None:
+        server.should_exit = True
+        if not STOPPED.wait(RESTART_SHUTDOWN_S):
+            log.warning("il server non si e' chiuso in %.0f s: chiudo il processo", RESTART_SHUTDOWN_S)
+    hook = ON_EXIT
+    if hook is not None:
+        with contextlib.suppress(Exception):
+            hook()
+        # All'icona un attimo per togliersi dall'area di notifica.
+        time.sleep(1.0)
+    _exit_process()
+
+
+def _spawn_launcher(launcher: Path) -> None:
     runner = Path(sys.executable).with_name("pythonw.exe")
-    if not launcher.exists():
-        STATE["restarting"] = False
-        log.warning("vorrei ripartire ma avvio.pyw non c'e': riavvia il companion a mano")
-        return
-    log.warning("riparto con un processo nuovo, per ritrovare la scheda")
     subprocess.Popen(
         [str(runner if runner.exists() else sys.executable), str(launcher), "--dopo"],
         cwd=str(launcher.parent),
@@ -1003,7 +1136,11 @@ def restart_when_idle() -> None:
         close_fds=True,
         creationflags=0x208 if sys.platform == "win32" else 0,
     )
-    threading.Timer(3.0, lambda: os._exit(0)).start()
+
+
+def _exit_process() -> None:
+    logging.shutdown()
+    os._exit(0)
 
 
 def unload_model(reason: str) -> None:
@@ -1021,16 +1158,24 @@ def unload_model(reason: str) -> None:
     STATE["model"] = None
     STATE["loaded_as"] = None
     STATE["own_gb"] = 0.0
-    # Anche gli allineatori stanno sulla scheda, uno per lingua.
+    # Anche l'allineatore sta sulla scheda.
     STATE["align"].clear()
+    STATE["align_gb"] = 0.0
     gc.collect()
-    if STATE["device"] == "cuda":
-        with contextlib.suppress(Exception):
-            import torch
-
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
+    empty_cuda_cache(ipc=True)
     log.info("modello scaricato (%s): da %.1f a %.1f GB occupati sulla scheda", reason, before, vram_gb())
+
+
+def empty_cuda_cache(ipc: bool = False) -> None:
+    """Restituisce alla scheda la riserva di torch: senza, quello che si e' mollato resta occupato."""
+    if STATE["device"] != "cuda":
+        return
+    with contextlib.suppress(Exception):
+        import torch
+
+        torch.cuda.empty_cache()
+        if ipc:
+            torch.cuda.ipc_collect()
 
 
 async def idle_watch() -> None:
@@ -1042,6 +1187,9 @@ async def idle_watch() -> None:
     """
     while True:
         await asyncio.sleep(30)
+        # Un riavvio chiesto mentre qualcuno era in fila, e quel qualcuno poi ha rinunciato: nessuna
+        # lezione finira' per ricordarsene, e allora se ne ricorda l'orologio.
+        restart_when_idle()
         idle = STATE["idle_seconds"]
         if not idle or STATE["model"] is None or STATE["busy"]:
             continue
@@ -1086,10 +1234,45 @@ def request_unload(reason: str = "richiesta") -> bool:
         return False
 
 
+async def preload_now() -> None:
+    """
+    Carica il modello prima che serva (`preload` in config.json), prendendo il turno nella fila.
+
+    L'icona lo caricava su un thread suo, fuori dalla fila: una lezione arrivata durante quei minuti
+    trovava `model` ancora vuoto e ne caricava un secondo, e la scheda si prendeva il doppio della
+    memoria — oltre il limite, nella RAM condivisa o in un errore. Col turno la lezione aspetta, e
+    trova il modello pronto.
+    """
+    async with GATE.slot(0, key="preload"):
+        if STATE["model"] is None:
+            await asyncio.to_thread(ensure_model)
+            STATE["last_used"] = time.time()
+
+
+def preload_when_ready(timeout_s: float = 120.0) -> bool:
+    """
+    [preload_now] da un altro thread, per l'icona: aspetta che il server sia partito ([LOOP]), poi
+    consegna il caricamento al suo ciclo di eventi e ne aspetta la fine. Falso se non e' andata.
+    """
+    deadline = time.monotonic() + timeout_s
+    while LOOP is None or LOOP.is_closed():
+        if time.monotonic() > deadline:
+            log.warning("il server non e' partito in tempo: il modello si carichera' alla prima lezione")
+            return False
+        time.sleep(0.2)
+    try:
+        asyncio.run_coroutine_threadsafe(preload_now(), LOOP).result()
+        return True
+    except Exception as error:  # noqa: BLE001 — un caricamento anticipato che fallisce non ferma niente
+        log.warning("caricamento anticipato del modello non riuscito: %s", error)
+        return False
+
+
 @contextlib.asynccontextmanager
 async def lifespan(_: FastAPI):
     global LOOP
     LOOP = asyncio.get_running_loop()
+    STOPPED.clear()
     watcher = asyncio.create_task(idle_watch())
     try:
         yield
@@ -1099,6 +1282,7 @@ async def lifespan(_: FastAPI):
             await watcher
         unload_model("chiusura")
         LOOP = None
+        STOPPED.set()
 
 
 app = FastAPI(title="Pampa Notes companion", docs_url=None, redoc_url=None, lifespan=lifespan)
@@ -1153,10 +1337,16 @@ def align_model_for(language: str, device: str | None = None):
     """
     Il modello di allineamento della lingua, tenuto da parte dopo il primo uso.
 
-    Ce n'e' uno per lingua e pesa poco, ma scaricarlo la prima volta richiede rete: tenerlo in
-    memoria evita di rifarlo a ogni lezione. Se ne va insieme al modello grande. Quello sul
-    processore del ripiego (vedi [run_job]) non si tiene: serve a una lezione sola, e la prossima
-    torna sulla scheda.
+    Ce n'e' uno per lingua, e leggerlo dal disco ogni lezione costerebbe secondi: si tiene quello
+    dell'ultima lingua, che e' quasi sempre anche quella della prossima. **Uno solo**: prima ne
+    restava uno per ogni lingua incontrata, fino allo sfratto del modello grande, e una lezione in
+    inglese in mezzo a quelle in italiano lasciava sulla scheda un gigabyte che il piano della VRAM
+    non vedeva. Cambiando lingua il vecchio se ne va, e la sua riserva torna alla scheda, prima di
+    caricare il nuovo. Quello sul processore del ripiego (vedi [run_job]) non si tiene: serve a una
+    lezione sola, e la prossima torna sulla scheda.
+
+    Quanto occupa sulla scheda si misura al caricamento (`align_gb`): e' nostro, non degli altri
+    programmi ([others_gb]).
     """
     import whisperx
 
@@ -1165,10 +1355,18 @@ def align_model_for(language: str, device: str | None = None):
         trust_sentence_splitter(language)
         return whisperx.load_align_model(language_code=language, device=device)
     if language not in STATE["align"]:
+        if STATE["align"]:
+            log.info("lascio l'allineamento per '%s'", "', '".join(STATE["align"]))
+            STATE["align"].clear()
+            STATE["align_gb"] = 0.0
+            gc.collect()
+            empty_cuda_cache()
         log.info("carico l'allineamento per '%s'...", language)
         trust_sentence_splitter(language)
+        before = vram_gb()
         model, metadata = whisperx.load_align_model(language_code=language, device=device)
         STATE["align"][language] = (model, metadata)
+        STATE["align_gb"] = max(0.0, vram_gb() - before)
     return STATE["align"][language]
 
 
@@ -1203,10 +1401,15 @@ def health() -> dict[str, Any]:
         "alignment": alignment,
         # Le tre righe qui sotto non le legge l'app: le legge chi sta guardando la VRAM.
         "loaded": loaded,
-        "vram_gb": round(vram_gb(), 1),
+        # Dal driver, di qualche secondo fa, e mai da torch: vedi [HEALTH_DRIVER_AGE_S].
+        "vram_gb": round(vram_gb(max_age_s=HEALTH_DRIVER_AGE_S, allow_torch=False), 1),
         "unload_in_s": max(0, int(STATE["idle_seconds"] - quiet)) if loaded and STATE["idle_seconds"] else None,
         # Quanti aspettano il loro turno, e se questo computer accetta ospiti.
         "queue": GATE.waiting,
+        # Le richieste a meta' ([REQUESTS]): l'installer non ferma il server finche' non e' zero.
+        "inflight": REQUESTS.count,
+        # Sta per ripartire da se' ([restart_when_idle]): le richieste nuove hanno un 503.
+        "restarting": bool(STATE.get("restarting")),
         "guests": bool(STATE["index_url"] and STATE["owner"]),
         # Come si entra: con l'account (biglietti verificati dal Worker) e/o senza credenziali.
         "auth": {
@@ -1415,22 +1618,31 @@ class AuthGate:
             response = JSONResponse({"detail": str(error)}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
             await response(scope, receive, send)
             return
-        state = scope.setdefault("state", {})
-        state["caller"] = caller
-        # Il lavoro si registra qui, con i soli header, e non nell'endpoint: FastAPI chiama
-        # l'endpoint solo dopo aver letto tutto il multipart, e fino ad allora chi chiedeva a che
-        # punto fosse si sarebbe sentito dire 404, cioe' «companion vecchio, smetti di chiedere».
-        if scope.get("method") == "POST" and scope.get("path") == TRANSCRIPTIONS_PATH:
-            # Sta per ripartire ([restart_when_idle]): una lezione accettata adesso morirebbe a meta'
-            # caricamento. Meglio dirlo subito, prima del corpo, e far riprovare fra poco.
+        # Da qui la richiesta conta fra quelle a meta' ([REQUESTS]) finche' la risposta non e' partita
+        # tutta: `self.app` torna solo dopo l'ultimo pezzo del corpo. Il conto sale *prima* di
+        # guardare `restarting`: cosi' il riavvio, che mette `restarting` e poi aspetta il conto a
+        # zero, o vede questa richiesta, o questa vede lui — mai nessuno dei due.
+        REQUESTS.enter()
+        try:
+            # Sta per ripartire ([restart_when_idle]): una lezione o un file accettati adesso
+            # morirebbero a meta' caricamento. Meglio dirlo subito, prima del corpo, e far riprovare
+            # fra poco, quando risponde il processo nuovo.
             if STATE.get("restarting"):
                 response = JSONResponse({"detail": "restarting"}, status_code=503, headers={"Retry-After": "20"})
                 await response(scope, receive, send)
                 return
-            job = JOBS.open(headers.get("x-pampa-job", ""), caller)
-            if job is not None:
-                state["job"] = job
-        await self.app(scope, receive, send)
+            state = scope.setdefault("state", {})
+            state["caller"] = caller
+            # Il lavoro si registra qui, con i soli header, e non nell'endpoint: FastAPI chiama
+            # l'endpoint solo dopo aver letto tutto il multipart, e fino ad allora chi chiedeva a che
+            # punto fosse si sarebbe sentito dire 404, cioe' «companion vecchio, smetti di chiedere».
+            if scope.get("method") == "POST" and scope.get("path") == TRANSCRIPTIONS_PATH:
+                job = JOBS.open(headers.get("x-pampa-job", ""), caller)
+                if job is not None:
+                    state["job"] = job
+            await self.app(scope, receive, send)
+        finally:
+            REQUESTS.leave()
 
 
 app.add_middleware(AuthGate)
@@ -1787,6 +1999,10 @@ async def transcriptions(
     # dell'archivio non si cancella mai: e' l'unica copia che il computer ha.
     source: Path | None = None
     target: Path | None = None
+    # Prima del `try`: il `finally` la guarda per sapere se il temporaneo lo sta ancora leggendo un
+    # lavoro. Assegnata solo piu' giu', un errore nel frattempo (il telefono che cade mentre si copia
+    # l'audio) diventava un `UnboundLocalError` nel `finally`, e il temporaneo restava in %TEMP%.
+    work: SharedWork | None = None
     origin = "upload"
     archived = False
     sha = source_sha256.strip().lower()
@@ -1834,6 +2050,17 @@ async def transcriptions(
         # che non sapeva che il telefono l'aveva mandata, o il telefono che la rimanda dopo aver perso
         # la risposta: ci si aggancia a quella. Il computer la fa una volta, e la danno a tutti e due.
         key = (sha, lang or "", vocabulary or "", cap or 0) if sha and archived else None
+        # Annullata mentre il file arrivava (`DELETE /v1/jobs/{id}` o il telefono che se ne va): il
+        # lavoro non si comincia, e non ci si aggancia a quello di un altro. Prima lo si scopriva solo
+        # un secondo dopo, in [_await_work], con il lavoro gia' creato e magari gia' in decodifica.
+        if not progress.cancelled:
+            with contextlib.suppress(Exception):
+                if await request.is_disconnected():
+                    progress.cancel()
+        if progress.cancelled:
+            log.info("%sannullata durante il caricamento: %s", who, label)
+            progress.set("failed", detail="annullata")
+            raise HTTPException(status_code=499, detail="annullata")
         work = INFLIGHT.get(key) if key is not None else None
         if work is not None and not work.task.done() and not work.progress.cancelled:
             log.info("%sla stessa registrazione e' gia' in corso: aspetto quella (%s)", who, label)
@@ -1908,6 +2135,11 @@ class SharedWork:
     progress: JobProgress
     waiters: set = dataclasses.field(default_factory=set)
     task: Any = None
+    # Ha avuto il suo turno nella fila, e da quel momento c'e' un thread che lavora. Un flag suo e non
+    # lo stato «queued»: dopo il turno lo stato resta «queued» ancora per un po' — finche' il thread
+    # non comincia a decodificare — e annullare il task in quella finestra liberava la fila mentre il
+    # thread andava avanti, con la lezione dopo sopra (vedi [_await_work]).
+    admitted: bool = False
 
 
 # Le trascrizioni in corso per impronta, per agganciare le richieste uguali. Solo sul ciclo di eventi.
@@ -1924,6 +2156,9 @@ async def _run_work(
     try:
         # Il proprietario passa davanti agli ospiti in attesa; nessuno interrompe chi sta gia' trascrivendo.
         async with GATE.slot(priority, key=progress.id):
+            # Nessuna attesa fra il turno e queste righe: chi guarda `admitted` da [_await_work] non
+            # puo' trovarlo falso con il thread gia' partito.
+            work.admitted = True
             STATE["busy"] = True
             progress.admitted()
             started = time.time()
@@ -1972,6 +2207,12 @@ async def _await_work(work: SharedWork, request: Request, progress: JobProgress)
     chiudeva solo la connessione del telefono, e il computer andava avanti a trascrivere per nessuno
     (23/09). Se era l'ultima ad aspettarlo, il lavoro si ferma: in fila esce dalla fila, mentre
     trascrive si ferma al lotto dopo.
+
+    Il task si annulla solo se il lavoro non ha ancora avuto il turno ([SharedWork] `admitted`).
+    Dopo, c'e' un thread che lavora, e annullare il task avrebbe liberato la fila subito, con il
+    thread ancora dentro la decodifica o il piano della VRAM: la lezione dopo partiva sopra, e la
+    scheda se le prendeva tutte e due. Da li' in poi si passa dal flag ([JobProgress.cancel]), che il
+    thread guarda a ogni passo, e la fila si libera quando il thread ha davvero finito.
     """
     token = object()
     work.waiters.add(token)
@@ -1990,7 +2231,7 @@ async def _await_work(work: SharedWork, request: Request, progress: JobProgress)
         work.waiters.discard(token)
         if not work.task.done() and not work.waiters:
             work.progress.cancel()
-            if work.progress.state == "queued":
+            if not work.admitted:
                 work.task.cancel()
 
 
@@ -2057,22 +2298,30 @@ class Engine:
     Una classe e non chiamate sparse perche' [run_job] la riceve come argomento, e i test gliene
     passano una finta che finisce la memoria a comando: il ripiego dalla scheda al processore e'
     codice che gira solo nei giorni storti, e un codice cosi' o si prova apposta o non si prova mai.
+
+    Modello e calcolo si fissano quando l'Engine nasce, cioe' all'inizio del lavoro: se dall'app
+    arrivano impostazioni nuove a meta' di una lezione a pezzi, il pezzo dopo non carica un altro
+    modello. Valgono dalla lezione successiva, come quando la lezione e' intera.
     """
 
+    def __init__(self, name: str | None = None, compute_type: str | None = None) -> None:
+        self.name = name or STATE["name"]
+        self.compute_type = compute_type or STATE["compute_type"]
+
     def main_model(self) -> Any:
-        ensure_model()
+        ensure_model(self.name, self.compute_type)
         return STATE["model"]
 
     def needs_load(self) -> bool:
         """[main_model] dovra' leggere i pesi dal disco? E' il «carico il modello» che l'app mostra."""
-        wanted = (STATE["name"], STATE["device"], STATE["compute_type"])
+        wanted = (self.name, STATE["device"], self.compute_type)
         return STATE["model"] is None or STATE["loaded_as"] not in (None, wanted)
 
     def cpu_model(self) -> Any:
         import whisperx
 
-        log.warning("carico %s sul processore (int8) per questa lezione: sara' piu' lenta", STATE["name"])
-        return whisperx.load_model(STATE["name"], device="cpu", compute_type="int8")
+        log.warning("carico %s sul processore (int8) per questa lezione: sara' piu' lenta", self.name)
+        return whisperx.load_model(self.name, device="cpu", compute_type="int8")
 
     def align(
         self,
@@ -2178,7 +2427,7 @@ def run_job(
         # non la vede — succede quando si apre all'accensione del PC — e l'unico rimedio e' un
         # processo nuovo: si riparte appena il computer e' libero ([restart_when_idle]).
         driver = nvidia_query(max_age_s=0)
-        needed = estimate_vram_gb(STATE["name"], STATE["compute_type"], 1)
+        needed = estimate_vram_gb(getattr(engine, "name", STATE["name"]), getattr(engine, "compute_type", STATE["compute_type"]), 1)
         if driver is not None and driver["free_gb"] >= needed:
             STATE["restart_wanted"] = True
             log.warning(
@@ -2436,6 +2685,8 @@ def transcribe_audio(
     engine: Engine,
     max_minutes: int | None = None,
     prompt: str | None = None,
+    batch_size: int | None = None,
+    device: str | None = None,
 ) -> dict[str, Any]:
     """
     [run_job] sull'audio intero, o su ogni pezzo se [max_minutes] lo chiede ([piece_count]).
@@ -2445,7 +2696,12 @@ def transcribe_audio(
     riconosciuto, cosi' non la si riconosce da capo a ogni pezzo. I tempi di segmenti e parole si
     spostano dell'inizio del pezzo, e i pezzi si mettono in fila. [progress] dice «pezzo 2 di 3» e,
     dentro, lo stato di quel pezzo.
+
+    Lotto e dispositivo si leggono una volta, qui, e valgono per tutti i pezzi: /v1/admin/settings
+    puo' cambiare [STATE] mentre si trascrive, e il pezzo due non deve partire con un altro lotto.
     """
+    batch_size = int(batch_size or STATE["batch_size"])
+    device = device or STATE["device"]
     total_s = len(audio) / sample_rate
     count = piece_count(total_s, max_minutes)
     if count > 1:
@@ -2458,21 +2714,21 @@ def transcribe_audio(
 
     segments: list[dict] = []
     detected = language
-    device_used = STATE["device"]
+    device_used = device
     alignment = "ok"
-    batch_size = STATE["batch_size"]
+    used_batch = batch_size
     for index, (start_s, end_s) in enumerate(bounds):
         progress.check_cancelled()
         progress.piece(index + 1, len(bounds))
         piece = audio if len(bounds) == 1 else audio[int(round(start_s * sample_rate)) : int(round(end_s * sample_rate))]
-        job = run_job(piece, detected, engine, STATE["batch_size"], STATE["device"], progress, prompt=prompt)
+        job = run_job(piece, detected, engine, batch_size, device, progress, prompt=prompt)
         detected = detected or job.get("language")
         segments.extend(_shifted(segment, start_s) for segment in job["segments"])
         if job.get("device_used") == "cpu":
             device_used = "cpu"
         if job.get("alignment", "ok") != "ok" and alignment == "ok":
             alignment = job["alignment"]
-        batch_size = job.get("batch_size", batch_size)
+        used_batch = job.get("batch_size", used_batch)
     # Niente di grande resta nel frame: se qualcuno lo conserva (una libreria che tiene da parte un
     # errore d'import col suo traceback, vedi [warm_imports]) si porterebbe dietro il modello e
     # l'audio, e scaricare il modello non restituirebbe piu' la scheda.
@@ -2481,7 +2737,7 @@ def transcribe_audio(
         "segments": segments,
         "language": detected or "en",
         "device_used": device_used,
-        "batch_size": batch_size,
+        "batch_size": used_batch,
         "alignment": alignment,
         "chunks": len(bounds),
     }
@@ -2500,6 +2756,11 @@ def _transcribe(
 
     progress = progress or JobProgress()
     replan_for_job()
+    # Da qui in poi la lezione usa queste impostazioni fino alla fine, pezzo dopo pezzo: vedi [Engine].
+    engine = Engine()
+    batch_size, device = STATE["batch_size"], STATE["device"]
+    # Annullata mentre si pianificava: non si decodifica un'ora di audio per nessuno.
+    progress.check_cancelled()
     # ffmpeg che decodifica un'ora di m4a sono secondi veri: meglio dirlo che restare «in coda».
     progress.set("decoding")
     audio = whisperx.load_audio(path)
@@ -2508,8 +2769,10 @@ def _transcribe(
     progress.audio_s = audio_s
     # «auto»: la lunghezza dei pezzi la sceglie il computer, adesso che sa quanto e' lunga la lezione
     # e quanto va veloce ([auto_piece_minutes]).
-    cap = auto_piece_minutes(audio_s, STATE["device"]) if max_minutes == "auto" else max_minutes
-    job = transcribe_audio(audio, SAMPLE_RATE, language, progress, Engine(), max_minutes=cap, prompt=prompt)
+    cap = auto_piece_minutes(audio_s, device) if max_minutes == "auto" else max_minutes
+    job = transcribe_audio(
+        audio, SAMPLE_RATE, language, progress, engine, max_minutes=cap, prompt=prompt, batch_size=batch_size, device=device,
+    )
     STATE["alignment"][job["language"]] = job["alignment"]
 
     out = []
@@ -2797,6 +3060,7 @@ def banner(settings: dict[str, Any]) -> None:
 
 
 def main() -> None:
+    global SERVER
     parser = argparse.ArgumentParser(description="WhisperX per Pampa Notes")
     config.add_arguments(parser)
     args = parser.parse_args()
@@ -2822,7 +3086,8 @@ def main() -> None:
 
     config_ = uvicorn.Config(app, host="0.0.0.0", port=settings["port"], log_level="warning")
     attach_access_log()
-    uvicorn.Server(config_).run()
+    SERVER = uvicorn.Server(config_)
+    SERVER.run()
 
 
 if __name__ == "__main__":

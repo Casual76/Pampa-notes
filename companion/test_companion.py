@@ -325,17 +325,21 @@ class AutoPiecesTest(StateMixin, unittest.TestCase):
     def test_auto_reaches_the_job_and_comes_back(self) -> None:
         seen = {}
 
-        def fake_transcribe_audio(audio, sample_rate, language, progress, engine, max_minutes=None, prompt=None):
+        def fake_transcribe_audio(audio, sample_rate, language, progress, engine, max_minutes=None, prompt=None, **frozen):
             seen["max_minutes"] = max_minutes
+            seen.update(frozen)
             return {"segments": [], "language": "it", "device_used": "cuda", "batch_size": 8, "alignment": "ok", "chunks": 3}
 
         server.STATE["speeds"] = {"cuda": [8.0]}
         server.STATE["device"] = "cuda"
+        server.STATE["batch_size"] = 8
         audio = [0.0] * 16000 * 60 * 50  # cinquanta minuti
         with mock.patch("whisperx.load_audio", return_value=audio, create=True),                 mock.patch.object(server, "transcribe_audio", fake_transcribe_audio),                 mock.patch.object(server, "replan_for_job"):
             result = server._transcribe("x.m4a", "it", server.JobProgress(), max_minutes="auto")
         # 8x per quattro minuti = 32, arrotondato a 30: cinquanta minuti vanno in pezzi.
         self.assertEqual((seen["max_minutes"], result["max_minutes_used"]), (30, 30))
+        # Lotto e dispositivo fissati all'inizio della lezione, per tutti i pezzi.
+        self.assertEqual((seen["batch_size"], seen["device"]), (8, "cuda"))
 
 
 class RegistryKeepsLiveJobsTest(unittest.TestCase):
@@ -738,6 +742,22 @@ class PiecesTest(StateMixin, unittest.TestCase):
         snap = progress.snapshot()
         self.assertEqual((snap["chunk"], snap["chunks"]), (2, 2))
 
+    def test_settings_changed_mid_lesson_do_not_reach_the_next_piece(self) -> None:
+        audio = lecture(45, quiet_at_s=22 * 60 + 40.0)
+        seen: list[tuple[int, str]] = []
+
+        def fake_run_job(piece, language, engine, batch_size, device, progress=None, prompt=None):
+            seen.append((batch_size, device))
+            # L'app cambia le impostazioni mentre il primo pezzo si trascrive.
+            server.STATE.update(batch_size=2, device="cpu", name="medium")
+            return {"segments": [], "language": "it", "device_used": device, "batch_size": batch_size, "alignment": "ok"}
+
+        server.STATE.update(device="cuda", batch_size=16)
+        with mock.patch.object(server, "run_job", fake_run_job):
+            result = server.transcribe_audio(audio, RATE, None, RecordingProgress(), FakeEngine(None), max_minutes=30)
+        self.assertEqual(seen, [(16, "cuda"), (16, "cuda")])
+        self.assertEqual((result["batch_size"], result["device_used"]), (16, "cuda"))
+
 
 class WordsTest(unittest.TestCase):
     def test_words_without_times_or_nan_are_dropped(self) -> None:
@@ -878,6 +898,19 @@ class DriverBudgetTest(StateMixin, unittest.TestCase):
         with mock.patch.object(server, "nvidia_query", return_value={**self.DRIVER, "used_gb": 6.0}):
             self.assertAlmostEqual(server.others_gb(), 6.0)
 
+    def test_resident_aligner_is_ours_not_the_others(self) -> None:
+        # Dalla seconda lezione l'allineatore resta in memoria: contarlo fra gli altri, e poi ancora
+        # nel piano (ALIGN_GB), toglieva un gigabyte di lotto a ogni lezione.
+        server.STATE.update(model=object(), own_gb=4.0, align_gb=0.9)
+        server.STATE["align"]["it"] = ("allineatore", {})
+        self.addCleanup(server.STATE.update, model=None, own_gb=0.0, align_gb=0.0)
+        self.addCleanup(server.STATE["align"].clear)
+        with mock.patch.object(server, "nvidia_query", return_value={**self.DRIVER, "used_gb": 7.9}):
+            self.assertAlmostEqual(server.others_gb(), 3.0)
+        server.STATE["align"].clear()
+        with mock.patch.object(server, "nvidia_query", return_value={**self.DRIVER, "used_gb": 7.0}):
+            self.assertAlmostEqual(server.others_gb(), 3.0, msg="senza allineatore non si toglie niente per lui")
+
     def test_manual_ignores_the_driver(self) -> None:
         with mock.patch.object(server, "nvidia_query", return_value=self.DRIVER):
             plan = server.decide_vram(tunables(vram_mode="manual", vram_gb=12.0), "cuda", GPU_12)
@@ -935,6 +968,162 @@ class EnsureModelTest(StateMixin, unittest.TestCase):
         self.assertEqual(loads, [("medium", "cpu", "int8")])
         self.assertEqual(server.STATE["model"], "modello medium")
         self.assertEqual(server.STATE["loaded_as"], ("medium", "cpu", "int8"))
+
+    def test_engine_keeps_the_model_it_started_with(self) -> None:
+        """Le impostazioni cambiate a meta' lezione non fanno caricare un altro modello al pezzo dopo."""
+        import sys
+        import types
+
+        loads: list[tuple] = []
+        fake = types.SimpleNamespace(load_model=lambda name, device, compute_type: loads.append((name, device, compute_type)) or f"modello {name}")
+        old = object()
+        server.STATE.update(model=old, loaded_as=("large-v3", "cpu", "int8"), name="large-v3", device="cpu", compute_type="int8")
+        self.addCleanup(server.STATE.update, model=None, loaded_as=None)
+        engine = server.Engine()
+        server.STATE.update(name="medium", compute_type="int8_float16")  # arriva da /v1/admin/settings
+        with mock.patch.dict(sys.modules, {"whisperx": fake}):
+            self.assertFalse(engine.needs_load())
+            self.assertIs(engine.main_model(), old)
+            self.assertIs(engine.main_model(), old, "anche al secondo pezzo")
+        self.assertEqual(loads, [])
+        self.assertTrue(server.Engine().needs_load(), "la lezione dopo carica quello nuovo")
+
+
+class AlignModelTest(StateMixin, unittest.TestCase):
+    """Un allineatore alla volta, e quello che occupa si sa: e' nostro, non degli altri programmi."""
+
+    def test_only_the_current_language_stays(self) -> None:
+        import sys
+        import types
+
+        loads: list[str] = []
+        fake = types.SimpleNamespace(load_align_model=lambda language_code, device: loads.append(language_code) or (f"model-{language_code}", {}))
+        server.STATE.update(device="cuda", align_gb=0.0)
+        server.STATE["align"].clear()
+        self.addCleanup(server.STATE.update, align_gb=0.0)
+        self.addCleanup(server.STATE["align"].clear)
+        with mock.patch.dict(sys.modules, {"whisperx": fake}), \
+                mock.patch.object(server, "trust_sentence_splitter"), \
+                mock.patch.object(server, "vram_gb", side_effect=[2.0, 3.2, 2.0, 2.5]), \
+                mock.patch.object(server, "empty_cuda_cache") as emptied, self.assertLogs("pampa", level="INFO"):
+            self.assertEqual(server.align_model_for("it")[0], "model-it")
+            self.assertAlmostEqual(server.STATE["align_gb"], 1.2)
+            server.align_model_for("it")
+            self.assertEqual(loads, ["it"], "la stessa lingua non si ricarica")
+            emptied.assert_not_called()
+            self.assertEqual(server.align_model_for("en")[0], "model-en")
+        self.assertEqual(loads, ["it", "en"])
+        self.assertEqual(list(server.STATE["align"]), ["en"], "l'allineatore italiano se ne va")
+        emptied.assert_called_once()
+        self.assertAlmostEqual(server.STATE["align_gb"], 0.5)
+
+
+class HealthDriverTest(StateMixin, unittest.TestCase):
+    def test_health_uses_a_cached_driver_reading_and_never_torch(self) -> None:
+        import sys
+        import types
+
+        touched: list[str] = []
+        fake_torch = types.SimpleNamespace(cuda=types.SimpleNamespace(mem_get_info=lambda: touched.append("torch") or (0, 1)))
+        server.STATE.update(device="cuda", gpu=GPU_12)
+        with mock.patch.dict(sys.modules, {"torch": fake_torch}), \
+                mock.patch.object(server, "nvidia_query", return_value=None) as query:
+            data = server.health()
+        self.assertEqual(data["vram_gb"], 0.0)
+        self.assertEqual(touched, [], "/health e' aperto a tutti: niente contesto CUDA a comando")
+        self.assertTrue(query.call_args_list)
+        for call in query.call_args_list:
+            self.assertGreaterEqual(call.kwargs.get("max_age_s", 2.0), server.HEALTH_DRIVER_AGE_S)
+        self.assertIn("inflight", data)
+
+
+class PreloadTest(StateMixin, unittest.TestCase):
+    def test_preload_waits_its_turn(self) -> None:
+        """Il caricamento anticipato dell'icona passa dalla fila: non carica un secondo modello sotto una lezione."""
+        loaded: list[str] = []
+        self.addCleanup(server.STATE.update, model=None)
+        server.STATE["model"] = None
+
+        async def scenario() -> list[list[str]]:
+            gate = server.PriorityGate()
+            seen: list[list[str]] = []
+            release = asyncio.Event()
+
+            async def lesson() -> None:
+                async with gate.slot(0, key="lezione"):
+                    await release.wait()
+
+            with mock.patch.object(server, "GATE", gate), \
+                    mock.patch.object(server, "ensure_model", side_effect=lambda: loaded.append("carico") or server.STATE.update(model=object())):
+                holder = asyncio.create_task(lesson())
+                await asyncio.sleep(0.01)
+                preload = asyncio.create_task(server.preload_now())
+                await asyncio.sleep(0.05)
+                seen.append(list(loaded))
+                release.set()
+                await asyncio.wait_for(asyncio.gather(holder, preload), timeout=5)
+                seen.append(list(loaded))
+                # Gia' in memoria: una seconda volta non carica niente.
+                await server.preload_now()
+                seen.append(list(loaded))
+            return seen
+
+        self.assertEqual(asyncio.run(scenario()), [[], ["carico"], ["carico"]])
+
+
+class RestartTest(StateMixin, unittest.TestCase):
+    """Il riavvio da se' aspetta l'ultima richiesta a meta', poi chiude uvicorn con garbo."""
+
+    class FakeServer:
+        def __init__(self, stopped: threading.Event) -> None:
+            self._stopped = stopped
+            self._exit = False
+
+        @property
+        def should_exit(self) -> bool:
+            return self._exit
+
+        @should_exit.setter
+        def should_exit(self, value: bool) -> None:
+            self._exit = value
+            if value:
+                self._stopped.set()
+
+    def test_waits_for_requests_in_flight(self) -> None:
+        counter = server.RequestCounter()
+        stopped = threading.Event()
+        fake = self.FakeServer(stopped)
+        order: list[str] = []
+        exited = threading.Event()
+        self.addCleanup(server.STATE.update, restarting=False, restart_wanted=False, busy=False)
+        server.STATE.update(restart_wanted=True, restarting=False, busy=False)
+        counter.enter()  # la risposta della lezione che ha chiesto il riavvio, ancora in viaggio
+        with mock.patch.object(server, "REQUESTS", counter), \
+                mock.patch.object(server, "GATE", server.PriorityGate()), \
+                mock.patch.object(server, "SERVER", fake), \
+                mock.patch.object(server, "STOPPED", stopped), \
+                mock.patch.object(server, "ON_EXIT", lambda: order.append("icona")), \
+                mock.patch.object(server, "RESTART_POLL_S", 0.02), \
+                mock.patch.object(server, "_spawn_launcher", lambda launcher: order.append("lanciatore")), \
+                mock.patch.object(server, "_exit_process", lambda: order.append("esci") or exited.set()), \
+                self.assertLogs("pampa", level="WARNING"):
+            server.restart_when_idle()
+            self.assertTrue(server.STATE["restarting"], "da subito le richieste nuove hanno un 503")
+            time.sleep(0.3)
+            self.assertEqual(order, [], "una richiesta a meta': non si esce")
+            self.assertFalse(fake.should_exit)
+            counter.leave()
+            self.assertTrue(exited.wait(5))
+        self.assertTrue(fake.should_exit, "prima la chiusura di uvicorn, non os._exit a freddo")
+        self.assertEqual(order, ["lanciatore", "icona", "esci"])
+
+    def test_not_while_busy(self) -> None:
+        self.addCleanup(server.STATE.update, restarting=False, restart_wanted=False, busy=False)
+        server.STATE.update(restart_wanted=True, restarting=False, busy=True)
+        with mock.patch.object(server, "_drain_and_restart", side_effect=AssertionError("non ora")):
+            server.restart_when_idle()
+        self.assertFalse(server.STATE.get("restarting"))
+        self.assertTrue(server.STATE["restart_wanted"])
 
 
 class ValidateTunablesTest(unittest.TestCase):
@@ -1334,6 +1523,144 @@ class ServerTest(StateMixin, unittest.TestCase):
         finally:
             server.STATE["restarting"] = False
 
+    def test_restarting_refuses_every_new_request_but_not_health(self) -> None:
+        # Non solo le lezioni: un PUT nell'archivio o uno scaricamento tagliati a meta' dal riavvio
+        # sono lo stesso guasto. /health resta aperto: e' da li' che avvio.pyw vede la porta liberarsi.
+        server.STATE["restarting"] = True
+        try:
+            status, headers, body = self.call("GET", "/v1/models", bearer="pt_good")
+            self.assertEqual((status, json.loads(body)), (503, {"detail": "restarting"}))
+            self.assertEqual({k.lower(): v for k, v in headers.items()}.get("retry-after"), "20")
+            status, _, body = self.call("GET", "/health")
+            self.assertEqual(status, 200)
+            self.assertTrue(json.loads(body)["restarting"])
+        finally:
+            server.STATE["restarting"] = False
+
+    def wait_inflight(self, value: int) -> int:
+        deadline = time.time() + 5
+        seen = server.REQUESTS.count
+        while seen != value and time.time() < deadline:
+            time.sleep(0.02)
+            seen = server.REQUESTS.count
+        return seen
+
+    def test_health_counts_the_requests_in_flight(self) -> None:
+        server.JOBS.clear()
+        release = threading.Event()
+        inside = threading.Event()
+
+        def slow(path: str, language: str | None, progress: server.JobProgress, **_: object) -> dict:
+            inside.set()
+            release.wait(10)
+            return {"task": "transcribe", "language": "it", "duration": 1.0, "text": "ciao",
+                    "segments": [{"start": 0.0, "end": 1.0, "text": "ciao"}], "device_used": "cpu", "audio_s": 1.0}
+
+        self.assertEqual(self.wait_inflight(0), 0)
+        self.assertEqual(json.loads(self.call("GET", "/health")[2])["inflight"], 0, "/health non conta se stesso")
+        body, headers = self.multipart()
+        answer: dict = {}
+        with mock.patch.object(server, "_transcribe", slow):
+            post = threading.Thread(target=lambda: answer.update(r=self.call("POST", "/v1/audio/transcriptions", bearer="pt_good", body=body, headers=headers)))
+            post.start()
+            try:
+                self.assertTrue(inside.wait(10))
+                self.assertEqual(json.loads(self.call("GET", "/health")[2])["inflight"], 1)
+            finally:
+                release.set()
+                post.join(10)
+        self.assertEqual(answer["r"][0], 200)
+        self.assertEqual(self.wait_inflight(0), 0, "finita la risposta, la richiesta non conta piu'")
+
+    def test_failure_while_receiving_the_upload_removes_the_temporary(self) -> None:
+        # Un errore dopo aver scritto il temporaneo ma prima del lavoro: il `finally` guardava `work`,
+        # che non c'era ancora, e il file restava in %TEMP%.
+        made: list[Path] = []
+        real = tempfile.NamedTemporaryFile
+
+        def recording(*args: object, **kwargs: object):
+            handle = real(*args, **kwargs)
+            made.append(Path(handle.name))
+            return handle
+
+        body, headers = self.form({"max_minutes": "30"}, b"audio che non arrivera' mai a WhisperX")
+        with mock.patch.object(server.tempfile, "NamedTemporaryFile", recording), \
+                mock.patch.object(server, "_positive_int", side_effect=server.HTTPException(status_code=400, detail="rotto")), \
+                mock.patch.object(server, "_transcribe", side_effect=AssertionError("non deve partire")):
+            status, _, raw = self.call("POST", "/v1/audio/transcriptions", bearer="pt_good", body=body, headers=headers)
+        self.assertEqual((status, json.loads(raw)), (400, {"detail": "rotto"}))
+        self.assertEqual(len(made), 1)
+        self.assertFalse(made[0].exists(), "il temporaneo se ne va anche se il lavoro non e' mai nato")
+
+    def test_delete_during_the_upload_does_not_start_the_work(self) -> None:
+        server.JOBS.clear()
+        job_id = "eeeeeeee-5555-4555-8555-555555555555"
+        calls: list[str] = []
+        body, headers = self.form({"language": "it"}, b"una lezione lunga" * 200)
+        head = (
+            f"POST /v1/audio/transcriptions HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer pt_good\r\n"
+            f"X-Pampa-Job: {job_id}\r\nContent-Type: {headers['Content-Type']}\r\nContent-Length: {len(body)}\r\n\r\n"
+        ).encode()
+        with mock.patch.object(server, "_transcribe", side_effect=lambda path, *a, **k: calls.append(path)), \
+                socket.create_connection(("127.0.0.1", self.port), timeout=10) as sock:
+            sock.sendall(head + body[:200])
+            # Il lavoro esiste da quando sono arrivati gli header: lo si annulla a caricamento a meta'.
+            deadline = time.time() + 5
+            while self.call("GET", f"/v1/jobs/{job_id}", bearer="pt_good")[0] != 200 and time.time() < deadline:
+                time.sleep(0.02)
+            self.assertEqual(self.call("DELETE", f"/v1/jobs/{job_id}", bearer="pt_good")[0], 200)
+            sock.sendall(body[200:])
+            answer = sock.recv(4096).decode(errors="replace")
+        self.assertIn("499", answer.splitlines()[0])
+        self.assertEqual(calls, [], "il computer non deve cominciare una lezione gia' annullata")
+        data = json.loads(self.call("GET", f"/v1/jobs/{job_id}", bearer="pt_good")[2])
+        self.assertEqual((data["state"], data["detail"]), ("failed", "annullata"))
+
+    def test_cancel_after_admission_keeps_the_gate_until_the_thread_stops(self) -> None:
+        # Il turno e' arrivato ma il thread sta ancora pianificando o decodificando (lo stato e' ancora
+        # «queued»): annullare il task liberava la fila subito, e la lezione dopo partiva sopra.
+        server.JOBS.clear()
+        inside = threading.Event()
+        ended = threading.Event()
+
+        def planning(path: str, language: str | None, progress: server.JobProgress, **_: object) -> dict:
+            inside.set()
+            time.sleep(3.0)  # il piano della VRAM, la decodifica: niente controlli nel frattempo
+            ended.set()
+            progress.check_cancelled()
+            raise AssertionError("l'annullamento non e' arrivato")
+
+        job_id = "ffffffff-6666-4666-8666-666666666666"
+        body, headers = self.multipart()
+        headers["X-Pampa-Job"] = job_id
+        answer: dict = {}
+        with mock.patch.object(server, "_transcribe", planning):
+            post = threading.Thread(target=lambda: answer.update(r=self.call("POST", "/v1/audio/transcriptions", bearer="pt_good", body=body, headers=headers)))
+            post.start()
+            try:
+                self.assertTrue(inside.wait(10))
+                self.assertEqual(self.call("DELETE", f"/v1/jobs/{job_id}", bearer="pt_good")[0], 200)
+                post.join(10)
+                self.assertEqual(answer["r"][0], 499)
+                self.assertFalse(ended.is_set())
+                self.assertTrue(server.STATE["busy"], "il thread lavora ancora: la fila resta sua")
+            finally:
+                deadline = time.time() + 10
+                while server.STATE["busy"] and time.time() < deadline:
+                    time.sleep(0.05)
+        self.assertFalse(server.STATE["busy"])
+        self.assertTrue(ended.is_set(), "la fila si libera solo quando il thread ha finito davvero")
+
+    def test_delete_of_a_file_in_use_is_retryable(self) -> None:
+        data = b"un file che qualcuno sta leggendo"
+        sha = hashlib.sha256(data).hexdigest()
+        archive.ARCHIVE.store(sha, "x.m4a", "audio/mp4", [data])
+        with mock.patch.object(archive.ARCHIVE, "remove", side_effect=archive.BlobInUse("in uso")):
+            status, headers, body = self.call("DELETE", f"/v1/files/{sha}", bearer="pt_good")
+        self.assertEqual((status, json.loads(body)), (503, {"detail": "file_in_use"}))
+        self.assertEqual({k.lower(): v for k, v in headers.items()}.get("retry-after"), str(archive.BLOB_IN_USE_RETRY_S))
+        self.assertEqual(self.call("DELETE", f"/v1/files/{sha}", bearer="pt_good")[0], 200)
+
     def test_instance_is_in_health_and_jobs(self) -> None:
         self.use_config({"accept_anonymous": False})
         data = json.loads(self.call("GET", "/health")[2])
@@ -1646,6 +1973,37 @@ class ConfigTest(unittest.TestCase):
             config.set_value("accept_anonymous", True, path)
             self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"accept_anonymous": True, "port": 9000})
 
+    def test_concurrent_writers_do_not_lose_keys(self) -> None:
+        # L'icona, /v1/admin/settings e /v1/pair/bind scrivono da thread diversi: nessuno perde la sua chiave.
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "config.json"
+            path.write_text(json.dumps({"port": 9000}), encoding="utf-8")
+            start = threading.Barrier(16)
+
+            def write(index: int) -> None:
+                start.wait()
+                for round_ in range(5):
+                    config.set_value(f"chiave_{index}", round_, path)
+
+            threads = [threading.Thread(target=write, args=(index,)) for index in range(16)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(20)
+            stored = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(stored, {"port": 9000, **{f"chiave_{index}": 4 for index in range(16)}})
+            self.assertEqual([item.name for item in Path(folder).iterdir()], ["config.json"], "nessun temporaneo resta")
+
+    def test_failed_write_leaves_the_old_file_whole(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "config.json"
+            before = json.dumps({"owner": "a@b.c", "accept_anonymous": False})
+            path.write_text(before, encoding="utf-8")
+            with mock.patch.object(config.os, "replace", side_effect=OSError("disco pieno")), self.assertRaises(OSError):
+                config.set_values({"owner": "altro@b.c", "index_url": "https://x"}, path)
+            self.assertEqual(path.read_text(encoding="utf-8"), before)
+            self.assertEqual([item.name for item in Path(folder).iterdir()], ["config.json"])
+
 
 class ArchiveTest(unittest.TestCase):
     def test_old_parts_are_swept_new_ones_kept(self) -> None:
@@ -1696,6 +2054,26 @@ class ArchiveTest(unittest.TestCase):
                 with self.assertRaises(archive.StalledUpload):
                     store.store("0" * 64, "x.m4a", "audio/mp4", chunks())
                 self.assertEqual(list((Path(folder) / "tmp").glob("*.part")), [])
+            finally:
+                store.db.close()
+
+    def test_remove_keeps_the_row_when_the_file_is_in_use(self) -> None:
+        # Su Windows un file aperto non si cancella: la riga deve restare, o il file resta orfano per sempre.
+        data = b"una registrazione che qualcuno sta scaricando"
+        sha = hashlib.sha256(data).hexdigest()
+        with tempfile.TemporaryDirectory() as folder:
+            store = archive.Archive(Path(folder))
+            try:
+                path = store.store(sha, "x.m4a", "audio/mp4", [data])["path"]
+                with mock.patch.object(Path, "unlink", side_effect=PermissionError("in uso da un altro processo")):
+                    with self.assertRaises(archive.BlobInUse):
+                        store.remove(sha)
+                self.assertTrue(path.exists())
+                self.assertIsNotNone(store.get(sha), "la riga resta: la prossima DELETE lo ritrova")
+                self.assertTrue(store.remove(sha))
+                self.assertFalse(path.exists())
+                self.assertIsNone(store.get(sha))
+                self.assertEqual(store.stats(), (0, 0))
             finally:
                 store.db.close()
 
@@ -1759,6 +2137,60 @@ class FileMetaTest(unittest.TestCase):
             self.assertEqual(archive.file_meta(record)["kind"], "audio")
             self.assertEqual(archive.file_meta(dict(record, path=plain, mime="application/pdf", ext="pdf"))["kind"], "other")
 
+    FFMPEG_STDERR = (
+        b"Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'voce.m4a':\n"
+        b"  Metadata:\n"
+        b"    major_brand     : M4A \n"
+        b"    creation_time   : 2025-10-09T08:15:30.000000Z\n"
+        b"  Duration: 00:00:01.02, start: 0.000000, bitrate: 3 kb/s\n"
+        b"  Stream #0:0[0x1](und): Audio: aac (LC) (mp4a / 0x6134706D), 16000 Hz, mono, fltp, 1 kb/s (default)\n"
+        b"      Metadata:\n"
+        b"        creation_time   : 2025-10-09T08:15:30.000000Z\n"
+        b"At least one output file must be specified\n"
+    )
+
+    def test_without_ffprobe_ffmpeg_tells_the_date(self) -> None:
+        # Il computer installato col setup ha solo il ffmpeg di imageio-ffmpeg in bin/, senza ffprobe.
+        import types
+
+        commands: list[list[str]] = []
+
+        def run(command, **_: object):
+            commands.append(command)
+            return types.SimpleNamespace(returncode=1, stdout=b"", stderr=self.FFMPEG_STDERR)
+
+        which = {"ffprobe": None, "ffmpeg": r"C:\companion\bin\ffmpeg.exe"}
+        with mock.patch.object(archive.shutil, "which", side_effect=which.get), mock.patch.object(archive.subprocess, "run", run):
+            self.assertEqual(archive.audio_recorded_us(Path("voce.m4a")), 1_759_997_730_000_000)
+        self.assertEqual(commands[0][0], which["ffmpeg"])
+        self.assertIn("-i", commands[0])
+
+    def test_without_ffprobe_or_ffmpeg_warns_once(self) -> None:
+        archive._WARNED.clear()
+        self.addCleanup(archive._WARNED.clear)
+        with mock.patch.object(archive.shutil, "which", return_value=None), self.assertLogs("pampa", level="WARNING") as logs:
+            for _ in range(5):
+                self.assertIsNone(archive.audio_recorded_us(Path("voce.m4a")))
+        self.assertEqual(len(logs.output), 1, "una riga, non una per nota")
+
+    def test_real_ffmpeg_without_ffprobe(self) -> None:
+        import shutil
+        import subprocess
+
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg is None:
+            self.skipTest("ffmpeg non installato")
+        with tempfile.TemporaryDirectory() as folder:
+            dated = Path(folder) / "dated.m4a"
+            plain = Path(folder) / "plain.m4a"
+            base = [ffmpeg, "-v", "error", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono", "-t", "1", "-c:a", "aac"]
+            subprocess.run([*base, "-metadata", "creation_time=2025-10-09T08:15:30Z", str(dated)], check=True, timeout=60)
+            subprocess.run([*base, str(plain)], check=True, timeout=60)
+            which = {"ffprobe": None, "ffmpeg": ffmpeg}
+            with mock.patch.object(archive.shutil, "which", side_effect=which.get):
+                self.assertEqual(archive.audio_recorded_us(dated), 1_759_997_730_000_000)
+                self.assertIsNone(archive.audio_recorded_us(plain))
+
 
 def load_avvio():
     loader = importlib.machinery.SourceFileLoader("avvio", str(HERE / "avvio.pyw"))
@@ -1817,6 +2249,19 @@ class TrayTest(unittest.TestCase):
         self.assertIn(r"$s.WorkingDirectory = 'C:\Pampa''s'", command)
         # Ogni apice aperto si chiude: il numero di apici singoli e' pari.
         self.assertEqual(command.count("'") % 2, 0)
+
+    def test_update_waits_for_requests_in_flight(self) -> None:
+        # Un telefono che sta caricando una lezione non e' ne' «busy» ne' in fila, ma il setup lo taglierebbe.
+        import tray
+
+        counter = server.RequestCounter()
+        with mock.patch.object(server, "REQUESTS", counter), mock.patch.object(server, "GATE", server.PriorityGate()), \
+                mock.patch.dict(server.STATE, {"busy": False}):
+            self.assertTrue(tray.idle_for_update())
+            counter.enter()
+            self.assertFalse(tray.idle_for_update())
+            counter.leave()
+            self.assertTrue(tray.idle_for_update())
 
 
 class AddressTest(unittest.TestCase):

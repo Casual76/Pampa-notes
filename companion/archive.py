@@ -68,6 +68,14 @@ STALE_PART_S = 3600
 class StalledUpload(Exception):
     """Il corpo della richiesta ha smesso di arrivare."""
 
+
+class BlobInUse(OSError):
+    """Il file non si cancella adesso (su Windows: qualcuno lo tiene aperto). Si riprova dopo."""
+
+
+# Quanto dire di aspettare a chi voleva cancellare un file in uso: il tempo di finire uno scaricamento.
+BLOB_IN_USE_RETRY_S = 60
+
 # L'estensione dal MIME, quando il nome non ne ha una buona. Rispecchia `AppFiles.extensionFor`.
 EXT_BY_MIME = {
     "audio/mp4": "m4a", "audio/m4a": "m4a", "audio/x-m4a": "m4a", "audio/aac": "m4a",
@@ -150,14 +158,25 @@ class Archive:
         return record
 
     def remove(self, sha256: str) -> bool:
-        """Via la riga e il file. Chi lo chiede sa che nessuna nota lo cita piu'."""
+        """
+        Via il file e poi la riga. Chi lo chiede sa che nessuna nota lo cita piu'.
+
+        In quest'ordine perche' su Windows un file aperto non si cancella: un telefono che lo sta
+        scaricando, una trascrizione che lo legge. Con la riga tolta per prima, il file restava sul
+        disco senza nessuno che lo sapesse — ne' [get], ne' le statistiche, ne' una `DELETE` ripetuta
+        l'avrebbero piu' trovato. Adesso la riga resta, e chi ha chiesto si sente dire [BlobInUse]:
+        riprova fra poco e trova tutto com'era.
+        """
         record = self.get(sha256)
         if record is None:
             return False
+        try:
+            record["path"].unlink(missing_ok=True)
+        except OSError as error:
+            raise BlobInUse(f"il file e' in uso, riprova fra poco: {error}") from error
         with self.lock:
             self.db.execute("DELETE FROM files WHERE sha256 = ?", (sha256,))
             self.db.commit()
-        record["path"].unlink(missing_ok=True)
         return True
 
     def stats(self) -> tuple[int, int]:
@@ -288,37 +307,83 @@ def audio_recorded_us(path: Path, now_us: int | None = None) -> int | None:
     """
     Quando e' stata fatta una registrazione, dal `creation_time` del contenitore, o None.
 
-    Lo legge ffprobe, che sta accanto a ffmpeg (WhisperX lo chiama per nome, quindi e' nel PATH):
-    legge solo l'intestazione, e dieci secondi bastano anche a un file da un'ora. Senza ffprobe, o
-    senza la data, None: il telefono prova il nome del file, che non chiede di aprire niente.
+    Lo legge ffprobe, se c'e': legge solo l'intestazione, e dieci secondi bastano anche a un file da
+    un'ora. Sul computer installato col setup pero' ffprobe non c'e' — `bin/` ha solo il ffmpeg di
+    imageio-ffmpeg — e allora lo si chiede a ffmpeg stesso ([_ffmpeg_creation_times]). Senza
+    nessuno dei due, o senza la data, None: il telefono prova il nome del file, che non chiede di
+    aprire niente.
     """
     now_us = int(time.time() * 1_000_000) if now_us is None else now_us
     probe = shutil.which("ffprobe")
-    if probe is None:
-        log.warning("ffprobe non trovato: la data delle registrazioni resta sconosciuta")
-        return None
-    try:
-        answer = subprocess.run(
-            [probe, "-v", "error", "-print_format", "json", "-show_entries", "format_tags=creation_time:stream_tags=creation_time", str(path)],
-            capture_output=True,
-            timeout=FFPROBE_TIMEOUT_S,
-            # Il server gira spesso senza console (pythonw): senza, ogni domanda aprirebbe una finestra nera.
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        data = json.loads(answer.stdout or b"{}")
-    except (OSError, subprocess.SubprocessError, ValueError) as error:
-        log.warning("ffprobe non ha risposto su %s: %s", path.name, error)
-        return None
-    tags = [(data.get("format") or {}).get("tags") or {}]
-    tags += [stream.get("tags") or {} for stream in data.get("streams") or []]
-    for entry in tags:
-        value = entry.get("creation_time")
-        if not isinstance(value, str):
-            continue
+    if probe is not None:
+        values = _ffprobe_creation_times(probe, path)
+    else:
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg is None:
+            _warn_once("senza_ffmpeg", "ne' ffprobe ne' ffmpeg trovati: la data delle registrazioni resta sconosciuta")
+            return None
+        values = _ffmpeg_creation_times(ffmpeg, path)
+    for value in values:
         recorded = _parse_creation_time(value)
         if recorded is not None and AUDIO_EPOCH_US <= recorded <= now_us + FUTURE_SLACK_US:
             return recorded
     return None
+
+
+# Gli avvisi gia' scritti: la stessa riga a ogni nota del backfill riempiva il registro e non diceva
+# niente di piu' della prima volta.
+_WARNED: set[str] = set()
+
+
+def _warn_once(key: str, message: str, *args: Any) -> None:
+    if key in _WARNED:
+        return
+    _WARNED.add(key)
+    log.warning(message, *args)
+
+
+def _run_quiet(command: list[str]) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        command,
+        capture_output=True,
+        timeout=FFPROBE_TIMEOUT_S,
+        # Il server gira spesso senza console (pythonw): senza, ogni domanda aprirebbe una finestra nera.
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+
+def _ffprobe_creation_times(probe: str, path: Path) -> list[str]:
+    """I `creation_time` del contenitore e delle tracce, nell'ordine in cui ffprobe li dice."""
+    try:
+        answer = _run_quiet(
+            [probe, "-v", "error", "-print_format", "json", "-show_entries", "format_tags=creation_time:stream_tags=creation_time", str(path)]
+        )
+        data = json.loads(answer.stdout or b"{}")
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        log.warning("ffprobe non ha risposto su %s: %s", path.name, error)
+        return []
+    tags = [(data.get("format") or {}).get("tags") or {}]
+    tags += [stream.get("tags") or {} for stream in data.get("streams") or []]
+    return [entry["creation_time"] for entry in tags if isinstance(entry.get("creation_time"), str)]
+
+
+# Come ffmpeg scrive i metadati quando gli si da' solo un ingresso: «    creation_time   : 2025-…Z».
+_CREATION_LINE = re.compile(r"^\s*creation_time\s*:\s*(\S+)\s*$", re.MULTILINE)
+
+
+def _ffmpeg_creation_times(ffmpeg: str, path: Path) -> list[str]:
+    """
+    Gli stessi `creation_time`, da `ffmpeg -i`: senza un'uscita ffmpeg descrive l'ingresso su stderr
+    e si ferma con un errore («At least one output file must be specified»), che qui e' la normalita'.
+    Il formato del testo non e' un contratto come il JSON di ffprobe, ma la riga dei metadati e' la
+    stessa da quindici anni; se un giorno cambiasse, si torna a None, come senza ffprobe.
+    """
+    try:
+        answer = _run_quiet([ffmpeg, "-hide_banner", "-nostdin", "-i", str(path)])
+    except (OSError, subprocess.SubprocessError) as error:
+        log.warning("ffmpeg non ha risposto su %s: %s", path.name, error)
+        return []
+    return _CREATION_LINE.findall((answer.stderr or b"").decode("utf-8", errors="replace"))
 
 
 def file_kind(record: dict[str, Any]) -> str:
@@ -436,7 +501,12 @@ def build_router(check_token: Callable[[Request], None]) -> APIRouter:
     def delete(request: Request, sha256: str) -> dict[str, Any]:
         """Un originale sostituito da una versione piu' nuova: quello vecchio non serve piu' a nessuno."""
         check_token(request)
-        removed = current().remove(valid(sha256))
+        try:
+            removed = current().remove(valid(sha256))
+        except BlobInUse as error:
+            raise HTTPException(
+                status_code=503, detail="file_in_use", headers={"Retry-After": str(BLOB_IN_USE_RETRY_S)}
+            ) from error
         if not removed:
             raise HTTPException(status_code=404, detail="non in archivio")
         log.info("tolto dall'archivio %s", sha256[:12])

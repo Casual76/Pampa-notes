@@ -196,7 +196,12 @@ def update_label(_: Any = None) -> str:
 
 
 def idle_for_update() -> bool:
-    return not server.STATE["busy"] and server.GATE.waiting == 0
+    """
+    Si puo' lanciare il setup, che fermera' l'icona? Non se trascrive, non se qualcuno e' in fila, e
+    non se c'e' una richiesta a meta': un telefono che sta ancora caricando una lezione non e' ne'
+    «busy» ne' in fila, ma fermare il server gli butta via il caricamento (vedi server.REQUESTS).
+    """
+    return not server.STATE["busy"] and server.GATE.waiting == 0 and server.REQUESTS.count == 0
 
 
 def on_update(icon: pystray.Icon, _: Any) -> None:
@@ -440,11 +445,15 @@ def main() -> None:
         return
 
     if SETTINGS["preload"]:
-        threading.Thread(target=server.ensure_model, daemon=True).start()
+        # Dalla fila del server, non per conto suo: vedi server.preload_now.
+        threading.Thread(target=server.preload_when_ready, daemon=True, name="preload").start()
 
     SERVER = uvicorn.Server(
         uvicorn.Config(server.app, host="0.0.0.0", port=SETTINGS["port"], log_level="warning")
     )
+    # Il server che si riavvia da se' lo chiude con garbo (vedi server.restart_when_idle), e poi
+    # toglie l'icona invece di lasciarla orfana accanto all'orologio.
+    server.SERVER = SERVER
     server.attach_access_log()
     # Demone: se il programma esce per una strada imprevista, il server non resta appeso a tenere
     # la porta occupata di un processo che non ha piu' nessuno che lo guarda.
@@ -457,6 +466,7 @@ def main() -> None:
         title="Pampa Notes - in ascolto",
         menu=build_menu(),
     )
+    server.ON_EXIT = icon.stop
     threading.Thread(target=watch, args=(icon,), daemon=True).start()
     start_update_watch(icon)
     # Un collegamento scritto da una versione precedente puntava a questo file, senza lanciatore:
