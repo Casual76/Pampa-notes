@@ -55,6 +55,8 @@ import dev.pampa.pampanotes.core.stats.lessonMs
 import dev.pampa.pampanotes.ui.common.Formats
 import dev.pampa.pampanotes.ui.common.folderIconOf
 import dev.pampa.pampanotes.ui.common.jobStateLabel
+import dev.pampa.pampanotes.ui.common.UpdateHomeCard
+import dev.pampa.pampanotes.ui.common.UpdateViewModel
 import dev.pampa.pampanotes.ui.common.folderVividColors
 import dev.pampa.pampanotes.ui.common.toneFromName
 import dev.pampa.pampanotes.ui.common.rememberComputerOnly
@@ -79,6 +81,8 @@ fun HomeRoute(
   viewModel: HomeViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
+  val updates: UpdateViewModel = hiltViewModel()
+  val update by updates.state.collectAsStateWithLifecycle()
   var pendingDelete by remember { mutableStateOf<RecentNote?>(null) }
   val computerOnly = rememberComputerOnly()
   var exporting by remember { mutableStateOf<RecentNote?>(null) }
@@ -149,6 +153,11 @@ fun HomeRoute(
           }
         },
       )
+    }
+
+    // Una versione nuova, sopra tutto il resto: e' l'unico modo in cui la trova chi non apre lo store.
+    if (update.supported && update.offerOnHome) {
+      item(key = "update") { UpdateHomeCard(update, updates) }
     }
 
     if (state.isEmpty) {

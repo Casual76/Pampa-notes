@@ -59,9 +59,9 @@ android {
     applicationId 'dev.pampa.pampanotes'
     minSdk 26
     targetSdk 36
-    versionCode 6
+    versionCode 7
     // Letterale: il publisher dello store legge questa riga con una regex che capisce solo stringhe.
-    versionName '1.0.0'
+    versionName '1.0.1'
     testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     vectorDrawables.useSupportLibrary = true
 

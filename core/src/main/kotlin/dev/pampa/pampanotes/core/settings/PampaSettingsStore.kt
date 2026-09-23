@@ -285,6 +285,20 @@ class PampaSettingsStore(
 
   suspend fun setRealDatesPending(keys: Set<String>) = edit { it[RealDatesPending] = keys }
 
+  // --- Aggiornamenti dell'app, per dispositivo ---------------------------------------------------
+
+  /** Quando si e' guardato l'ultima volta se c'e' una versione nuova: il controllo all'avvio e' al massimo due al giorno. */
+  suspend fun updateLastCheck(): Long = store.data.first()[UpdateLastCheck] ?: 0L
+  suspend fun setUpdateLastCheck(at: Long) = edit { it[UpdateLastCheck] = at }
+
+  /** La versione a cui si e' detto «non ora»: la home non la propone piu', Informazioni si'. */
+  val updateIgnored: Flow<String> = store.data.map { it[UpdateIgnored].orEmpty() }
+  suspend fun setUpdateIgnored(version: String) = edit { it[UpdateIgnored] = version }
+
+  /** Anche le beta: chi le vuole le prova prima, chi no resta sulle stabili. */
+  val updateBeta: Flow<Boolean> = store.data.map { it[UpdateBeta] ?: false }
+  suspend fun setUpdateBeta(on: Boolean) = edit { it[UpdateBeta] = on }
+
   suspend fun syncDeviceId(): String {
     val existing = store.data.first()[SyncDeviceId]
     if (!existing.isNullOrBlank()) return existing
@@ -552,6 +566,10 @@ class PampaSettingsStore(
     // Date vere e «Riprendi ad ascoltare».
     val LastListenedKey = stringPreferencesKey("last_listened")
     val RealDatesPending = stringSetPreferencesKey("real_dates_pending")
+    // Aggiornamenti dell'app.
+    val UpdateLastCheck = longPreferencesKey("update_last_check")
+    val UpdateIgnored = stringPreferencesKey("update_ignored")
+    val UpdateBeta = booleanPreferencesKey("update_beta")
   }
 }
 

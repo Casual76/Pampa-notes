@@ -41,6 +41,7 @@ class PampaNotesApp : Application(), Configuration.Provider {
   @Inject lateinit var files: AppFiles
   @Inject lateinit var realDates: RealDatesBackfill
   @Inject lateinit var storage: dev.pampa.pampanotes.core.repo.StorageRepository
+  @Inject lateinit var updates: dev.pampa.pampanotes.update.UpdateController
 
   /** Vive quanto il processo: niente di quello che parte qui ha qualcosa da cui essere cancellato. */
   private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -48,6 +49,8 @@ class PampaNotesApp : Application(), Configuration.Provider {
   override fun onCreate() {
     super.onCreate()
     AppNotifications.createChannels(this)
+    // Una versione nuova su GitHub: in silenzio, al massimo una volta all'ora (vedi UpdateController).
+    updates.checkIfDue()
     // «Solo sul computer» non toglie la lezione che si sta ascoltando: chi la riapre dal «Riprendi»
     // della home si aspetta di ritrovarla qui, non di riscaricarla.
     storage.protectedSessionIds = {

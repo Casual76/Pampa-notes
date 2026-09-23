@@ -1267,4 +1267,32 @@
   <string name="install_bind_not_signed_in">%1$s. The computer does not belong to anyone yet: sign in with Google in the app and scan the QR again, or type the code the computer shows.</string>
   <string name="install_bind_taken">%1$s. The computer already belongs to another account: change it in its config.json.</string>
   <string name="install_bind_failed">%1$s. The computer did not accept the account: show the QR again on the computer and retry.</string>
+  <!-- aggiornamenti -->
+  <string name="update_title">Updates</string>
+  <string name="update_card_title">Version %1$s is here</string>
+  <string name="update_install">Update</string>
+  <string name="update_install_version">Update to %1$s</string>
+  <string name="update_later">Not now</string>
+  <string name="update_check_now">Check for updates</string>
+  <string name="update_checking">Checking…</string>
+  <string name="update_none">You have the latest version</string>
+  <string name="update_no_notes">A new version, without notes.</string>
+  <string name="update_check_failed">Could not check: no network, or GitHub is not answering.</string>
+  <string name="update_last_checked">Last checked: %1$s</string>
+  <string name="update_never_checked">It checks by itself every time you open the app.</string>
+  <string name="update_badge_new">New</string>
+  <string name="update_beta">Get betas</string>
+  <string name="update_beta_detail">New versions before they are stable: something may not work yet.</string>
+  <string name="update_downloading">Downloading the update · %1$d%% of %2$s</string>
+  <string name="update_downloading_unknown">Downloading the update…</string>
+  <string name="update_verifying">Checking the downloaded file</string>
+  <string name="update_installing">Installing</string>
+  <string name="update_awaiting">Confirm the installation in the Android dialog. If it asks to allow apps from this source, allow it and come back.</string>
+  <string name="update_installed">Installed: the app reopens with the new version.</string>
+  <string name="update_error">It did not work: %1$s</string>
+  <string name="update_debug_title">Test build</string>
+  <string name="update_debug_detail">This build has its own package: store updates install on the normal version, not here.</string>
+  <string name="more_version_update">%1$s · version %2$s is here</string>
+  <string name="update_permission">To install the update, Android asks once to allow apps from Pampa Notes. Turn on “Allow from this source” and come back: the update resumes by itself.</string>
+  <string name="update_permission_open">Settings</string>
 </resources>

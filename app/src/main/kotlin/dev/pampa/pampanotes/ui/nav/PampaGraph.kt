@@ -258,6 +258,7 @@ fun NavGraphBuilder.listDestinations(actions: PampaNavActions, host: NavHostCont
         onOpenJobs = actions::openJobs,
         onOpenSettings = actions::openSettings,
         onImport = actions.pickFiles,
+        onOpenAbout = { actions.openSettingsSection(SettingsSection.ABOUT) },
       )
     }
   }

@@ -27,6 +27,7 @@ import dev.antigravity.fluidengine.ui.theme.FluidListRow
 import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
+import dev.pampa.pampanotes.ui.common.UpdateViewModel
 import dev.pampa.pampanotes.core.export.ExportScope
 import dev.pampa.pampanotes.ui.common.RowIcon
 import dev.pampa.pampanotes.ui.export.ExportSheet
@@ -43,9 +44,13 @@ fun MoreRoute(
   onOpenJobs: () -> Unit,
   onOpenSettings: () -> Unit,
   onImport: () -> Unit,
+  /** Impostazioni → Informazioni, dove stanno gli aggiornamenti. */
+  onOpenAbout: () -> Unit = onOpenSettings,
   viewModel: MoreViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
+  val updates: UpdateViewModel = hiltViewModel()
+  val update by updates.state.collectAsStateWithLifecycle()
   var exporting by remember { mutableStateOf(false) }
 
   FluidScreen(
@@ -102,9 +107,11 @@ fun MoreRoute(
         FluidListDivider()
         FluidListRow(
           title = stringResource(R.string.settings_version),
-          subtitle = state.versionName,
-          leading = { RowIcon(Icons.Rounded.Info, FluidTone.Neutral) },
+          // Una versione nuova si vede anche qui, dove si guarda la versione.
+          subtitle = update.available?.let { stringResource(R.string.more_version_update, state.versionName, it.version) } ?: state.versionName,
+          leading = { RowIcon(Icons.Rounded.Info, if (update.available != null) FluidTone.Primary else FluidTone.Neutral) },
           meta = "Fluid Engine ${state.engineVersion}",
+          onClick = onOpenAbout,
         )
       }
     }

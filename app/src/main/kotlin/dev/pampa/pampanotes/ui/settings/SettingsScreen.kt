@@ -50,6 +50,9 @@ import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.BuildConfig
 import dev.pampa.pampanotes.R
+import dev.pampa.pampanotes.ui.common.UpdateViewModel
+import dev.pampa.pampanotes.ui.common.updatesSection
+import dev.pampa.pampanotes.update.UpdateUiState
 import dev.pampa.pampanotes.core.export.ExportOptions
 import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.RefinementPreset
@@ -183,6 +186,8 @@ private fun PreferencesSectionRoute(
 ) {
   val engine by viewModel.engineSettings.collectAsStateWithLifecycle()
   val settings by viewModel.settings.collectAsStateWithLifecycle()
+  val updates: UpdateViewModel = hiltViewModel()
+  val update by updates.state.collectAsStateWithLifecycle()
   val services by viewModel.services.collectAsStateWithLifecycle()
   val exportDefaults by viewModel.exportDefaults.collectAsStateWithLifecycle()
 
@@ -234,7 +239,7 @@ private fun PreferencesSectionRoute(
       SettingsSection.TRANSCRIPTION -> transcriptionSection(settings = settings, companion = companion, viewModel = viewModel)
       SettingsSection.REFINEMENT -> refinementSection(settings = settings, services = services, viewModel = viewModel)
       SettingsSection.APPEARANCE -> appearanceSection(engine = engine, viewModel = viewModel)
-      SettingsSection.ABOUT -> aboutSection()
+      SettingsSection.ABOUT -> aboutSection(update, updates)
       SettingsSection.EXPORT -> exportSection(defaults = exportDefaults, viewModel = viewModel)
       // Hanno una pagina loro, e qui non ci si arriva mai.
       SettingsSection.BACKUP, SettingsSection.STORAGE, SettingsSection.SYNC, SettingsSection.SHARES, SettingsSection.GUESTS,
@@ -868,14 +873,15 @@ private fun LazyListScope.appearanceSection(engine: EngineSettings, viewModel: S
 // Informazioni
 // -------------------------------------------------------------------------------------------------
 
-private fun LazyListScope.aboutSection() {
+private fun LazyListScope.aboutSection(update: UpdateUiState, updates: UpdateViewModel) {
   item {
     FluidListGroup {
       FluidListRow(
         title = stringResource(R.string.settings_version),
         subtitle = BuildConfig.VERSION_NAME,
-        meta = EngineBuild.VERSION,
+        meta = "Fluid Engine ${EngineBuild.VERSION}",
       )
     }
   }
+  updatesSection(update, updates)
 }

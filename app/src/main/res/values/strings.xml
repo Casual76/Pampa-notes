@@ -1297,4 +1297,32 @@
   <string name="install_bind_not_signed_in">%1$s. Il computer non è ancora di nessuno: entra con Google nell\'app e rifai il QR, oppure scrivi il codice che il computer mostra.</string>
   <string name="install_bind_taken">%1$s. Il computer è già di un altro account: si cambia nel suo config.json.</string>
   <string name="install_bind_failed">%1$s. Il computer non ha accettato l\'account: rifai il QR dal computer e riprova.</string>
+  <!-- aggiornamenti -->
+  <string name="update_title">Aggiornamenti</string>
+  <string name="update_card_title">È arrivata la %1$s</string>
+  <string name="update_install">Aggiorna</string>
+  <string name="update_install_version">Aggiorna alla %1$s</string>
+  <string name="update_later">Non ora</string>
+  <string name="update_check_now">Cerca aggiornamenti</string>
+  <string name="update_checking">Controllo…</string>
+  <string name="update_none">Hai l\'ultima versione</string>
+  <string name="update_no_notes">Una versione nuova, senza note.</string>
+  <string name="update_check_failed">Non sono riuscito a controllare: niente rete, o GitHub non risponde.</string>
+  <string name="update_last_checked">Ultimo controllo: %1$s</string>
+  <string name="update_never_checked">Si controlla da sola a ogni apertura dell\'app.</string>
+  <string name="update_badge_new">Nuova</string>
+  <string name="update_beta">Ricevi le beta</string>
+  <string name="update_beta_detail">Le versioni nuove prima che siano stabili: qualcosa può non funzionare ancora.</string>
+  <string name="update_downloading">Scarico l\'aggiornamento · %1$d%% di %2$s</string>
+  <string name="update_downloading_unknown">Scarico l\'aggiornamento…</string>
+  <string name="update_verifying">Controllo il file scaricato</string>
+  <string name="update_installing">Installo</string>
+  <string name="update_awaiting">Conferma l\'installazione nella finestra di Android. Se chiede di consentire le app da questa fonte, consentilo e torna qui.</string>
+  <string name="update_installed">Installato: l\'app si riapre con la versione nuova.</string>
+  <string name="update_error">Non è andata: %1$s</string>
+  <string name="update_debug_title">Build di prova</string>
+  <string name="update_debug_detail">Questa build ha un pacchetto suo: gli aggiornamenti dello store si installano sulla versione normale, non qui.</string>
+  <string name="more_version_update">%1$s · è arrivata la %2$s</string>
+  <string name="update_permission">Per installare l\'aggiornamento Android chiede, una volta sola, di consentire le app da Pampa Notes. Accendi «Consenti da questa fonte» e torna qui: l\'aggiornamento riparte da solo.</string>
+  <string name="update_permission_open">Impostazioni</string>
 </resources>
