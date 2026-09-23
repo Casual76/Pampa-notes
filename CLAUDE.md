@@ -188,6 +188,7 @@ Quattro cose non ovvie, tutte in `core/backup/`:
 | M14 aggiornare una nota da un `.sdocx` piu' nuovo, libera spazio, «solo il computer di casa», «tieni tutto anche qui», ritrascrivi, selezione multipla | fatto |
 | M15 export per agenti (una cartella, un file per lezione, file sciolti), pagine scritte a mano come immagini, il computer di casa segue l'account, accesso Google nel primo avvio | fatto |
 | M16 caccia ai problemi: sync senza corse ne' orfani, coda che si annulla e non si appende, il PC riconosce l'account, parole allineate in italiano, link che chiedono conferma | fatto |
+| M17 export per destinazione, tre pallini al tocco, data vera delle registrazioni, pezzi uguali, VRAM stimata, avanzamento in tempo reale dal computer, statistiche | fatto |
 
 Dopo M7, il rifacimento dell'interfaccia (engine 1.32–1.35): misura di lettura e pagine intere,
 vetro solo sugli elementi piccoli, tre pannelli sul tablet, la materia che colora l'app, il testo
@@ -611,6 +612,29 @@ non sta sotto le sue cartelle — che e' quello che succede quando il companion 
 di Claude, che sposta `%APPDATA%` in una copia virtuale. L'eccezione veniva inghiottita.
 `trust_sentence_splitter` aggiunge a NLTK la cartella vera; `/health` dice per lingua come e' andato
 l'ultimo allineamento (`"alignment": {"it": "ok"}`).
+
+**A che punto e', mentre trascrive.** Una richiesta al computer e' una sola `POST` che torna quando
+ha finito, e per un'ora il telefono non sapeva niente. Ora l'app manda `X-Pampa-Job: <uuid>` e, finito
+l'invio, chiede `GET /v1/jobs/<uuid>` ogni secondo (`RemoteJobPoller`): `state` fra `received`,
+`queued` (con `position`), `decoding`, `loading_model`, `transcribing`, `aligning`, `done`, `failed`,
+e `fraction` dentro la fase, che viene dal `progress_callback` di WhisperX — vero, non stimato dal
+tempo, ma a scatti di un lotto. Il companion registra il lavoro appena le intestazioni passano
+l'autenticazione, **prima** di leggere il corpo, o una domanda durante l'invio avrebbe un 404; il
+proprietario vede tutti i lavori, un ospite solo i suoi, e gli altri hanno lo stesso 404 di un id
+che non esiste. Un companion vecchio risponde 404 due volte e l'app smette di chiedere senza far
+fallire niente. La fase finisce nella riga del lavoro in un formato solo, `JobPhase`
+(`remote:<stato>:<parte>/<parti>:<percento>…`), e da li' la stessa frase va nella notifica, in Lavori,
+nella nota e nella sessione, con due barre: tutta la lezione (le parti pesate per durata) e il
+passo di adesso, che si anima quando non c'e' niente da misurare.
+
+**Le statistiche.** `transcription_runs` (schema 6) tiene una riga per trascrizione finita: durata
+dell'audio, tempo sul telefono dal primo passo alla fine (la coda esclusa), parole, dispositivo
+(`cuda`, `cpu`, `groq`) e i `processing_s`/`audio_s` che il companion rimanda. **Non si
+sincronizza** — la velocita' e' di questo telefono con quel computer — e non ha chiavi esterne: una
+sessione cancellata non si porta via la storia. Un lavoro ripreso (`resumed`) conta le parole ma non
+la velocita', perche' ha saltato i pezzi gia' fatti. Tutto il resto della home (ore, parole, ritmo,
+lezione piu' lunga) si conta dalle trascrizioni grezze, quindi vale anche per quelle arrivate dal
+sync. I conti stanno in `TranscriptionStats.aggregate`, puro.
 
 Il raffinamento passa da `ChatProvider.complete` di `engine-ai` su Groq. Non è un assistente: è un
 passaggio che toglie intercalari e rimette la punteggiatura senza cambiare il contenuto.
