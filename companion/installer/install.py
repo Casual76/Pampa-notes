@@ -268,11 +268,17 @@ def looks_like_network(text: str) -> bool:
 def restart_allowed(health: dict[str, Any] | None) -> bool:
     """
     Si puo' fermare l'icona adesso? Si', se non risponde (non c'e' niente da interrompere) o se dice
-    che non sta trascrivendo e che non c'e' nessuno in fila.
+    che non sta trascrivendo, che non c'e' nessuno in fila e nessuna richiesta a meta' (`inflight`:
+    un telefono che sta ancora caricando una lezione, un file che sale nell'archivio). Un companion
+    vecchio `inflight` non lo dice, e vale come zero: e' quello che si faceva prima.
     """
     if health is None:
         return True
-    return not health.get("busy") and int(health.get("queue") or 0) == 0
+    return (
+        not health.get("busy")
+        and int(health.get("queue") or 0) == 0
+        and int(health.get("inflight") or 0) == 0
+    )
 
 
 def is_tailscale(address: str) -> bool:
@@ -1017,6 +1023,33 @@ def stop_running(ctx: Context) -> bool:
     return health(ctx.port) is None
 
 
+def step_stop(ctx: Context) -> None:
+    """
+    Ferma il companion di questa cartella prima di toccare il suo ambiente Python.
+
+    Prima si fermava solo all'ultimo passo, per riavviarlo: nel frattempo WhisperX, torch e ffmpeg
+    si reinstallavano sotto un processo vivo, che li aveva gia' caricati e poteva caricarne altri pezzi
+    a meta' sostituzione — una lezione arrivata in quei minuti, o l'aggiornamento dall'icona, che
+    lancia questo setup proprio mentre l'icona gira. Su Windows, poi, un `.pyd` in uso non si
+    sovrascrive, e il passo falliva. L'attesa e' la stessa del riavvio ([stop_running]): mai durante
+    una trascrizione o un caricamento. Uno di un'altra cartella non si tocca: il suo ambiente non e'
+    questo.
+    """
+    running = health(ctx.port)
+    if running is None:
+        ctx.say("nessun companion acceso")
+        return
+    if os.name == "nt":
+        _, command = listener_command_line(ctx)
+        if command and not ours(command, ctx.app):
+            ctx.say(f"sulla porta {ctx.port} c'e' un companion di un'altra cartella: non lo tocco")
+            return
+    if stop_running(ctx):
+        ctx.say("companion fermato: lo riavvio alla fine")
+        if ctx.options.no_start:
+            ctx.note("Il companion e' fermo e non verra' riavviato (--no-start).", warn=True)
+
+
 def step_start(ctx: Context) -> None:
     if ctx.options.no_start:
         ctx.say("avvio: saltato")
@@ -1071,6 +1104,8 @@ class Step:
 STEPS: tuple[Step, ...] = (
     Step("Controlli", step_checks),
     Step("Scheda video", step_gpu),
+    # Prima di ogni passo che scrive in .venv: vedi step_stop.
+    Step("Ferma il companion", step_stop),
     Step("Ambiente Python", step_venv),
     Step("WhisperX", step_packages),
     Step("torch per la scheda", step_torch),

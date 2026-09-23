@@ -20,10 +20,20 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
+
+# Chi scrive config.json lo fa da tre posti che non si parlano: il menu dell'icona (il suo thread),
+# /v1/admin/settings e /v1/pair/bind (i thread del server). Ognuno legge il file, cambia una chiave e
+# lo riscrive: due insieme, e la chiave del primo spariva sotto la riscrittura del secondo. Leggere,
+# cambiare e scrivere stanno quindi sotto lo stesso lucchetto. Rientrante perche' [load] puo'
+# riscrivere il file da dentro una lettura.
+_LOCK = threading.RLock()
 CONFIG_PATH = HERE / "config.json"
 LOG_DIR = HERE / "logs"
 # La versione del companion, una sola: la leggono /health, l'icona (per gli aggiornamenti) e
@@ -114,18 +124,19 @@ def load(path: Path = CONFIG_PATH) -> dict[str, Any]:
     tablet non trova piu' il computer.
     """
     settings = dict(DEFAULTS)
-    if not path.exists():
-        return settings
-    try:
-        stored = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
-        print(f"  config.json non si legge ({error}): uso i valori di partenza.")
-        return settings
-    if not isinstance(stored, dict):
-        return settings
-    if "accept_anonymous" not in stored:
-        stored["accept_anonymous"] = _migrated_anonymous(stored)
-        _write_back(stored, path)
+    with _LOCK:
+        if not path.exists():
+            return settings
+        try:
+            stored = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            print(f"  config.json non si legge ({error}): uso i valori di partenza.")
+            return settings
+        if not isinstance(stored, dict):
+            return settings
+        if "accept_anonymous" not in stored:
+            stored["accept_anonymous"] = _migrated_anonymous(stored)
+            _write_back(stored, path)
     # Solo le chiavi che conosciamo: una chiave scritta male resta nel file senza fare danni,
     # e chi lo rilegge la trova ancora li' invece di vedersela sparire.
     for key in DEFAULTS:
@@ -173,26 +184,59 @@ def set_value(key: str, value: Any, path: Path = CONFIG_PATH) -> None:
 
 def set_values(values: dict[str, Any], path: Path = CONFIG_PATH) -> None:
     """[set_value] per piu' chiavi insieme, con una scrittura sola: dall'app ne arrivano diverse."""
-    stored: dict[str, Any] = {}
-    if path.exists():
-        try:
-            loaded = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                stored = loaded
-        except (OSError, ValueError):
-            stored = {}
-    stored.update(values)
-    _dump(stored, path)
+    with _LOCK:
+        stored: dict[str, Any] = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    stored = loaded
+            except (OSError, ValueError):
+                stored = {}
+        stored.update(values)
+        _dump(stored, path)
+
+
+# Windows rifiuta `os.replace` finche' un altro processo tiene il file aperto (un antivirus, Google
+# Drive che lo legge): e' questione di un attimo, e un attimo dopo si riprova.
+REPLACE_ATTEMPTS = 5
+REPLACE_PAUSE_S = 0.1
 
 
 def _dump(stored: dict[str, Any], path: Path) -> None:
-    path.write_text(json.dumps(stored, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    """
+    Scrive tutto il file o niente: prima un temporaneo accanto, poi `os.replace` al posto suo.
+
+    `write_text` direttamente sul file lo tronca e poi lo riempie: un processo che muore a meta' (il
+    computer spento, l'icona chiusa) lasciava un config.json vuoto o a mezzo, che al prossimo avvio
+    [load] non legge — e il computer ripartiva coi valori di partenza, senza account e senza token.
+    Il temporaneo sta nella stessa cartella perche' `os.replace` e' atomico solo sullo stesso disco.
+    """
+    text = json.dumps(stored, indent=2, ensure_ascii=False) + "\n"
+    with _LOCK:
+        handle, name = tempfile.mkstemp(prefix=".config-", suffix=".tmp", dir=str(path.parent))
+        temp = Path(name)
+        try:
+            with os.fdopen(handle, "w", encoding="utf-8") as out:
+                out.write(text)
+                out.flush()
+                os.fsync(out.fileno())
+            for attempt in range(REPLACE_ATTEMPTS):
+                try:
+                    os.replace(temp, path)
+                    break
+                except PermissionError:
+                    if attempt == REPLACE_ATTEMPTS - 1:
+                        raise
+                    time.sleep(REPLACE_PAUSE_S)
+        finally:
+            temp.unlink(missing_ok=True)
 
 
 def save(settings: dict[str, Any], path: Path = CONFIG_PATH) -> None:
     """Riscrive il file tenendo solo le chiavi conosciute, cosi' resta leggibile a mano."""
     body = {key: settings.get(key, DEFAULTS[key]) for key in DEFAULTS}
-    path.write_text(json.dumps(body, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    _dump(body, path)
 
 
 def resolve_device(device: str) -> str:

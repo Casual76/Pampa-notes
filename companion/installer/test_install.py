@@ -154,6 +154,16 @@ class SmallRulesTest(unittest.TestCase):
         self.assertTrue(install.restart_allowed({"busy": False, "queue": 0}))
         self.assertFalse(install.restart_allowed({"busy": True, "queue": 0}))
         self.assertFalse(install.restart_allowed({"busy": False, "queue": 2}))
+        # Un caricamento a meta' non e' ne' «busy» ne' in fila; un companion vecchio non lo dice.
+        self.assertFalse(install.restart_allowed({"busy": False, "queue": 0, "inflight": 1}))
+        self.assertTrue(install.restart_allowed({"busy": False, "queue": 0, "inflight": 0}))
+
+    def test_companion_stops_before_the_venv_changes(self) -> None:
+        # WhisperX, torch e ffmpeg non si reinstallano sotto un companion che gira.
+        order = [step.run for step in install.STEPS]
+        stop = order.index(install.step_stop)
+        for touches_venv in (install.step_venv, install.step_packages, install.step_torch, install.step_ffmpeg):
+            self.assertLess(stop, order.index(touches_venv), touches_venv.__name__)
 
     def test_tailscale_and_ownership(self) -> None:
         self.assertEqual(install.pick_tailscale(["192.168.1.5", "100.101.3.4"]), "100.101.3.4")
