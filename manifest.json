@@ -15,22 +15,30 @@
       "ref": "main"
     },
     "stable": {
-      "version": "1.0.1",
+      "version": "1.0.2",
       "releaseDate": "2026-09-23",
-      "changelog": "Gli aggiornamenti arrivano dentro l'app.\n\n**Aggiornamenti in-app.** Quando esce una versione nuova, la home la propone in cima, con quello che cambia, «Aggiorna» e «Non ora». Un tocco la scarica e la installa, senza passare dallo store. La prima volta Android chiede di consentire le app da Pampa Notes: accendi l'interruttore, torna nell'app e l'aggiornamento riparte da solo.\n\nIn Impostazioni → Informazioni c'è «Cerca aggiornamenti», e si possono ricevere anche le beta. La riga «Versione» in Altro dice quando c'è una versione nuova.\n\nDa questa versione in poi, gli aggiornamenti si installano da qui.",
-      "releaseTag": "stable-pampa-notes-v1.0.1",
-      "apkAsset": "pampa-notes-1.0.1.apk",
-      "sizeBytes": 12460129
+      "changelog": "Una caccia ai problemi: più sicura con i tuoi appunti, più chiara quando qualcosa va storto.\n\n- Una trascrizione fallita resta scritta nella nota e nella sessione, con il motivo e «Riprova».\n- «Solo il computer di casa» vale anche per le lezioni già in coda: niente più finisce su Groq per sbaglio.\n- Riordinare o spostare registrazioni mentre si trascrive non mette più il testo nel posto sbagliato.\n- Una lezione che un altro dispositivo sta già trascrivendo non riparte due volte.\n- «Annulla» nella notifica ferma davvero la lezione; niente più timeout di tre ore su una lezione che avanza.\n- Sincronizzazione: uscire e rientrare non fa rinascere note cancellate né note di conflitto finte; una cancellazione non si porta più via le registrazioni; un backup ripristinato si rimette in pari.\n- «Aggiorna» da Samsung Notes tocca solo il suo file; le registrazioni di giorni diversi fanno una lezione per giorno.\n- «Libera spazio» chiede al computer se ha davvero il file prima di toglierlo dal telefono.\n- Conferma per eliminare una registrazione, revocare un link o un ospite.\n- Le versioni ripulite si chiamano col loro nome e si aprono tutte; in Lavori ogni riga apre la lezione.\n- Ricerca nella home, «Mostra tutte» in «Da fare», date scritte come 22/09/2025, «Computer di casa» ovunque.",
+      "releaseTag": "stable-pampa-notes-v1.0.2",
+      "apkAsset": "pampa-notes-1.0.2.apk",
+      "sizeBytes": 12538152
     },
     "beta": {
-      "version": "1.0.1",
+      "version": "1.0.2",
       "releaseDate": "2026-09-23",
-      "changelog": "Gli aggiornamenti arrivano dentro l'app.\n\n**Aggiornamenti in-app.** Quando esce una versione nuova, la home la propone in cima, con quello che cambia, «Aggiorna» e «Non ora». Un tocco la scarica e la installa, senza passare dallo store. La prima volta Android chiede di consentire le app da Pampa Notes: accendi l'interruttore, torna nell'app e l'aggiornamento riparte da solo.\n\nIn Impostazioni → Informazioni c'è «Cerca aggiornamenti», e si possono ricevere anche le beta. La riga «Versione» in Altro dice quando c'è una versione nuova.\n\nDa questa versione in poi, gli aggiornamenti si installano da qui.",
-      "releaseTag": "stable-pampa-notes-v1.0.1",
-      "apkAsset": "pampa-notes-1.0.1.apk",
-      "sizeBytes": 12460129
+      "changelog": "Una caccia ai problemi: più sicura con i tuoi appunti, più chiara quando qualcosa va storto.\n\n- Una trascrizione fallita resta scritta nella nota e nella sessione, con il motivo e «Riprova».\n- «Solo il computer di casa» vale anche per le lezioni già in coda: niente più finisce su Groq per sbaglio.\n- Riordinare o spostare registrazioni mentre si trascrive non mette più il testo nel posto sbagliato.\n- Una lezione che un altro dispositivo sta già trascrivendo non riparte due volte.\n- «Annulla» nella notifica ferma davvero la lezione; niente più timeout di tre ore su una lezione che avanza.\n- Sincronizzazione: uscire e rientrare non fa rinascere note cancellate né note di conflitto finte; una cancellazione non si porta più via le registrazioni; un backup ripristinato si rimette in pari.\n- «Aggiorna» da Samsung Notes tocca solo il suo file; le registrazioni di giorni diversi fanno una lezione per giorno.\n- «Libera spazio» chiede al computer se ha davvero il file prima di toglierlo dal telefono.\n- Conferma per eliminare una registrazione, revocare un link o un ospite.\n- Le versioni ripulite si chiamano col loro nome e si aprono tutte; in Lavori ogni riga apre la lezione.\n- Ricerca nella home, «Mostra tutte» in «Da fare», date scritte come 22/09/2025, «Computer di casa» ovunque.",
+      "releaseTag": "stable-pampa-notes-v1.0.2",
+      "apkAsset": "pampa-notes-1.0.2.apk",
+      "sizeBytes": 12538152
     },
     "history": [
+      {
+        "version": "1.0.1",
+        "releaseDate": "2026-09-23",
+        "changelog": "Gli aggiornamenti arrivano dentro l'app.\n\n**Aggiornamenti in-app.** Quando esce una versione nuova, la home la propone in cima, con quello che cambia, «Aggiorna» e «Non ora». Un tocco la scarica e la installa, senza passare dallo store. La prima volta Android chiede di consentire le app da Pampa Notes: accendi l'interruttore, torna nell'app e l'aggiornamento riparte da solo.\n\nIn Impostazioni → Informazioni c'è «Cerca aggiornamenti», e si possono ricevere anche le beta. La riga «Versione» in Altro dice quando c'è una versione nuova.\n\nDa questa versione in poi, gli aggiornamenti si installano da qui.",
+        "releaseTag": "stable-pampa-notes-v1.0.1",
+        "apkAsset": "pampa-notes-1.0.1.apk",
+        "sizeBytes": 12460129
+      },
       {
         "version": "1.0.0",
         "releaseDate": "2026-09-23",
