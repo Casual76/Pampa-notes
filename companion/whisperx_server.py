@@ -31,17 +31,21 @@ import contextlib
 import gc
 import json
 import logging
+import math
 import os
 import secrets
 import socket
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
 import warnings
+from collections import OrderedDict
+from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 # pyannote e torchcodec stampano in avvio un muro di avvisi su ffmpeg che non riguardano niente di
 # quello che facciamo qui (la diarizzazione non si usa). Sembravano errori, e una console che
@@ -53,6 +57,7 @@ os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse
+from starlette.datastructures import Headers
 import uvicorn
 
 import archive
@@ -75,6 +80,12 @@ STATE: dict[str, Any] = {
     # Vedi config.DEFAULTS: senza questi due, gli ospiti non esistono.
     "index_url": "",
     "owner": "",
+    # Vedi config.DEFAULTS: una richiesta senza credenziali passa come proprietario?
+    "accept_anonymous": False,
+    # L'esito dell'ultimo allineamento per lingua: "ok" o l'errore. Lo mostra /health, perche' un
+    # allineamento che fallisce non ferma niente — la trascrizione esce lo stesso, coi tempi per
+    # frase — e cosi' e' rimasto rotto per giorni senza che nessuno lo vedesse.
+    "alignment": {},
     "busy": False,
     # Quando e' finita l'ultima trascrizione. Da qui parte il conto per lo sfratto.
     "last_used": 0.0,
@@ -117,9 +128,20 @@ class PriorityGate:
             me = (priority, self._seq)
             self._waiting.append(me)
             self._waiting.sort()
-            await self._cond.wait_for(lambda: not self._busy and self._waiting[0] == me)
-            self._waiting.remove(me)
-            self._busy = True
+            # Chi smette di aspettare (la richiesta annullata, il server che si chiude) deve uscire
+            # dalla fila. Senza, restava primo per sempre: nessun altro vedeva `_waiting[0] == me`,
+            # e il computer smetteva di trascrivere per chiunque finche' non lo si riavviava.
+            admitted = False
+            try:
+                await self._cond.wait_for(lambda: not self._busy and self._waiting[0] == me)
+                admitted = True
+            finally:
+                self._waiting.remove(me)
+                if admitted:
+                    self._busy = True
+                else:
+                    # Il posto potrebbe toccare a chi era dietro: lo si sveglia a guardare.
+                    self._cond.notify_all()
         try:
             yield
         finally:
@@ -134,10 +156,58 @@ class PriorityGate:
 
 GATE = PriorityGate()
 
-# Gli ospiti verificati di recente: token -> (nome, scadenza). Dieci minuti se e' buono, uno se
-# no: un token revocato smette di valere entro dieci minuti, e uno inventato non fa una richiesta
-# al Worker a ogni tentativo.
-GUEST_CACHE: dict[str, tuple[str | None, float]] = {}
+
+class BoundedCache:
+    """
+    Le risposte del Worker tenute da parte, ognuna con la sua scadenza, e al massimo `limit`.
+
+    Un dict semplice cresceva per sempre: ogni token inventato che qualcuno prova sulla porta e'
+    una voce in piu', e chi ne prova un milione si prende la memoria del server. Quando e' pieno
+    se ne vanno le voci piu' vecchie. Un lucchetto perche' le verifiche girano sui thread.
+    """
+
+    def __init__(self, limit: int = 256) -> None:
+        self.limit = limit
+        self._items: OrderedDict[str, tuple[Any, float]] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key: str, now: float | None = None) -> tuple[bool, Any]:
+        """(True, valore) se c'e' e non e' scaduto; (False, None) altrimenti."""
+        now = time.time() if now is None else now
+        with self._lock:
+            item = self._items.get(key)
+            if item is None:
+                return False, None
+            if item[1] <= now:
+                del self._items[key]
+                return False, None
+            return True, item[0]
+
+    def put(self, key: str, value: Any, until: float) -> None:
+        with self._lock:
+            self._items[key] = (value, until)
+            self._items.move_to_end(key)
+            while len(self._items) > self.limit:
+                self._items.popitem(last=False)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._items.clear()
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+
+# Gli ospiti verificati di recente: token -> nome. Dieci minuti se e' buono, uno se no: un token
+# revocato smette di valere entro dieci minuti, e uno inventato non fa una richiesta al Worker a
+# ogni tentativo.
+GUEST_CACHE = BoundedCache(256)
+
+# I biglietti dell'account (`pt_…`, vedi [verify_ticket]): biglietto -> valido. Uno buono vale
+# fino alla sua scadenza, che il Worker dice, e al massimo dodici ore; uno cattivo un minuto.
+TICKET_CACHE = BoundedCache(256)
+TICKET_MAX_S = 12 * 3600
+NEGATIVE_S = 60
 
 # Cloudflare rifiuta (403, «error code: 1010») le richieste con lo User-Agent di serie di urllib:
 # ci si presenta con un nome, come fa l'app.
@@ -286,18 +356,70 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Pampa Notes companion", docs_url=None, redoc_url=None, lifespan=lifespan)
 
 
-def align_model_for(language: str):
+def trust_sentence_splitter(language: str) -> None:
+    """
+    Fa trovare a NLTK le regole per dividere le frasi della lingua, e gliele fa aprire.
+
+    **E' il motivo per cui l'allineamento non ha mai funzionato.** `whisperx.align` divide ogni
+    segmento in frasi con il Punkt di NLTK prima di allineare le parole, e NLTK 3.10 controlla ogni
+    file che apre: il percorso *risolto* deve stare sotto una delle cartelle dati, *risolte* anche
+    quelle. Sul computer di casa le due risoluzioni non tornano: quando il companion parte da dentro
+    l'app di Claude, Windows (la virtualizzazione dei pacchetti MSIX) manda le scritture in
+    `%APPDATA%` in `...\\Packages\\Claude_…\\LocalCache\\Roaming`, e cosi' la cartella `nltk_data`
+    si risolve in `AppData\\Roaming\\nltk_data` mentre i file dentro — scaricati da li' — si
+    risolvono nella copia virtuale. NLTK vede un file «fuori» dalle sue cartelle e rifiuta:
+    `PermissionError: Security Violation [pathsec.open]: Unauthorized path ...`. L'`except` intorno
+    all'allineamento lo inghiottiva, e ogni lezione tornava con i tempi per frase.
+
+    Qui si cerca la cartella della lingua, si risolve un file vero che ci sta dentro (la cartella da
+    sola si risolve nell'altro posto), e la cartella dove quel file sta davvero si aggiunge a quelle
+    di cui NLTK si fida. Vale in tutti e due i casi: fuori dall'app le due strade coincidono e
+    l'aggiunta non cambia niente. Se le regole non ci sono si scaricano, come farebbe WhisperX.
+    """
+    import nltk
+
+    try:
+        from whisperx.utils import PUNKT_LANGUAGES
+    except ImportError:  # una versione di WhisperX che non le ha: si prova col nome inglese
+        PUNKT_LANGUAGES = {}
+    name = PUNKT_LANGUAGES.get(language, "english")
+    resource = f"tokenizers/punkt_tab/{name}/"
+    try:
+        found = nltk.data.find(resource)
+    except LookupError:
+        log.info("scarico le regole delle frasi di NLTK (punkt_tab)...")
+        nltk.download("punkt_tab", quiet=True, raise_on_error=True)
+        found = nltk.data.find(resource)
+    folder = Path(str(getattr(found, "path", found)))
+    if folder.is_file():
+        # Dentro uno zip: il file da aprire e' lo zip stesso.
+        real = folder.resolve().parent
+    else:
+        probe = next((child for child in folder.iterdir() if child.is_file()), None)
+        real = probe.resolve().parent if probe is not None else folder.resolve()
+    if str(real) not in [str(entry) for entry in nltk.data.path]:
+        nltk.data.path.append(str(real))
+
+
+def align_model_for(language: str, device: str | None = None):
     """
     Il modello di allineamento della lingua, tenuto da parte dopo il primo uso.
 
     Ce n'e' uno per lingua e pesa poco, ma scaricarlo la prima volta richiede rete: tenerlo in
-    memoria evita di rifarlo a ogni lezione. Se ne va insieme al modello grande.
+    memoria evita di rifarlo a ogni lezione. Se ne va insieme al modello grande. Quello sul
+    processore del ripiego (vedi [run_job]) non si tiene: serve a una lezione sola, e la prossima
+    torna sulla scheda.
     """
     import whisperx
 
+    device = device or STATE["device"]
+    if device != STATE["device"]:
+        trust_sentence_splitter(language)
+        return whisperx.load_align_model(language_code=language, device=device)
     if language not in STATE["align"]:
         log.info("carico l'allineamento per '%s'...", language)
-        model, metadata = whisperx.load_align_model(language_code=language, device=STATE["device"])
+        trust_sentence_splitter(language)
+        model, metadata = whisperx.load_align_model(language_code=language, device=device)
         STATE["align"][language] = (model, metadata)
     return STATE["align"][language]
 
@@ -305,9 +427,11 @@ def align_model_for(language: str):
 @app.get("/health")
 def health() -> dict[str, Any]:
     """Quello che l'app chiama per dire «raggiunto» invece di «non risponde». Risponde subito
-    anche a modello scarico: e' il senso di non caricarlo all'avvio."""
+    anche a modello scarico: e' il senso di non caricarlo all'avvio. E senza credenziali: e' la
+    domanda «ci sei?», non «chi sei?»."""
     loaded = STATE["model"] is not None
     quiet = time.time() - STATE["last_used"] if STATE["last_used"] else 0.0
+    alignment = dict(STATE["alignment"])
     return {
         "status": "ok",
         "model": STATE["name"],
@@ -315,7 +439,10 @@ def health() -> dict[str, Any]:
         "compute_type": STATE["compute_type"],
         "busy": STATE["busy"],
         # L'app lo guarda per sapere se il testo si accendera' parola per parola davvero o per stima.
-        "word_timestamps": True,
+        # Vero finche' non si sa il contrario: prima della prima lezione non c'e' niente da dire.
+        "word_timestamps": all(status == "ok" for status in alignment.values()),
+        # Per lingua, "ok" o l'errore: un allineamento rotto si vede qui, senza leggere il registro.
+        "alignment": alignment,
         # Le tre righe qui sotto non le legge l'app: le legge chi sta guardando la VRAM.
         "loaded": loaded,
         "vram_gb": round(vram_gb(), 1),
@@ -323,18 +450,27 @@ def health() -> dict[str, Any]:
         # Quanti aspettano il loro turno, e se questo computer accetta ospiti.
         "queue": GATE.waiting,
         "guests": bool(STATE["index_url"] and STATE["owner"]),
+        # Come si entra: con l'account (biglietti verificati dal Worker) e/o senza credenziali.
+        "auth": {
+            "account": bool(STATE["index_url"] and STATE["owner"]),
+            "anonymous": bool(STATE["accept_anonymous"]),
+        },
     }
 
 
 def pairing_link(port: int) -> str:
-    """Il link che l'app sa aprire: `pampanotes://endpoint?url=...&remote=...&token=...`."""
+    """
+    Il link che l'app sa aprire: `pampanotes://endpoint?url=...&remote=...`.
+
+    Senza token, di proposito: il QR si fotografa, si inoltra, resta nella galleria, e il token apre
+    il computer a chi lo legge. Un dispositivo con l'account entra col biglietto (vedi
+    [verify_ticket]); uno senza il codice lo scrive a mano, dal config.json.
+    """
     lan = local_addresses(port)
     link = "pampanotes://endpoint?url=" + (lan[0] if lan else f"http://localhost:{port}")
     remote = tailscale_address(port)
     if remote:
         link += "&remote=" + remote
-    if STATE["token"]:
-        link += "&token=" + STATE["token"]
     return link
 
 
@@ -342,8 +478,8 @@ def new_pairing_key() -> str:
     """
     Una chiave usa-e-getta per la pagina di accoppiamento, buona per dieci minuti.
 
-    La pagina porta il token del server: senza una chiave, chiunque sulla rete di casa potrebbe
-    chiederla e leggerlo. Con la chiave, il segreto e' il QR sullo schermo, come prima.
+    La pagina non porta piu' il token, ma dice dove sta il computer, in casa e fuori: senza una
+    chiave, chiunque sulla rete potrebbe chiederla. Con la chiave, il segreto e' il QR sullo schermo.
     """
     key = secrets.token_urlsafe(16)
     STATE["pairing"] = (key, time.time() + 600)
@@ -374,8 +510,10 @@ def pair(request: Request, k: str = "") -> Any:
     remote = tailscale_address(port)
     rows = f"<p><b>In casa:</b> {escape(lan[0] if lan else '?')}</p>"
     rows += f"<p><b>Fuori casa:</b> {escape(remote)}</p>" if remote else "<p><b>Fuori casa:</b> installa Tailscale sul computer</p>"
+    if STATE["index_url"] and STATE["owner"]:
+        rows += "<p><b>Accesso:</b> entra nell'app con l'account Google di questo computer.</p>"
     if STATE["token"]:
-        rows += f"<p><b>Token:</b> <code>{escape(STATE['token'])}</code></p>"
+        rows += "<p><b>Codice:</b> quello scritto in <code>config.json</code>, per i dispositivi senza account.</p>"
     body = f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Pampa Notes</title>
 <style>body{{font-family:system-ui,sans-serif;margin:0;padding:24px;background:#f4f0fb;color:#1c1b1f}}
@@ -386,7 +524,9 @@ font-size:18px;font-weight:600;text-decoration:none}}a.s{{color:#7c3aed}}</style
 <a class="b" href="{escape(link)}">Apri Pampa Notes</a>
 <p><a class="s" href="{escape(intent)}">Se non si apre, prova questo</a></p>
 <hr><p>Oppure a mano, in <i>Impostazioni → Servizi → Server personale</i>:</p>{rows}</body></html>"""
-    return HTMLResponse(body)
+    # Una pagina con gli indirizzi del computer non deve restare nella cache del browser, ne' di
+    # qualunque cosa stia in mezzo: vale dieci minuti, e dopo non deve piu' esistere da nessuna parte.
+    return HTMLResponse(body, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/v1/models")
@@ -395,80 +535,203 @@ def models() -> dict[str, Any]:
     return {"object": "list", "data": [{"id": STATE["name"], "object": "model", "owned_by": "whisperx"}]}
 
 
-def check_token(request: Request) -> None:
+# --- chi sta chiedendo -------------------------------------------------------------------------
+
+
+class AuthError(Exception):
+    """Credenziali che non passano. Il messaggio arriva all'app nel 401."""
+
+
+@dataclass(frozen=True)
+class Caller:
+    """
+    Chi ha fatto la richiesta, deciso una volta sola in [AuthGate] prima di leggere il corpo.
+
+    `kind` e' "owner" o "guest"; `via` dice come ci si e' arrivati ("token", "ticket", "guest",
+    "anonymous"), e serve al registro e a nient'altro.
+    """
+
+    kind: str
+    via: str
+    name: str | None = None
+    bearer: str = ""
+
+
+def _same_secret(given: str, expected: str) -> bool:
     """
     Il confronto e' `compare_digest` e non `==` perche' un `==` su stringhe esce al primo carattere
     diverso, e quanto ci mette a uscire dice quanti caratteri erano giusti. In casa non cambia
-    niente; il giorno in cui questa porta si affaccia altrove, cambia.
+    niente; il giorno in cui questa porta si affaccia altrove, cambia. In byte, perche' con una
+    stringa non ASCII `compare_digest` solleva invece di rispondere di no.
     """
-    header = request.headers.get("authorization", "")
-    # Un ospite trascrive e basta: l'archivio dei file e lo sfratto del modello sono del proprietario.
-    if header.startswith("Bearer pg_"):
-        raise HTTPException(status_code=401, detail="riservato al proprietario")
+    return secrets.compare_digest(given.encode("utf-8"), expected.encode("utf-8"))
+
+
+def identify(authorization: str) -> Caller:
+    """
+    Da un header `Authorization` a chi e', o [AuthError].
+
+    Nell'ordine:
+      * `pg_…`: un ospite, se il Worker lo riconosce ([verify_guest]). Un ospite rifiutato resta
+        fuori anche con l'accesso libero acceso: l'invito revocato deve dirlo, non fingere di valere;
+      * il token di `config.json`, se c'e': la riserva che funziona anche senza internet;
+      * `pt_…`: il biglietto dell'account, se il Worker lo riconosce ([verify_ticket]);
+      * nient'altro: passa solo con `accept_anonymous`. Una credenziale che non torna conta come
+        nessuna credenziale — con l'accesso libero non apre niente di piu' di quanto non apra non
+        mandarla — ed e' quello che tiene in piedi un'app nuova su un computer a cui manca ancora
+        `owner` nel config.json.
+    """
+    bearer = authorization[7:].strip() if authorization[:7].lower() == "bearer " else ""
+    if bearer.startswith("pg_"):
+        name = verify_guest(bearer)
+        if not name:
+            raise AuthError("ospite non riconosciuto")
+        return Caller("guest", "guest", name, bearer)
     expected = STATE["token"]
-    if not expected:
-        return
-    if not secrets.compare_digest(header, f"Bearer {expected}"):
-        raise HTTPException(status_code=401, detail="token non valido")
+    if bearer and expected and _same_secret(bearer, expected):
+        return Caller("owner", "token", None, bearer)
+    if bearer.startswith("pt_") and verify_ticket(bearer):
+        return Caller("owner", "ticket", None, bearer)
+    if STATE["accept_anonymous"]:
+        return Caller("owner", "anonymous")
+    if bearer.startswith("pt_"):
+        raise AuthError("il computer non riconosce l'account: controlla owner e index_url nel config.json")
+    if bearer:
+        raise AuthError("token non valido")
+    raise AuthError("servono le credenziali: entra con l'account nell'app, o scrivi il codice del computer")
+
+
+# Le uniche strade aperte a tutti: «ci sei?» e la pagina del QR, che ha la sua chiave.
+OPEN_PATHS = frozenset({"/health", "/pair"})
+
+
+class AuthGate:
+    """
+    Le credenziali si guardano **prima** che si legga il corpo della richiesta.
+
+    Con il controllo dentro l'endpoint, FastAPI leggeva tutto il multipart — un'ora di audio, un
+    `.sdocx` da mezzo giga — e solo dopo diceva 401: chiunque raggiungesse la porta poteva riempire
+    il disco e tenere occupato il server senza nessuna credenziale. Un middleware ASGI vede la
+    richiesta quando sono arrivati solo gli header, e un rifiuto qui non tocca `receive`.
+
+    Chi passa lo trova in `request.state.caller` ([caller_of]). La verifica di un biglietto o di un
+    ospite puo' fare una richiesta al Worker: va su un thread, o bloccherebbe il server per tutti.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
+        if scope["type"] != "http" or scope.get("path") in OPEN_PATHS:
+            await self.app(scope, receive, send)
+            return
+        authorization = Headers(scope=scope).get("authorization", "")
+        try:
+            caller = await asyncio.to_thread(identify, authorization)
+        except AuthError as error:
+            response = JSONResponse({"detail": str(error)}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
+            await response(scope, receive, send)
+            return
+        scope.setdefault("state", {})["caller"] = caller
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(AuthGate)
+
+
+def caller_of(request: Request) -> Caller:
+    """Chi ha fatto la richiesta, come l'ha deciso [AuthGate]."""
+    caller = getattr(request.state, "caller", None)
+    if caller is None:  # una strada aperta che chiede chi e': non dovrebbe succedere
+        raise HTTPException(status_code=401, detail="servono le credenziali")
+    return caller
+
+
+def require_owner(request: Request) -> None:
+    """Un ospite trascrive e basta: l'archivio dei file e lo sfratto del modello sono del proprietario."""
+    if caller_of(request).kind != "owner":
+        raise HTTPException(status_code=401, detail="riservato al proprietario")
+
+
+# Il nome di prima, per chi lo importa ancora.
+check_token = require_owner
+
+
+def _post_worker(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Una POST al Worker dell'indice. Solleva `HTTPError` su un rifiuto, `OSError` sulla rete."""
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        STATE["index_url"].rstrip("/") + path,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json", "User-Agent": WORKER_USER_AGENT},
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        answer = json.loads(response.read() or b"{}")
+    return answer if isinstance(answer, dict) else {}
 
 
 def verify_guest(token: str) -> str | None:
     """Chiede al Worker se il token e' un ospite di questo proprietario. Il nome, o None."""
     now = time.time()
-    cached = GUEST_CACHE.get(token)
-    if cached and cached[1] > now:
-        return cached[0]
+    hit, cached = GUEST_CACHE.get(token, now)
+    if hit:
+        return cached
     name: str | None = None
-    index, owner = STATE["index_url"], STATE["owner"]
-    if index and owner:
+    if STATE["index_url"] and STATE["owner"]:
         try:
-            body = json.dumps({"token": token, "owner": owner}).encode("utf-8")
-            req = urllib.request.Request(index.rstrip("/") + "/v1/guests/verify", data=body, method="POST", headers={"Content-Type": "application/json", "User-Agent": WORKER_USER_AGENT})
-            with urllib.request.urlopen(req, timeout=10) as response:
-                name = json.loads(response.read() or b"{}").get("name") or None
+            name = _post_worker("/v1/guests/verify", {"token": token, "owner": STATE["owner"]}).get("name") or None
         except urllib.error.HTTPError:
             name = None
         except (OSError, ValueError) as error:
             log.warning("verifica dell'ospite non riuscita: %s", error)
             name = None
-    GUEST_CACHE[token] = (name, now + (600 if name else 60))
+    GUEST_CACHE.put(token, name, now + (600 if name else NEGATIVE_S))
     return name
+
+
+def verify_ticket(ticket: str) -> bool:
+    """
+    Chiede al Worker se il biglietto `pt_…` e' dell'account scritto in `owner`.
+
+    Il companion non lo decodifica da solo, di proposito: la chiave che lo firma sta nel Worker e
+    non deve uscirne. La risposta buona si tiene fino alla scadenza del biglietto (al massimo dodici
+    ore): cosi' un'interruzione di internet non ferma il computer per le ore in cui il biglietto
+    vale. Quella cattiva un minuto, perche' un biglietto inventato non faccia una richiesta al
+    Worker a ogni tentativo — e perche' chi corregge `owner` nel config.json non aspetti ore.
+    """
+    now = time.time()
+    hit, cached = TICKET_CACHE.get(ticket, now)
+    if hit:
+        return bool(cached)
+    until = now + NEGATIVE_S
+    valid = False
+    if STATE["index_url"] and STATE["owner"]:
+        try:
+            answer = _post_worker("/v1/computer/verify", {"ticket": ticket, "owner": STATE["owner"]})
+            expires = float(answer.get("expiresAt") or 0) / 1000
+            if answer.get("ok") is True and expires > now:
+                valid = True
+                until = min(expires, now + TICKET_MAX_S)
+        except urllib.error.HTTPError as error:
+            log.info("biglietto dell'account rifiutato dal Worker (%s): controlla owner nel config.json", error.code)
+        except (OSError, ValueError, TypeError) as error:
+            log.warning("verifica del biglietto non riuscita: %s", error)
+    TICKET_CACHE.put(ticket, valid, until)
+    return valid
 
 
 def report_usage(token: str, seconds: float) -> None:
     """Una trascrizione fatta da un ospite: si dice al Worker quanti secondi, per il registro."""
-    index = STATE["index_url"]
-    if not index:
+    if not STATE["index_url"]:
         return
     try:
-        body = json.dumps({"token": token, "seconds": round(seconds)}).encode("utf-8")
-        req = urllib.request.Request(index.rstrip("/") + "/v1/guests/usage", data=body, method="POST", headers={"Content-Type": "application/json", "User-Agent": WORKER_USER_AGENT})
-        with urllib.request.urlopen(req, timeout=10):
-            pass
+        _post_worker("/v1/guests/usage", {"token": token, "seconds": round(seconds)})
     except (OSError, ValueError) as error:
         log.warning("registro degli ospiti non aggiornato: %s", error)
 
 
-async def caller_of(request: Request) -> tuple[str, str | None, str]:
-    """
-    Chi chiede di trascrivere: ("owner", None, token) oppure ("guest", nome, token). 401 altrimenti.
-
-    Un ospite ha un token `pg_…` e passa dal Worker; il proprietario ha il token di config.json, o
-    niente se non ne ha messo uno. La verifica dell'ospite fa una richiesta di rete: va su un
-    thread, o bloccherebbe il server per tutti.
-    """
-    header = request.headers.get("authorization", "")
-    bearer = header[7:] if header.startswith("Bearer ") else ""
-    if bearer.startswith("pg_"):
-        name = await asyncio.to_thread(verify_guest, bearer)
-        if not name:
-            raise HTTPException(status_code=401, detail="ospite non riconosciuto")
-        return "guest", name, bearer
-    check_token(request)
-    return "owner", None, bearer
-
-
-app.include_router(archive.build_router(check_token))
+app.include_router(archive.build_router(require_owner))
 
 
 @app.post("/v1/admin/unload")
@@ -479,7 +742,7 @@ async def admin_unload(request: Request) -> dict[str, Any]:
     Serve a chi sta per aprire un gioco e rivuole la scheda: l'icona nell'area di notifica lo fa
     senza passare di qui ([request_unload]), questo e' per l'app e per chi automatizza.
     """
-    check_token(request)
+    require_owner(request)
     freed = await unload_now("richiesta")
     return {"unloaded": freed, "busy": STATE["busy"], "vram_gb": round(vram_gb(), 1)}
 
@@ -500,42 +763,49 @@ async def transcriptions(
     Il campo `model` si ignora di proposito: il modello e' quello scelto all'avvio, e cambiarlo per
     richiesta significherebbe rileggere qualche gigabyte di pesi nel mezzo di una lezione.
     """
-    kind, guest, bearer = await caller_of(request)
+    caller = caller_of(request)
+    who = f"ospite {caller.name}: " if caller.kind == "guest" else ""
+    target: Path | None = None
+    # Il `try` comincia prima del file temporaneo, non dopo: una richiesta annullata mentre si
+    # copiava l'audio, o mentre aspettava il suo turno, lasciava il file in %TEMP% per sempre.
+    try:
+        suffix = Path(file.filename or "audio").suffix or ".m4a"
+        # Su disco e non in memoria: qui arrivano file da un'ora.
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            target = Path(tmp.name)
+            while chunk := await file.read(1024 * 1024):
+                tmp.write(chunk)
 
-    suffix = Path(file.filename or "audio").suffix or ".m4a"
-    # Su disco e non in memoria: qui arrivano file da un'ora.
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        target = Path(tmp.name)
-        while chunk := await file.read(1024 * 1024):
-            tmp.write(chunk)
+        size_mb = target.stat().st_size / (1024 * 1024)
+        log.info("%sricevuto %s (%.1f MB)%s", who, file.filename, size_mb, f", {GATE.waiting} in fila" if GATE.waiting else "")
 
-    size_mb = target.stat().st_size / (1024 * 1024)
-    who = f"ospite {guest}: " if guest else ""
-    log.info("%sricevuto %s (%.1f MB)%s", who, file.filename, size_mb, f", {GATE.waiting} in fila" if GATE.waiting else "")
-
-    # Il proprietario passa davanti agli ospiti in attesa; nessuno interrompe chi sta gia' trascrivendo.
-    async with GATE.slot(0 if kind == "owner" else 1):
-        STATE["busy"] = True
-        started = time.time()
-        try:
-            # Su un thread anche il caricamento: cosi' `/health` continua a rispondere durante i
-            # minuti del primo avvio, invece di far credere all'app che il server sia morto.
-            await asyncio.to_thread(ensure_model)
-            result = await asyncio.to_thread(_transcribe, str(target), language.strip() or None)
-        except Exception as error:  # noqa: BLE001 — qualunque guasto deve tornare come 500 leggibile
-            log.exception("trascrizione fallita")
-            raise HTTPException(status_code=500, detail=str(error)) from error
-        finally:
-            STATE["busy"] = False
-            STATE["last_used"] = time.time()
-            target.unlink(missing_ok=True)
+        # Il proprietario passa davanti agli ospiti in attesa; nessuno interrompe chi sta gia' trascrivendo.
+        async with GATE.slot(0 if caller.kind == "owner" else 1):
+            STATE["busy"] = True
+            started = time.time()
+            try:
+                # Su un thread anche il caricamento del modello: cosi' `/health` continua a
+                # rispondere durante i minuti del primo avvio, invece di far credere all'app che il
+                # server sia morto.
+                result = await asyncio.to_thread(_transcribe, str(target), language.strip() or None)
+            except Exception as error:  # noqa: BLE001 — qualunque guasto deve tornare come 500 leggibile
+                log.exception("trascrizione fallita")
+                raise HTTPException(status_code=500, detail=str(error)) from error
+            finally:
+                STATE["busy"] = False
+                STATE["last_used"] = time.time()
+    finally:
+        if target is not None:
+            with contextlib.suppress(OSError):
+                target.unlink(missing_ok=True)
 
     elapsed = time.time() - started
     duration = result["segments"][-1]["end"] if result["segments"] else 0.0
     speed = duration / elapsed if elapsed > 0 else 0
-    log.info("%sfatto: %.1f min in %.0f s (%.0f volte il tempo reale)", who, duration / 60, elapsed, speed)
-    if guest:
-        asyncio.get_running_loop().run_in_executor(None, report_usage, bearer, duration)
+    on_cpu = " sul processore" if result.get("device_used") == "cpu" and STATE["device"] != "cpu" else ""
+    log.info("%sfatto%s: %.1f min in %.0f s (%.0f volte il tempo reale)", who, on_cpu, duration / 60, elapsed, speed)
+    if caller.kind == "guest":
+        asyncio.get_running_loop().run_in_executor(None, report_usage, caller.bearer, duration)
     if STATE["idle_seconds"]:
         log.info("tengo il modello in memoria per %d minuti", STATE["idle_seconds"] // 60)
 
@@ -544,37 +814,160 @@ async def transcriptions(
     return JSONResponse(result)
 
 
+# --- il lavoro ---------------------------------------------------------------------------------
+
+
+def is_oom(error: BaseException) -> bool:
+    """
+    La scheda ha finito la memoria?
+
+    Da torch arriva `torch.cuda.OutOfMemoryError`; da ctranslate2, che fa girare Whisper, un
+    `RuntimeError` qualunque con «out of memory» nel testo («CUDA failed with error out of
+    memory»); da cuBLAS e cuDNN un «ALLOC_FAILED». Si riconoscono tutti e tre: sono la stessa cosa
+    — qualcun altro, un gioco, un altro programma, si e' preso la scheda — e hanno lo stesso rimedio.
+    """
+    try:
+        import torch
+
+        if isinstance(error, torch.cuda.OutOfMemoryError):
+            return True
+    except Exception:  # noqa: BLE001 — senza torch si guarda solo il testo
+        pass
+    text = str(error).lower()
+    return "out of memory" in text or "alloc_failed" in text
+
+
+class Engine:
+    """
+    Il modello, l'allineamento e la memoria della scheda: le tre cose che il lavoro tocca.
+
+    Una classe e non chiamate sparse perche' [run_job] la riceve come argomento, e i test gliene
+    passano una finta che finisce la memoria a comando: il ripiego dalla scheda al processore e'
+    codice che gira solo nei giorni storti, e un codice cosi' o si prova apposta o non si prova mai.
+    """
+
+    def main_model(self) -> Any:
+        ensure_model()
+        return STATE["model"]
+
+    def cpu_model(self) -> Any:
+        import whisperx
+
+        log.warning("carico %s sul processore (int8) per questa lezione: sara' piu' lenta", STATE["name"])
+        return whisperx.load_model(STATE["name"], device="cpu", compute_type="int8")
+
+    def align(self, segments: list[dict], language: str, audio: Any, device: str) -> list[dict]:
+        import whisperx
+
+        model, metadata = align_model_for(language, device)
+        aligned = whisperx.align(segments, model, metadata, audio, device, return_char_alignments=False)
+        return aligned.get("segments", segments)
+
+    def release(self) -> None:
+        """Restituisce alla scheda quello che torch tiene in riserva, prima di riprovare."""
+        gc.collect()
+        if STATE["device"] == "cuda":
+            with contextlib.suppress(Exception):
+                import torch
+
+                torch.cuda.empty_cache()
+
+
+# Sul processore il lotto conta poco per la velocita' e molto per la RAM: non si esagera.
+CPU_BATCH_SIZE = 4
+
+
+def run_job(audio: Any, language: str | None, engine: Engine, batch_size: int, device: str) -> dict[str, Any]:
+    """
+    Trascrive e allinea, scendendo dalla scheda alla RAM se la scheda non basta.
+
+    La scheda puo' essere piena per ragioni che col companion non c'entrano — un gioco aperto a
+    meta' pomeriggio — e allora `transcribe` o `align` finiscono la memoria. Prima di arrendersi:
+      1. si svuota la riserva di torch e si riprova con un lotto grande la meta', fino a 1: un
+         lotto piu' piccolo occupa meno, e spesso basta;
+      2. se neanche con 1 entra, la lezione si fa sul processore con un modello `int8` caricato
+         apposta, e poi buttato: e' piu' lenta, ma e' una lezione trascritta invece di un errore.
+         La prossima riparte dalla scheda, che nel frattempo potrebbe essersi liberata.
+    L'allineamento, se finisce la memoria, si rifa' sul processore: il suo modello e' piccolo.
+
+    Torna i segmenti, la lingua, dove si e' trascritto (`device_used`) e l'esito dell'allineamento.
+    """
+    device_used = device
+    size = max(1, int(batch_size))
+    transcription: dict[str, Any] | None = None
+
+    try:
+        model = engine.main_model()
+    except Exception as error:
+        if device != "cuda" or not is_oom(error):
+            raise
+        engine.release()
+        log.warning("il modello non entra nella scheda: questa lezione va sul processore")
+        model = None
+
+    while model is not None:
+        try:
+            transcription = model.transcribe(audio, batch_size=size, language=language)
+            break
+        except Exception as error:
+            if device != "cuda" or not is_oom(error):
+                raise
+            engine.release()
+            if size == 1:
+                log.warning("memoria della scheda finita anche con un lotto da 1: passo al processore")
+                break
+            size = max(1, size // 2)
+            log.warning("memoria della scheda finita: riprovo con batch_size %d", size)
+
+    if transcription is None:
+        device_used = "cpu"
+        cpu = engine.cpu_model()
+        try:
+            transcription = cpu.transcribe(audio, batch_size=min(size, CPU_BATCH_SIZE), language=language)
+        finally:
+            del cpu
+            engine.release()
+
+    detected = transcription.get("language") or language or "en"
+    segments = transcription.get("segments", [])
+
+    alignment = "ok"
+    try:
+        align_device = device_used
+        try:
+            segments = engine.align(segments, detected, audio, align_device)
+        except Exception as error:
+            if align_device != "cuda" or not is_oom(error):
+                raise
+            engine.release()
+            log.warning("allineamento: memoria della scheda finita, lo rifaccio sul processore")
+            segments = engine.align(segments, detected, audio, "cpu")
+    except Exception as error:  # noqa: BLE001
+        # Senza allineamento i tempi restano quelli di Whisper: meno precisi, ma una trascrizione
+        # con tempi approssimativi vale piu' di un errore. Con la traccia, pero': senza, l'errore di
+        # NLTK (vedi [trust_sentence_splitter]) e' rimasto nascosto dietro questa riga per giorni.
+        alignment = f"errore: {type(error).__name__}: {error}"
+        log.warning("allineamento non riuscito per '%s': tengo i tempi originali", detected, exc_info=True)
+
+    return {
+        "segments": segments,
+        "language": detected,
+        "device_used": device_used,
+        "batch_size": size,
+        "alignment": alignment,
+    }
+
+
 def _transcribe(path: str, language: str | None) -> dict[str, Any]:
     """Il lavoro vero, su un thread suo: WhisperX blocca, e bloccare il loop ferma anche /health."""
     import whisperx
 
     audio = whisperx.load_audio(path)
-    transcription = STATE["model"].transcribe(
-        audio,
-        batch_size=STATE["batch_size"],
-        language=language,
-    )
-    detected = transcription.get("language", language or "en")
-
-    segments = transcription.get("segments", [])
-    try:
-        align_model, metadata = align_model_for(detected)
-        aligned = whisperx.align(
-            segments,
-            align_model,
-            metadata,
-            audio,
-            STATE["device"],
-            return_char_alignments=False,
-        )
-        segments = aligned.get("segments", segments)
-    except Exception:  # noqa: BLE001
-        # Senza allineamento i tempi restano quelli di Whisper: meno precisi, ma una trascrizione
-        # con tempi approssimativi vale piu' di un errore.
-        log.warning("allineamento non riuscito per '%s': tengo i tempi originali", detected)
+    job = run_job(audio, language, Engine(), STATE["batch_size"], STATE["device"])
+    STATE["alignment"][job["language"]] = job["alignment"]
 
     out = []
-    for index, segment in enumerate(segments):
+    for index, segment in enumerate(job["segments"]):
         text = (segment.get("text") or "").strip()
         if not text:
             continue
@@ -582,14 +975,14 @@ def _transcribe(path: str, language: str | None) -> dict[str, Any]:
             {
                 "id": index,
                 "seek": 0,
-                "start": float(segment.get("start", 0.0)),
-                "end": float(segment.get("end", 0.0)),
+                "start": _finite(segment.get("start"), 0.0),
+                "end": _finite(segment.get("end"), 0.0),
                 "text": text,
                 # WhisperX non li restituisce: l'app li usa per scartare le allucinazioni, e valori
                 # che dicono "voce presente, confidenza buona" lasciano passare tutto — che e' il
                 # comportamento giusto quando l'informazione non c'e'.
-                "avg_logprob": float(segment.get("avg_logprob", -0.2)),
-                "no_speech_prob": float(segment.get("no_speech_prob", 0.0)),
+                "avg_logprob": _finite(segment.get("avg_logprob"), -0.2),
+                "no_speech_prob": _finite(segment.get("no_speech_prob"), 0.0),
                 "compression_ratio": 1.0,
                 "temperature": 0.0,
                 "tokens": [],
@@ -600,11 +993,27 @@ def _transcribe(path: str, language: str | None) -> dict[str, Any]:
     gc.collect()
     return {
         "task": "transcribe",
-        "language": detected,
+        "language": job["language"],
         "duration": out[-1]["end"] if out else 0.0,
         "text": " ".join(s["text"] for s in out),
         "segments": out,
+        # «cuda» o «cpu»: l'app lo usa per dire «trascritta sulla RAM, piu' lenta».
+        "device_used": job["device_used"],
     }
+
+
+def _finite(value: Any, fallback: float) -> float:
+    """
+    Un numero che il JSON sa scrivere.
+
+    L'allineamento interpola i tempi mancanti con pandas, e un NaN puo' restare: `JSONResponse` lo
+    rifiuta (`allow_nan=False`) e l'intera trascrizione tornerebbe come un 500 per una parola.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return number if math.isfinite(number) else fallback
 
 
 def words_of(segment: dict) -> list[dict]:
@@ -620,16 +1029,16 @@ def words_of(segment: dict) -> list[dict]:
         text = (word.get("word") or "").strip()
         if not text:
             continue
-        start = word.get("start")
-        end = word.get("end")
-        if start is None or end is None:
+        start = _finite(word.get("start"), math.nan)
+        end = _finite(word.get("end"), math.nan)
+        if math.isnan(start) or math.isnan(end):
             continue
         out.append(
             {
                 "word": text,
-                "start": float(start),
-                "end": float(end),
-                "score": float(word.get("score", 0.0)),
+                "start": start,
+                "end": end,
+                "score": _finite(word.get("score"), 0.0),
             }
         )
     return out
@@ -655,7 +1064,19 @@ def tailscale_address(port: int) -> str | None:
 
 
 def _ipv4_addresses() -> list[str]:
+    """
+    Gli indirizzi IPv4 del computer, il piu' probabile per primo.
+
+    L'ordine conta: il menu dell'icona e il QR mostrano il primo, e su un PC con Hyper-V, WSL o
+    Docker il primo che Windows elenca e' spesso quello di una scheda virtuale (`vEthernet`,
+    172.x), che dal tablet non si raggiunge. Davanti va quello da cui il computer esce davvero verso
+    la rete ([_primary_ipv4]); poi le reti di casa tipiche (192.168, 10), poi le 172.16/12 che le
+    schede virtuali usano quasi sempre, e in fondo i 169.254 di una scheda senza rete.
+    """
     found: list[str] = []
+    primary = _primary_ipv4()
+    if primary and not primary.startswith("127."):
+        found.append(primary)
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
             address = info[4][0]
@@ -663,7 +1084,36 @@ def _ipv4_addresses() -> list[str]:
                 found.append(address)
     except OSError:
         pass
-    return found
+    return sorted(found, key=lambda address: _address_rank(address, primary))
+
+
+def _primary_ipv4() -> str | None:
+    """
+    L'indirizzo della scheda che porta il traffico verso fuori.
+
+    Un `connect` su un socket UDP non manda niente: chiede solo al sistema quale strada userebbe, e
+    `getsockname` dice da quale indirizzo partirebbe. 192.0.2.1 e' un indirizzo di documentazione
+    (TEST-NET-1) che non esiste da nessuna parte: nessun pacchetto, nessuna attesa.
+    """
+    with contextlib.suppress(OSError), socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        probe.connect(("192.0.2.1", 9))
+        return probe.getsockname()[0]
+    return None
+
+
+def _address_rank(address: str, primary: str | None) -> int:
+    if address == primary and not _is_tailscale(address):
+        return 0
+    parts = [int(part) for part in address.split(".")] if address.count(".") == 3 else [0, 0, 0, 0]
+    if parts[0] == 192 and parts[1] == 168:
+        return 1
+    if parts[0] == 10:
+        return 2
+    if parts[0] == 169 and parts[1] == 254:
+        return 9
+    if parts[0] == 172 and 16 <= parts[1] <= 31:
+        return 5
+    return 3
 
 
 def _is_tailscale(address: str) -> bool:
@@ -693,6 +1143,10 @@ def configure(settings: dict[str, Any]) -> dict[str, Any]:
     STATE["idle_seconds"] = max(0, resolved["idle_minutes"]) * 60
     STATE["index_url"] = str(resolved.get("index_url") or "").strip()
     STATE["owner"] = str(resolved.get("owner") or "").strip()
+    STATE["accept_anonymous"] = bool(resolved.get("accept_anonymous"))
+    # Le verifiche tenute da parte valevano per l'account di prima.
+    GUEST_CACHE.clear()
+    TICKET_CACHE.clear()
     archive.open_archive(resolved["archive_root"])
     return resolved
 
@@ -754,7 +1208,11 @@ def banner(settings: dict[str, Any]) -> None:
     print()
     print("  Mettilo in Altro -> Impostazioni -> Server personale, e tocca 'Prova la connessione'.")
     if STATE["token"]:
-        print("  Il token va nel campo sotto l'indirizzo.")
+        print("  Il codice (token di config.json) va nel campo sotto l'indirizzo, sui dispositivi senza account.")
+    if STATE["index_url"] and STATE["owner"]:
+        print(f"  Entra chi ha fatto l'accesso nell'app con {STATE['owner']}.")
+    if STATE["accept_anonymous"]:
+        print("  Accesso libero acceso: si trascrive anche senza credenziali (accept_anonymous in config.json).")
     if STATE["idle_seconds"]:
         print(f"  Il modello si carica alla prima registrazione e se ne va dopo {settings['idle_minutes']} minuti di silenzio.")
     else:

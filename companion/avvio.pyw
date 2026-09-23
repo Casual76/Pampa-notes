@@ -10,8 +10,9 @@ il tablet non trova piu' il computer di casa senza che niente dica perche'.
 Qui si usa solo la libreria standard, cosi' questo file parte anche quando il resto non puo':
 - aspetta un po' dopo l'accesso, che e' il momento in cui il sistema e' piu' occupato;
 - lancia `tray.py` con gli errori scritti in `logs/tray-stderr.log`;
-- controlla che `/health` risponda; se il processo muore o non risponde, riprova, qualche volta,
-  sempre piu' distanziato, e scrive ogni tentativo in `logs/avvio.log`.
+- controlla che `/health` risponda; se il processo muore riprova, qualche volta, sempre piu'
+  distanziato, e scrive ogni tentativo in `logs/avvio.log`. Un processo vivo ma lento non si uccide:
+  lo si aspetta fino a cinque minuti, e poi lo si lascia al suo lavoro.
 
 Se il server risponde, questo processo esce e lascia l'icona al suo lavoro.
 """
@@ -31,7 +32,8 @@ LOGS = HERE / "logs"
 DEFAULT_PORT = 8765
 FIRST_WAIT_S = 20
 ATTEMPTS = 5
-HEALTH_TIMEOUT_S = 60
+# Quanto si aspetta un processo vivo prima di lasciarlo stare. Vedi [wait_for].
+SLOW_START_S = 300
 
 
 def log(message: str) -> None:
@@ -85,21 +87,40 @@ def main() -> None:
             return
         log(f"tentativo {attempt} di {ATTEMPTS}")
         process = launch()
-        deadline = time.monotonic() + HEALTH_TIMEOUT_S
-        while time.monotonic() < deadline:
-            if healthy(at):
-                log(f"in ascolto sulla porta {at}")
-                return
-            code = process.poll()
-            if code is not None:
-                log(f"tray.py e' uscito con codice {code}: l'errore e' in logs/tray-stderr.log")
-                break
-            time.sleep(2)
-        else:
-            log(f"nessuna risposta in {HEALTH_TIMEOUT_S} s")
-            process.kill()
+        outcome = wait_for(process, at)
+        if outcome == "ok":
+            log(f"in ascolto sulla porta {at}")
+            return
+        if outcome == "slow":
+            # Vivo ma muto dopo cinque minuti: non lo si uccide e non se ne lancia un altro. Un
+            # secondo tray.py troverebbe la porta presa appena il primo si sveglia, e ucciderlo
+            # voleva dire buttare via proprio il caricamento lento che stava finendo.
+            log(f"tray.py e' vivo ma non risponde dopo {SLOW_START_S // 60} minuti: lo lascio lavorare")
+            return
+        log(f"tray.py e' uscito con codice {outcome}: l'errore e' in logs/tray-stderr.log")
         time.sleep(30 * attempt)
     log("rinuncio: avvia il companion a mano con avvia-in-background.cmd")
+
+
+def wait_for(process: subprocess.Popen[bytes], at: int) -> str | int:
+    """
+    Aspetta che il server risponda: "ok", "slow" se e' ancora vivo dopo [SLOW_START_S], o il codice
+    d'uscita se e' morto.
+
+    Prima si aspettava un minuto e poi si uccideva il processo. Ma un minuto non basta sempre: subito
+    dopo l'accesso, con Google Drive che rilegge la cartella del progetto, importare torch e
+    WhisperX puo' metterci di piu' — e il processo ucciso era uno che stava partendo bene. Quello
+    che dice «non partira'» e' il processo che esce, non l'orologio.
+    """
+    deadline = time.monotonic() + SLOW_START_S
+    while time.monotonic() < deadline:
+        if healthy(at):
+            return "ok"
+        code = process.poll()
+        if code is not None:
+            return code
+        time.sleep(2)
+    return "slow"
 
 
 if __name__ == "__main__":
