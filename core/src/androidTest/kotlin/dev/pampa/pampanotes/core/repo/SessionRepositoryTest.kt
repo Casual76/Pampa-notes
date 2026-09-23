@@ -50,6 +50,7 @@ class SessionRepositoryTest {
       segments = db.segments(),
       notes = db.notes(),
       files = files,
+      db = db,
     )
   }
 

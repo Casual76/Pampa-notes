@@ -25,8 +25,18 @@ class SyncApi(
   suspend fun push(baseUrl: String, token: String, request: PushRequest): PushResponse =
     call(baseUrl, "/v1/sync/push", token, "POST", SyncCodec.json.encodeToString(PushRequest.serializer(), request), PushResponse.serializer())
 
-  suspend fun pull(baseUrl: String, token: String, deviceId: String, since: Long, limit: Int = 200): PullResponse =
-    call(baseUrl, "/v1/sync/pull?since=$since&limit=$limit&deviceId=${URLEncoder.encode(deviceId, "UTF-8")}", token, "GET", null, PullResponse.serializer())
+  /**
+   * @param includeOwn anche le righe scritte da questo dispositivo, che di solito il server salta:
+   *  servono al riallineamento, per sapere che cosa il server ha *tutto*, non solo quello degli altri.
+   *  Un Worker che non conosce il parametro lo ignora: il riallineamento se ne accorge (nessuna
+   *  riga di questo dispositivo in tutto l'indice) e non cancella niente (`SyncRepository.rebaseline`).
+   */
+  suspend fun pull(baseUrl: String, token: String, deviceId: String, since: Long, limit: Int = 200, includeOwn: Boolean = false): PullResponse =
+    call(
+      baseUrl,
+      "/v1/sync/pull?since=$since&limit=$limit&deviceId=${URLEncoder.encode(deviceId, "UTF-8")}" + if (includeOwn) "&includeOwn=1" else "",
+      token, "GET", null, PullResponse.serializer(),
+    )
 
   suspend fun status(baseUrl: String, token: String): SyncStatus =
     call(baseUrl, "/v1/sync/status", token, "GET", null, SyncStatus.serializer())

@@ -10,6 +10,7 @@ import androidx.work.WorkInfo
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.pampa.pampanotes.core.db.SyncDao
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
+import dev.pampa.pampanotes.core.sync.SyncRepository
 import dev.pampa.pampanotes.work.SyncWorker
 import dev.pampa.pampanotes.work.WorkScheduler
 import javax.inject.Inject
@@ -42,6 +43,11 @@ data class SyncUiState(
   val pending: Int = 0,
   val running: Boolean = false,
   val last: SyncLast? = null,
+  /**
+   * Il giro si e' fermato: questo telefono ha note sincronizzate con un altro account. La pagina
+   * propone [SyncViewModel.adoptAccount] — «portale in questo account» — accanto al rientro.
+   */
+  val foreignAccount: Boolean = false,
 ) {
   val configured: Boolean get() = serverUrl.isNotBlank() && hasToken
 }
@@ -58,6 +64,7 @@ class SyncViewModel @Inject constructor(
   private val scheduler: WorkScheduler,
   private val api: SyncApi,
   private val accountSignIn: AccountSignIn,
+  private val repository: SyncRepository,
   sync: SyncDao,
 ) : ViewModel() {
 
@@ -77,6 +84,7 @@ class SyncViewModel @Inject constructor(
       }
     }
     viewModelScope.launch { sync.observeOutboxCount().collect { n -> _uiState.update { it.copy(pending = n) } } }
+    viewModelScope.launch { settingsStore.syncForeignOwner.collect { owner -> _uiState.update { it.copy(foreignAccount = owner.isNotBlank()) } } }
     viewModelScope.launch {
       scheduler.observeSync().collect { infos ->
         val running = infos.any { it.state == WorkInfo.State.RUNNING }
@@ -129,6 +137,24 @@ class SyncViewModel @Inject constructor(
     }
   }
 
+  /**
+   * «Sono mie, portale in questo account»: le note di qui entrano nell'account con cui si e' entrati
+   * adesso, come da un dispositivo nuovo, e parte un giro. Solo da un tocco esplicito, dopo un giro
+   * fermato con [SyncUiState.foreignAccount].
+   */
+  fun adoptAccount() {
+    viewModelScope.launch {
+      try {
+        repository.adoptAccount()
+        scheduler.syncNow(force = true)
+      } catch (cancelled: CancellationException) {
+        throw cancelled
+      } catch (error: Exception) {
+        _uiState.update { it.copy(authError = error.message ?: error::class.java.simpleName) }
+      }
+    }
+  }
+
   /** Chiude la sessione sul server (se ci arriva) e dimentica il token: da qui la sincronizzazione si ferma. */
   fun signOut() {
     viewModelScope.launch {
@@ -137,6 +163,9 @@ class SyncViewModel @Inject constructor(
       if (url.isNotBlank() && token != null) runCatching { api.logout(url, token) }
       settingsStore.setSyncToken(null)
       settingsStore.setSyncAccount("")
+      // Chi rientra e' un dispositivo nuovo per il server (SyncRepository.ensureIdentity). L'account
+      // di prima invece resta ricordato: e' cosi' che ci si accorge se rientra qualcun altro.
+      settingsStore.forgetSyncDevice()
       settingsStore.setSyncEnabled(false)
       scheduler.setPeriodicSync(false)
       _uiState.update { it.copy(authError = null) }

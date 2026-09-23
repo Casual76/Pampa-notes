@@ -56,10 +56,12 @@ class SyncPayloads @Inject constructor(
     "sessions" -> sessions.get(id)?.let { encode(SessionEntity.serializer(), it, it.updatedAt) }
     "audio_parts" -> audioParts.get(id)?.let { encode(AudioPartEntity.serializer(), it, it.createdAt) }
     "transcripts" -> transcripts.get(id)?.let { t ->
-      // I segmenti viaggiano accanto al payload, non dentro: cosi' l'impronta della trascrizione
-      // resta quella del suo testo, e il server puo' tenerli a blocchi.
+      // I segmenti viaggiano accanto al payload, non dentro, cosi' il server li puo' tenere a
+      // blocchi; ma l'impronta li conta (SyncCodec.transcriptHash), o un riordino delle parti — che
+      // cambia i tempi e non il testo — non salirebbe mai.
       val parts = segments.byTranscript(id).map { it.copy(id = 0) }
-      encode(TranscriptEntity.serializer(), t, t.createdAt).copy(segments = parts)
+      val base = encode(TranscriptEntity.serializer(), t, t.createdAt)
+      base.copy(hash = SyncCodec.transcriptHash(base.hash, parts), segments = parts)
     }
     "sources" -> sources.get(id)?.let { encode(SourceEntity.serializer(), it, it.importedAt) }
     "export_presets" -> presets.get(id)?.let { encode(ExportPresetEntity.serializer(), it, it.lastUsedAt) }

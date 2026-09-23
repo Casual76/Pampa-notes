@@ -176,6 +176,29 @@ object SyncCodec {
 
   fun hash(payload: JsonElement): String = Hashing.sha256(json.encodeToString(JsonElement.serializer(), strip(payload)))
 
+  /**
+   * L'impronta di una trascrizione: il suo payload **e i suoi segmenti**.
+   *
+   * Prima c'era solo il payload, e i segmenti viaggiavano accanto senza contare: riordinare le parti
+   * rifa' i segmenti (tempi di sessione nuovi) senza cambiare il testo, e una trascrizione identica
+   * nell'impronta non sale — il push la toglieva dall'outbox come «toccata, non cambiata». Gli altri
+   * dispositivi restavano coi tempi di prima, e il lettore saltava nel punto sbagliato.
+   *
+   * I segmenti entrano in un ordine che non dipende dagli id locali (autoincrementali, diversi su
+   * ogni dispositivo), e senza id. Senza segmenti l'impronta resta quella di prima: una raffinata
+   * non ne ha, e non deve sembrare cambiata a chi aggiorna l'app.
+   */
+  fun transcriptHash(payloadHash: String, segments: List<SegmentEntity>): String {
+    if (segments.isEmpty()) return payloadHash
+    val canonical = segments
+      .map { it.copy(id = 0) }
+      .sortedWith(compareBy({ it.sessionStartMs }, { it.partId }, { it.indexInPart }, { it.partStartMs }))
+    val digest = Hashing.sha256(json.encodeToString(SEGMENTS, canonical))
+    return Hashing.sha256("$payloadHash:$digest")
+  }
+
+  private val SEGMENTS = kotlinx.serialization.builtins.ListSerializer(SegmentEntity.serializer())
+
   /** Il payload senza le colonne che non sono contenuto. `note.updatedAt` sta un livello sotto. */
   private fun strip(element: JsonElement): JsonElement {
     val obj = element as? JsonObject ?: return element
