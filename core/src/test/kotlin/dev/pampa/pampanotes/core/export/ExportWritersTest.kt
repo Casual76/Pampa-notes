@@ -6,6 +6,7 @@ import dev.pampa.pampanotes.core.db.SourceKind
 import dev.pampa.pampanotes.core.db.SourceStatus
 import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.db.TranscriptKind
+import dev.pampa.pampanotes.core.export.BundleLayout.Companion.sanitized
 import java.io.ByteArrayOutputStream
 import java.util.zip.ZipInputStream
 import kotlinx.serialization.json.Json
@@ -25,23 +26,27 @@ class ExportWritersTest {
   private val options = ExportOptions()
 
   // -----------------------------------------------------------------------------------------------
-  // Il file di una nota
+  // Il file degli appunti
   // -----------------------------------------------------------------------------------------------
 
   @Test
-  fun `appunti e trascrizione stanno sotto due titoli diversi`() {
+  fun `gli appunti stanno in un file e la trascrizione in un altro`() {
     // E' la distinzione da cui dipende tutto il resto: un assistente che non la vede tratta un
     // errore di Whisper come una cosa che l'autore ha scritto.
-    val text = writer.note(note(body = "Il trattato di Tordesillas."), options)
+    val note = note(body = "Il trattato di Tordesillas.")
+    val layout = layout(listOf(note))
+    val text = writer.noteFile(note, layout, options)
 
-    assertTrue(text.contains("## Appunti"))
-    assertTrue(text.contains("### Trascrizione (grezza, whisper-large-v3-turbo)"))
-    assertTrue(text.indexOf("## Appunti") < text.indexOf("### Trascrizione"))
+    assertTrue(text.contains("## Appunti\n\nIl trattato di Tordesillas."))
+    assertFalse(text.contains("Prima frase."))
+    assertTrue(text.contains("## Sessioni"))
+    assertTrue(text.contains("[universita--storia--lezione-monti--2025-10-09.md](universita--storia--lezione-monti--2025-10-09.md)"))
   }
 
   @Test
   fun `una nota senza appunti lo dice invece di lasciare il vuoto`() {
-    val text = writer.note(note(body = ""), options)
+    val note = note(body = "")
+    val text = writer.noteFile(note, layout(listOf(note)), options)
 
     assertTrue(text.contains("_Nessun appunto scritto"))
   }
@@ -50,32 +55,60 @@ class ExportWritersTest {
   fun `il titolo nel front-matter sta fra virgolette anche con i due punti dentro`() {
     // Senza virgolette "Lezione: il Novecento" spezza lo YAML, e chi lo legge con un parser vero
     // non trova piu' nessuno dei campi.
-    val text = writer.note(note(title = "Lezione: il \"Novecento\""), options)
+    val note = note(title = "Lezione: il \"Novecento\"")
+    val text = writer.noteFile(note, layout(listOf(note)), options)
 
     assertTrue(text.contains("""title: "Lezione: il \"Novecento\""""))
   }
 
   @Test
-  fun `il front-matter dice con che modello e' stata fatta la trascrizione`() {
-    val text = writer.note(note(), options, generator = "Pampa Notes 0.2.0")
+  fun `il front-matter dice con che modello e in che file sta la trascrizione`() {
+    val note = note()
+    val text = writer.noteFile(note, layout(listOf(note)), options, generator = "Pampa Notes 0.2.0")
 
     assertTrue(text.contains("transcript: raw"))
     assertTrue(text.contains("provider: groq"))
     assertTrue(text.contains("""model: "whisper-large-v3-turbo""""))
+    assertTrue(text.contains("""files: ["universita--storia--lezione-monti--2025-10-09.md"]"""))
     assertTrue(text.contains("""generator: "Pampa Notes 0.2.0""""))
   }
 
   @Test
-  fun `i tempi compaiono davanti a ogni paragrafo`() {
-    val text = writer.note(note(), options)
+  fun `una sessione non trascritta lo dice invece di sembrare vuota`() {
+    val note = note(sessions = listOf(session(transcript = null, raw = null)))
+    val layout = layout(listOf(note))
+    val text = writer.noteFile(note, layout, options)
 
+    assertTrue(text.contains("_Non ancora trascritta._"))
+    assertTrue(layout.of(note).transcripts.isEmpty())
+  }
+
+  // -----------------------------------------------------------------------------------------------
+  // Il file di una trascrizione
+  // -----------------------------------------------------------------------------------------------
+
+  @Test
+  fun `la trascrizione si legge da sola`() {
+    val note = note()
+    val layout = layout(listOf(note))
+    val piece = layout.of(note).transcripts.values.single().single()
+    val text = writer.transcriptFile(note, piece, layout)
+
+    assertTrue(text.startsWith("---\nnote: \"Lezione Monti\"\n"))
+    assertTrue(text.contains("# Trascrizione — Lezione Monti"))
+    // Chi apre solo questo file deve sapere che e' testo di una macchina, e dove sono gli appunti.
+    assertTrue(text.contains("riconoscimento vocale"))
+    assertTrue(text.contains("[universita--storia--lezione-monti.md](universita--storia--lezione-monti.md)"))
     assertTrue(text.contains("[00:01] Prima frase. Seconda frase."))
     assertTrue(text.contains("[00:20] Dopo una pausa lunga."))
   }
 
   @Test
   fun `senza tempi si stampa il testo e basta`() {
-    val text = writer.note(note(), options.copy(timestamps = false))
+    val note = note()
+    val noTimes = options.copy(timestamps = false)
+    val layout = BundleLayout(set(listOf(note)), noTimes)
+    val text = writer.transcriptFile(note, layout.of(note).transcripts.values.single().single(), layout)
 
     assertFalse(text.contains("[00:01]"))
     assertTrue(text.contains("Prima frase."))
@@ -88,8 +121,9 @@ class ExportWritersTest {
   }
 
   @Test
-  fun `al confine fra due registrazioni si dice quale comincia`() {
-    // Senza questa riga una citazione a [32:10] non sa in quale dei due file andare a riascoltare.
+  fun `al confine fra due registrazioni si dice quale comincia e quando`() {
+    // I tempi contano dalla lezione, non dal file: senza questa riga una citazione a [30:01] non sa
+    // in quale dei due file andare a riascoltare.
     val session = session(
       parts = listOf(part("p1", "prima.m4a", 30 * 60_000, 0), part("p2", "seconda.m4a", 10 * 60_000, 30 * 60_000)),
       segments = listOf(
@@ -97,40 +131,77 @@ class ExportWritersTest {
         segment("p2", 30 * 60_000 + 1_000, 30 * 60_000 + 3_000, "Nella seconda."),
       ),
     )
-    val text = writer.note(note(sessions = listOf(session)), options)
+    val note = note(sessions = listOf(session))
+    val layout = layout(listOf(note))
+    val text = writer.transcriptFile(note, layout.of(note).transcripts.values.single().single(), layout)
 
-    assertTrue(text.contains("> Parte 2 — `seconda.m4a`"))
+    assertTrue(text.contains("> Registrazione 2 (`seconda.m4a`) — comincia a 30:00"))
     assertTrue(text.contains("[30:01] Nella seconda."))
     // La prima non si annuncia: non e' un cambio.
-    assertFalse(text.contains("> Parte 1"))
+    assertFalse(text.contains("> Registrazione 1"))
   }
 
   @Test
   fun `una versione raffinata non ha i tempi e lo dice`() {
     val raw = transcript(TranscriptKind.RAW, "Testo grezzo.")
     val refined = transcript(TranscriptKind.REFINED, "Testo ripulito.", model = "gpt-oss-120b", parentId = raw.id)
-    val session = session(transcript = refined, raw = raw)
+    val note = note(sessions = listOf(session(transcript = refined, raw = raw)))
+    val layout = layout(listOf(note))
+    val text = writer.transcriptFile(note, layout.of(note).transcripts.values.single().single(), layout)
 
-    val text = writer.note(note(sessions = listOf(session)), options)
-
-    assertTrue(text.contains("### Trascrizione (raffinata, gpt-oss-120b)"))
+    assertTrue(text.contains("trascrizione raffinata, gpt-oss-120b"))
     assertTrue(text.contains("non porta i tempi"))
     assertTrue(text.contains("Testo ripulito."))
     assertFalse(text.contains("[00:01]"))
   }
 
-  @Test
-  fun `una sessione non trascritta lo dice invece di sembrare vuota`() {
-    val text = writer.note(note(sessions = listOf(session(transcript = null, raw = null))), options)
+  // -----------------------------------------------------------------------------------------------
+  // Le lezioni lunghe
+  // -----------------------------------------------------------------------------------------------
 
-    assertTrue(text.contains("_Non ancora trascritta._"))
+  @Test
+  fun `una lezione lunga si divide in pezzi ai confini di paragrafo senza perdere niente`() {
+    // Venti minuti di paragrafi da cento parole: 20 000 parole, piu' del triplo del tetto.
+    val segments = (0 until 200).map { index ->
+      val start = index * 10_000L
+      // Un salto di tre secondi fra un segmento e l'altro: ognuno e' un paragrafo.
+      segment("p1", start, start + 7_000, (1..100).joinToString(" ") { "p${index}w$it" })
+    }
+    val transcript = transcript(TranscriptKind.RAW, segments.joinToString(" ") { it.text })
+    val note = note(sessions = listOf(session(parts = listOf(part("p1", "lunga.m4a", 2_000_000, 0)), transcript = transcript, segments = segments)))
+    val layout = layout(listOf(note))
+    val pieces = layout.of(note).transcripts.values.single()
+
+    assertEquals(4, pieces.size)
+    assertEquals(
+      listOf(1, 2, 3, 4).map { "notes/universita--storia--lezione-monti--2025-10-09--${it}di4.md" },
+      pieces.map { it.path },
+    )
+    assertTrue(pieces.all { it.words <= TranscriptPieces.MAX_WORDS_PER_FILE })
+    // Nessun paragrafo perso, nessuno ripetuto, e in ordine.
+    assertEquals(segments.map { it.text }, pieces.flatMap { piece -> piece.blocks.map { it.text } })
+
+    val second = writer.transcriptFile(note, pieces[1], layout)
+    assertTrue(second.contains("piece: \"2/4\""))
+    assertTrue(second.contains("(2 di 4)"))
+    assertTrue(second.contains("← [precedente](universita--storia--lezione-monti--2025-10-09--1di4.md)"))
+    assertTrue(second.contains("[successiva](universita--storia--lezione-monti--2025-10-09--3di4.md) →"))
+
+    // L'indice dice che tratto di lezione copre ogni pezzo.
+    val index = IndexWriter().index(layout)
+    assertTrue(index.contains("[2 di 4](notes/universita--storia--lezione-monti--2025-10-09--2di4.md) · 08:20–"))
   }
 
   @Test
-  fun `la riga di contesto dice quante registrazioni e quanti minuti`() {
-    val text = writer.note(note(), options)
+  fun `un testo senza capoversi si divide fra le frasi`() {
+    // Una raffinata e' spesso un muro solo: senza tagliarlo alle frasi resterebbe un file intero.
+    val text = (1..2_000).joinToString(" ") { "Frase numero $it con qualche parola in piu'." }
+    val blocks = TranscriptPieces.textBlocks(text)
+    val pieces = TranscriptPieces.split(blocks)
 
-    assertTrue(text.contains("1 registrazione, 32 min."))
+    assertTrue(pieces.size > 1)
+    assertTrue(blocks.all { it.text.endsWith(".") })
+    assertEquals(text, blocks.joinToString(" ") { it.text })
   }
 
   // -----------------------------------------------------------------------------------------------
@@ -138,26 +209,80 @@ class ExportWritersTest {
   // -----------------------------------------------------------------------------------------------
 
   @Test
-  fun `il percorso segue le cartelle e perde gli accenti`() {
+  fun `il nome segue le cartelle e perde gli accenti`() {
     val note = note(title = "Lezione perché è così", folderPath = listOf("Università", "Storia"))
 
-    assertEquals("notes/universita/storia/lezione-perche-e-cosi.md", writer.pathOf(note))
+    assertEquals("notes/universita--storia--lezione-perche-e-cosi.md", layout(listOf(note)).of(note).notes)
   }
 
   @Test
   fun `due note con lo stesso titolo non si sovrascrivono`() {
-    val bundle = BundleWriter(temp.newFolder(), temp.newFolder())
-    val set = set(
-      listOf(
-        note(id = "a", title = "Lezione 1", folderPath = listOf("Storia")),
-        note(id = "b", title = "Lezione 1", folderPath = listOf("Storia")),
+    val a = note(id = "a", title = "Lezione 1", folderPath = listOf("Storia"))
+    val b = note(id = "b", title = "Lezione 1", folderPath = listOf("Storia"))
+    val c = note(id = "c", title = "Lezione 1", folderPath = listOf("Filosofia"))
+    val layout = layout(listOf(a, b, c))
+
+    assertEquals("notes/storia--lezione-1.md", layout.of(a).notes)
+    assertEquals("notes/storia--lezione-1-2.md", layout.of(b).notes)
+    assertEquals("notes/filosofia--lezione-1.md", layout.of(c).notes)
+    // Anche le trascrizioni seguono il nome giusto, e l'indice collega il file di ognuna.
+    assertEquals("notes/storia--lezione-1-2--2025-10-09.md", layout.of(b).transcripts.values.single().single().path)
+    val index = IndexWriter().index(layout)
+    assertTrue(index.contains("(notes/storia--lezione-1.md)"))
+    assertTrue(index.contains("(notes/storia--lezione-1-2.md)"))
+  }
+
+  @Test
+  fun `due sessioni nello stesso giorno sono due file`() {
+    val note = note(sessions = listOf(session(id = "s1"), session(id = "s2")))
+    val paths = layout(listOf(note)).of(note).transcripts.values.map { it.single().path }
+
+    assertEquals(
+      listOf("notes/universita--storia--lezione-monti--2025-10-09.md", "notes/universita--storia--lezione-monti--2025-10-09-2.md"),
+      paths,
+    )
+  }
+
+  @Test
+  fun `un titolo che Windows non accetta prende un trattino basso`() {
+    val note = note(title = "Con", folderPath = emptyList())
+
+    assertEquals("notes/con_.md", layout(listOf(note)).of(note).notes)
+  }
+
+  @Test
+  fun `un nome di file impossibile su Windows viene addomesticato`() {
+    // Gli spazi restano: in uno ZIP sono legali e sono quello che l'utente ha chiamato il file.
+    // Se ne vanno solo i caratteri che un filesystem rifiuta.
+    assertEquals("lezione 9-10-2025.m4a", "lezione 9/10/2025.m4a".sanitized())
+    assertEquals("nome-strano-.txt", "nome:strano?.txt".sanitized())
+    assertEquals("file", "   ".sanitized())
+    // Accorciando, l'estensione resta.
+    val long = "a".repeat(300) + ".m4a"
+    assertTrue(long.sanitized().endsWith(".m4a"))
+    assertTrue(long.sanitized().length <= 120)
+  }
+
+  @Test
+  fun `due registrazioni con lo stesso nome non fanno fallire lo zip`() {
+    // Samsung Notes chiama "Voce 001" la prima registrazione di ogni nota: due lezioni della stessa
+    // nota con dentro "Voce 001.m4a" erano due voci identiche, e lo ZIP si rifiutava di scriverle.
+    val audio = temp.newFolder()
+    java.io.File(audio, "p1.m4a").writeBytes(ByteArray(64) { 1 })
+    java.io.File(audio, "p2.m4a").writeBytes(ByteArray(64) { 2 })
+    val note = note(
+      sessions = listOf(
+        session(id = "s1", parts = listOf(part("p1", "Voce 001.m4a", 60_000, 0))),
+        session(id = "s2", parts = listOf(part("p2", "Voce 001.m4a", 60_000, 0))),
       ),
     )
+    val out = ByteArrayOutputStream()
 
-    val paths = bundle.assignPaths(set)
+    BundleWriter(audio, temp.newFolder()).write(set(listOf(note)), options.copy(includeAudio = true), out)
 
-    assertEquals("notes/storia/lezione-1.md", paths.getValue("a"))
-    assertEquals("notes/storia/lezione-1-2.md", paths.getValue("b"))
+    val names = entriesOf(out.toByteArray()).keys
+    assertTrue(names.contains("pampa-notes-storia/audio/universita--storia--lezione-monti/2025-10-09-01-Voce 001.m4a"))
+    assertTrue(names.contains("pampa-notes-storia/audio/universita--storia--lezione-monti/2025-10-09-01-Voce 001-2.m4a"))
   }
 
   // -----------------------------------------------------------------------------------------------
@@ -165,14 +290,22 @@ class ExportWritersTest {
   // -----------------------------------------------------------------------------------------------
 
   @Test
-  fun `l'indice raggruppa per cartella e collega i file`() {
-    val index = IndexWriter().index(set(listOf(note())), writer)
+  fun `l'indice raggruppa per cartella, dice di cosa parla e collega ogni file`() {
+    val index = IndexWriter().index(layout(listOf(note(body = "# Titolo\n\nIl **trattato** di [Tordesillas](http://x).\n\n- divide il mondo"))))
 
     assertTrue(index.contains("# Indice: Storia"))
     assertTrue(index.contains("## Università / Storia"))
-    assertTrue(index.contains("[Lezione Monti](notes/universita/storia/lezione-monti.md)"))
+    assertTrue(index.contains("### Lezione Monti"))
+    assertTrue(index.contains("> Titolo Il trattato di Tordesillas. divide il mondo"))
+    assertTrue(index.contains("- Appunti: [universita--storia--lezione-monti.md](notes/universita--storia--lezione-monti.md)"))
+    assertTrue(index.contains("[universita--storia--lezione-monti--2025-10-09.md](notes/universita--storia--lezione-monti--2025-10-09.md)"))
     assertTrue(index.contains("1 registrazione"))
     assertTrue(index.contains("32 min"))
+  }
+
+  @Test
+  fun `un titolo con le parentesi quadre non rompe il collegamento`() {
+    assertEquals("""[Lezione \[bozza\]](a b.md)""".replace("a b.md", "<a b.md>"), MarkdownWriter.mdLink("Lezione [bozza]", "a b.md"))
   }
 
   @Test
@@ -186,9 +319,22 @@ class ExportWritersTest {
   }
 
   @Test
-  fun `le regole dicono che la trascrizione puo' sbagliare i nomi`() {
+  fun `la descrizione della skill resta nei limiti di Claude`() {
+    // Al massimo 1024 caratteri e niente parentesi angolari, o Claude rifiuta la skill intera.
+    val notes = (1..40).map { note(id = "n$it", title = "Lezione <$it> " + "molto lunga ".repeat(20)) }
+    val description = SkillWriter().skillDescription(set(notes))
+
+    assertTrue(description.length <= 1024)
+    assertFalse(description.contains('<'))
+    assertTrue(description.endsWith("queste fonti."))
+  }
+
+  @Test
+  fun `le regole dicono come sono fatti i file e che la trascrizione puo' sbagliare i nomi`() {
     val rules = SkillWriter().instructions(set(listOf(note())))
 
+    assertTrue(rules.contains("INDEX.md"))
+    assertTrue(rules.contains("<nota>--AAAA-MM-GG.md"))
     assertTrue(rules.contains("vince l'appunto"))
     assertTrue(rules.contains("non è nelle fonti"))
     assertTrue(rules.contains("nella lingua della domanda"))
@@ -197,12 +343,14 @@ class ExportWritersTest {
   }
 
   @Test
-  fun `il readme parla due lingue`() {
-    val readme = ReadmeForAi.text(set(listOf(note())))
+  fun `il readme parla due lingue e usa i titoli che si trovano nei file`() {
+    val readme = ReadmeForAi.text(set(listOf(note())), ExportLabels(notes = "Notes", transcript = "Transcript"))
 
     assertTrue(readme.contains("**IT**"))
     assertTrue(readme.contains("**EN**"))
     assertTrue(readme.contains("INDEX.md"))
+    assertTrue(readme.contains("**Notes**"))
+    assertFalse(readme.contains("Appunti"))
   }
 
   // -----------------------------------------------------------------------------------------------
@@ -210,37 +358,56 @@ class ExportWritersTest {
   // -----------------------------------------------------------------------------------------------
 
   @Test
-  fun `il bundle contiene tutto quello che promette`() {
-    val bundle = BundleWriter(temp.newFolder(), temp.newFolder())
+  fun `il pacchetto e' una cartella sola con dentro la skill`() {
     val out = ByteArrayOutputStream()
 
-    bundle.write(set(listOf(note())), options, out)
+    BundleWriter(temp.newFolder(), temp.newFolder()).write(set(listOf(note())), options, out)
 
     val entries = entriesOf(out.toByteArray())
     assertEquals(
       listOf(
-        "README-FOR-AI.md",
-        "INDEX.md",
-        "manifest.json",
-        "SKILL.md",
-        "instructions.md",
-        "notes/universita/storia/lezione-monti.md",
+        "pampa-notes-storia/",
+        "pampa-notes-storia/SKILL.md",
+        "pampa-notes-storia/README-FOR-AI.md",
+        "pampa-notes-storia/INDEX.md",
+        "pampa-notes-storia/instructions.md",
+        "pampa-notes-storia/manifest.json",
+        "pampa-notes-storia/notes/",
+        "pampa-notes-storia/notes/universita--storia--lezione-monti.md",
+        "pampa-notes-storia/notes/universita--storia--lezione-monti--2025-10-09.md",
       ),
       entries.keys.toList(),
     )
-    assertTrue(entries.getValue("notes/universita/storia/lezione-monti.md").contains("## Appunti"))
+    // Il nome della skill e quello della cartella coincidono: Claude lo pretende.
+    assertTrue(entries.getValue("pampa-notes-storia/SKILL.md").contains("name: pampa-notes-storia\n"))
   }
 
   @Test
-  fun `senza skill il bundle non la mette`() {
-    val bundle = BundleWriter(temp.newFolder(), temp.newFolder())
+  fun `senza skill il pacchetto non la mette`() {
     val out = ByteArrayOutputStream()
 
-    bundle.write(set(listOf(note())), options.copy(includeSkill = false), out)
+    BundleWriter(temp.newFolder(), temp.newFolder()).write(set(listOf(note())), options.copy(includeSkill = false), out)
 
     val entries = entriesOf(out.toByteArray())
-    assertFalse(entries.containsKey("SKILL.md"))
-    assertTrue(entries.containsKey("INDEX.md"))
+    assertFalse(entries.containsKey("pampa-notes-storia/SKILL.md"))
+    assertTrue(entries.containsKey("pampa-notes-storia/INDEX.md"))
+  }
+
+  @Test
+  fun `le pagine scritte a mano entrano sempre e gli appunti le mostrano`() {
+    val sources = temp.newFolder()
+    java.io.File(sources, "img1.png").writeBytes(ByteArray(16) { 7 })
+    val note = note(handwriting = listOf(ExportImage("img1.png", 1, 16)))
+    val out = ByteArrayOutputStream()
+
+    BundleWriter(temp.newFolder(), sources).write(set(listOf(note)), options, out)
+
+    val entries = entriesOf(out.toByteArray())
+    assertTrue(entries.containsKey("pampa-notes-storia/images/universita--storia--lezione-monti/pagina-1.png"))
+    val notes = entries.getValue("pampa-notes-storia/notes/universita--storia--lezione-monti.md")
+    assertTrue(notes.contains("## Pagine scritte a mano"))
+    assertTrue(notes.contains("![Pagina 1](../images/universita--storia--lezione-monti/pagina-1.png)"))
+    assertTrue(entries.getValue("pampa-notes-storia/INDEX.md").contains("1 pagina a mano"))
   }
 
   @Test
@@ -248,35 +415,50 @@ class ExportWritersTest {
     val audio = temp.newFolder()
     // Un m4a e' gia' compresso: deflate costerebbe minuti di CPU per qualche kilobyte.
     java.io.File(audio, "p1.m4a").writeBytes(ByteArray(4096) { (it % 251).toByte() })
-    val bundle = BundleWriter(audio, temp.newFolder())
     val out = ByteArrayOutputStream()
 
-    bundle.write(set(listOf(note())), options.copy(includeAudio = true), out)
+    BundleWriter(audio, temp.newFolder()).write(set(listOf(note())), options.copy(includeAudio = true), out)
 
-    val entries = entriesOf(out.toByteArray())
-    assertTrue(entries.containsKey("audio/lezione-monti/lezione.m4a"))
+    ZipInputStream(out.toByteArray().inputStream()).use { zip ->
+      while (true) {
+        val entry = zip.nextEntry ?: break
+        if (entry.name.endsWith(".m4a")) {
+          assertEquals("pampa-notes-storia/audio/universita--storia--lezione-monti/2025-10-09-01-lezione.m4a", entry.name)
+          assertEquals(java.util.zip.ZipEntry.STORED, entry.method)
+        }
+      }
+    }
   }
 
   @Test
   fun `il progresso arriva a uno`() {
-    val bundle = BundleWriter(temp.newFolder(), temp.newFolder())
     val seen = mutableListOf<Float>()
 
-    bundle.write(set(listOf(note("a"), note("b"))), options, ByteArrayOutputStream()) { seen += it }
+    BundleWriter(temp.newFolder(), temp.newFolder()).write(set(listOf(note("a"), note("b"))), options, ByteArrayOutputStream()) { seen += it }
 
     assertEquals(1f, seen.last(), 0.0001f)
     assertTrue(seen.all { it in 0f..1f })
   }
 
+  // -----------------------------------------------------------------------------------------------
+  // I file sciolti
+  // -----------------------------------------------------------------------------------------------
+
   @Test
-  fun `un nome di file impossibile su Windows viene addomesticato`() {
-    with(BundleWriter.Companion) {
-      // Gli spazi restano: in uno ZIP sono legali e sono quello che l'utente ha chiamato il file.
-      // Se ne vanno solo i caratteri che un filesystem rifiuta.
-      assertEquals("lezione 9-10-2025.m4a", "lezione 9/10/2025.m4a".sanitized())
-      assertEquals("nome-strano-.txt", "nome:strano?.txt".sanitized())
-      assertEquals("file", "   ".sanitized())
-    }
+  fun `i file sciolti stanno tutti allo stesso livello e si collegano per nome`() {
+    val directory = temp.newFolder("sciolti")
+
+    val written = BundleWriter(temp.newFolder(), temp.newFolder()).writeLoose(set(listOf(note())), options, directory)
+
+    assertEquals(
+      listOf("INDEX.md", "instructions.md", "universita--storia--lezione-monti.md", "universita--storia--lezione-monti--2025-10-09.md"),
+      written.map { it.name },
+    )
+    assertTrue(written.all { it.parentFile == directory })
+    val index = java.io.File(directory, "INDEX.md").readText()
+    assertTrue(index.contains("(universita--storia--lezione-monti.md)"))
+    assertFalse(index.contains("notes/"))
+    assertFalse(java.io.File(directory, "instructions.md").readText().contains("`notes/`"))
   }
 
   // -----------------------------------------------------------------------------------------------
@@ -284,22 +466,24 @@ class ExportWritersTest {
   // -----------------------------------------------------------------------------------------------
 
   @Test
-  fun `il manifest si rilegge con un parser e dice cosa c'era`() {
-    val bundle = BundleWriter(temp.newFolder(), temp.newFolder())
+  fun `il manifest si rilegge con un parser e dice dove sta ogni file`() {
     val out = ByteArrayOutputStream()
 
-    bundle.write(set(listOf(note())), options, out)
+    BundleWriter(temp.newFolder(), temp.newFolder()).write(set(listOf(note())), options, out)
 
     val json = Json { ignoreUnknownKeys = true }
-    val manifest = json.decodeFromString<ExportManifest>(entriesOf(out.toByteArray()).getValue("manifest.json"))
+    val manifest = json.decodeFromString<ExportManifest>(entriesOf(out.toByteArray()).getValue("pampa-notes-storia/manifest.json"))
 
-    assertEquals(ExportManifest.SCHEMA, manifest.schema)
+    assertEquals(2, manifest.schema)
     assertEquals("Storia", manifest.scope)
     assertEquals(1, manifest.stats.notes)
     assertEquals(1, manifest.stats.sessions)
     assertEquals(32L, manifest.stats.durationMinutes)
-    assertEquals("notes/universita/storia/lezione-monti.md", manifest.notes.single().file)
-    assertEquals("raw", manifest.notes.single().sessions.single().transcript)
+    val note = manifest.notes.single()
+    assertEquals("notes/universita--storia--lezione-monti.md", note.file)
+    assertEquals("raw", note.sessions.single().transcript)
+    assertEquals(listOf("notes", "transcript"), note.files.map { it.kind })
+    assertEquals(1, note.files.last().session)
   }
 
   // -----------------------------------------------------------------------------------------------
@@ -307,13 +491,15 @@ class ExportWritersTest {
   // -----------------------------------------------------------------------------------------------
 
   @Test
-  fun `il file singolo mette le regole prima delle note`() {
+  fun `il file singolo mette le regole prima delle note e le trascrizioni dentro`() {
     val bundle = BundleWriter(temp.newFolder(), temp.newFolder())
 
     val text = bundle.single(set(listOf(note("a"), note("b"))), options.copy(format = ExportFormat.SINGLE))
 
     assertTrue(text.indexOf("# Fonti: Storia") < text.indexOf("## Appunti"))
     assertEquals(2, Regex("""^## Appunti$""", RegexOption.MULTILINE).findAll(text).count())
+    assertTrue(text.contains("### Trascrizione (grezza, whisper-large-v3-turbo)"))
+    assertTrue(text.contains("[00:01] Prima frase. Seconda frase."))
     // In un file solo non c'e' nessun indice da aprire: mandarci un assistente e' mandarlo a vuoto.
     assertFalse(text.contains("Apri prima `INDEX.md`"))
     assertTrue(text.contains("separate da una riga"))
@@ -332,6 +518,8 @@ class ExportWritersTest {
     return result
   }
 
+  private fun layout(notes: List<ExportNote>) = BundleLayout(set(notes), options)
+
   private fun set(notes: List<ExportNote>) = ExportSet(
     scopeLabel = "Storia",
     scopeSlug = "storia",
@@ -349,6 +537,7 @@ class ExportWritersTest {
     sources: List<ExportSource> = listOf(
       ExportSource("lezione.m4a", SourceKind.AUDIO, "abc", 1024, "s1.m4a", SourceStatus.OK, 0),
     ),
+    handwriting: List<ExportImage> = emptyList(),
   ) = ExportNote(
     note = NoteEntity(
       id = id,
@@ -363,9 +552,11 @@ class ExportWritersTest {
     tags = listOf("storia"),
     sources = sources,
     sessions = sessions,
+    handwriting = handwriting,
   )
 
   private fun session(
+    id: String = "sessione-1",
     parts: List<ExportPart> = listOf(part("p1", "lezione.m4a", 31 * 60_000 + 44_000, 0)),
     transcript: TranscriptEntity? = transcript(TranscriptKind.RAW, "Prima frase. Seconda frase.\n\nDopo una pausa lunga."),
     raw: TranscriptEntity? = transcript,
@@ -375,7 +566,7 @@ class ExportWritersTest {
       segment("p1", 20_000, 22_000, "Dopo una pausa lunga."),
     ),
   ) = ExportSession(
-    id = "sessione-1",
+    id = id,
     number = 1,
     title = "",
     date = "2025-10-09",

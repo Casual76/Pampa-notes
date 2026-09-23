@@ -49,6 +49,13 @@ data class ExportResult(
    * un'altra app, ci vuole un URI del FileProvider, e per costruirlo ci vuole il File.
    */
   val file: File? = null,
+  /**
+   * I file scritti, quando il pacchetto e' sciolto: si condividono tutti insieme. Vuota per lo ZIP e
+   * per il file singolo, che sono un file solo.
+   */
+  val files: List<File> = emptyList(),
+  /** Vero per i file sciolti: [uri] e' una cartella, e una cartella non si "apre" con un'app. */
+  val isDirectory: Boolean = false,
   /** Registrazioni chieste e non entrate: il file sta su un altro dispositivo. Si dice, non si tace. */
   val skippedAudio: Int = 0,
   /** Originali chiesti e non entrati, per lo stesso motivo. */
@@ -132,7 +139,7 @@ class ExportService @Inject constructor(
     )
   }
 
-  /** Scrive il bundle e torna dove lo ha messo. */
+  /** Scrive il pacchetto e torna dove lo ha messo. */
   suspend fun export(
     set: ExportSet,
     options: ExportOptions,
@@ -141,22 +148,25 @@ class ExportService @Inject constructor(
     onProgress: (Float) -> Unit = {},
   ): ExportResult = withContext(io) {
     val writer = BundleWriter(audioDir = files.audio, sourcesDir = files.sources, labels = labels)
-    val single = options.format == ExportFormat.SINGLE
-    val name = fileName(set, single)
-    val mime = if (single) "text/markdown" else "application/zip"
+    val format = options.format
+    val name = fileName(set, format)
     // Con l'indice in cloud una nota puo' avere le righe delle registrazioni e non i file: il
     // pacchetto esce lo stesso, ma chi lo riceve deve sapere che e' piu' leggero di quello chiesto.
-    val skipped = if (!single && options.includeAudio) {
+    val skipped = if (format == ExportFormat.BUNDLE && options.includeAudio) {
       set.notes.sumOf { note -> note.sessions.sumOf { session -> session.parts.count { !File(files.audio, it.fileName).exists() } } }
     } else {
       0
     }
-    val skippedSources = if (!single && options.includeSources) {
+    val skippedSources = if (format == ExportFormat.BUNDLE && options.includeSources) {
       set.notes.sumOf { note -> note.sources.count { source -> source.storedFileName != null && !File(files.sources, source.storedFileName).exists() } }
     } else {
       0
     }
 
+    if (format == ExportFormat.FILES) return@withContext exportLoose(set, options, destination, writer, name, onProgress)
+
+    val single = format == ExportFormat.SINGLE
+    val mime = if (single) "text/markdown" else "application/zip"
     when (destination) {
       is ExportDestination.Share -> {
         val target = File(files.exports, name)
@@ -173,9 +183,7 @@ class ExportService @Inject constructor(
       }
 
       is ExportDestination.Folder -> {
-        val tree = DocumentFile.fromTreeUri(context, destination.treeUri)
-          ?: throw ExportFailure("la cartella scelta non e' piu' raggiungibile")
-        if (!tree.canWrite()) throw ExportFailure("non ho il permesso di scrivere in quella cartella")
+        val tree = folderOf(destination)
         // Un file con lo stesso nome se ne va: due export dello stesso minuto sono lo stesso export
         // rifatto, e lasciare "bundle (1).zip" accanto a "bundle.zip" confonde e basta.
         tree.findFile(name)?.delete()
@@ -198,6 +206,64 @@ class ExportService @Inject constructor(
         ExportResult(document.uri, name, document.length(), mime, set.notes.size, skippedAudio = skipped, skippedSources = skippedSources)
       }
     }
+  }
+
+  /**
+   * I file sciolti: si scrivono sempre nella cache, in una cartella col nome del pacchetto, e da li'
+   * o si condividono tutti insieme o si copiano in una sottocartella di quella scelta.
+   *
+   * Passare dalla cache anche per la cartella costa una copia, ma un file a meta' nella cartella
+   * dell'utente non puo' succedere: se la scrittura fallisce, fallisce prima di toccarla.
+   */
+  private fun exportLoose(
+    set: ExportSet,
+    options: ExportOptions,
+    destination: ExportDestination,
+    writer: BundleWriter,
+    name: String,
+    onProgress: (Float) -> Unit,
+  ): ExportResult {
+    val directory = File(files.exports, name)
+    directory.deleteRecursively()
+    val written = runCatching { writer.writeLoose(set, options, directory, onProgress) }.getOrElse {
+      directory.deleteRecursively()
+      throw ExportFailure("non sono riuscito a scrivere i file", it)
+    }
+    val size = written.sumOf { it.length() }
+
+    return when (destination) {
+      is ExportDestination.Share ->
+        ExportResult(Uri.fromFile(directory), name, size, "text/markdown", set.notes.size, file = directory, files = written, isDirectory = true)
+
+      is ExportDestination.Folder -> {
+        val tree = folderOf(destination)
+        tree.findFile(name)?.delete()
+        val folder = tree.createDirectory(name)
+          ?: throw ExportFailure("non sono riuscito a creare la cartella")
+        runCatching {
+          written.forEach { file ->
+            val mime = if (file.extension == "png") "image/png" else "text/markdown"
+            val document = folder.createFile(mime, file.name)
+              ?: throw ExportFailure("non sono riuscito a creare ${file.name}")
+            val stream = context.contentResolver.openOutputStream(document.uri)
+              ?: throw ExportFailure("la cartella scelta non accetta scritture")
+            stream.use { out -> file.inputStream().use { it.copyTo(out) } }
+          }
+        }.getOrElse {
+          folder.delete()
+          throw if (it is ExportFailure) it else ExportFailure("la scrittura si e' interrotta", it)
+        }
+        directory.deleteRecursively()
+        ExportResult(folder.uri, name, size, "text/markdown", set.notes.size, isDirectory = true)
+      }
+    }
+  }
+
+  private fun folderOf(destination: ExportDestination.Folder): DocumentFile {
+    val tree = DocumentFile.fromTreeUri(context, destination.treeUri)
+      ?: throw ExportFailure("la cartella scelta non e' piu' raggiungibile")
+    if (!tree.canWrite()) throw ExportFailure("non ho il permesso di scrivere in quella cartella")
+    return tree
   }
 
   // -----------------------------------------------------------------------------------------------
@@ -284,11 +350,18 @@ class ExportService @Inject constructor(
   companion object {
     private val stamp: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd-HHmm", Locale.ROOT)
 
-    /** `pampa-notes-storia-20260917-1830.zip`: si riconosce e si ordina da solo. */
-    fun fileName(set: ExportSet, single: Boolean): String {
+    /**
+     * `pampa-notes-storia-20260917-1830.zip`: si riconosce e si ordina da solo. Il formato sciolto e'
+     * una cartella con lo stesso nome, senza estensione.
+     */
+    fun fileName(set: ExportSet, format: ExportFormat): String {
       val when_ = Instant.ofEpochMilli(set.exportedAtMillis).atZone(ZoneId.systemDefault()).format(stamp)
       val scope = set.scopeSlug.ifBlank { "note" }
-      return "pampa-notes-$scope-$when_." + if (single) "md" else "zip"
+      return "pampa-notes-$scope-$when_" + when (format) {
+        ExportFormat.BUNDLE -> ".zip"
+        ExportFormat.SINGLE -> ".md"
+        ExportFormat.FILES -> ""
+      }
     }
   }
 }

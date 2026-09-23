@@ -22,7 +22,11 @@ data class ExportManifest(
   val notes: List<ManifestNote>,
 ) {
   companion object {
-    const val SCHEMA = 1
+    /**
+     * 2: una cartella in cima, le trascrizioni in file loro (`files`), le pagine scritte a mano.
+     * Nell'1 ogni nota era un file solo con dentro anche le trascrizioni.
+     */
+    const val SCHEMA = 2
   }
 }
 
@@ -40,7 +44,7 @@ data class ExportStats(
 data class ManifestNote(
   val id: String,
   val title: String,
-  /** Dove sta il file dentro lo ZIP. */
+  /** Il file degli appunti, relativo alla cartella del pacchetto. */
   val file: String,
   val folder: String,
   val path: String,
@@ -50,6 +54,23 @@ data class ManifestNote(
   val language: String? = null,
   val sessions: List<ManifestSession>,
   val sources: List<ManifestSource>,
+  /** Tutti i file della nota: appunti, pagine scritte a mano, trascrizioni coi loro pezzi. */
+  val files: List<ManifestFile> = emptyList(),
+)
+
+@Serializable
+data class ManifestFile(
+  val path: String,
+  /** "notes" | "handwriting" | "transcript". */
+  val kind: String,
+  /** Il numero della sessione, per le trascrizioni. */
+  val session: Int? = null,
+  val piece: Int? = null,
+  val pieces: Int? = null,
+  val words: Int = 0,
+  /** Il tratto di lezione coperto, in millisecondi dall'inizio della sessione, quando ha i tempi. */
+  val startMs: Long? = null,
+  val endMs: Long? = null,
 )
 
 @Serializable

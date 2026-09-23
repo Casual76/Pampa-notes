@@ -494,7 +494,7 @@
   <string name="export_label_refined">refined</string>
   <string name="export_label_no_transcript">Not transcribed yet.</string>
   <string name="export_label_no_timings">This version was cleaned up by a model and carries no timings. The raw one has them.</string>
-  <string name="export_label_part">Part</string>
+  <string name="export_label_part">Recording</string>
   <string name="export_label_sources">Sources</string>
   <string name="export_label_index">Index</string>
   <string name="export_label_recording">recording</string>
@@ -503,6 +503,21 @@
   <string name="export_label_words">words</string>
   <string name="export_label_note">note</string>
   <string name="export_label_notes_plural">notes</string>
+  <string name="export_format_files_detail">The same files without a ZIP, to upload together to a Claude Project or to ChatGPT. The rules are in instructions.md, to paste into the Project instructions.</string>
+  <string name="export_format_files">Loose files</string>
+  <string name="export_label_index_how_to">Each note has one file of notes and one file per recorded lesson; long lessons are split into parts. Choose by title and date, and open only the files the question needs.</string>
+  <string name="export_label_page_singular">handwritten page</string>
+  <string name="export_label_pages">handwritten pages</string>
+  <string name="export_label_page">Page</string>
+  <string name="export_label_handwriting_detail">Images of pages handwritten by the author: they count as notes. Read them; if a word is illegible, say so instead of guessing.</string>
+  <string name="export_label_handwriting">Handwritten pages</string>
+  <string name="export_label_notes_are_in">The written notes for this note are in</string>
+  <string name="export_label_machine_text">Text produced by speech recognition: proper names, dates, figures and technical terms may be wrong, and the punctuation was added by the model.</string>
+  <string name="export_label_next">next</string>
+  <string name="export_label_previous">previous</string>
+  <string name="export_label_of">of</string>
+  <string name="export_label_sessions">Sessions</string>
+  <string name="export_label_starts_at">starts at</string>
 
   <!-- Export: the panel -->
   <string name="export_scope_everything">Everything</string>
@@ -510,7 +525,7 @@
   <string name="export_format_label">Format</string>
   <string name="export_format_bundle">Pack</string>
   <string name="export_format_single">Single file</string>
-  <string name="export_format_bundle_detail">A ZIP with one file per note, an index, and the rules for the assistant. For a Claude Project, a ChatGPT Project or a Gem.</string>
+  <string name="export_format_bundle_detail">A ZIP holding one folder: the index, the rules, each note\'s written notes and one file per lesson. Claude loads it as a skill; ChatGPT and agents unzip it and start from the index.</string>
   <string name="export_format_single_detail">One Markdown file, to paste into a conversation.</string>
   <string name="export_transcript_label">Which transcript</string>
   <string name="export_transcript_best">The best one</string>

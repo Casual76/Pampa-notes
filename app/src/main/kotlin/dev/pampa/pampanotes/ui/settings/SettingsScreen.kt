@@ -543,10 +543,11 @@ private fun LazyListScope.exportSection(defaults: ExportOptions, viewModel: Sett
   item {
     val formatLabels = mapOf(
       ExportFormat.BUNDLE to stringResource(R.string.export_format_bundle),
+      ExportFormat.FILES to stringResource(R.string.export_format_files),
       ExportFormat.SINGLE to stringResource(R.string.export_format_single),
     )
     FluidSegmentedControl(
-      options = ExportFormat.entries.toList(),
+      options = listOf(ExportFormat.BUNDLE, ExportFormat.FILES, ExportFormat.SINGLE),
       selected = defaults.format,
       onSelect = { viewModel.setExportDefaults(defaults.copy(format = it)) },
       label = { formatLabels.getValue(it) },

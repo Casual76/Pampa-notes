@@ -18,11 +18,24 @@ sealed interface ExportScope {
 }
 
 enum class ExportFormat {
-  /** Uno ZIP con un file per nota, l'indice, le istruzioni e la skill. Per un Progetto o un Gem. */
+  /**
+   * Uno ZIP con dentro una cartella sola: l'indice, le istruzioni, la skill, un file per gli appunti
+   * di ogni nota e uno per ogni lezione trascritta. Claude lo carica come skill cosi' com'e', ChatGPT e
+   * un agente col terminale lo estraggono e partono dall'indice.
+   */
   BUNDLE,
 
   /** Un Markdown solo, da incollare in una conversazione. */
   SINGLE,
+
+  /**
+   * Gli stessi file del pacchetto, sciolti e senza cartelle.
+   *
+   * Per chi non apre gli ZIP: un Progetto di Claude prende file, non archivi, e appiattisce le
+   * cartelle. I nomi sono gia' unici e i collegamenti fra i file sono nomi nudi, quindi appiattire
+   * non rompe niente.
+   */
+  FILES,
 }
 
 enum class TranscriptChoice {
@@ -105,6 +118,20 @@ data class ExportSession(
   val hasTimings: Boolean get() = transcript != null && transcript.id == raw?.id && segments.isNotEmpty()
 }
 
+/**
+ * Una pagina scritta a mano, gia' disegnata come immagine all'import.
+ *
+ * Non e' una fonte da allegare quando lo si chiede: e' contenuto, scritto dall'autore come gli
+ * appunti, e un modello lo legge con la vista. Per questo entra nel pacchetto sempre.
+ */
+data class ExportImage(
+  /** Il file in `filesDir/sources`. */
+  val storedFileName: String,
+  /** "Pagina 1", "Pagina 2": l'ordine in cui stavano nel quaderno. */
+  val page: Int,
+  val sizeBytes: Long,
+)
+
 data class ExportNote(
   val note: NoteEntity,
   /** La catena di cartelle dalla radice, per nome. */
@@ -112,6 +139,7 @@ data class ExportNote(
   val tags: List<String>,
   val sources: List<ExportSource>,
   val sessions: List<ExportSession>,
+  val handwriting: List<ExportImage> = emptyList(),
 ) {
   val folderName: String get() = folderPath.lastOrNull().orEmpty()
   val audioDurationMs: Long get() = sessions.sumOf { it.durationMs }

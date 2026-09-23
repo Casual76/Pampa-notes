@@ -62,13 +62,17 @@ class ExportViewModel @Inject constructor(
 
   private var scope: ExportScope = ExportScope.Everything
   private var labels: ExportLabels = ExportLabels()
+  private var everythingLabel: String = ""
   private var running: Job? = null
+  private var gathering: Job? = null
 
   /** Chiamata dalla schermata quando il pannello si apre, con le parole della lingua dell'app. */
   fun start(scope: ExportScope, labels: ExportLabels, everythingLabel: String) {
     this.scope = scope
     this.labels = labels
-    viewModelScope.launch {
+    this.everythingLabel = everythingLabel
+    gathering?.cancel()
+    gathering = viewModelScope.launch {
       val current = settings.current()
       _uiState.update {
         it.copy(
@@ -89,8 +93,21 @@ class ExportViewModel @Inject constructor(
     }
   }
 
+  /**
+   * Quale trascrizione si prende si decide leggendo il database, non scrivendo: cambiarla vuol dire
+   * raccogliere di nuovo, o il pacchetto uscirebbe con quella di prima e il manifest direbbe l'altra.
+   */
   fun setOptions(options: ExportOptions) {
+    val previous = _uiState.value.options
     _uiState.update { it.copy(options = options) }
+    if (options.transcript != previous.transcript) {
+      gathering?.cancel()
+      gathering = viewModelScope.launch {
+        _uiState.update { it.copy(set = null) }
+        val gathered = service.gather(scope, options, generator(), everythingLabel)
+        _uiState.update { it.copy(set = gathered) }
+      }
+    }
   }
 
   /** Salva nella cartella scelta. L'URI arriva dal selettore di sistema la prima volta. */
@@ -118,6 +135,7 @@ class ExportViewModel @Inject constructor(
    * FileProvider, che porta con se' il permesso di lettura per chi lo riceve.
    */
   fun shareIntent(result: ExportResult): Intent? {
+    if (result.files.isNotEmpty()) return shareManyIntent(result)
     val file = result.file ?: return null
     val uri = runCatching {
       FileProvider.getUriForFile(context, "${BuildConfig.APPLICATION_ID}.fileprovider", file)
@@ -125,6 +143,23 @@ class ExportViewModel @Inject constructor(
     return Intent(Intent.ACTION_SEND).apply {
       type = result.mimeType
       putExtra(Intent.EXTRA_STREAM, uri)
+      putExtra(Intent.EXTRA_SUBJECT, result.displayName)
+      addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+  }
+
+  /**
+   * I file sciolti, tutti in una condivisione: e' cosi' che un Progetto di Claude o ChatGPT li
+   * ricevono in un gesto solo invece di venti.
+   */
+  private fun shareManyIntent(result: ExportResult): Intent? {
+    val uris = result.files.mapNotNull { file ->
+      runCatching { FileProvider.getUriForFile(context, "${BuildConfig.APPLICATION_ID}.fileprovider", file) }.getOrNull()
+    }
+    if (uris.isEmpty()) return null
+    return Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+      type = if (result.files.any { it.extension == "png" }) "*/*" else "text/markdown"
+      putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
       putExtra(Intent.EXTRA_SUBJECT, result.displayName)
       addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }

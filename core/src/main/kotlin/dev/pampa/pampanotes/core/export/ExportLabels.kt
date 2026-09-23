@@ -8,8 +8,9 @@ package dev.pampa.pampanotes.core.export
  * cui la persona la sta usando; i valori qui sotto sono quello che si ottiene senza fare niente, e
  * servono ai test.
  *
- * `README-FOR-AI.md` non passa di qui: e' bilingue di proposito, perche' chi lo legge puo' essere un
- * assistente configurato in un'altra lingua ancora.
+ * `README-FOR-AI.md` ci passa solo per i due titoli che nomina: il resto e' bilingue di proposito,
+ * perche' chi lo legge puo' essere un assistente configurato in un'altra lingua ancora, ma i due
+ * titoli devono essere quelli che trovera' davvero dentro i file.
  */
 data class ExportLabels(
   val notes: String = "Appunti",
@@ -20,7 +21,22 @@ data class ExportLabels(
   val transcriptRefined: String = "raffinata",
   val noTranscript: String = "Non ancora trascritta.",
   val refinedHasNoTimings: String = "Questa versione è stata ripulita da un modello e non porta i tempi. La grezza li ha.",
-  val part: String = "Parte",
+  /** Una delle registrazioni di una sessione, nella riga che dice dove comincia la successiva. */
+  val part: String = "Registrazione",
+  val startsAt: String = "comincia a",
+  val sessions: String = "Sessioni",
+  /** "(2 di 3)": i pezzi di una lezione lunga. */
+  val of: String = "di",
+  val previous: String = "precedente",
+  val next: String = "successiva",
+  val machineText: String = "Testo prodotto da un riconoscimento vocale: nomi propri, date, cifre e termini tecnici possono essere sbagliati, e la punteggiatura l'ha messa il modello.",
+  val notesAreIn: String = "Gli appunti di questa nota stanno in",
+  val handwriting: String = "Pagine scritte a mano",
+  val handwritingDetail: String = "Immagini delle pagine scritte a mano dall'autore: valgono come appunti. Leggile; se una parola non si legge, dillo invece di indovinarla.",
+  val page: String = "Pagina",
+  val pages: String = "pagine a mano",
+  val pageSingular: String = "pagina a mano",
+  val indexHowTo: String = "Ogni nota ha un file di appunti e un file per ogni lezione registrata; le lezioni lunghe sono divise in parti. Scegli per titolo e per data, e apri solo i file che servono alla domanda.",
   val sources: String = "Fonti",
   val index: String = "Indice",
   val recording: String = "registrazione",

@@ -524,7 +524,7 @@
   <string name="export_label_refined">raffinata</string>
   <string name="export_label_no_transcript">Non ancora trascritta.</string>
   <string name="export_label_no_timings">Questa versione è stata ripulita da un modello e non porta i tempi. La grezza li ha.</string>
-  <string name="export_label_part">Parte</string>
+  <string name="export_label_part">Registrazione</string>
   <string name="export_label_sources">Fonti</string>
   <string name="export_label_index">Indice</string>
   <string name="export_label_recording">registrazione</string>
@@ -533,6 +533,21 @@
   <string name="export_label_words">parole</string>
   <string name="export_label_note">nota</string>
   <string name="export_label_notes_plural">note</string>
+  <string name="export_format_files_detail">Gli stessi file senza ZIP, da caricare tutti insieme in un Progetto di Claude o in ChatGPT. Le regole stanno in instructions.md, da incollare nelle istruzioni del Progetto.</string>
+  <string name="export_format_files">File sciolti</string>
+  <string name="export_label_index_how_to">Ogni nota ha un file di appunti e un file per ogni lezione registrata; le lezioni lunghe sono divise in parti. Scegli per titolo e per data, e apri solo i file che servono alla domanda.</string>
+  <string name="export_label_page_singular">pagina a mano</string>
+  <string name="export_label_pages">pagine a mano</string>
+  <string name="export_label_page">Pagina</string>
+  <string name="export_label_handwriting_detail">Immagini delle pagine scritte a mano dall\'autore: valgono come appunti. Leggile; se una parola non si legge, dillo invece di indovinarla.</string>
+  <string name="export_label_handwriting">Pagine scritte a mano</string>
+  <string name="export_label_notes_are_in">Gli appunti di questa nota stanno in</string>
+  <string name="export_label_machine_text">Testo prodotto da un riconoscimento vocale: nomi propri, date, cifre e termini tecnici possono essere sbagliati, e la punteggiatura l\'ha messa il modello.</string>
+  <string name="export_label_next">successiva</string>
+  <string name="export_label_previous">precedente</string>
+  <string name="export_label_of">di</string>
+  <string name="export_label_sessions">Sessioni</string>
+  <string name="export_label_starts_at">comincia a</string>
 
   <!-- Export: il pannello -->
   <string name="export_scope_everything">Tutto l\'archivio</string>
@@ -540,7 +555,7 @@
   <string name="export_format_label">Formato</string>
   <string name="export_format_bundle">Pacchetto</string>
   <string name="export_format_single">File singolo</string>
-  <string name="export_format_bundle_detail">Uno ZIP con un file per nota, l\'indice e le regole per l\'assistente. Da caricare in un Progetto di Claude, di ChatGPT o in un Gem.</string>
+  <string name="export_format_bundle_detail">Uno ZIP con dentro una cartella: l\'indice, le regole, gli appunti di ogni nota e un file per ogni lezione. Claude lo carica come skill, ChatGPT e un agente lo estraggono e partono dall\'indice.</string>
   <string name="export_format_single_detail">Un Markdown solo, da incollare in una conversazione.</string>
   <string name="export_transcript_label">Quale trascrizione</string>
   <string name="export_transcript_best">La migliore</string>

@@ -156,19 +156,26 @@ private fun ColumnScope.ConfiguringBody(state: ExportUiState, onOptions: (Export
     color = MaterialTheme.colorScheme.onSurfaceVariant,
   )
 
-  val bundleLabel = stringResource(R.string.export_format_bundle)
-  val singleLabel = stringResource(R.string.export_format_single)
+  val formatLabels = mapOf(
+    ExportFormat.BUNDLE to stringResource(R.string.export_format_bundle),
+    ExportFormat.FILES to stringResource(R.string.export_format_files),
+    ExportFormat.SINGLE to stringResource(R.string.export_format_single),
+  )
   FluidSectionFootnote(text = stringResource(R.string.export_format_label))
   FluidSegmentedControl(
-    options = listOf(ExportFormat.BUNDLE, ExportFormat.SINGLE),
+    options = listOf(ExportFormat.BUNDLE, ExportFormat.FILES, ExportFormat.SINGLE),
     selected = options.format,
     onSelect = { onOptions(options.copy(format = it)) },
-    label = { if (it == ExportFormat.BUNDLE) bundleLabel else singleLabel },
+    label = { formatLabels.getValue(it) },
     modifier = Modifier.fillMaxWidth(),
   )
   FluidSectionFootnote(
     text = stringResource(
-      if (options.format == ExportFormat.BUNDLE) R.string.export_format_bundle_detail else R.string.export_format_single_detail,
+      when (options.format) {
+        ExportFormat.BUNDLE -> R.string.export_format_bundle_detail
+        ExportFormat.FILES -> R.string.export_format_files_detail
+        ExportFormat.SINGLE -> R.string.export_format_single_detail
+      },
     ),
   )
 
@@ -191,7 +198,8 @@ private fun ColumnScope.ConfiguringBody(state: ExportUiState, onOptions: (Export
       onChange = { onOptions(options.copy(timestamps = it)) },
     )
     // Un file singolo e' un testo da incollare: non ha una cartella dove mettere un PDF, e le regole
-    // ci stanno gia' dentro in cima.
+    // ci stanno gia' dentro in cima. I file sciolti hanno le regole sempre e niente allegati: vanno
+    // in un Progetto, che vuole testo.
     if (options.format == ExportFormat.BUNDLE) {
       FluidListDivider()
       SwitchRow(
@@ -324,7 +332,8 @@ private fun ColumnScope.DoneActions(
   onOpen: () -> Unit,
   onClose: () -> Unit,
 ) {
-  // Il file in cache si consegna a un'altra app; quello gia' salvato in una cartella si apre.
+  // Il file in cache si consegna a un'altra app; quello gia' salvato in una cartella si apre. Una
+  // cartella di file sciolti salvata non si apre con niente: e' gia' dove l'utente l'ha messa.
   if (state.result?.file != null) {
     FluidButton(
       text = stringResource(R.string.export_share),
@@ -332,7 +341,7 @@ private fun ColumnScope.DoneActions(
       fillWidth = true,
       modifier = Modifier.fillMaxWidth(),
     )
-  } else {
+  } else if (state.result?.isDirectory != true) {
     FluidButton(
       text = stringResource(R.string.export_open),
       onClick = onOpen,
