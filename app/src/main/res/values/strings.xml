@@ -548,6 +548,7 @@
   <string name="session_no_audio_detail">Una sessione senza audio non ha niente da far sentire. Importa un file dalla nota.</string>
   <string name="session_no_transcript_title">Non ancora trascritta</string>
   <string name="session_no_transcript_detail">L\'audio c\'è. Manca il testo su cui cercare, che si esporta e che un assistente può leggere.</string>
+  <string name="session_no_transcript_elsewhere">Si trascrive dal dispositivo che ha la registrazione, o da qui quando sarà arrivata al computer di casa.</string>
 
   <!-- Le parti di una sessione -->
   <string name="part_starts_at">Comincia al minuto %1$s</string>

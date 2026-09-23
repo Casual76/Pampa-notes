@@ -220,7 +220,7 @@ private fun SessionScreen(
             }
             // Rifare da capo: una grezza venuta male da Groq si rifa' col computer di casa, o con un
             // vocabolario migliore. La conferma c'e' perche' si porta via anche le versioni ripulite.
-            if (state.raw != null && state.job == null && state.parts.isNotEmpty()) {
+            if (state.raw != null && state.job == null && state.parts.isNotEmpty() && state.transcribableHere) {
               add(FluidContextAction(label = retranscribeLabel) { confirmingRetranscribe = true })
             }
             if (state.canMerge) add(FluidContextAction(label = mergeLabel) { onMerge() })
@@ -511,11 +511,15 @@ private fun LazyListScope.transcriptSection(
           if (state.parts.isEmpty()) R.string.session_no_audio_title else R.string.session_no_transcript_title,
         ),
         detail = stringResource(
-          if (state.parts.isEmpty()) R.string.session_no_audio_detail else R.string.session_no_transcript_detail,
+          when {
+            state.parts.isEmpty() -> R.string.session_no_audio_detail
+            !state.transcribableHere -> R.string.session_no_transcript_elsewhere
+            else -> R.string.session_no_transcript_detail
+          },
         ),
       )
     }
-    if (state.parts.isNotEmpty() && state.job == null) {
+    if (state.parts.isNotEmpty() && state.job == null && state.transcribableHere) {
       item(key = "transcribe") {
         FluidButton(
           text = stringResource(R.string.note_transcribe),

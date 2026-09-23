@@ -96,6 +96,13 @@ data class SessionUiState(
 
   /** Quello che manca sta sul computer di casa, tutto: si puo' scaricare. */
   val fetchable: Boolean get() = !missing.isNullOrEmpty() && missing.all { it.archivedAt > 0 }
+
+  /**
+   * Da qui si puo' trascrivere: i file ci sono, o il computer di casa li ha (la coda li scarica da
+   * sola). Una registrazione che sta solo sull'altro dispositivo si trascrive da li': offrire il
+   * tasto qui vuol dire un lavoro che fallisce per forza.
+   */
+  val transcribableHere: Boolean get() = missing.isNullOrEmpty() || fetchable
   val raw: TranscriptEntity? get() = transcripts.firstOrNull { it.kind == TranscriptKind.RAW }
 
   /** Le parti di cui la trascrizione non dice niente: importate dopo, o arrivate da un'altra sessione. */
