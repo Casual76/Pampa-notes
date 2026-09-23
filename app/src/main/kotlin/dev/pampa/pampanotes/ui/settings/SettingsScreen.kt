@@ -144,10 +144,12 @@ private fun SettingsSection.detail(): String = stringResource(
 fun SettingsSectionRoute(
   section: SettingsSection,
   onBack: () -> Unit,
+  /** Da una sezione a un'altra: Archiviazione manda a Servizi chi non ha ancora collegato il computer. */
+  onOpenSection: (SettingsSection) -> Unit = {},
 ) {
   when (section) {
     SettingsSection.BACKUP -> BackupSectionRoute(onBack = onBack)
-    SettingsSection.STORAGE -> StorageSectionRoute(onBack = onBack)
+    SettingsSection.STORAGE -> StorageSectionRoute(onBack = onBack, onOpenServices = { onOpenSection(SettingsSection.SERVICES) })
     SettingsSection.SYNC -> SyncSectionRoute(onBack = onBack)
     SettingsSection.SHARES -> SharesSectionRoute(onBack = onBack)
     SettingsSection.GUESTS -> GuestsSectionRoute(onBack = onBack)

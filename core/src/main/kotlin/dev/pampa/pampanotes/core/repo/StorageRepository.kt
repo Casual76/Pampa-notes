@@ -5,6 +5,8 @@ import dev.pampa.pampanotes.core.db.JobDao
 import dev.pampa.pampanotes.core.db.SizeTotal
 import dev.pampa.pampanotes.core.db.SourceDao
 import dev.pampa.pampanotes.core.files.AppFiles
+import dev.pampa.pampanotes.core.files.FileFact
+import dev.pampa.pampanotes.core.files.FileLocations
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
@@ -26,6 +28,8 @@ data class StorageUsage(
   /** Quello che sta qui *e* sul computer: si puo' togliere da qui, e tornera' quando servira'. */
   val evictableSources: SizeTotal = SizeTotal(0, 0),
   val evictableAudio: SizeTotal = SizeTotal(0, 0),
+  /** Registrazioni e originali divisi per posto: qui, sul computer, tutti e due, nessuno dei due. */
+  val locations: FileLocations = FileLocations(),
 ) {
   val totalBytes: Long get() = audio.bytes + sources.bytes + jobsBytes + exportsBytes + databaseBytes
 }
@@ -68,6 +72,12 @@ class StorageRepository @Inject constructor(
       databaseBytes = files.root.parentFile?.let { java.io.File(it, "databases") }?.let { files.sizeOf(it) } ?: 0L,
       archived = audioParts.archivedTotal().let { a -> sources.archivedTotal().let { s -> SizeTotal(a.count + s.count, a.bytes + s.bytes) } },
       pendingArchive = pendingArchive(),
+      // Il peso dalla riga, non dal disco: un file che non c'e' non si misura, e la pagina deve
+      // poter dire quanto pesa anche quello che sta solo sul computer.
+      locations = FileLocations.of(
+        recordings = parts.map { FileFact(it.sizeBytes, here = partHere[it] == true, archived = it.archivedAt > 0) },
+        originals = docs.map { FileFact(it.sizeBytes, here = docHere[it] == true, archived = it.archivedAt > 0) },
+      ),
     )
   }
 
