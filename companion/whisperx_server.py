@@ -73,6 +73,11 @@ import config
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("pampa")
 
+# Chi e' questo processo: cambia a ogni avvio. L'app lo legge in /health e nei lavori, e da li' sa
+# distinguere «il computer si e' riavviato e ha perso la lezione» da «non ha risposto per un po'»:
+# senza, due 404 di fila bastavano per rimandare da capo una lezione che stava andando benissimo.
+INSTANCE = secrets.token_hex(8)
+
 # Lo stato del processo. Il modello e' `None` finche' non serve davvero: vedi [ensure_model].
 # I valori qui sono quelli di partenza e non li legge nessuno: [configure] li sostituisce con
 # quelli veri prima che il server si metta in ascolto.
@@ -257,7 +262,27 @@ class JobProgress:
         # Chiesto dal telefono (`DELETE /v1/jobs/{id}`) o dalla connessione chiusa: il lavoro si
         # ferma al prossimo scatto di WhisperX ([check_cancelled]).
         self.cancelled = False
+        # Il lavoro condiviso che questa richiesta aspetta (vedi [SharedWork]): finche' la richiesta
+        # non ha un esito suo, a che punto e' lo dice lui.
+        self._leader: JobProgress | None = None
         self._lock = threading.Lock()
+
+    def follow(self, leader: "JobProgress") -> None:
+        self._leader = leader
+
+    @property
+    def gate_key(self) -> str:
+        """Il nome con cui il lavoro sta in fila in [PriorityGate]: quello del lavoro condiviso."""
+        return self._leader.id if self._leader is not None else self.id
+
+    def _source(self) -> "JobProgress":
+        leader = self._leader
+        if leader is not None and self.state not in ("done", "failed"):
+            return leader
+        return self
+
+    def current_state(self) -> str:
+        return self._source().state
 
     def cancel(self) -> None:
         self.cancelled = True
@@ -317,10 +342,12 @@ class JobProgress:
 
     def snapshot(self, position: int | None = None, now: float | None = None) -> dict[str, Any]:
         now = time.time() if now is None else now
-        with self._lock:
-            state, fraction, detail = self.state, self.fraction, self.detail
-            since = self.state_since
-            chunk, chunks = self.chunk, self.chunks
+        src = self._source()
+        with src._lock:
+            state, fraction, detail = src.state, src.fraction, src.detail
+            since = src.state_since
+            chunk, chunks = src.chunk, src.chunks
+            audio_s, device = src.audio_s, src.device
         in_state = max(0.0, now - since)
         # La stima c'e' solo quando dice qualcosa: con il 2% fatto in un secondo verrebbe fuori un
         # numero che cambia di minuti a ogni domanda.
@@ -332,15 +359,16 @@ class JobProgress:
             "state": state,
             "fraction": round(fraction, 4),
             "position": position if state == "queued" else None,
-            "audio_s": round(self.audio_s, 2) if self.audio_s is not None else None,
+            "audio_s": round(audio_s, 2) if audio_s is not None else None,
             "elapsed_s": round(max(0.0, (self.finished or now) - self.created), 1),
             "state_elapsed_s": round(in_state, 1),
             "eta_s": eta,
-            "processing_s": round(self.processing_s(now), 1),
-            "device": self.device,
+            "processing_s": round(src.processing_s(now), 1),
+            "device": device,
             "detail": detail,
             "chunk": chunk,
             "chunks": chunks,
+            "instance": INSTANCE,
         }
 
 
@@ -374,9 +402,16 @@ class JobRegistry:
             job = JobProgress(job_id, owner, caller.kind == "guest", now)
             self._items[job_id] = job
             self._items.move_to_end(job_id)
+            # Oltre il limite se ne va prima un lavoro finito, poi uno mai partito (il file non e'
+            # mai arrivato); uno che sta lavorando mai: dimenticarlo farebbe credere all'app che il
+            # computer l'abbia perso, e la lezione ripartirebbe da capo.
             while len(self._items) > self.limit:
-                finished = next((key for key, item in self._items.items() if item.finished is not None), None)
-                self._items.pop(finished if finished is not None else next(iter(self._items)))
+                gone = next((key for key, item in self._items.items() if item.finished is not None), None)
+                if gone is None:
+                    gone = next((key for key, item in self._items.items() if item.current_state() == "received" and key != job_id), None)
+                if gone is None:
+                    break
+                self._items.pop(gone)
             return job
 
     def get(self, job_id: str, now: float | None = None) -> JobProgress | None:
@@ -392,10 +427,13 @@ class JobRegistry:
         return secrets.compare_digest(job.bearer_hash, bearer_hash(caller.bearer))
 
     def _prune(self, now: float) -> None:
+        # Scaduto: finito da piu' di [keep_s], o mai partito da ore (il caricamento si e' perso). Un
+        # lavoro in corso resta quanto dura — una lezione di tre ore sul processore dura tre ore.
         gone = [
             key
             for key, item in self._items.items()
-            if (item.finished is not None and now - item.finished > self.keep_s) or now - item.created > JOB_STALE_S
+            if (item.finished is not None and now - item.finished > self.keep_s)
+            or (item.finished is None and item.current_state() == "received" and now - item.created > JOB_STALE_S)
         ]
         for key in gone:
             del self._items[key]
@@ -926,9 +964,11 @@ def restart_when_idle() -> None:
     if not STATE.get("restart_wanted") or STATE.get("busy") or GATE.waiting:
         return
     STATE["restart_wanted"] = False
+    STATE["restarting"] = True
     launcher = Path(__file__).with_name("avvio.pyw")
     runner = Path(sys.executable).with_name("pythonw.exe")
     if not launcher.exists():
+        STATE["restarting"] = False
         log.warning("vorrei ripartire ma avvio.pyw non c'e': riavvia il companion a mano")
         return
     log.warning("riparto con un processo nuovo, per ritrovare la scheda")
@@ -1127,6 +1167,7 @@ def health() -> dict[str, Any]:
     return {
         "status": "ok",
         "version": config.version(),
+        "instance": INSTANCE,
         "model": STATE["name"],
         "device": STATE["device"],
         "compute_type": STATE["compute_type"],
@@ -1356,6 +1397,12 @@ class AuthGate:
         # l'endpoint solo dopo aver letto tutto il multipart, e fino ad allora chi chiedeva a che
         # punto fosse si sarebbe sentito dire 404, cioe' «companion vecchio, smetti di chiedere».
         if scope.get("method") == "POST" and scope.get("path") == TRANSCRIPTIONS_PATH:
+            # Sta per ripartire ([restart_when_idle]): una lezione accettata adesso morirebbe a meta'
+            # caricamento. Meglio dirlo subito, prima del corpo, e far riprovare fra poco.
+            if STATE.get("restarting"):
+                response = JSONResponse({"detail": "restarting"}, status_code=503, headers={"Retry-After": "20"})
+                await response(scope, receive, send)
+                return
             job = JOBS.open(headers.get("x-pampa-job", ""), caller)
             if job is not None:
                 state["job"] = job
@@ -1757,70 +1804,61 @@ async def transcriptions(
         log.info("%s%s %s (%.1f MB)%s", who, how, label, size_mb, f", {GATE.waiting} in fila" if GATE.waiting else "")
         cap = _positive_int(max_minutes)
         vocabulary = prompt.strip() or None
+        lang = language.strip() or None
 
-        progress.set("queued")
-        watcher = asyncio.create_task(_watch_cancel(request, progress, asyncio.current_task()))
-        # Il proprietario passa davanti agli ospiti in attesa; nessuno interrompe chi sta gia' trascrivendo.
-        async with GATE.slot(0 if caller.kind == "owner" else 1, key=progress.id or None):
-            STATE["busy"] = True
-            progress.admitted()
-            started = time.time()
-            try:
-                # Su un thread anche il caricamento del modello: cosi' `/health` continua a
-                # rispondere durante i minuti del primo avvio, invece di far credere all'app che il
-                # server sia morto.
-                result = await asyncio.to_thread(
-                    _transcribe, str(source), language.strip() or None, progress, prompt=vocabulary, max_minutes=cap,
-                )
-            except JobCancelled:
-                log.info("%sannullata dal telefono: lascio perdere %s", who, label)
-                progress.set("failed", detail="annullata")
-                raise HTTPException(status_code=499, detail="annullata") from None
-            except Exception as error:  # noqa: BLE001 — qualunque guasto deve tornare come 500 leggibile
-                log.exception("trascrizione fallita")
-                progress.set("failed", detail=str(error)[:300])
-                raise HTTPException(status_code=500, detail=str(error)) from error
-            finally:
-                STATE["busy"] = False
-                STATE["last_used"] = time.time()
-                restart_when_idle()
-    except asyncio.CancelledError:
-        # Annullata mentre aspettava il suo turno ([_watch_cancel]): si esce dalla fila e lo si dice.
-        if not progress.cancelled:
-            raise
-        task = asyncio.current_task()
-        if task is not None:
-            task.uncancel()
-        log.info("%sannullata dal telefono mentre aspettava: esce dalla fila", who)
-        progress.set("failed", detail="annullata")
-        raise HTTPException(status_code=499, detail="annullata") from None
+        # La stessa registrazione, con le stesse richieste, gia' in corso per qualcun altro — il tablet
+        # che non sapeva che il telefono l'aveva mandata, o il telefono che la rimanda dopo aver perso
+        # la risposta: ci si aggancia a quella. Il computer la fa una volta, e la danno a tutti e due.
+        key = (sha, lang or "", vocabulary or "", cap or 0) if sha and archived else None
+        work = INFLIGHT.get(key) if key is not None else None
+        if work is not None and not work.task.done() and not work.progress.cancelled:
+            log.info("%sla stessa registrazione e' gia' in corso: aspetto quella (%s)", who, label)
+        else:
+            work = SharedWork(key=key, progress=JobProgress("w" + secrets.token_hex(8)))
+            work.task = asyncio.create_task(
+                _run_work(work, source, lang, vocabulary, cap, 0 if caller.kind == "owner" else 1, who, label)
+            )
+            if key is not None:
+                INFLIGHT[key] = work
+                work.task.add_done_callback(lambda _task, k=key, w=work: INFLIGHT.pop(k, None) if INFLIGHT.get(k) is w else None)
+        progress.follow(work.progress)
+        try:
+            shared = await _await_work(work, request, progress)
+        except JobCancelled:
+            log.info("%sannullata dal telefono: %s", who, label)
+            progress.set("failed", detail="annullata")
+            raise HTTPException(status_code=499, detail="annullata") from None
+        except Exception as error:  # noqa: BLE001 — qualunque guasto deve tornare come 500 leggibile
+            progress.set("failed", detail=str(error)[:300])
+            raise HTTPException(status_code=500, detail=str(error)) from error
     except BaseException:
-        # Annullata mentre arrivava o aspettava il turno: chi chiede deve leggere che e' finita,
-        # non vederla ferma in fila per sempre.
+        # Finita prima di un esito — il caricamento interrotto, il server che si chiude: chi chiede
+        # deve leggere che e' finita, non vederla ferma in fila per sempre.
         if progress.state not in ("done", "failed"):
             progress.set("failed", detail="interrotta")
         raise
     finally:
-        if "watcher" in locals():
-            watcher.cancel()
         if target is not None:
-            with contextlib.suppress(OSError):
-                target.unlink(missing_ok=True)
+            # Il temporaneo si cancella quando il lavoro ha finito di leggerlo, non prima: una
+            # richiesta annullata esce subito, ma ffmpeg potrebbe averlo ancora aperto.
+            def drop(_task: object = None, path: Path = target) -> None:
+                with contextlib.suppress(OSError):
+                    path.unlink(missing_ok=True)
 
+            if work is not None and work.task is not None and not work.task.done():
+                work.task.add_done_callback(drop)
+            else:
+                drop()
+
+    result = dict(shared)
     progress.set("done", 1.0)
-    elapsed = time.time() - started
     duration = result["segments"][-1]["end"] if result["segments"] else 0.0
-    speed = duration / elapsed if elapsed > 0 else 0
-    on_cpu = " sul processore" if result.get("device_used") == "cpu" and STATE["device"] != "cpu" else ""
-    log.info("%sfatto%s: %.1f min in %.0f s (%.0f volte il tempo reale)", who, on_cpu, duration / 60, elapsed, speed)
     if caller.kind == "guest":
         asyncio.get_running_loop().run_in_executor(None, report_usage, caller.bearer, duration)
-    if STATE["idle_seconds"]:
-        log.info("tengo il modello in memoria per %d minuti", STATE["idle_seconds"] // 60)
 
     # Quanto ha lavorato il computer (senza la fila) e quanto era lungo l'audio: l'app ne fa le
     # statistiche («un'ora di lezione in quattro minuti»). I nomi restano questi.
-    result["processing_s"] = round(progress.processing_s(), 2)
+    result["processing_s"] = round(work.progress.processing_s(), 2)
     result["audio_s"] = round(float(result.get("audio_s") or duration), 2)
     # Se il file ora sta nell'archivio (c'era gia', o e' entrato adesso: l'app marca la parte come
     # archiviata), da dove si e' trascritto, e in quanti pezzi.
@@ -1832,25 +1870,99 @@ async def transcriptions(
     return JSONResponse(result)
 
 
-async def _watch_cancel(request: Request, progress: JobProgress, handler: asyncio.Task | None) -> None:
+@dataclass
+class SharedWork:
     """
-    Tiene d'occhio chi ha chiesto la lezione: se il telefono chiude la connessione, o la annulla con
-    `DELETE /v1/jobs/{id}`, il lavoro si ferma. Prima «Annulla» chiudeva solo la connessione del
-    telefono, e il computer andava avanti a trascrivere per nessuno (23/09).
+    Una trascrizione che il computer sta facendo, e le richieste che la aspettano.
 
-    In fila basta togliere la richiesta dalla fila (si annulla il suo task, e [PriorityGate] la fa
-    uscire); mentre si trascrive si alza la bandiera, e WhisperX si ferma al lotto dopo.
+    Il lavoro vive per conto suo, non dentro la richiesta: una richiesta che si stacca (annullata,
+    connessione caduta) non ferma chi aspetta la stessa registrazione. Si ferma quando non la aspetta
+    piu' nessuno ([_await_work]).
     """
-    while True:
-        await asyncio.sleep(1.0)
-        if not progress.cancelled:
-            with contextlib.suppress(Exception):
-                if await request.is_disconnected():
-                    progress.cancel()
-        if progress.cancelled:
-            if progress.state == "queued" and handler is not None:
-                handler.cancel()
-            return
+
+    key: tuple | None
+    progress: JobProgress
+    waiters: set = dataclasses.field(default_factory=set)
+    task: Any = None
+
+
+# Le trascrizioni in corso per impronta, per agganciare le richieste uguali. Solo sul ciclo di eventi.
+INFLIGHT: dict[tuple, SharedWork] = {}
+
+
+async def _run_work(
+    work: SharedWork, source: Path, language: str | None, prompt: str | None, cap: int | None,
+    priority: int, who: str, label: str,
+) -> dict[str, Any]:
+    """La trascrizione vera: il turno nella fila, poi WhisperX su un thread."""
+    progress = work.progress
+    progress.set("queued")
+    try:
+        # Il proprietario passa davanti agli ospiti in attesa; nessuno interrompe chi sta gia' trascrivendo.
+        async with GATE.slot(priority, key=progress.id):
+            STATE["busy"] = True
+            progress.admitted()
+            started = time.time()
+            try:
+                # Su un thread anche il caricamento del modello: cosi' `/health` continua a
+                # rispondere durante i minuti del primo avvio, invece di far credere all'app che il
+                # server sia morto.
+                result = await asyncio.to_thread(_transcribe, str(source), language, progress, prompt=prompt, max_minutes=cap)
+            except JobCancelled:
+                log.info("%snessuno aspetta piu' %s: il computer si ferma", who, label)
+                progress.set("failed", detail="annullata")
+                raise
+            except Exception as error:
+                log.exception("trascrizione fallita")
+                progress.set("failed", detail=str(error)[:300])
+                raise
+            finally:
+                STATE["busy"] = False
+                STATE["last_used"] = time.time()
+                restart_when_idle()
+    except asyncio.CancelledError:
+        # Tolta dalla fila prima del suo turno: nessuno la aspettava piu'.
+        if progress.state not in ("done", "failed"):
+            progress.set("failed", detail="annullata")
+        raise JobCancelled() from None
+    progress.set("done", 1.0)
+    elapsed = time.time() - started
+    duration = result["segments"][-1]["end"] if result["segments"] else 0.0
+    speed = duration / elapsed if elapsed > 0 else 0
+    on_cpu = " sul processore" if result.get("device_used") == "cpu" and STATE["device"] != "cpu" else ""
+    log.info("%sfatto%s: %.1f min in %.0f s (%.0f volte il tempo reale)", who, on_cpu, duration / 60, elapsed, speed)
+    if STATE["idle_seconds"]:
+        log.info("tengo il modello in memoria per %d minuti", STATE["idle_seconds"] // 60)
+    return result
+
+
+async def _await_work(work: SharedWork, request: Request, progress: JobProgress) -> dict[str, Any]:
+    """
+    Aspetta il lavoro condiviso, tenendo d'occhio chi lo ha chiesto: se il telefono chiude la
+    connessione, o la annulla con `DELETE /v1/jobs/{id}`, questa richiesta si stacca. Prima «Annulla»
+    chiudeva solo la connessione del telefono, e il computer andava avanti a trascrivere per nessuno
+    (23/09). Se era l'ultima ad aspettarlo, il lavoro si ferma: in fila esce dalla fila, mentre
+    trascrive si ferma al lotto dopo.
+    """
+    token = object()
+    work.waiters.add(token)
+    try:
+        while True:
+            done, _ = await asyncio.wait({work.task}, timeout=1.0)
+            if done:
+                return work.task.result()
+            if not progress.cancelled:
+                with contextlib.suppress(Exception):
+                    if await request.is_disconnected():
+                        progress.cancel()
+            if progress.cancelled:
+                raise JobCancelled()
+    finally:
+        work.waiters.discard(token)
+        if not work.task.done() and not work.waiters:
+            work.progress.cancel()
+            if work.progress.state == "queued":
+                work.task.cancel()
 
 
 @app.delete("/v1/jobs/{job_id}")
@@ -1866,7 +1978,7 @@ async def job_cancel(job_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="lavoro sconosciuto")
     if job.state not in ("done", "failed"):
         job.cancel()
-    return {"cancelled": True, "state": job.state}
+    return {"cancelled": True, "state": job.current_state()}
 
 
 @app.get("/v1/jobs/{job_id}")
@@ -1882,7 +1994,7 @@ async def job_status(job_id: str, request: Request) -> dict[str, Any]:
     job = JOBS.get(job_id)
     if job is None or not JOBS.visible_to(job, caller):
         raise HTTPException(status_code=404, detail="lavoro sconosciuto")
-    position = GATE.position(job.id) if job.state == "queued" else None
+    position = GATE.position(job.gate_key) if job.current_state() == "queued" else None
     return job.snapshot(position=position)
 
 

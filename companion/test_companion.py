@@ -295,6 +295,26 @@ class JobProgressTest(unittest.TestCase):
         self.assertEqual((snap["processing_s"], snap["elapsed_s"]), (20.0, 30.0))
 
 
+class RegistryKeepsLiveJobsTest(unittest.TestCase):
+    def test_a_running_job_is_never_forgotten(self) -> None:
+        registry = server.JobRegistry(limit=2)
+        owner = server.Caller("owner", "token", "", "t")
+        running = registry.open("aaaaaaaa", owner, now=0.0)
+        running.set("transcribing")
+        other = registry.open("bbbbbbbb", owner, now=1.0)
+        other.set("transcribing")
+        registry.open("cccccccc", owner, now=2.0)
+        self.assertIsNotNone(registry.get("aaaaaaaa", now=3.0), "oltre il limite non se ne va chi lavora")
+        # Una lezione di tre ore sul processore resta per tutte le tre ore (e oltre).
+        self.assertIsNotNone(registry.get("aaaaaaaa", now=server.JOB_STALE_S * 3))
+
+    def test_a_job_that_never_started_goes_after_hours(self) -> None:
+        registry = server.JobRegistry()
+        owner = server.Caller("owner", "token", "", "t")
+        registry.open("eeeeeeee", owner, now=0.0)
+        self.assertIsNone(registry.get("eeeeeeee", now=server.JOB_STALE_S + 1))
+
+
 class JobCancelTest(unittest.TestCase):
     def test_cancel_stops_at_the_next_callback(self) -> None:
         progress = server.JobProgress("abcdefgh")
@@ -1162,7 +1182,119 @@ class ServerTest(StateMixin, unittest.TestCase):
         self.assertEqual(answer["r"][0], 499, answer["r"][2])
         data = json.loads(self.call("GET", f"/v1/jobs/{job_id}", bearer="pg_friend")[2])
         self.assertEqual((data["state"], data["detail"]), ("failed", "annullata"))
+        # La risposta parte appena la richiesta si stacca; il computer si ferma al lotto dopo.
+        deadline = time.time() + 5
+        while server.STATE["busy"] and time.time() < deadline:
+            time.sleep(0.05)
         self.assertFalse(server.STATE["busy"])
+
+    def test_same_recording_twice_is_transcribed_once(self) -> None:
+        # Il tablet e il telefono mandano la stessa registrazione: una trascrizione, due risposte.
+        server.JOBS.clear()
+        data = b"una lezione" * 40
+        blob = hashlib.sha256(data).hexdigest()
+        archive.ARCHIVE.store(blob, "Voce 001.m4a", "audio/mp4", [data])
+        calls = []
+        release = threading.Event()
+        inside = threading.Event()
+
+        def slow(path: str, language: str | None, progress: server.JobProgress, **_: object) -> dict:
+            calls.append(path)
+            progress.set("transcribing")
+            inside.set()
+            for _ in range(500):
+                if release.is_set():
+                    break
+                progress.callback("transcribing")(10.0)
+                time.sleep(0.01)
+            return {"task": "transcribe", "language": "it", "duration": 1.0, "text": "ciao",
+                    "segments": [{"start": 0.0, "end": 1.0, "text": "ciao"}], "device_used": "cuda", "audio_s": 1.0}
+
+        answers: dict = {}
+
+        def send(name: str, job: str) -> None:
+            body, headers = self.form({"source_sha256": blob, "language": "it"}, None)
+            headers["X-Pampa-Job"] = job
+            answers[name] = self.call("POST", "/v1/audio/transcriptions", bearer="pt_good", body=body, headers=headers)
+
+        with mock.patch.object(server, "_transcribe", slow):
+            first = threading.Thread(target=send, args=("a", "aaaaaaaa-1111-4111-8111-111111111111"))
+            first.start()
+            self.assertTrue(inside.wait(10))
+            second = threading.Thread(target=send, args=("b", "bbbbbbbb-2222-4222-8222-222222222222"))
+            second.start()
+            time.sleep(1.5)
+            # Il secondo segue il primo: stesso stato, e annullarlo non ferma il lavoro.
+            data = json.loads(self.call("GET", "/v1/jobs/bbbbbbbb-2222-4222-8222-222222222222", bearer="pt_good")[2])
+            self.assertEqual(data["state"], "transcribing")
+            release.set()
+            first.join(20)
+            second.join(20)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual((answers["a"][0], answers["b"][0]), (200, 200))
+        self.assertEqual(json.loads(answers["a"][2])["text"], json.loads(answers["b"][2])["text"])
+
+    def test_one_of_two_cancelled_keeps_the_other_going(self) -> None:
+        server.JOBS.clear()
+        data = b"un'altra lezione" * 40
+        blob = hashlib.sha256(data).hexdigest()
+        archive.ARCHIVE.store(blob, "Voce 002.m4a", "audio/mp4", [data])
+        release = threading.Event()
+        inside = threading.Event()
+        stopped = []
+
+        def slow(path: str, language: str | None, progress: server.JobProgress, **_: object) -> dict:
+            progress.set("transcribing")
+            inside.set()
+            try:
+                for _ in range(1000):
+                    if release.is_set():
+                        break
+                    progress.callback("transcribing")(10.0)
+                    time.sleep(0.01)
+            except server.JobCancelled:
+                stopped.append(True)
+                raise
+            return {"task": "transcribe", "language": "it", "duration": 1.0, "text": "ciao",
+                    "segments": [{"start": 0.0, "end": 1.0, "text": "ciao"}], "device_used": "cuda", "audio_s": 1.0}
+
+        answers: dict = {}
+
+        def send(name: str, job: str) -> None:
+            body, headers = self.form({"source_sha256": blob, "language": "it"}, None)
+            headers["X-Pampa-Job"] = job
+            answers[name] = self.call("POST", "/v1/audio/transcriptions", bearer="pt_good", body=body, headers=headers)
+
+        with mock.patch.object(server, "_transcribe", slow):
+            first = threading.Thread(target=send, args=("a", "cccccccc-1111-4111-8111-111111111111"))
+            first.start()
+            self.assertTrue(inside.wait(10))
+            second = threading.Thread(target=send, args=("b", "dddddddd-2222-4222-8222-222222222222"))
+            second.start()
+            time.sleep(1.5)
+            self.assertEqual(self.call("DELETE", "/v1/jobs/cccccccc-1111-4111-8111-111111111111", bearer="pt_good")[0], 200)
+            first.join(20)
+            self.assertEqual(answers["a"][0], 499)
+            self.assertEqual(stopped, [], "il secondo aspetta ancora: il lavoro non si ferma")
+            release.set()
+            second.join(20)
+        self.assertEqual(answers["b"][0], 200)
+
+    def test_restarting_answers_503_before_reading_the_body(self) -> None:
+        # Un proprietario riconosciuto: senza credenziali il 401 viene prima, com'e' giusto.
+        server.STATE["restarting"] = True
+        try:
+            with mock.patch.object(server, "identify", return_value=as_caller("owner", "pt_good")):
+                answer = self.refused_before_body("POST /v1/audio/transcriptions")
+            self.assertIn("503", answer.splitlines()[0])
+            self.assertIn("retry-after: 20", answer.lower())
+        finally:
+            server.STATE["restarting"] = False
+
+    def test_instance_is_in_health_and_jobs(self) -> None:
+        self.use_config({"accept_anonymous": False})
+        data = json.loads(self.call("GET", "/health")[2])
+        self.assertEqual(data["instance"], server.INSTANCE)
 
     def test_failed_job_says_so(self) -> None:
         server.JOBS.clear()
