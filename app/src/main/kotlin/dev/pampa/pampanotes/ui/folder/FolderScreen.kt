@@ -12,6 +12,8 @@ import androidx.compose.material.icons.rounded.Upload
 import dev.pampa.pampanotes.ui.common.FolderPickerSheet
 import dev.pampa.pampanotes.ui.common.SelectionMark
 import dev.pampa.pampanotes.ui.common.rememberComputerOnly
+import dev.pampa.pampanotes.ui.common.rememberPullToSync
+import dev.pampa.pampanotes.core.transcription.NoteTranscribingElsewhere
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -121,6 +123,8 @@ private fun FolderScreen(
   // Una riga tenuta premuta: la sottocartella o la nota da dare all'assistente.
   var exportingScope by remember { mutableStateOf<ExportScope?>(null) }
   val computerOnly = rememberComputerOnly()
+  // Tirando giu' l'elenco si sincronizza (vedi PullToSync); con la selezione aperta no.
+  val pull = rememberPullToSync()
 
   // Le etichette dei menu si leggono qui: le lambda che le ricevono non sono composable.
   val renameLabel = stringResource(R.string.action_rename)
@@ -143,7 +147,8 @@ private fun FolderScreen(
   ReportSubject(state.folder?.asSubject())
 
   val selectedRows = state.notes.filter { it.note.id in selected }
-  val anyPending = selectedRows.any { it.untranscribedSessions > 0 }
+  // Quelle che un altro dispositivo sta gia' trascrivendo non contano: «Trascrivi» le salterebbe.
+  val anyPending = selectedRows.any { state.toTranscribe(it) > 0 }
 
   FluidScreen(
     title = if (selecting) pluralStringResource(R.plurals.selection_count, selected.size, selected.size) else state.folder?.name ?: stringResource(R.string.folder_loading),
@@ -151,6 +156,8 @@ private fun FolderScreen(
     onBack = if (selecting) exitSelection else onBack,
     // Il fondale prende il colore della cartella: la pagina e la sua tessera si somigliano.
     ambient = FluidAmbient(tone = ambientToneOf(folderTone), motif = ambientMotifOf(folderIcon)),
+    isRefreshing = pull.isRefreshing,
+    onRefresh = pull.onRefresh.takeUnless { selecting },
     actions = {
       if (selecting) {
         if (anyPending) {
@@ -198,7 +205,7 @@ private fun FolderScreen(
               title = row.note.title,
               subtitle = computerOnly.noteSubtitle(row.note.id, row.note.folderId, noteSubtitle(row)),
               meta = Formats.relativeDate(row.note.updatedAt),
-              badge = noteBadge(row),
+              badge = noteBadge(state.toTranscribe(row), state.elsewhere[row.note.id]),
               tone = if (checked) FluidTone.Primary else FluidTone.Neutral,
               leading = { SelectionMark(checked) },
               onClick = { selected = if (checked) selected - row.note.id else selected + row.note.id },
@@ -259,7 +266,7 @@ private fun FolderScreen(
               subtitle = computerOnly.noteSubtitle(row.note.id, row.note.folderId, noteSubtitle(row)),
               eyebrow = if (row.note.pinned) stringResource(R.string.note_pinned) else null,
               meta = Formats.relativeDate(row.note.updatedAt),
-              badge = noteBadge(row),
+              badge = noteBadge(state.toTranscribe(row), state.elsewhere[row.note.id]),
               onClick = { onOpenNote(row.note.id) },
               contextActions = {
                 listOf(
@@ -453,14 +460,19 @@ private fun noteSubtitle(row: NoteRow): String {
   return if (parts.isEmpty()) stringResource(R.string.note_text_only) else parts.joinToString(" · ")
 }
 
+/**
+ * «Da trascrivere» se resta qualcosa che nessuno sta trascrivendo; se tutto quello che mancava lo
+ * sta trascrivendo un altro dispositivo, dove — e' in corso, non da fare.
+ */
 @Composable
-private fun noteBadge(row: NoteRow): (@Composable () -> Unit)? {
-  if (row.untranscribedSessions <= 0) return null
-  val label = stringResource(R.string.note_to_transcribe)
+private fun noteBadge(toTranscribe: Int, elsewhere: NoteTranscribingElsewhere?): (@Composable () -> Unit)? {
+  val (label, tone) = when {
+    toTranscribe > 0 -> stringResource(R.string.note_to_transcribe) to dev.antigravity.fluidengine.ui.theme.FluidTone.Warning
+    elsewhere != null && elsewhere.untranscribed > 0 ->
+      stringResource(R.string.transcribing_elsewhere, elsewhere.device) to dev.antigravity.fluidengine.ui.theme.FluidTone.Primary
+    else -> return null
+  }
   return {
-    dev.antigravity.fluidengine.ui.theme.FluidStatusBadge(
-      label = label,
-      tone = dev.antigravity.fluidengine.ui.theme.FluidTone.Warning,
-    )
+    dev.antigravity.fluidengine.ui.theme.FluidStatusBadge(label = label, tone = tone)
   }
 }

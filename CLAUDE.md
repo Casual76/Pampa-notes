@@ -289,7 +289,24 @@ invece non sale: e' dell'utente e del suo account Groq, non del computer.
 I file di una parte o di una fonte cancellate altrove non si buttano: vanno in
 `filesDir/trash/<giorno>/`, perche' questo dispositivo potrebbe averne l'unica copia. Il worker
 (`SyncWorker`) non e' in primo piano: dura secondi. Gira all'apertura, dopo ogni import e ogni sei
-ore; «Sincronizza adesso» sta in Impostazioni → Sincronizzazione.
+ore; «Sincronizza adesso» sta in Impostazioni → Sincronizzazione, e lo stesso giro parte **tirando
+giu'** la home, le materie, una cartella o una nota (`PullToSync`: il gesto e la rotellina sono
+quelli di `FluidScreen`, la rotellina resta finche' il `SyncWorker` non ha finito o per venti
+secondi; senza sync il gesto non c'e').
+
+**In trascrizione su un altro dispositivo.** `jobs` non viaggia, e mentre il telefono trascriveva
+una lezione il tablet la offriva «Da trascrivere»: un tocco, e la stessa ora passava due volte dal
+computer. Le sessioni hanno quindi un segno sincronizzato, `transcribingOn` (il nome del
+dispositivo nel sync) e `transcribingSince` (database 8), con tre regole (`TranscribingMarker`,
+puro): **lo scrive solo chi trascrive** — `TranscribingMarkers` guarda la coda e lo tiene uguale ai
+lavori al lavoro qui, cosi' nessuna delle sei uscite di un lavoro puo' dimenticarsi di toglierlo, e
+nel merge il segno che parla di questo dispositivo resta quello di qui; **non e' una modifica** —
+non alza `updatedAt`, quindi non vince su un titolo cambiato altrove, entra nell'impronta solo
+quando c'e' (vuoto, la sessione ha l'impronta di prima) e da solo non fa rinascere una nota
+cancellata altrove; **scade** — dopo tre ore non vale (rinnovato ogni ora mentre lavora), e
+all'avvio il dispositivo toglie i suoi. Il segno sale con `WorkScheduler.syncSoon` (un giro dopo
+quello in corso, non il `KEEP` di `syncNow`). Gli altri mostrano «In trascrizione su …» al posto di
+«Trascrivi» e dei badge «Da trascrivere», e `enqueue` salta la sessione.
 
 ### I file di un altro dispositivo
 

@@ -42,6 +42,7 @@ class PampaNotesApp : Application(), Configuration.Provider {
   @Inject lateinit var realDates: RealDatesBackfill
   @Inject lateinit var storage: dev.pampa.pampanotes.core.repo.StorageRepository
   @Inject lateinit var updates: dev.pampa.pampanotes.update.UpdateController
+  @Inject lateinit var transcribingMarkers: dev.pampa.pampanotes.work.TranscribingMarkers
 
   /** Vive quanto il processo: niente di quello che parte qui ha qualcosa da cui essere cancellato. */
   private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -84,6 +85,10 @@ class PampaNotesApp : Application(), Configuration.Provider {
         if (transcription.queuedCount(GroqWhisperProvider.ID) > 0) scheduler.kick(GroqWhisperProvider.ID)
       }
     }
+    // Il segno «in trascrizione su» segue la coda di questo dispositivo, e al primo giro toglie
+    // quello che un processo ucciso ha lasciato: gli altri dispositivi non offrono una lezione che
+    // si sta trascrivendo qui, e tornano a offrirla appena qui si smette.
+    transcribingMarkers.start(applicationScope)
     // Quello che un prelievo dal computer o un import interrotti hanno lasciato in `cacheDir/tmp`.
     applicationScope.launch(Dispatchers.IO) { runCatching { files.sweepTemp() } }
     // Le pagine scritte a mano delle note importate prima che l'app le sapesse disegnare: una volta

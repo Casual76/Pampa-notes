@@ -10,6 +10,7 @@ import dev.pampa.pampanotes.core.db.SegmentEntity
 import dev.pampa.pampanotes.core.db.SessionEntity
 import dev.pampa.pampanotes.core.db.SourceEntity
 import dev.pampa.pampanotes.core.db.SourceKind
+import dev.pampa.pampanotes.core.db.SyncMetaEntity
 import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.db.TranscriptKind
 import dev.pampa.pampanotes.core.db.TranscriptionRunEntity
@@ -266,5 +267,92 @@ class SyncApplierTest {
     db.transcripts().delete("t")
     // La cascata porta via i segmenti dopo la trascrizione: il tombstone resta un tombstone.
     assertEquals("D", db.sync().outboxEntry("transcripts", "t")?.op)
+  }
+
+  // --- il segno «in trascrizione su» ---
+
+  @Test
+  fun il_segno_scritto_qui_non_alza_il_tempo_ma_sporca_la_sessione(): Unit = runBlocking {
+    db.folders().upsert(folder("f"))
+    db.notes().upsert(note("n", folderId = "f"))
+    db.sessions().upsert(session("s", noteId = "n"))
+    clean()
+
+    db.sessions().setMarker("s", "questo", 5)
+    assertEquals(1L, db.sessions().get("s")?.updatedAt)
+    assertEquals("U", db.sync().outboxEntry("sessions", "s")?.op)
+
+    clean()
+    assertEquals(0, db.sessions().clearMarker("s", "un altro"))
+    assertEquals("questo", db.sessions().get("s")?.transcribingOn)
+    assertEquals(1, db.sessions().clearMarker("s", "questo"))
+    assertNull(db.sessions().get("s")?.transcribingOn)
+  }
+
+  @Test
+  fun il_segno_di_un_altro_dispositivo_arriva_col_sync_e_non_torna_indietro(): Unit = runBlocking {
+    db.folders().upsert(folder("f"))
+    db.notes().upsert(note("n", folderId = "f"))
+    db.sessions().upsert(session("s", noteId = "n"))
+    clean()
+
+    apply(upSession(session("s", noteId = "n").copy(transcribingOn = "Pixel 8", transcribingSince = 5), seq = 1))
+    val local = db.sessions().get("s")
+    assertEquals("Pixel 8", local?.transcribingOn)
+    assertEquals(5L, local?.transcribingSince)
+    assertNull(db.sync().outboxEntry("sessions", "s"))
+
+    // Finito sul telefono: il segno se ne va anche qui.
+    apply(upSession(session("s", noteId = "n").copy(activeTranscriptId = "t"), seq = 2))
+    assertNull(db.sessions().get("s")?.transcribingOn)
+  }
+
+  @Test
+  fun il_proprio_segno_resta_sotto_una_sessione_rinominata_altrove_e_risale(): Unit = runBlocking {
+    db.folders().upsert(folder("f"))
+    db.notes().upsert(note("n", folderId = "f"))
+    db.sessions().upsert(session("s", noteId = "n"))
+    clean()
+    db.sessions().setMarker("s", "questo", 5)
+
+    // L'altro dispositivo l'ha rinominata dopo, senza sapere del lavoro: vince lui, ma il segno resta.
+    apply(upSession(session("s", noteId = "n").copy(title = "Rinominata", updatedAt = 9), seq = 1))
+    val local = db.sessions().get("s")
+    assertEquals("Rinominata", local?.title)
+    assertEquals("questo", local?.transcribingOn)
+    assertEquals(5L, local?.transcribingSince)
+    assertEquals("U", db.sync().outboxEntry("sessions", "s")?.op)
+  }
+
+  @Test
+  fun un_remoto_vecchio_che_parla_di_questo_dispositivo_non_rimette_il_segno(): Unit = runBlocking {
+    db.folders().upsert(folder("f"))
+    db.notes().upsert(note("n", folderId = "f"))
+    db.sessions().upsert(session("s", noteId = "n"))
+    clean()
+
+    apply(upSession(session("s", noteId = "n").copy(title = "Rinominata", updatedAt = 9, transcribingOn = "questo", transcribingSince = 5), seq = 1))
+    val local = db.sessions().get("s")
+    assertEquals("Rinominata", local?.title)
+    assertNull(local?.transcribingOn)
+    // Diversa da quella concordata: il push rimanda la sessione senza segno.
+    assertEquals("U", db.sync().outboxEntry("sessions", "s")?.op)
+  }
+
+  @Test
+  fun una_nota_cancellata_altrove_mentre_qui_la_si_trascrive_se_ne_va_lo_stesso(): Unit = runBlocking {
+    db.folders().upsert(folder("f"))
+    db.notes().upsert(note("n", folderId = "f"))
+    db.sessions().upsert(session("s", noteId = "n"))
+    clean()
+    // La sessione e' quella concordata col server; qui cambia solo per il segno.
+    val base = SyncPayloads.encode(SessionEntity.serializer(), session("s", noteId = "n"), 1).hash
+    db.sync().upsertMeta(SyncMetaEntity("sessions", "s", serverSeq = 2, hash = base, updatedAt = 1))
+    db.sessions().setMarker("s", "questo", 5)
+
+    apply(del("notes", "n", seq = 3))
+    // Il segno e' uno stato, non una modifica: non fa rinascere la nota.
+    assertNull(db.notes().get("n"))
+    assertNull(db.sessions().get("s"))
   }
 }

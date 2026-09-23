@@ -173,6 +173,33 @@ class MigrationTest {
     }
   }
 
+  @Test
+  fun migrazione7a8_le_sessioni_restano_senza_segno() {
+    helper.createDatabase(NAME, 7).use { db ->
+      db.execSQL("INSERT INTO folders (id, name, sortOrder, createdAt, updatedAt) VALUES ('f', 'Storia', 0, 1, 1)")
+      db.execSQL("INSERT INTO notes (id, folderId, title, body, pinned, createdAt, updatedAt) VALUES ('n', 'f', 'Lezione', '', 0, 1, 1)")
+      db.execSQL("INSERT INTO sessions (id, noteId, title, date, position, activeTranscriptId, createdAt, updatedAt) VALUES ('s', 'n', 'Prima', '2026-09-18', 0, NULL, 1, 2)")
+    }
+
+    helper.runMigrationsAndValidate(NAME, 8, true).use { db ->
+      db.query("SELECT title, updatedAt, transcribingOn, transcribingSince FROM sessions WHERE id = 's'").use { cursor ->
+        assertEquals(1, cursor.count)
+        cursor.moveToFirst()
+        assertEquals("Prima", cursor.getString(0))
+        assertEquals(2L, cursor.getLong(1))
+        // Nessuno ci stava lavorando: il segno nasce vuoto, e vuoto non cambia l'impronta.
+        assertTrue(cursor.isNull(2))
+        assertTrue(cursor.isNull(3))
+      }
+      db.execSQL("UPDATE sessions SET transcribingOn = 'Pixel 8', transcribingSince = 5 WHERE id = 's'")
+      db.query("SELECT transcribingOn, transcribingSince FROM sessions WHERE id = 's'").use { cursor ->
+        cursor.moveToFirst()
+        assertEquals("Pixel 8", cursor.getString(0))
+        assertEquals(5L, cursor.getLong(1))
+      }
+    }
+  }
+
   private companion object {
     const val NAME = "migration-test.db"
   }

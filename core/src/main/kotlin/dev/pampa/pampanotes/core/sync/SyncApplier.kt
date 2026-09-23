@@ -17,6 +17,7 @@ import dev.pampa.pampanotes.core.model.Ids
 import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.sync.SyncMerge.Decision
 import dev.pampa.pampanotes.core.sync.SyncMerge.LocalView
+import dev.pampa.pampanotes.core.transcription.TranscribingMarker
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -70,6 +71,10 @@ data class ApplyOutcome(
  *    dichiara, e senza il server rifiuterebbe il locale come non aggiornato, a ogni giro;
  *  - una **sessione con un lavoro in corso** che viene cancellata altrove — da sola o con la sua
  *    nota o cartella — ha il lavoro annullato prima, o il worker scriverebbe in una riga sparita;
+ *  - il **segno «in trascrizione su»** di una sessione non segue chi vince: quello che parla di
+ *    questo dispositivo resta quello di qui, quello degli altri viene dal remoto anche quando il
+ *    resto della riga resta locale ([TranscribingMarker.merge]). Tenuto il nostro sopra una riga
+ *    remota, la sessione torna sporca e il push lo rimanda;
  *  - i **file** delle parti e delle fonti cancellate altrove, anche in cascata, non si buttano:
  *    vanno in `filesDir/trash/<giorno>/`, e solo dopo che la transazione e' andata a buon fine.
  *    Questo dispositivo potrebbe averne l'unica copia, e una pagina tornata indietro non deve
@@ -171,7 +176,10 @@ class SyncApplier @Inject constructor(
       Decision.SKIP -> {
         // Un tombstone per una riga che non c'e': se era rimasta una voce fantasma, via anche quella.
         if (change.isDelete && local == null && entry != null) sync.forgetOutbox(change.tbl, change.id)
-        if (local != null) rebase(change, tally.ownerId)
+        if (local != null) {
+          if (change.tbl == "sessions" && !change.isDelete) adoptRemoteMarker(change, tally.deviceName)
+          rebase(change, tally.ownerId)
+        }
         tally.skipped++
       }
       Decision.KEEP_AND_FORK_REMOTE -> {
@@ -191,8 +199,11 @@ class SyncApplier @Inject constructor(
           fork(change.id, tally.deviceName)
           tally.forked++
         }
-        if (change.isDelete) delete(change, tally.trash) else upsert(change)
+        val keptLocalMarker = if (change.isDelete) { delete(change, tally.trash); false } else upsert(change, tally.deviceName)
         bookkeep(change, tally.ownerId)
+        // La sessione e' quella remota, ma il segno «in trascrizione su» e' rimasto quello di qui:
+        // e' diversa da quella concordata, e deve salire.
+        if (keptLocalMarker) sync.markDirty(SyncOutboxEntity(tbl = change.tbl, rowId = change.id, op = WireChange.OP_UPSERT))
         if (change.isDelete) tally.deleted++ else tally.applied++
       }
     }
@@ -271,10 +282,23 @@ class SyncApplier @Inject constructor(
       for (entry in inChunks(ids) { sync.dirtyAmong(table, it) }) {
         val encoded = payloads.encode(table, entry.rowId) ?: continue
         val meta = sync.meta(table, entry.rowId)
-        if (meta == null || meta.hash != encoded.hash) return true
+        if (meta == null || (meta.hash != encoded.hash && !onlyMarkerChanged(table, entry.rowId, meta.hash))) return true
       }
     }
     return false
+  }
+
+  /**
+   * Una sessione diversa da quella concordata solo per il segno «in trascrizione su» messo qui: non
+   * e' un figlio cambiato. Una nota cancellata altrove mentre qui la si trascrive se ne va — e il
+   * lavoro si annulla con lei — invece di rinascere per uno stato che nessuno ha scritto.
+   */
+  private suspend fun onlyMarkerChanged(table: String, id: String, metaHash: String): Boolean {
+    if (table != "sessions") return false
+    val session = db.sessions().get(id) ?: return false
+    if (session.transcribingOn == null) return false
+    val bare = session.copy(transcribingOn = null, transcribingSince = null)
+    return SyncPayloads.encode(SessionEntity.serializer(), bare, bare.updatedAt).hash == metaHash
   }
 
   /** Quello che una cancellazione si porta via in cascata, radice compresa. */
@@ -313,8 +337,25 @@ class SyncApplier @Inject constructor(
   private suspend fun <T> inChunks(ids: List<String>, query: suspend (List<String>) -> List<T>): List<T> =
     if (ids.isEmpty()) emptyList() else ids.chunked(IN_CHUNK).flatMap { query(it) }
 
-  private suspend fun upsert(change: WireChange) {
+  /**
+   * Il segno «in trascrizione su» di una sessione che qui resta com'e' ([Decision.SKIP]): gli altri
+   * campi sono quelli di qui, ma quello che il remoto sa degli *altri* dispositivi e' piu' fresco.
+   * Sotto la guardia, quindi niente outbox: la riga e' gia' sporca, e il push la porta col segno nuovo.
+   */
+  private suspend fun adoptRemoteMarker(change: WireChange, deviceName: String) {
     val payload = change.payload ?: return
+    val local = db.sessions().get(change.id) ?: return
+    val remote = decode(SessionEntity.serializer(), payload)
+    val (on, since) = TranscribingMarker.merge(local.transcribingOn, local.transcribingSince, remote.transcribingOn, remote.transcribingSince, deviceName)
+    if (on != local.transcribingOn || since != local.transcribingSince) db.sessions().setMarker(change.id, on, since)
+  }
+
+  /**
+   * @return vero se la riga scritta non e' quella remota: una sessione a cui si e' tenuto il segno
+   *   «in trascrizione su» di qui (vedi [TranscribingMarker.merge]).
+   */
+  private suspend fun upsert(change: WireChange, deviceName: String): Boolean {
+    val payload = change.payload ?: return false
     when (change.tbl) {
       "folders" -> db.folders().upsert(decode(FolderEntity.serializer(), payload))
       "notes" -> {
@@ -322,7 +363,15 @@ class SyncApplier @Inject constructor(
         db.notes().upsert(note.note)
         db.tags().replace(note.note.id, note.tags)
       }
-      "sessions" -> db.sessions().upsert(decode(SessionEntity.serializer(), payload))
+      "sessions" -> {
+        // Solo chi trascrive sa se il suo lavoro c'e' ancora: il segno di questo dispositivo non lo
+        // decide una copia arrivata da fuori, in nessuno dei due versi.
+        val remote = decode(SessionEntity.serializer(), payload)
+        val local = db.sessions().get(remote.id)
+        val merged = if (local == null) remote else TranscribingMarker.mergeInto(local, remote, deviceName)
+        db.sessions().upsert(merged)
+        return merged != remote
+      }
       "audio_parts" -> db.audioParts().upsert(decode(AudioPartEntity.serializer(), payload))
       "transcripts" -> {
         val transcript = decode(TranscriptEntity.serializer(), payload)
@@ -338,6 +387,7 @@ class SyncApplier @Inject constructor(
       // Senza padre da aspettare: il `sessionId` di una corsa non e' una chiave esterna.
       "transcription_runs" -> db.stats().upsert(RunPayload.decode(payload))
     }
+    return false
   }
 
   private suspend fun delete(change: WireChange, trash: MutableList<File>) {

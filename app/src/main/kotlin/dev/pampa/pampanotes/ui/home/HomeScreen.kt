@@ -60,6 +60,7 @@ import dev.pampa.pampanotes.ui.common.UpdateViewModel
 import dev.pampa.pampanotes.ui.common.folderVividColors
 import dev.pampa.pampanotes.ui.common.toneFromName
 import dev.pampa.pampanotes.ui.common.rememberComputerOnly
+import dev.pampa.pampanotes.ui.common.rememberPullToSync
 import dev.pampa.pampanotes.ui.export.ExportSheet
 import java.time.LocalDate
 
@@ -86,6 +87,8 @@ fun HomeRoute(
   var pendingDelete by remember { mutableStateOf<RecentNote?>(null) }
   val computerOnly = rememberComputerOnly()
   var exporting by remember { mutableStateOf<RecentNote?>(null) }
+  // Tirando giu' la home si sincronizza: quello che si e' fatto sull'altro dispositivo, adesso.
+  val pull = rememberPullToSync()
 
   val pinLabel = stringResource(R.string.note_pin)
   val unpinLabel = stringResource(R.string.note_unpin)
@@ -112,6 +115,8 @@ fun HomeRoute(
     // Il fondale: e' quello che il vetro delle card ha da rifrangere. Senza, il materiale non si
     // vede e la pagina torna quella grigia di prima.
     ambient = FluidAmbient(tone = FluidHeroTone.PrimaryToSecondary, motif = FluidHeroMotif.Glow),
+    isRefreshing = pull.isRefreshing,
+    onRefresh = pull.onRefresh,
     actions = {
       FluidBarAction(
         icon = Icons.Rounded.Add,
@@ -316,7 +321,10 @@ private fun noteBadge(recent: RecentNote): (@Composable () -> Unit)? {
   val row = recent.row
   val (label, tone) = when {
     job != null -> jobBadgeLabel(job) to FluidTone.Primary
-    row.untranscribedSessions > 0 -> stringResource(R.string.note_to_transcribe) to FluidTone.Warning
+    recent.toTranscribe > 0 -> stringResource(R.string.note_to_transcribe) to FluidTone.Warning
+    // Tutto quello che mancava lo sta trascrivendo un altro dispositivo: e' in corso, non da fare.
+    recent.elsewhere != null && recent.elsewhere.untranscribed > 0 ->
+      stringResource(R.string.transcribing_elsewhere, recent.elsewhere.device) to FluidTone.Primary
     row.audioCount > 0 -> Formats.durationShort(row.audioDurationMs) to FluidTone.Neutral
     else -> return null
   }

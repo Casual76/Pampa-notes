@@ -199,6 +199,8 @@ object SyncCodec {
 
   private val SEGMENTS = kotlinx.serialization.builtins.ListSerializer(SegmentEntity.serializer())
 
+  private val TRANSCRIBING_KEYS = setOf("transcribingOn", "transcribingSince")
+
   /** Il payload senza le colonne che non sono contenuto. `note.updatedAt` sta un livello sotto. */
   private fun strip(element: JsonElement): JsonElement {
     val obj = element as? JsonObject ?: return element
@@ -209,6 +211,10 @@ object SyncCodec {
           // Una colonna nuova e vuota non cambia l'impronta: una sorgente di prima, riletta da una
           // versione che ha `derivedFromId`, e' la stessa sorgente di prima.
           key == "derivedFromId" && value is JsonNull -> Unit
+          // Lo stesso per il segno «in trascrizione su» delle sessioni: vuoto, la sessione e' quella
+          // di prima (senza, l'aggiornamento avrebbe sporcato tutte le sessioni di tutti). Pieno,
+          // conta: e' cosi' che il segno sale e arriva agli altri.
+          key in TRANSCRIBING_KEYS && value is JsonNull -> Unit
           key == "note" && value is JsonObject -> put(key, strip(value))
           else -> put(key, value)
         }

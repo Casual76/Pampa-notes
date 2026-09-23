@@ -32,10 +32,16 @@ import dev.pampa.pampanotes.core.transcription.TranscribeRequest
 import dev.pampa.pampanotes.core.transcription.TranscriptionError
 import dev.pampa.pampanotes.core.transcription.TranscriptionHttp
 import dev.pampa.pampanotes.core.transcription.TranscriptionProvider
+import dev.pampa.pampanotes.core.transcription.RemoteTranscribing
+import dev.pampa.pampanotes.core.transcription.TranscribingMarker
+import dev.pampa.pampanotes.core.sync.deviceLabel
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -77,10 +83,15 @@ class TranscriptionRepository @Inject constructor(
    * Mette in coda la trascrizione di una sessione.
    *
    * @return il lavoro creato, oppure quello gia' in corso: chiedere due volte la stessa sessione e'
-   *   un doppio tocco, non una richiesta di trascriverla due volte.
+   *   un doppio tocco, non una richiesta di trascriverla due volte. Null se un altro dispositivo la
+   *   sta gia' trascrivendo ([busyElsewhere]): la trascrizione arrivera' col sync, e rifarla qui
+   *   vorrebbe dire la stessa lezione due volte dal computer o da Groq. Vale per tutti quelli che
+   *   accodano — il tasto, «Trascrivi tutte», la selezione, l'import — anche se la schermata non
+   *   l'ha ancora saputo.
    */
-  suspend fun enqueue(sessionId: String, providerId: TranscriptionProviderId): JobEntity {
+  suspend fun enqueue(sessionId: String, providerId: TranscriptionProviderId): JobEntity? {
     jobs.activeForSession(sessionId)?.let { return it }
+    if (busyElsewhere(sessionId) != null) return null
 
     val now = System.currentTimeMillis()
     val settings = settingsStore.current()
@@ -457,6 +468,70 @@ class TranscriptionRepository @Inject constructor(
     stats.recordTranscription(job, startedAt, transcript)
 
   suspend fun rawFor(sessionId: String): TranscriptEntity? = transcripts.rawForSession(sessionId)
+
+  // ---------------------------------------------------------------------------------------------
+  // In trascrizione su un altro dispositivo (vedi TranscribingMarker)
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Le sessioni che un altro dispositivo sta trascrivendo adesso, per id. Quelle di questo
+   * dispositivo non ci sono mai: qui si guarda il lavoro vero, con le sue barre.
+   *
+   * La scadenza si valuta quando qualcosa cambia, non a orologio: un segno che scade mentre la
+   * pagina e' aperta resta a schermo finche' la pagina non si riapre o arriva un giro di sync. Tre
+   * ore sono abbastanza larghe perche' non valga un timer.
+   */
+  fun observeElsewhere(): Flow<Map<String, RemoteTranscribing>> = combine(
+    sessions.observeMarkers(),
+    settingsStore.settings.map { it.deviceLabel() }.distinctUntilChanged(),
+  ) { rows, me -> TranscribingMarker.elsewhere(rows, me, System.currentTimeMillis()) }
+
+  /** Un altro dispositivo sta trascrivendo questa sessione adesso: chi, e da quando. */
+  suspend fun busyElsewhere(sessionId: String): RemoteTranscribing? {
+    val session = sessions.get(sessionId) ?: return null
+    val me = settingsStore.current().deviceLabel()
+    if (!TranscribingMarker.isElsewhere(session.transcribingOn, session.transcribingSince, me, System.currentTimeMillis())) return null
+    return RemoteTranscribing(session.id, session.noteId, session.transcribingOn.orEmpty(), session.transcribingSince ?: 0L, session.activeTranscriptId != null)
+  }
+
+  /** Le sessioni con una trascrizione al lavoro qui, vive: chi tiene il segno in passo le guarda. */
+  fun observeRunningTranscriptions(): Flow<List<String>> = jobs.observeRunningTranscriptions().distinctUntilChanged()
+
+  /**
+   * Mette il segno di questo dispositivo in passo con i suoi lavori: su ogni sessione che si sta
+   * trascrivendo qui, via da ogni sessione che qui non si trascrive piu' — finita, fallita,
+   * annullata, tornata in fila, o lasciata cosi' da un processo ucciso. Lo chiama chi guarda la coda
+   * (`TranscribingMarkers` nell'app) a ogni cambio e all'avvio; i lavori non ne sanno niente, ed e'
+   * apposta: nessuna strada d'uscita di un lavoro puo' dimenticarsi di togliere il segno.
+   *
+   * @return vero se ha scritto qualcosa: c'e' un segno da far salire.
+   */
+  suspend fun reconcileMarkers(): Boolean = markersLock.withLock {
+    val me = settingsStore.current().deviceLabel()
+    val now = System.currentTimeMillis()
+    val running = jobs.runningTranscriptions().toSet()
+    val mine = sessions.markedBy(me).associate { it.id to it.transcribingSince }
+    val plan = TranscribingMarker.plan(running, mine, now)
+    if (plan.isEmpty) return@withLock false
+    db.withTransaction {
+      plan.clear.forEach { sessions.clearMarker(it, me) }
+      plan.mark.forEach { sessions.setMarker(it, me, now) }
+    }
+    true
+  }
+
+  /**
+   * Il dispositivo ha cambiato nome: i segni col nome di prima sono suoi, ma a tutti — anche a lui —
+   * sembrerebbero di un altro. Si tolgono; [reconcileMarkers] li rimette col nome nuovo.
+   */
+  suspend fun releaseMarkersOf(device: String): Boolean = markersLock.withLock {
+    val stale = sessions.markedBy(device)
+    stale.forEach { sessions.clearMarker(it.id, device) }
+    stale.isNotEmpty()
+  }
+
+  /** Un giro alla volta: il cambio di un lavoro e il rinnovo a orologio possono arrivare insieme. */
+  private val markersLock = Mutex()
 
   companion object {
     /** La fase di un lavoro in fila che aspetta il computer di casa. */

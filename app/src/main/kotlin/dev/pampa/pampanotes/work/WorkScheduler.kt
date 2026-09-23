@@ -14,6 +14,7 @@ import androidx.work.workDataOf
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -147,14 +148,41 @@ class WorkScheduler @Inject constructor(
    * sostituisce e parte subito; interrompere un giro a meta' non fa danni, ogni pagina e' una
    * transazione e ogni lotto ha il suo id.
    */
-  fun syncNow(force: Boolean = false) {
+  fun syncNow(force: Boolean = false): UUID {
     val request = OneTimeWorkRequestBuilder<SyncWorker>()
       .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
       .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
       .addTag(TAG_SYNC)
       .build()
     WorkManager.getInstance(context).enqueueUniqueWork(SYNC_NOW, if (force) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP, request)
+    // Con [force] e' il giro che partira' davvero; senza, un `KEEP` puo' aver tenuto quello di prima.
+    return request.id
   }
+
+  /**
+   * Un giro fra qualche secondo, per una cosa che gli altri dispositivi devono sapere presto: il
+   * segno «in trascrizione su» di una sessione ([TranscribingMarkers]).
+   *
+   * Non [syncNow]: il suo `KEEP` lascerebbe cadere la richiesta se un giro sta gia' girando — ed e'
+   * proprio il caso tipico, l'import che chiede un giro e fa partire la trascrizione un attimo dopo
+   * — e quel giro puo' aver letto l'outbox prima del segno. Qui, con un giro al lavoro, se ne
+   * accoda uno dopo di lui; altrimenti si sostituisce quello in attesa, e i cambi ravvicinati (un
+   * lavoro che finisce, il successivo che parte) salgono in un giro solo.
+   */
+  suspend fun syncSoon() {
+    val manager = WorkManager.getInstance(context)
+    val running = manager.getWorkInfosForUniqueWorkFlow(SYNC_SOON).first().any { it.state == WorkInfo.State.RUNNING }
+    val request = OneTimeWorkRequestBuilder<SyncWorker>()
+      .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+      .setInitialDelay(SYNC_SOON_DELAY_SECONDS, TimeUnit.SECONDS)
+      .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
+      .addTag(TAG_SYNC)
+      .build()
+    manager.enqueueUniqueWork(SYNC_SOON, if (running) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.REPLACE, request)
+  }
+
+  /** Un lavoro per id: chi ha chiesto un giro con [syncNow] guarda quando finisce. */
+  fun observeWork(id: UUID): Flow<WorkInfo?> = WorkManager.getInstance(context).getWorkInfoByIdFlow(id)
 
   /** Ogni sei ore, con sei ore di ritardo iniziale: chi accende chiede gia' un giro con [syncNow]. */
   fun setPeriodicSync(enabled: Boolean) {
@@ -226,6 +254,8 @@ class WorkScheduler @Inject constructor(
     private const val FETCH_NOW = "fetch-now"
     private const val ENDPOINT_WATCH = "endpoint-watch"
     private const val SYNC_NOW = "sync-now"
+    private const val SYNC_SOON = "sync-soon"
+    private const val SYNC_SOON_DELAY_SECONDS = 3L
     private const val SYNC_PERIODIC = "sync-periodic"
     private const val WORK_PREFIX = "transcription-queue-"
     private const val ARCHIVE_NOW = "archive-now"

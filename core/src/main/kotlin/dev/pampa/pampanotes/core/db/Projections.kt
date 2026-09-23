@@ -21,6 +21,18 @@ data class NoteRow(
   val untranscribedSessions: Int,
 )
 
+/**
+ * Una sessione con il segno «in trascrizione su»: quello che serve per sapere chi ci sta lavorando
+ * e se la lezione ha gia' una trascrizione. Vedi `TranscribingMarker`.
+ */
+data class SessionMarkerRow(
+  val id: String,
+  val noteId: String,
+  val activeTranscriptId: String?,
+  val transcribingOn: String?,
+  val transcribingSince: Long?,
+)
+
 data class SessionWithParts(
   @Embedded val session: SessionEntity,
   @Relation(parentColumn = "id", entityColumn = "sessionId")

@@ -16,7 +16,7 @@ import javax.inject.Singleton
 /**
  * Il database: entita', DAO e l'indice di ricerca.
  *
- * Versione 7. Le aggiunte di colonna e di tabella passano da `@AutoMigration`; tutto il resto si
+ * Versione 8. Le aggiunte di colonna e di tabella passano da `@AutoMigration`; tutto il resto si
  * scrive a mano in [Migrations] e si prova con `MigrationTest` sugli schemi esportati in
  * `core/schemas`.
  *
@@ -36,6 +36,9 @@ import javax.inject.Singleton
  * mostra la velocita' di tutti i dispositivi, e ogni corsa dice chi l'ha misurata. Le corse di prima
  * restano senza nome finche' il primo giro di sync non le rivendica (`StatsDao.claimUnnamed`), ed e'
  * quell'`UPDATE` a metterle nell'outbox.
+ * 7 -> 8: `transcribingOn` e `transcribingSince` sulle sessioni: chi la sta trascrivendo adesso, e
+ * da quando, perche' gli altri dispositivi non la offrano da trascrivere una seconda volta. Due
+ * colonne che possono essere nulle, e nulle per tutte le righe di prima: nessuno ci stava lavorando.
  */
 @Database(
   entities = [
@@ -58,9 +61,9 @@ import javax.inject.Singleton
     SyncOriginEntity::class,
     TranscriptionRunEntity::class,
   ],
-  version = 7,
+  version = 8,
   exportSchema = true,
-  autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7)],
+  autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7), AutoMigration(from = 7, to = 8)],
 )
 abstract class PampaDatabase : RoomDatabase() {
   abstract fun folders(): FolderDao

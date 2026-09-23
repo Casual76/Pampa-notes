@@ -12,6 +12,8 @@ import dev.pampa.pampanotes.core.repo.NoteRepository
 import dev.pampa.pampanotes.core.repo.SessionRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
+import dev.pampa.pampanotes.core.transcription.NoteTranscribingElsewhere
+import dev.pampa.pampanotes.core.transcription.TranscribingMarker
 import dev.pampa.pampanotes.work.WorkScheduler
 import javax.inject.Inject
 import kotlinx.coroutines.NonCancellable
@@ -19,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -31,8 +34,13 @@ data class FolderUiState(
   val query: String = "",
   /** Tutte le cartelle: dove una nota selezionata puo' andare. */
   val allFolders: List<FolderEntity> = emptyList(),
+  /** Le note con lezioni che un altro dispositivo sta trascrivendo: il badge dice dove, non «da trascrivere». */
+  val elsewhere: Map<String, NoteTranscribingElsewhere> = emptyMap(),
   val loading: Boolean = true,
 ) {
+  /** Le sessioni senza trascrizione che nessun altro dispositivo sta gia' trascrivendo. */
+  fun toTranscribe(row: NoteRow): Int = row.untranscribedSessions - (elsewhere[row.note.id]?.untranscribed ?: 0)
+
   val visibleNotes: List<NoteRow>
     get() = if (query.isBlank()) notes else notes.filter {
       it.note.title.contains(query, ignoreCase = true) || it.note.body.contains(query, ignoreCase = true)
@@ -65,6 +73,7 @@ class FolderViewModel @Inject constructor(
     query,
     path,
     folders.observeAll(),
+    transcription.observeElsewhere().map { TranscribingMarker.byNote(it.values) },
   ) { values ->
     @Suppress("UNCHECKED_CAST")
     FolderUiState(
@@ -74,6 +83,7 @@ class FolderViewModel @Inject constructor(
       notes = values[2] as List<NoteRow>,
       query = values[3] as String,
       allFolders = values[5] as List<FolderEntity>,
+      elsewhere = values[6] as Map<String, NoteTranscribingElsewhere>,
       loading = false,
     )
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FolderUiState())
@@ -129,7 +139,8 @@ class FolderViewModel @Inject constructor(
       ids.forEach { noteId ->
         sessions.byNote(noteId)
           .filter { it.parts.isNotEmpty() && it.session.activeTranscriptId == null }
-          .forEach { transcription.enqueue(it.session.id, provider); any = true }
+          // Quelle che un altro dispositivo sta trascrivendo le salta `enqueue`.
+          .forEach { if (transcription.enqueue(it.session.id, provider) != null) any = true }
       }
       if (any) scheduler.kick(provider.id)
     }

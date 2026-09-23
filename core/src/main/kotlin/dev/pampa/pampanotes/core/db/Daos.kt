@@ -262,6 +262,23 @@ interface SessionDao {
   @Query("DELETE FROM sessions WHERE id = :id")
   suspend fun delete(id: String)
 
+  // --- il segno «in trascrizione su» (vedi TranscribingMarker) ---
+
+  /** Le sessioni con un segno, di chiunque: poche, e la UI le guarda tutte insieme. */
+  @Query("SELECT id, noteId, activeTranscriptId, transcribingOn, transcribingSince FROM sessions WHERE transcribingOn IS NOT NULL")
+  fun observeMarkers(): Flow<List<SessionMarkerRow>>
+
+  @Query("SELECT id, noteId, activeTranscriptId, transcribingOn, transcribingSince FROM sessions WHERE transcribingOn = :device")
+  suspend fun markedBy(device: String): List<SessionMarkerRow>
+
+  /** Senza toccare `updatedAt`: il segno e' uno stato, non una modifica di chi ha scritto la sessione. */
+  @Query("UPDATE sessions SET transcribingOn = :device, transcribingSince = :since WHERE id = :id")
+  suspend fun setMarker(id: String, device: String?, since: Long?)
+
+  /** Toglie il segno solo se e' ancora di [device]: nel frattempo puo' averlo preso un altro. */
+  @Query("UPDATE sessions SET transcribingOn = NULL, transcribingSince = NULL WHERE id = :id AND transcribingOn = :device")
+  suspend fun clearMarker(id: String, device: String): Int
+
   @Query("SELECT COUNT(DISTINCT date) FROM sessions")
   fun observeLessonDays(): Flow<Int>
 
@@ -497,6 +514,17 @@ interface JobDao {
 
   @Query("SELECT * FROM jobs WHERE state = 'FAILED'")
   suspend fun failed(): List<JobEntity>
+
+  /**
+   * Le sessioni che hanno qui una trascrizione al lavoro adesso: partita e non ancora finita. Non
+   * quelle in fila, e non un «annulla» chiesto: sono quelle che il segno «in trascrizione su» dice
+   * agli altri dispositivi (vedi `TranscribingMarker`).
+   */
+  @Query("SELECT DISTINCT sessionId FROM jobs WHERE type = 'TRANSCRIBE' AND state IN ('PREPARING','UPLOADING','TRANSCRIBING','STITCHING') ORDER BY sessionId")
+  fun observeRunningTranscriptions(): Flow<List<String>>
+
+  @Query("SELECT DISTINCT sessionId FROM jobs WHERE type = 'TRANSCRIBE' AND state IN ('PREPARING','UPLOADING','TRANSCRIBING','STITCHING')")
+  suspend fun runningTranscriptions(): List<String>
 
   @Upsert
   suspend fun upsert(job: JobEntity)
