@@ -104,6 +104,41 @@ class CompanionByRefTest {
   }
 
   @Test
+  fun `con Automatico si chiede auto e la scelta del computer torna indietro`() = runBlocking {
+    server.respond { request ->
+      when (request.method) {
+        "POST" -> TinyHttpServer.Response(200, answer.dropLast(1) + ",\"max_minutes_used\":30}")
+        else -> TinyHttpServer.Response(404, "{}")
+      }
+    }
+    var chosen: Int? = null
+    val auto = OpenAiCompatProvider(
+      TranscriptionHttp("test"), server.url(""), CompanionAuth.fixed("segreto"), pollIntervalMs = 100,
+      autoChunks = true, onChunksChosen = { chosen = it },
+    )
+    // Un tetto passato per sbaglio non conta: con Automatico decide il computer.
+    val result = auto.transcribeByRef("abcdef", TranscribeRequest("m"), maxMinutes = 60) {}
+
+    val body = server.requests.first { it.method == "POST" }.text()
+    assertTrue(body.contains("name=\"max_minutes\"\r\n\r\nauto\r\n"))
+    assertEquals(30, result.maxMinutesUsed)
+    assertEquals(30, chosen)
+  }
+
+  @Test
+  fun `senza Automatico la scelta del computer non tocca lo slider`() = runBlocking {
+    server.respond { TinyHttpServer.Response(200, answer.dropLast(1) + ",\"max_minutes_used\":0}") }
+    var chosen: Int? = null
+    val fixed = OpenAiCompatProvider(
+      TranscriptionHttp("test"), server.url(""), CompanionAuth.fixed("segreto"), pollIntervalMs = 100,
+      onChunksChosen = { chosen = it },
+    )
+    fixed.transcribeByRef("abcdef", TranscribeRequest("m"), maxMinutes = 45) {}
+    assertTrue(server.requests.first { it.method == "POST" }.text().contains("name=\"max_minutes\"\r\n\r\n45\r\n"))
+    assertEquals(null, chosen)
+  }
+
+  @Test
   fun `il caricamento chiede al computer di tenere il file e di dividerlo`() = runBlocking {
     server.respond { request ->
       if (request.method == "POST") TinyHttpServer.Response(200, answer) else TinyHttpServer.Response(404, "{}")

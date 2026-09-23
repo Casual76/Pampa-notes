@@ -343,7 +343,10 @@ class TranscriptionRepository @Inject constructor(
             OpenAiCompatProvider.READ_TIMEOUT_MS.toLong(),
             settings.endpointTimeoutMinutes * 60_000L,
           ).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
-          maxChunkMinutes = settings.customMaxMinutes,
+          // Con «Automatico» nessun tetto dal telefono: lo sceglie il computer, e lo racconta.
+          maxChunkMinutes = if (settings.customChunkAuto) null else settings.customMaxMinutes,
+          autoChunks = settings.customChunkAuto,
+          onChunksChosen = { minutes -> settingsStore.setCustomLastMaxMinutes(minutes) },
           // Un elenco per processo: il lavoro lasciato indietro da questo provider lo ferma il
           // provider del lavoro dopo. Vedi [AbandonedCompanionJobs].
           abandoned = dev.pampa.pampanotes.core.transcription.AbandonedCompanionJobs.shared,

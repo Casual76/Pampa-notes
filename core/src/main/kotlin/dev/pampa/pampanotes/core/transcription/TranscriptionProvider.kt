@@ -77,6 +77,8 @@ data class TranscriptResult(
   val archived: Boolean = false,
   /** In quanti pezzi il computer ha diviso la registrazione da se' (`max_minutes`); null se non l'ha detto. */
   val serverChunks: Int? = null,
+  /** Il tetto dei pezzi usato davvero, in minuti (0 = intera): con `max_minutes=auto` e' la scelta del computer. */
+  val maxMinutesUsed: Int? = null,
 )
 
 /** A che punto e' l'invio di un file: la barra di avanzamento ha bisogno di questo, non di uno spinner. */

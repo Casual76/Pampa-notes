@@ -55,6 +55,7 @@ object VerboseJson {
       // I due campi del companion che lavora da se': Groq e un companion vecchio non li mandano.
       archived = root["archived"].asString()?.lowercase() == "true",
       serverChunks = root["chunks"].asDouble()?.toInt()?.takeIf { it > 0 },
+      maxMinutesUsed = root["max_minutes_used"].asDouble()?.toInt()?.takeIf { it >= 0 },
     )
   }
 

@@ -164,6 +164,13 @@ class OpenAiCompatProvider(
    * da un lavoro al successivo. La prova di «Prova» no: non trascrive niente.
    */
   private val abandoned: AbandonedCompanionJobs = AbandonedCompanionJobs(),
+  /**
+   * «Automatico»: la durata dei pezzi la sceglie il computer prima di ogni lezione (`max_minutes=auto`),
+   * e [onChunksChosen] riceve quello che ha scelto, per lo slider delle impostazioni. Un companion che
+   * non conosce «auto» lo legge come «nessun tetto»: la lezione va intera, come prima.
+   */
+  private val autoChunks: Boolean = false,
+  private val onChunksChosen: suspend (Int) -> Unit = {},
 ) : TranscriptionProvider, CompanionTranscription {
 
   /** Normalizzato una volta: chi digita l'indirizzo mette o non mette la barra e il `/v1`. */
@@ -252,7 +259,7 @@ class OpenAiCompatProvider(
   ): TranscriptResult {
     val fields = baseFields(request).apply {
       put(FIELD_SHA, sha256.lowercase())
-      maxMinutes?.let { put(FIELD_MAX_MINUTES, it.toString()) }
+      putMaxMinutes(maxMinutes)
     }
     // Niente da caricare: le domande sullo stato possono partire subito.
     return VerboseJson.parse(
@@ -261,7 +268,18 @@ class OpenAiCompatProvider(
           http.postForm("$base/audio/transcriptions", headers, fields, readTimeoutMillis)
         }
       },
-    )
+    ).also { reportChunks(it) }
+  }
+
+  private fun MutableMap<String, String>.putMaxMinutes(maxMinutes: Int?) {
+    if (autoChunks) put(FIELD_MAX_MINUTES, MAX_MINUTES_AUTO) else maxMinutes?.let { put(FIELD_MAX_MINUTES, it.toString()) }
+  }
+
+  /** La durata scelta dal computer va allo slider; un suo guasto non tocca la trascrizione. */
+  private suspend fun reportChunks(result: TranscriptResult) {
+    val used = result.maxMinutesUsed ?: return
+    if (!autoChunks) return
+    runCatching { onChunksChosen(used) }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
   }
 
   override suspend fun transcribeUpload(
@@ -279,7 +297,7 @@ class OpenAiCompatProvider(
         if (upload.archive) put(FIELD_ARCHIVE, "1")
       }
       upload.name?.takeIf { it.isNotBlank() }?.let { put(FIELD_NAME, it) }
-      upload.maxMinutes?.let { put(FIELD_MAX_MINUTES, it.toString()) }
+      putMaxMinutes(upload.maxMinutes)
     }
     return VerboseJson.parse(
       watching(onRemote, uploadedAlready = false) { headers, uploaded ->
@@ -295,7 +313,7 @@ class OpenAiCompatProvider(
           )
         }
       },
-    )
+    ).also { reportChunks(it) }
   }
 
   private fun baseFields(request: TranscribeRequest): LinkedHashMap<String, String> {
@@ -587,6 +605,7 @@ class OpenAiCompatProvider(
     const val FIELD_ARCHIVE = "archive"
     const val FIELD_NAME = "name"
     const val FIELD_MAX_MINUTES = "max_minutes"
+    const val MAX_MINUTES_AUTO = "auto"
 
     /** `features` di `/health`: un elenco di stringhe. Qualunque altra forma vale «niente». */
     fun parseFeatures(health: JsonElement?): Set<String> {
