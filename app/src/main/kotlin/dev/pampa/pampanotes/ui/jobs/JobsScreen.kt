@@ -75,7 +75,7 @@ fun JobsRoute(
             if (index > 0) FluidListDivider()
             FluidListRow(
               title = row.noteTitle.ifBlank { stringResource(R.string.jobs_unknown_note) },
-              subtitle = row.job.errorCode?.let { jobErrorText(it, row.job.errorMessage) }
+              subtitle = row.job.errorCode?.let { jobErrorText(it, row.job.errorMessage, row.job.provider) }
                 ?: jobStateLabel(row.job.state),
               eyebrow = sessionDateLabel(row.sessionDate),
               tone = when (row.job.state) {

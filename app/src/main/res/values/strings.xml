@@ -330,8 +330,8 @@
     <item quantity="one">una pagina</item>
     <item quantity="other">%d pagine</item>
   </plurals>
-  <string name="home_fun_subject">%1$s è la materia più ascoltata, con %2$s.</string>
-  <string name="home_fun_days">%1$d giorni di lezione, uno diverso dall’altro.</string>
+  <string name="home_fun_subject">%1$s è la materia con più lezioni registrate: %2$s.</string>
+  <string name="home_fun_days">Hai registrato %1$d giorni di lezione.</string>
 
   <!-- Cartelle -->
   <string name="folders_title">Cartelle</string>
@@ -376,7 +376,6 @@
     <item quantity="other">%d parole</item>
   </plurals>
   <string name="notification_failed_title">Trascrizione non riuscita</string>
-  <string name="notification_failed_text">Apri i Lavori per vedere cosa e\u0300 successo.</string>
 
   <!-- Stati di un lavoro -->
   <string name="job_state_queued">In coda</string>
@@ -417,6 +416,7 @@
 
   <!-- Errori -->
   <string name="error_unauthorized">Chiave non valida. Rimettila nelle impostazioni.</string>
+  <string name="error_unauthorized_computer">Il computer di casa non ti riconosce: entra con l\'account in Sincronizzazione, o controlla il codice in Servizi.</string>
   <string name="error_rate_limited">Limite del servizio raggiunto. Riprova fra poco.</string>
   <string name="error_file_too_large">Il pezzo supera il limite del servizio. Prova con pezzi piu\u0300 corti.</string>
   <string name="error_server">Il servizio ha risposto con un errore. Di solito passa da solo.</string>

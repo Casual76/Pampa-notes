@@ -465,7 +465,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
         finishedAt = System.currentTimeMillis(),
       ),
     )
-    AppNotifications.notifyFailed(applicationContext, job.id, error.code)
+    AppNotifications.notifyFailed(applicationContext, job.id, error.code, job.provider)
   }
 
   private fun foregroundInfo(title: String, text: String?, progress: Float?): ForegroundInfo {

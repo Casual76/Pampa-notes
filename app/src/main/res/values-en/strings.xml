@@ -311,8 +311,8 @@
     <item quantity="one">one page</item>
     <item quantity="other">%d pages</item>
   </plurals>
-  <string name="home_fun_subject">%1$s is your most listened subject, with %2$s.</string>
-  <string name="home_fun_days">You sat through %1$d days of lessons.</string>
+  <string name="home_fun_subject">%1$s is the subject with the most recorded lessons: %2$s.</string>
+  <string name="home_fun_days">You recorded %1$d days of lessons.</string>
 
   <string name="folders_title">Folders</string>
   <string name="folders_subtitle">One per subject, one per topic</string>
@@ -353,7 +353,6 @@
     <item quantity="other">%d words</item>
   </plurals>
   <string name="notification_failed_title">Transcription failed</string>
-  <string name="notification_failed_text">Open Jobs to see what happened.</string>
 
   <string name="job_state_queued">Queued</string>
   <string name="job_state_preparing">Preparing</string>
@@ -392,6 +391,7 @@
   <string name="job_phase_stitching">Putting the text together</string>
 
   <string name="error_unauthorized">Invalid key. Set it again in settings.</string>
+  <string name="error_unauthorized_computer">The home computer does not recognise you: sign in under Sync, or check the code under Services.</string>
   <string name="error_rate_limited">Service rate limit reached. Try again shortly.</string>
   <string name="error_file_too_large">The chunk exceeds the service limit. Try shorter chunks.</string>
   <string name="error_server">The service returned an error. It usually clears on its own.</string>

@@ -18,6 +18,7 @@ import dev.pampa.pampanotes.MainActivity
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.db.TranscriptionRunEntity
 import dev.pampa.pampanotes.ui.common.RunText
+import dev.pampa.pampanotes.ui.common.jobErrorRes
 
 /** I canali di notifica: uno per i lavori in corso (silenzioso), uno per gli esiti. */
 object AppNotifications {
@@ -113,12 +114,13 @@ object AppNotifications {
     )
   }
 
-  fun notifyFailed(context: Context, jobId: String, errorCode: String) {
+  fun notifyFailed(context: Context, jobId: String, errorCode: String, provider: String) {
+    // Il perche' sta gia' nella notifica: «apri i Lavori per vedere» costava un giro per leggerlo.
     notify(
       context = context,
       jobId = jobId,
       title = context.getString(R.string.notification_failed_title),
-      text = context.getString(R.string.notification_failed_text),
+      text = context.getString(jobErrorRes(errorCode, provider)),
     )
   }
 

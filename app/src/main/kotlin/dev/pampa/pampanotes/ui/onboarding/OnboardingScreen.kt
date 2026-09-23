@@ -479,7 +479,7 @@ private fun LazyListScope.providerStep(
     (services.endpointCheck as? CheckState.Failed)?.let { failed ->
       item {
         FluidInlineMessage(
-          message = jobErrorText(failed.reason, null),
+          message = jobErrorText(failed.reason, null, TranscriptionProviderId.CUSTOM.id),
           title = stringResource(R.string.settings_endpoint),
           tone = FluidTone.Danger,
         )

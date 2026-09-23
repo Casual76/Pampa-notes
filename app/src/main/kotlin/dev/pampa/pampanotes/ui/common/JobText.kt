@@ -1,5 +1,6 @@
 package dev.pampa.pampanotes.ui.common
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,6 +16,7 @@ import dev.antigravity.fluidengine.ui.fluid.FluidProgressBar
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.db.JobEntity
 import dev.pampa.pampanotes.core.db.JobState
+import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
 import dev.pampa.pampanotes.core.transcription.JobPhase
 import dev.pampa.pampanotes.core.transcription.RemoteStage
 import dev.pampa.pampanotes.work.JobPhaseText
@@ -100,19 +102,26 @@ private fun JobPhase?.isUnmeasuredWork(): Boolean = when (this) {
  * quello che serve sapere e' "vai nelle impostazioni e rimetti la chiave".
  */
 @Composable
-fun jobErrorText(code: String, rawMessage: String?): String = stringResource(
-  when (code) {
-    "unauthorized" -> R.string.error_unauthorized
-    "rate_limited" -> R.string.error_rate_limited
-    "file_too_large" -> R.string.error_file_too_large
-    "server" -> R.string.error_server
-    "network" -> R.string.error_network
-    "timeout" -> R.string.error_timeout
-    "decode" -> R.string.error_decode
-    "parse" -> R.string.error_parse
-    "no_speech" -> R.string.error_no_speech
-    "unknown_model" -> R.string.error_unknown_model
-    "cancelled" -> R.string.job_state_cancelled
-    else -> R.string.error_generic
-  },
-)
+fun jobErrorText(code: String, rawMessage: String?, provider: String? = null): String =
+  stringResource(jobErrorRes(code, provider))
+
+/**
+ * La frase per un codice d'errore, fuori da Compose (la notifica la usa uguale). `unauthorized`
+ * dipende da chi l'ha detto: per Groq e' la chiave, per il computer di casa l'account o il codice —
+ * «rimetti la chiave» a chi non ne ha mai messa una manda a cercare la cosa sbagliata.
+ */
+@StringRes
+fun jobErrorRes(code: String, provider: String? = null): Int = when (code) {
+  "unauthorized" -> if (provider == TranscriptionProviderId.CUSTOM.id) R.string.error_unauthorized_computer else R.string.error_unauthorized
+  "rate_limited" -> R.string.error_rate_limited
+  "file_too_large" -> R.string.error_file_too_large
+  "server" -> R.string.error_server
+  "network" -> R.string.error_network
+  "timeout" -> R.string.error_timeout
+  "decode" -> R.string.error_decode
+  "parse" -> R.string.error_parse
+  "no_speech" -> R.string.error_no_speech
+  "unknown_model" -> R.string.error_unknown_model
+  "cancelled" -> R.string.job_state_cancelled
+  else -> R.string.error_generic
+}

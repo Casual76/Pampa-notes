@@ -374,7 +374,7 @@ private fun LazyListScope.servicesSection(
   (services.endpointCheck as? CheckState.Failed)?.let { failed ->
     item {
       FluidInlineMessage(
-        message = jobErrorText(failed.reason, null),
+        message = jobErrorText(failed.reason, null, TranscriptionProviderId.CUSTOM.id),
         title = stringResource(R.string.settings_endpoint),
         tone = FluidTone.Danger,
       )
@@ -689,7 +689,7 @@ private fun LazyListScope.vramSection(companion: CompanionUiState, viewModel: Se
     }
     is CompanionSaveResult.Failed -> item {
       FluidInlineMessage(
-        message = stringResource(R.string.settings_vram_failed, jobErrorText(result.code, null)),
+        message = stringResource(R.string.settings_vram_failed, jobErrorText(result.code, null, TranscriptionProviderId.CUSTOM.id)),
         title = stringResource(R.string.settings_vram_header),
         tone = FluidTone.Danger,
       )

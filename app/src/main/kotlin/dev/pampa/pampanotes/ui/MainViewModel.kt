@@ -122,6 +122,13 @@ class MainViewModel @Inject constructor(
           settingsStore.setSyncServerUrl(link.url)
           link.token?.let { settingsStore.setSyncToken(it) }
           link.name?.let { settingsStore.setSyncDeviceName(it) }
+          // Con un codice il link dice tutto quello che serve: confermarlo e poi dover trovare
+          // l'interruttore da soli era un collegamento che non collegava niente.
+          if (!link.token.isNullOrBlank()) {
+            settingsStore.setSyncEnabled(true)
+            scheduler.setPeriodicSync(true)
+            scheduler.syncNow(force = true)
+          }
           _linkApplied.emit(IntentOutcome.SyncLinked(link.url))
         }
         is PendingLink.Endpoint -> {
