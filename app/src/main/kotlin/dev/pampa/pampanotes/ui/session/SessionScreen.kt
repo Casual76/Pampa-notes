@@ -70,6 +70,7 @@ import dev.pampa.pampanotes.core.settings.RefinementPreset
 import dev.pampa.pampanotes.player.PlaybackState
 import dev.pampa.pampanotes.ui.common.Formats
 import dev.pampa.pampanotes.ui.common.RunText
+import dev.pampa.pampanotes.ui.common.JobProgressBars
 import dev.pampa.pampanotes.ui.common.jobPhaseText
 import dev.pampa.pampanotes.ui.common.MarkdownText
 import androidx.compose.ui.geometry.Rect
@@ -334,7 +335,7 @@ private fun LazyListScope.jobItem(state: SessionUiState, onCancelJob: (String) -
         text = jobPhaseText(job),
         style = MaterialTheme.typography.titleSmall,
       )
-      FluidProgressBar(progress = { job.progress }, modifier = Modifier.fillMaxWidth())
+      JobProgressBars(job)
       FluidButton(
         text = stringResource(R.string.action_cancel),
         onClick = { onCancelJob(job.id) },
