@@ -333,6 +333,9 @@ class TranscriptionRepository @Inject constructor(
             settings.endpointTimeoutMinutes * 60_000L,
           ).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
           maxChunkMinutes = settings.customMaxMinutes,
+          // Un elenco per processo: il lavoro lasciato indietro da questo provider lo ferma il
+          // provider del lavoro dopo. Vedi [AbandonedCompanionJobs].
+          abandoned = dev.pampa.pampanotes.core.transcription.AbandonedCompanionJobs.shared,
         )
       }
 

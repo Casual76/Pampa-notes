@@ -74,25 +74,27 @@ class WorkScheduler @Inject constructor(
    *
    * Non il `retry` di WorkManager, perche' la sua attesa cresce (esponenziale o lineare, fino a
    * cinque ore) e non si puo' fermare a un tetto: un PC riavviato faceva aspettare minuti una coda
-   * che poteva ripartire subito (vedi `EndpointWait`). Stesso meccanismo di [kickAfter]
-   * (`APPEND_OR_REPLACE` dietro il worker che sta chiudendo), con [waitingSince] che passa da un
-   * tentativo all'altro per sapere da quanto si aspetta. [kick] lo trova in attesa e lo lascia —
-   * il computer tanto non risponde — mentre [wake] lo sostituisce e parte subito.
+   * che poteva ripartire subito (vedi `EndpointWait`). E nemmeno un lavoro della coda accodato
+   * dietro quello che sta chiudendo (`APPEND_OR_REPLACE`), che era la prima versione: ogni
+   * tentativo allungava la catena della coda, una voce al minuto per tutta l'attesa.
+   *
+   * Un timer ([EndpointRetryWorker]) con un nome suo per provider e `REPLACE`: ce n'e' al massimo
+   * uno, rimetterlo sostituisce il precedente, e non tocca mai la coda — che il timer, scadendo,
+   * sveglia con [wake], con le sue regole (mai un worker che sta lavorando).
    */
-  fun retryForEndpoint(providerId: String, delayMillis: Long, waitingSince: Long) {
-    val request = OneTimeWorkRequestBuilder<TranscriptionQueueWorker>()
+  fun retryForEndpoint(providerId: String, delayMillis: Long) {
+    val request = OneTimeWorkRequestBuilder<EndpointRetryWorker>()
       .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-      .setInputData(
-        workDataOf(
-          TranscriptionQueueWorker.KEY_PROVIDER to providerId,
-          TranscriptionQueueWorker.KEY_WAITING_SINCE to waitingSince,
-        ),
-      )
+      .setInputData(workDataOf(TranscriptionQueueWorker.KEY_PROVIDER to providerId))
       .setInitialDelay(delayMillis.coerceAtLeast(0L), TimeUnit.MILLISECONDS)
-      .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
       .addTag(TAG)
       .build()
-    WorkManager.getInstance(context).enqueueUniqueWork(workName(providerId), ExistingWorkPolicy.APPEND_OR_REPLACE, request)
+    WorkManager.getInstance(context).enqueueUniqueWork(retryName(providerId), ExistingWorkPolicy.REPLACE, request)
+  }
+
+  /** Il timer non serve piu': la coda e' partita per conto suo, o e' stata fermata. */
+  fun cancelEndpointRetry(providerId: String) {
+    WorkManager.getInstance(context).cancelUniqueWork(retryName(providerId))
   }
 
   private fun queueRequest(providerId: String) = OneTimeWorkRequestBuilder<TranscriptionQueueWorker>()
@@ -130,6 +132,7 @@ class WorkScheduler @Inject constructor(
   /** Ferma la coda di un provider. I lavori restano dove sono: li rimette in fila l'avvio successivo. */
   fun stop(providerId: String) {
     WorkManager.getInstance(context).cancelUniqueWork(workName(providerId))
+    cancelEndpointRetry(providerId)
   }
 
   /**
@@ -246,6 +249,8 @@ class WorkScheduler @Inject constructor(
 
   private fun workName(providerId: String) = "$WORK_PREFIX$providerId"
 
+  private fun retryName(providerId: String) = "$RETRY_PREFIX$providerId"
+
   companion object {
     const val TAG = "transcription"
     const val TAG_ARCHIVE = "archive"
@@ -256,6 +261,7 @@ class WorkScheduler @Inject constructor(
     private const val SYNC_NOW = "sync-now"
     private const val SYNC_PERIODIC = "sync-periodic"
     private const val WORK_PREFIX = "transcription-queue-"
+    private const val RETRY_PREFIX = "endpoint-retry-"
     private const val ARCHIVE_NOW = "archive-now"
     private const val ARCHIVE_PERIODIC = "archive-periodic"
   }

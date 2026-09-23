@@ -645,10 +645,22 @@ tempo, ma a scatti di un lotto. Il companion registra il lavoro appena le intest
 l'autenticazione, **prima** di leggere il corpo, o una domanda durante l'invio avrebbe un 404; il
 proprietario vede tutti i lavori, un ospite solo i suoi, e gli altri hanno lo stesso 404 di un id
 che non esiste. Un companion vecchio risponde 404 due volte e l'app smette di chiedere senza far
-fallire niente. Ma un lavoro **gia' visto** che torna 404 due volte di fila e' un lavoro che il PC
-ha perso (riavviato), e novanta secondi senza nessuna risposta sono un PC spento: in tutti e due i
-casi `RemoteJobLost` annulla la POST — che altrimenti restava appesa fino al timeout di novanta
-minuti, con la coda ferma dietro — e diventa un errore di rete, che si riprova. La fase finisce nella riga del lavoro in un formato solo, `JobPhase`
+fallire niente — a meno che `/health` dica un `instance`: allora e' un companion nuovo che il lavoro
+non l'ha ancora registrato, e si pazienta un minuto. `RemoteJobLost` annulla la POST — che altrimenti
+restava appesa fino al timeout di novanta minuti, con la coda ferma dietro — e diventa un errore di
+rete, che si riprova; ma **solo se `/health` lo conferma** (quindici secondi di pazienza), perche'
+abbandonare un lavoro buono costa una lezione intera: un lavoro gia' visto che torna 404 due volte
+di fila e' perso se l'`instance` di `/health` (l'id del processo del companion, nuovo a ogni avvio)
+non e' piu' quello del lavoro — con lo stesso `instance` si aspetta la POST, e un companion 1.0.0
+senza `instance` si da' per perso come prima; novanta secondi senza nessuna risposta (misurati con
+l'orologio monotono, non con l'ora del telefono) sono un PC spento solo se tace anche `/health`.
+Quando chiedere del lavoro non serve piu' (finito, dimenticato dallo stesso processo) si passa alla
+**sola sonda**: `/health` ogni dieci secondi finche' la POST non torna. Un `503 restarting` del
+companion che si riavvia si aspetta per il suo `Retry-After` (5–120 s, dieci volte al massimo) senza
+consumare i tentativi del runner. **Il PC non lavora due volte**: una POST abbandonata finisce in
+`AbandonedCompanionJobs` (in memoria, per processo: un processo che muore chiude le connessioni, e il
+companion le ferma da se'), e la POST successiva le manda la `DELETE` **dopo** essersi agganciata —
+il companion unisce le richieste identiche per impronta, e una `DELETE` stacca solo la sua. La fase finisce nella riga del lavoro in un formato solo, `JobPhase`
 (`remote:<stato>:<parte>/<parti>:<percento>…`), e da li' la stessa frase va nella notifica, in Lavori,
 nella nota e nella sessione, con due barre: tutta la lezione (le parti pesate per durata) e il
 passo di adesso, che si anima quando non c'e' niente da misurare.
@@ -693,10 +705,13 @@ Quello che la rende utilizzabile e' che **la coda del computer di casa aspetta i
 `TranscriptionQueueWorker`, prima di ogni lavoro di quella coda, chiede
 `TranscriptionRepository.endpointState()`: `/health` sull'indirizzo scelto, due secondi. Se il
 computer e' configurato ma non risponde, il lavoro resta `QUEUED` con la fase `endpoint` («In
-attesa del computer di casa»), il worker lascia in coda il tentativo dopo a passo fisso
-(`EndpointWait`: un minuto per la prima mezz'ora, poi cinque; `WorkScheduler.retryForEndpoint`) e
-si chiude con `success` — non `retry`, la cui attesa raddoppiava e dopo un riavvio del PC teneva la
-fila ferma minuti con il companion che rispondeva gia' — e accende la sonda `EndpointWatchWorker`,
+attesa del computer di casa»), il worker mette un timer a passo fisso (`EndpointWait`: un minuto per
+la prima mezz'ora, poi cinque) e si chiude con `success` — non `retry`, la cui attesa raddoppiava e
+dopo un riavvio del PC teneva la fila ferma minuti con il companion che rispondeva gia'. Il timer e'
+`EndpointRetryWorker` (`WorkScheduler.retryForEndpoint`, nome unico per provider e `REPLACE`: uno
+solo, che non tocca mai la coda) e scadendo chiama `wake`, solo se la fila ha ancora lavori; da
+quando si aspetta sta in DataStore (`endpointWaitingSince`), azzerato quando il PC risponde. Il
+worker accende anche la sonda `EndpointWatchWorker`,
 ogni quarto d'ora finche' la fila non e' vuota, come rete di sicurezza. Un errore di
 rete a meta' lavoro col computer muto rimette in fila invece di fallire (`requeueForEndpoint`). Chi
 vede il computer rispondere lo sveglia prima: l'archivio dopo un giro andato bene, «Prova» in

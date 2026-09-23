@@ -171,7 +171,7 @@ class TranscriptionHttp(
     val stream = if (code in 200..299) connection.inputStream else connection.errorStream
     val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
     if (code !in 200..299) {
-      throw AiErrorMapper.map(code, connection.headerFields.orEmpty(), text)
+      throw httpFailure(code, connection.headerFields.orEmpty(), text)
     }
     return runCatching { json.parseToJsonElement(text) }.getOrNull()
   }
@@ -181,11 +181,23 @@ class TranscriptionHttp(
     if (t is kotlinx.coroutines.CancellationException) return t
     // Gia' tradotto da [readBody], col corpo della risposta: rileggerlo qui dava un corpo vuoto (lo
     // stream e' gia' consumato) e un «HTTP 404» al posto di quello che il server aveva detto.
-    if (t is dev.antigravity.fluidengine.ai.net.AiError) return t
+    if (t is dev.antigravity.fluidengine.ai.net.AiError || t is TranscriptionError) return t
     val code = runCatching { connection.responseCode }.getOrNull() ?: return AiErrorMapper.wrap(t)
     if (code in 200..299) return AiErrorMapper.wrap(t)
     val body = runCatching { connection.errorStream?.bufferedReader()?.use { it.readText() } }.getOrNull().orEmpty()
-    return AiErrorMapper.map(code, connection.headerFields.orEmpty(), body)
+    return httpFailure(code, connection.headerFields.orEmpty(), body)
+  }
+
+  /**
+   * Da una risposta d'errore all'eccezione. Come l'engine, tranne il 503: l'engine legge il
+   * `Retry-After` solo per il 429, e un 503 del companion che si sta riavviando dice proprio quanto
+   * aspettare. Si tiene in [TranscriptionError.Server.retryAfterSec].
+   */
+  private fun httpFailure(code: Int, headers: Map<String?, List<String>>, body: String): Throwable {
+    val mapped = AiErrorMapper.map(code, headers, body)
+    if (code != 503) return mapped
+    val retryAfter = AiErrorMapper.parseRetryAfter(AiErrorMapper.normalize(headers), null, "")
+    return TranscriptionError.Server(code, mapped.message ?: body, retryAfter)
   }
 
   private fun buildPrelude(

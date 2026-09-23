@@ -22,8 +22,11 @@ sealed class TranscriptionError(message: String, cause: Throwable? = null) : Exc
   /** Il file supera il tetto del servizio. Con il taglio in pezzi non dovrebbe succedere: se succede, il tetto e' sbagliato. */
   class FileTooLarge(val limitBytes: Long?, message: String) : TranscriptionError(message)
 
-  /** 5xx: quasi sempre passa da solo. */
-  class Server(val httpCode: Int, message: String) : TranscriptionError(message)
+  /**
+   * 5xx: quasi sempre passa da solo. [retryAfterSec] e' il `Retry-After` di un 503, quando c'e': il
+   * companion che si sta riavviando lo dice (vedi `OpenAiCompatProvider.restartWait`).
+   */
+  class Server(val httpCode: Int, message: String, val retryAfterSec: Double? = null) : TranscriptionError(message)
 
   class Network(message: String, cause: Throwable? = null) : TranscriptionError(message, cause)
 
