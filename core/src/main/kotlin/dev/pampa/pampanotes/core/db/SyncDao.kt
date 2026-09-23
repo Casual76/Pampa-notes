@@ -108,4 +108,33 @@ interface SyncDao {
 
   @Query("DELETE FROM sync_origin")
   suspend fun clearAllOrigin()
+
+  /** Quante righe hanno una versione concordata con un account: zero vuol dire «mai sincronizzato». */
+  @Query("SELECT COUNT(*) FROM sync_meta")
+  suspend fun metaCount(): Int
+
+  // --- i discendenti, per le cancellazioni remote ---
+  //
+  // Una cartella, una nota o una sessione cancellate altrove si portano via i figli in cascata, e
+  // la cascata non passa dall'applier: i file delle parti e delle fonti si spostano nel cestino
+  // prima, e una modifica fatta qui a un figlio ferma la cancellazione (vedi SyncApplier).
+
+  @Query("SELECT id FROM notes WHERE folderId IN (:folderIds)")
+  suspend fun noteIdsInFolders(folderIds: List<String>): List<String>
+
+  @Query("SELECT id FROM sessions WHERE noteId IN (:noteIds)")
+  suspend fun sessionIdsOfNotes(noteIds: List<String>): List<String>
+
+  @Query("SELECT id FROM transcripts WHERE sessionId IN (:sessionIds)")
+  suspend fun transcriptIdsOfSessions(sessionIds: List<String>): List<String>
+
+  @Query("SELECT * FROM audio_parts WHERE sessionId IN (:sessionIds)")
+  suspend fun partsOfSessions(sessionIds: List<String>): List<AudioPartEntity>
+
+  @Query("SELECT * FROM sources WHERE noteId IN (:noteIds)")
+  suspend fun sourcesOfNotes(noteIds: List<String>): List<SourceEntity>
+
+  /** Le voci «cambiata» di queste righe: i tombstone no, una riga cancellata qui non ha niente da difendere. */
+  @Query("SELECT * FROM sync_outbox WHERE op = 'U' AND tbl = :tbl AND rowId IN (:ids)")
+  suspend fun dirtyAmong(tbl: String, ids: List<String>): List<SyncOutboxEntity>
 }

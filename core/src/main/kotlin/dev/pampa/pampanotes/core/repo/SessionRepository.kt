@@ -3,6 +3,7 @@ package dev.pampa.pampanotes.core.repo
 import dev.pampa.pampanotes.core.db.AudioPartDao
 import dev.pampa.pampanotes.core.db.AudioPartEntity
 import dev.pampa.pampanotes.core.db.NoteDao
+import dev.pampa.pampanotes.core.db.PampaDatabase
 import dev.pampa.pampanotes.core.db.SegmentDao
 import dev.pampa.pampanotes.core.db.SegmentEntity
 import dev.pampa.pampanotes.core.db.SessionDao
@@ -17,6 +18,7 @@ import dev.pampa.pampanotes.core.model.Ids
 import dev.pampa.pampanotes.core.model.wordCount
 import dev.pampa.pampanotes.core.transcription.SessionAssembler
 import dev.pampa.pampanotes.core.transcription.SessionSegment
+import androidx.room.withTransaction
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
@@ -38,6 +40,7 @@ class SessionRepository @Inject constructor(
   private val segments: SegmentDao,
   private val notes: NoteDao,
   private val files: AppFiles,
+  private val db: PampaDatabase,
 ) {
 
   fun observe(sessionId: String): Flow<SessionWithParts?> = sessions.observe(sessionId)
@@ -230,6 +233,13 @@ class SessionRepository @Inject constructor(
    *    modello e lingua li si eredita da dove venivano.
    */
   suspend fun rebuildRaw(sessionId: String) {
+    // In una transazione sola: fra la cancellazione dei segmenti e la loro riscrittura la
+    // trascrizione e' vuota, e un giro di sync (o il lettore) che la legge li' in mezzo manderebbe
+    // agli altri dispositivi una lezione senza tempi. Chi la rilegge vede prima o dopo, mai durante.
+    db.withTransaction { rebuildRawNow(sessionId) }
+  }
+
+  private suspend fun rebuildRawNow(sessionId: String) {
     val ordered = parts.bySession(sessionId)
     val existing = transcripts.rawForSession(sessionId)
     val stored = if (ordered.isEmpty()) emptyList() else segments.byParts(ordered.map { it.id })

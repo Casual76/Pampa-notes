@@ -218,6 +218,8 @@ class PampaSettingsStore(
     prefs[EndpointUpdatedAt] = maxOf(System.currentTimeMillis(), (prefs[EndpointUpdatedAt] ?: 0L) + 1)
     prefs[EndpointDirty] = true
     prefs[EndpointFromAccount] = false
+    // Scritto a mano qui: e' il computer di questo account, qualunque cosa ci fosse prima.
+    prefs.remove(ComputerForeign)
   }
 
   private fun MutablePreferences.setIfChanged(key: Preferences.Key<String>, value: String): Boolean {
@@ -239,6 +241,11 @@ class PampaSettingsStore(
       prefs.remove(SyncDeviceId)
       prefs.remove(SyncTokenBlob)
       prefs.remove(SyncAccount)
+      // Un altro server e' un altro mondo: l'account di la' non e' «un altro account» da rifiutare,
+      // e chi passa dal Worker di prova a quello vero deve arrivarci con tutto.
+      prefs.remove(SyncOwnerId)
+      prefs.remove(SyncForeignOwner)
+      prefs.remove(SyncOrphanAttempts)
     }
     prefs[SyncServerUrl] = next
   }
@@ -272,6 +279,62 @@ class PampaSettingsStore(
     val trimmed = token?.trim()
     if (trimmed.isNullOrEmpty()) prefs.remove(SyncTokenBlob) else prefs[SyncTokenBlob] = syncCipher.encrypt(trimmed)
   }
+
+  // --- sincronizzazione: account, dispositivo, orfani (SyncRepository) ---------------------------
+
+  /**
+   * L'account con cui questo database e' stato sincronizzato l'ultima volta (`status.ownerId`).
+   * Non si toglie all'uscita: e' proprio dopo un'uscita che serve, per accorgersi che chi rientra
+   * e' un altro.
+   */
+  suspend fun syncOwnerId(): String? = store.data.first()[SyncOwnerId]?.takeIf { it.isNotBlank() }
+
+  /** Questo database adesso e' di [ownerId]: e la richiesta di un altro account, se c'era, e' chiusa. */
+  suspend fun setSyncOwnerId(ownerId: String) = edit {
+    it[SyncOwnerId] = ownerId
+    it.remove(SyncForeignOwner)
+  }
+
+  /**
+   * L'account che ha provato a sincronizzare un database che non e' suo, rifiutato. Vuoto quando
+   * non c'e' niente in sospeso: la pagina Sincronizzazione lo guarda per proporre la scelta.
+   */
+  val syncForeignOwner: Flow<String> = store.data.map { it[SyncForeignOwner] ?: "" }
+
+  suspend fun setSyncForeignOwner(ownerId: String) = edit { it[SyncForeignOwner] = ownerId }
+
+  /**
+   * Chi esce dimentica anche l'id del dispositivo: chi rientra — lo stesso account o un altro — e'
+   * un dispositivo nuovo per il server, e `ensureIdentity` riparte da zero. Tenerlo vorrebbe dire
+   * presentarsi al server col nome di una sessione chiusa.
+   */
+  suspend fun forgetSyncDevice() = edit { it.remove(SyncDeviceId) }
+
+  /** Quante volte ogni riga senza padre e' rimasta indietro in fondo a un pull (`tbl/id` -> giri). */
+  suspend fun syncOrphanAttempts(): Map<String, Int> {
+    val raw = store.data.first()[SyncOrphanAttempts] ?: return emptyMap()
+    return runCatching { kotlinx.serialization.json.Json.decodeFromString(ORPHANS, raw) }.getOrDefault(emptyMap())
+  }
+
+  suspend fun setSyncOrphanAttempts(attempts: Map<String, Int>) = edit {
+    if (attempts.isEmpty()) it.remove(SyncOrphanAttempts) else it[SyncOrphanAttempts] = kotlinx.serialization.json.Json.encodeToString(ORPHANS, attempts)
+  }
+
+  /** Il computer che c'e' qui e' arrivato da un altro account: non sale su questo. */
+  suspend fun computerIsForeign(): Boolean = store.data.first()[ComputerForeign] ?: false
+
+  /**
+   * Cambio di account: il computer di prima resta configurato (serve ancora, se il PC e' lo stesso),
+   * ma non e' una modifica di qui da mandare, e non deve salire sull'account nuovo — ha il token del
+   * companion di qualcun altro. Lo sblocca una modifica fatta a mano ([touchEndpoint]) o il computer
+   * dell'account nuovo, quando arriva.
+   */
+  suspend fun disownComputer() = edit {
+    it[EndpointDirty] = false
+    it[ComputerForeign] = true
+  }
+
+  suspend fun clearComputerForeign() = edit { it.remove(ComputerForeign) }
 
   suspend fun setArchiveEnabled(enabled: Boolean) = edit { it[ArchiveEnabled] = enabled }
   suspend fun setArchiveOnlyUnmetered(only: Boolean) = edit { it[ArchiveOnlyUnmetered] = only }
@@ -395,5 +458,12 @@ class PampaSettingsStore(
     val LastExportPreset = stringPreferencesKey("last_export_preset")
     val ExportDefaults = stringPreferencesKey("export_defaults")
     val FakeProvider = booleanPreferencesKey("fake_provider")
+
+    // --- sincronizzazione: account, orfani, computer di un altro account ---
+    val SyncOwnerId = stringPreferencesKey("sync_owner_id")
+    val SyncForeignOwner = stringPreferencesKey("sync_foreign_owner")
+    val SyncOrphanAttempts = stringPreferencesKey("sync_orphan_attempts")
+    val ComputerForeign = booleanPreferencesKey("computer_foreign")
+    val ORPHANS = kotlinx.serialization.serializer<Map<String, Int>>()
   }
 }

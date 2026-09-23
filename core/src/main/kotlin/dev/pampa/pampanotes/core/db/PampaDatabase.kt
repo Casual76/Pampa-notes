@@ -100,6 +100,13 @@ abstract class PampaDatabase : RoomDatabase() {
       // I tag non hanno una riga loro nell'indice: cambiare i tag sporca la nota, che li porta con se'.
       add("CREATE TRIGGER IF NOT EXISTS note_tags_sync_ai AFTER INSERT ON note_tags $guard BEGIN INSERT OR REPLACE INTO sync_outbox (tbl, rowId, op) SELECT 'notes', new.noteId, 'U' WHERE EXISTS (SELECT 1 FROM notes WHERE id = new.noteId); END")
       add("CREATE TRIGGER IF NOT EXISTS note_tags_sync_ad AFTER DELETE ON note_tags $guard BEGIN INSERT OR REPLACE INTO sync_outbox (tbl, rowId, op) SELECT 'notes', old.noteId, 'U' WHERE EXISTS (SELECT 1 FROM notes WHERE id = old.noteId); END")
+      // Lo stesso per i segmenti, che viaggiano dentro la trascrizione: `rebuildRaw` li riscrive
+      // dopo un riordino senza toccare la riga della trascrizione, e senza questi due il cambiamento
+      // restava sul dispositivo. L'`EXISTS` tiene fuori la cascata: quando si cancella la
+      // trascrizione i suoi segmenti se ne vanno dopo di lei, e il suo tombstone non deve diventare
+      // un «cambiata».
+      add("CREATE TRIGGER IF NOT EXISTS segments_sync_ai AFTER INSERT ON segments $guard BEGIN INSERT OR REPLACE INTO sync_outbox (tbl, rowId, op) SELECT 'transcripts', new.transcriptId, 'U' WHERE EXISTS (SELECT 1 FROM transcripts WHERE id = new.transcriptId); END")
+      add("CREATE TRIGGER IF NOT EXISTS segments_sync_ad AFTER DELETE ON segments $guard BEGIN INSERT OR REPLACE INTO sync_outbox (tbl, rowId, op) SELECT 'transcripts', old.transcriptId, 'U' WHERE EXISTS (SELECT 1 FROM transcripts WHERE id = old.transcriptId); END")
     }
 
     /**

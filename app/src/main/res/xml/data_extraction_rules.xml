@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cosa esce dal telefono senza passare dall'app (Android 12 e oltre).
+
+  Backup nel cloud: niente, come con allowBackup="false". Il backup vero e' quello dell'app, uno zip
+  nella cartella scelta dall'utente, e sa quello che fa (niente segreti, database copiato e non vivo).
+
+  Trasferimento da un telefono all'altro (il cavo o il Wi-Fi del primo avvio): allowBackup="false"
+  su Android 12+ non lo ferma. Note, registrazioni e database possono passare — e' il modo in cui un
+  telefono nuovo parte gia' pieno — ma le preferenze no: dentro c'e' l'id del dispositivo per la
+  sincronizzazione. Due telefoni con lo stesso id sono uno solo per il server, che non manda a
+  nessuno dei due quello che scrive l'altro. Senza preferenze, il nuovo si presenta come nuovo, e
+  il database arrivato col trasferimento riparte da zero (SyncRepository.ensureIdentity). I token
+  sono cifrati col Keystore del telefono vecchio e di qua non si aprirebbero comunque.
+-->
+<data-extraction-rules>
+  <cloud-backup>
+    <exclude domain="root" path="." />
+    <exclude domain="file" path="." />
+    <exclude domain="database" path="." />
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="external" path="." />
+  </cloud-backup>
+  <device-transfer>
+    <exclude domain="file" path="datastore/pampa_settings.preferences_pb" />
+  </device-transfer>
+</data-extraction-rules>

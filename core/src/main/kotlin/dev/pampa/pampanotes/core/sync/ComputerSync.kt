@@ -30,6 +30,15 @@ class ComputerSync @Inject constructor(
       dirty = settings.endpointDirty,
     )
     val remote = api.getComputer(baseUrl, token)
+    // Il computer qui e' quello dell'account di prima (cambio di account, SyncRepository): non sale
+    // su questo — porterebbe il token del companion di qualcun altro — ma quello di questo account,
+    // se c'e', scende e prende il suo posto, qualunque sia la data.
+    if (settingsStore.computerIsForeign()) {
+      if (remote == null || !remote.hasEndpoint) return Outcome.UNCHANGED
+      val applied = apply(remote)
+      if (applied) settingsStore.clearComputerForeign()
+      return if (applied) Outcome.APPLIED else Outcome.UNCHANGED
+    }
     return when (ComputerMerge.decide(local, remote)) {
       ComputerMerge.Decision.NOTHING -> Outcome.UNCHANGED
       ComputerMerge.Decision.APPLY -> if (apply(requireNotNull(remote))) Outcome.APPLIED else Outcome.UNCHANGED
