@@ -489,6 +489,7 @@ private fun LazyListScope.transcriptionSection(settings: PampaSettings, companio
       }
     }
   }
+  item { FluidSectionFootnote(text = stringResource(R.string.settings_custom_chunk_on_computer)) }
 
   if (settings.hasEndpoint) vramSection(companion, viewModel)
 

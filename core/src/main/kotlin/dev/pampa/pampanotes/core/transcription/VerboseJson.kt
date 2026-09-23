@@ -52,6 +52,9 @@ object VerboseJson {
       segments = segments,
       language = language,
       durationMs = durationMs ?: segments.maxOfOrNull { it.endMs },
+      // I due campi del companion che lavora da se': Groq e un companion vecchio non li mandano.
+      archived = root["archived"].asString()?.lowercase() == "true",
+      serverChunks = root["chunks"].asDouble()?.toInt()?.takeIf { it > 0 },
     )
   }
 

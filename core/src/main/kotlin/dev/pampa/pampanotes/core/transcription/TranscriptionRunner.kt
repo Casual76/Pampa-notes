@@ -126,6 +126,18 @@ class ProgressScale(durationsMs: List<Long>, private val uploadShare: Float) {
   /** Il lavoro del servizio, dopo il caricamento. */
   fun remote(progress: RemoteProgress): Float = uploadShare + (1f - uploadShare) * remoteFraction(progress)
 
+  /**
+   * Una parte che il computer di casa fa da se': i pezzi, se ce ne sono, li conta lui
+   * ([RemoteProgress.chunk]); [byRef] toglie la quota del caricamento, che per un file preso
+   * dall'archivio non c'e' — la barra parte dal lavoro del computer.
+   */
+  fun onComputer(progress: RemoteProgress, byRef: Boolean): Float {
+    val upload = if (byRef) 0f else uploadShare
+    val count = (progress.chunks ?: 1).coerceAtLeast(1)
+    val done = ((progress.chunk ?: 1) - 1).coerceIn(0, count - 1)
+    return upload + (1f - upload) * ((done + remoteFraction(progress)) / count)
+  }
+
   companion object {
     const val MAX = 0.98f
     const val PREPARE_SHARE = 0.1f
@@ -239,6 +251,10 @@ class TranscriptionRunner @Inject constructor(
 
   /**
    * @param jobId la cartella di lavoro, e la chiave con cui si riprende.
+   * @param archiveUploads col computer di casa che lavora da se': una registrazione caricata per
+   *   trascriverla resta anche nel suo archivio (l'archivio acceso nelle impostazioni). Cosi' non
+   *   sale due volte, una per la trascrizione e una per l'archivio.
+   * @param onArchived il computer ha tenuto la parte: chi chiama la segna archiviata.
    * @param onProgress chiamato spesso: la UI ci disegna sopra una barra.
    */
   suspend fun transcribeSession(
@@ -247,6 +263,8 @@ class TranscriptionRunner @Inject constructor(
     provider: TranscriptionProvider,
     request: TranscribeRequest,
     chunkMinutes: Int,
+    archiveUploads: Boolean = false,
+    onArchived: suspend (partId: String, at: Long) -> Unit = { _, _ -> },
     onProgress: (TranscriptionProgress) -> Unit = {},
   ): SessionTranscript {
     require(parts.isNotEmpty()) { "una sessione senza parti non si trascrive" }
@@ -257,10 +275,20 @@ class TranscriptionRunner @Inject constructor(
       durationsMs = sorted.map { it.durationMs },
       uploadShare = if (provider.id == GroqWhisperProvider.ID) ProgressScale.GROQ_UPLOAD_SHARE else ProgressScale.COMPUTER_UPLOAD_SHARE,
     )
+    // Una domanda per lavoro: il computer sa lavorare da se'? Se si', il telefono non decodifica e
+    // non taglia niente, e una registrazione che il computer ha gia' non la scarica ne' la rimanda.
+    val computer = computerMode(provider, archiveUploads)
 
     sorted.forEachIndexed { index, part ->
       currentCoroutineContext().ensureActive()
       val partDir = File(workDir, "part-${part.id}").apply { mkdirs() }
+      computer?.let { mode ->
+        transcribeOnComputer(part, index, parts.size, partDir, mode, request, scale, onArchived, onProgress)
+          ?.let {
+            transcripts += it
+            return@forEachIndexed
+          }
+      }
       transcripts += transcribePart(
         part = part,
         partIndex = index,
@@ -280,6 +308,162 @@ class TranscriptionRunner @Inject constructor(
 
     onProgress(TranscriptionProgress.Stitching)
     return SessionAssembler.assemble(transcripts, provider.id, request.model)
+  }
+
+  /** Il computer di casa che lavora da se', per un lavoro: con cosa, e fino a quando. */
+  private class ComputerMode(
+    val companion: CompanionTranscription,
+    /** Il tetto dei pezzi, che il computer applica da se' (`customMaxMinutes`). */
+    val maxMinutes: Int?,
+    /** Tenere nell'archivio del computer quello che si carica. */
+    val archive: Boolean,
+  ) {
+    /**
+     * Il computer ha detto che chi chiede e' un ospite: da li' in poi, per questo lavoro, la strada
+     * di sempre. Chiederlo a ogni parte vorrebbe dire caricare ogni registrazione due volte.
+     */
+    @Volatile var ownerOnly = false
+  }
+
+  /**
+   * Null quando il computer non sa lavorare da se' — un companion vecchio, un altro server
+   * compatibile OpenAI, Groq — e allora si fa tutto come prima. Con un tetto ai pezzi serve anche
+   * che il computer sappia dividere: se non lo sa, il tetto lo applica il telefono, come prima.
+   */
+  private suspend fun computerMode(provider: TranscriptionProvider, archiveUploads: Boolean): ComputerMode? {
+    if (provider.id != OpenAiCompatProvider.ID) return null
+    val companion = provider as? CompanionTranscription ?: return null
+    val features = companion.features()
+    if (CompanionFeatures.BY_REF !in features) return null
+    val maxMinutes = provider.capabilities.maxChunkMinutes
+    if (maxMinutes != null && CompanionFeatures.SERVER_CHUNKS !in features) return null
+    return ComputerMode(companion, maxMinutes, archiveUploads && CompanionFeatures.ARCHIVE_UPLOAD in features)
+  }
+
+  /**
+   * Una parte fatta dal computer di casa da se': il telefono non decodifica e non taglia niente.
+   *
+   * 1. Se il computer ce l'ha gia' (`archivedAt > 0`) gli si dice quale, per impronta, e non si
+   *    scarica niente: prima il telefono la prendeva dal PC per rimandargliela.
+   * 2. Se non ce l'ha (o dice di non averla piu') e il file e' qui, si carica, e il computer la
+   *    tiene nel suo archivio se l'archivio e' acceso: non salira' una seconda volta.
+   * 3. Se non e' ne' qui ne' sul computer, non c'e' niente da trascrivere, e lo si dice.
+   *
+   * @return null quando la parte va per la strada di sempre: chi chiede e' un ospite, oppure non c'e'
+   *   un'impronta con cui chiederla, oppure il file non e' qui e il computer non l'ha mai avuto —
+   *   e allora l'errore lo da' la strada di sempre, con le sue parole.
+   */
+  private suspend fun transcribeOnComputer(
+    part: AudioPartEntity,
+    partIndex: Int,
+    partCount: Int,
+    workDir: File,
+    mode: ComputerMode,
+    request: TranscribeRequest,
+    scale: ProgressScale,
+    onArchived: suspend (partId: String, at: Long) -> Unit,
+    onProgress: (TranscriptionProgress) -> Unit,
+  ): PartTranscript? {
+    if (mode.ownerOnly) return null
+    val spec = ChunkSpec(0, 0, part.durationMs)
+    val stored = computerFile(workDir)
+
+    fun finished(chunks: Int) = onProgress(
+      TranscriptionProgress.Transcribing(chunks, chunks, partIndex, partCount, scale.overall(partIndex, 1f)),
+    )
+
+    fun transcript(chunk: ChunkTranscript, language: String?): PartTranscript {
+      val stitched = TranscriptStitcher.stitch(listOf(chunk))
+      return PartTranscript(part, stitched.text, stitched.segments, language)
+    }
+
+    // Gia' fatta in un giro precedente: si rilegge e si va avanti.
+    readStored(stored)?.let {
+      finished(1)
+      return transcript(it, request.language)
+    }
+
+    // Il computer racconta i suoi pezzi da se': sono quelli che la frase deve dire.
+    fun remote(byRef: Boolean): (RemoteProgress) -> Unit = { remote ->
+      onProgress(
+        TranscriptionProgress.Remote(
+          remote, remote.chunk ?: 1, remote.chunks ?: 1, partIndex, partCount,
+          scale.overall(partIndex, scale.onComputer(remote, byRef)),
+        ),
+      )
+    }
+    val uploading: (UploadProgress) -> Unit = { progress ->
+      onProgress(
+        TranscriptionProgress.Uploading(
+          1, 1, progress.fraction, partIndex, partCount,
+          scale.overall(partIndex, scale.uploading(progress.fraction)),
+        ),
+      )
+    }
+
+    val source = files.audioFile(part.fileName)
+    val sha = part.sha256.trim().lowercase().takeIf { it.isNotEmpty() }
+    val result = try {
+      var answer: TranscriptResult? = null
+      if (part.archivedAt > 0 && sha != null) {
+        // Niente da caricare: la barra parte dal lavoro del computer, e la fase lo dice subito.
+        onProgress(
+          TranscriptionProgress.Remote(RemoteProgress(RemoteStage.RECEIVED), 1, 1, partIndex, partCount, scale.overall(partIndex, 0f)),
+        )
+        answer = try {
+          withRetry(waitingReporter(onProgress)) {
+            mode.companion.transcribeByRef(sha, request, mode.maxMinutes, remote(byRef = true))
+          }
+        } catch (missing: TranscriptionError.BlobMissing) {
+          // La riga dice archiviata, il computer dice di no (un archivio rifatto, un altro PC): se il
+          // file e' qui si carica; se non e' neanche qui, non e' da nessuna parte.
+          if (!source.exists()) {
+            throw TranscriptionError.Decode("«${part.originalName}» non e' su questo dispositivo, e il computer di casa non ce l'ha piu'")
+          }
+          null
+        }
+      }
+      answer ?: run {
+        if (!source.exists()) return null
+        withRetry(waitingReporter(onProgress)) {
+          mode.companion.transcribeUpload(
+            file = source,
+            mime = part.mime,
+            request = request,
+            upload = CompanionUpload(sha, part.originalName, mode.archive && sha != null, mode.maxMinutes),
+            onProgress = uploading,
+            onRemote = remote(byRef = false),
+          )
+        }
+      }
+    } catch (guest: TranscriptionError.OwnerOnly) {
+      mode.ownerOnly = true
+      return null
+    } catch (silent: TranscriptionError.NoSpeech) {
+      // Come sulla strada di sempre: una parte muta e' una parte vuota, non una lezione fallita.
+      writeStored(stored, ChunkTranscript(spec, emptyList()))
+      finished(1)
+      return PartTranscript(part, "", emptyList(), null)
+    }
+
+    // Il computer l'ha tenuta: e' archiviata adesso, e l'archivio non la rimandera'. Un errore qui
+    // non tocca la trascrizione, che e' gia' arrivata: al peggio l'archivio la manda un'altra volta,
+    // e il computer risponde che ce l'ha gia'.
+    if (result.archived && part.archivedAt <= 0) {
+      try {
+        onArchived(part.id, System.currentTimeMillis())
+      } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
+      } catch (ignored: Exception) {
+        Unit
+      }
+    }
+
+    val chunk = ChunkTranscript(spec, result.segments)
+    writeStored(stored, chunk)
+    finished(result.serverChunks ?: 1)
+    // Un server che risponde col solo testo, senza segmenti: mezzo risultato vale piu' di niente.
+    return transcript(chunk, result.language).let { if (it.text.isBlank()) it.copy(text = result.text.trim()) else it }
   }
 
   private suspend fun transcribePart(
@@ -456,12 +640,14 @@ class TranscriptionRunner @Inject constructor(
     onWaiting: (seconds: Int) -> Unit,
     onRemote: (RemoteProgress) -> Unit,
     onProgress: (UploadProgress) -> Unit,
-  ): TranscriptResult {
+  ): TranscriptResult = withRetry(onWaiting) { provider.transcribe(file, mime, request, onProgress, onRemote) }
+
+  private suspend fun withRetry(onWaiting: (seconds: Int) -> Unit, send: suspend () -> TranscriptResult): TranscriptResult {
     var attempt = 0
     while (true) {
       currentCoroutineContext().ensureActive()
       try {
-        return provider.transcribe(file, mime, request, onProgress, onRemote)
+        return send()
       } catch (error: Throwable) {
         // Una cancellazione resta una cancellazione: tradotta in un errore, il worker la scambiava
         // per un guasto e segnava fallito un lavoro che l'utente — o il sistema — aveva fermato.
@@ -497,8 +683,17 @@ class TranscriptionRunner @Inject constructor(
 
   private fun chunkFile(workDir: File, index: Int) = File(workDir, "chunk-$index.json")
 
-  private fun readStoredChunk(workDir: File, spec: ChunkSpec): ChunkTranscript? {
-    val file = chunkFile(workDir, spec.index)
+  /**
+   * Il risultato di una parte fatta dal computer da se'. Un nome suo e non `chunk-0.json`: un
+   * tentativo precedente sulla strada di sempre puo' aver lasciato li' il primo pezzo, che non e'
+   * la parte intera.
+   */
+  private fun computerFile(workDir: File) = File(workDir, "computer.json")
+
+  private fun readStoredChunk(workDir: File, spec: ChunkSpec): ChunkTranscript? =
+    readStored(chunkFile(workDir, spec.index))
+
+  private fun readStored(file: File): ChunkTranscript? {
     if (!file.exists()) return null
     return runCatching {
       val stored = json.decodeFromString<StoredChunk>(file.readText())
@@ -518,7 +713,9 @@ class TranscriptionRunner @Inject constructor(
     }.getOrNull()
   }
 
-  private fun writeStoredChunk(workDir: File, chunk: ChunkTranscript) {
+  private fun writeStoredChunk(workDir: File, chunk: ChunkTranscript) = writeStored(chunkFile(workDir, chunk.spec.index), chunk)
+
+  private fun writeStored(file: File, chunk: ChunkTranscript) {
     val stored = StoredChunk(
       index = chunk.spec.index,
       startMs = chunk.spec.startMs,
@@ -534,7 +731,7 @@ class TranscriptionRunner @Inject constructor(
         )
       },
     )
-    runCatching { chunkFile(workDir, chunk.spec.index).writeText(json.encodeToString(stored)) }
+    runCatching { file.writeText(json.encodeToString(stored)) }
   }
 
   /** Butta tutto quello che il lavoro aveva lasciato in giro: si chiama quando finisce, in bene o in male. */

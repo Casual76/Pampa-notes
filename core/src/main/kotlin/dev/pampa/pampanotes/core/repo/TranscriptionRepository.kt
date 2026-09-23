@@ -262,6 +262,12 @@ class TranscriptionRepository @Inject constructor(
   suspend fun partsOf(sessionId: String) = parts.bySession(sessionId)
 
   /**
+   * Il computer di casa ha tenuto nel suo archivio la registrazione caricata per trascriverla: e'
+   * archiviata come se l'avesse mandata l'archivio, che cosi' non la rimanda.
+   */
+  suspend fun markPartArchived(partId: String, at: Long) = parts.markArchived(partId, at)
+
+  /**
    * Il vocabolario da passare al modello.
    *
    * Il titolo della nota e le sue parole entrano nel prompt di Whisper insieme al vocabolario delle

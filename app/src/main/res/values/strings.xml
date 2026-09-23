@@ -1197,4 +1197,6 @@
   <string name="home_stats_pace_detail">parole al minuto, in «%1$s»</string>
   <string name="home_stats_longest_label">La lezione più lunga</string>
   <string name="home_stats_longest_detail">«%1$s» · %2$s</string>
+  <!-- apptx -->
+  <string name="settings_custom_chunk_on_computer">Con il companion aggiornato i pezzi li taglia il computer, e una registrazione che ha già nel suo archivio non passa dal telefono: qui non si decodifica niente.</string>
 </resources>

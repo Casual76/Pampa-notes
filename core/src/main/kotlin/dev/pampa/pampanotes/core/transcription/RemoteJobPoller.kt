@@ -83,6 +83,9 @@ internal class RemoteJobPoller(
         etaSeconds = obj.number("eta_s"),
         device = obj.string("device"),
         detail = obj.string("detail"),
+        // Solo quando la registrazione la divide il computer (`max_minutes`).
+        chunk = (obj["chunk"] as? JsonPrimitive)?.intOrNull?.takeIf { it > 0 },
+        chunks = (obj["chunks"] as? JsonPrimitive)?.intOrNull?.takeIf { it > 0 },
       )
     }
 

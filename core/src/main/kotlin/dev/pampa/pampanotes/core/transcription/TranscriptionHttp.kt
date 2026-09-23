@@ -84,6 +84,31 @@ class TranscriptionHttp(
     } }
   }
 
+  /**
+   * Lo stesso multipart di [postAudio], ma senza file: i soli campi. E' la trascrizione per
+   * riferimento, in cui il computer di casa il file ce l'ha gia' e il telefono manda solo l'impronta.
+   * Multipart e non JSON perche' dall'altra parte e' lo stesso endpoint, che legge un form.
+   */
+  suspend fun postForm(
+    url: String,
+    headers: Map<String, String>,
+    fields: Map<String, String>,
+    readTimeoutMillis: Int,
+  ): JsonElement? {
+    val boundary = "----PampaNotes${System.nanoTime().toString(16)}"
+    val body = (fieldsPart(boundary, fields) + "--$boundary--\r\n").toByteArray(Charsets.UTF_8)
+    val connection = open(url, "POST", headers, readTimeoutMillis.coerceAtLeast(1))
+    return connection.cancellable(io) {
+      exchange(connection) {
+        connection.doOutput = true
+        connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+        connection.setFixedLengthStreamingMode(body.size)
+        connection.outputStream.use { it.write(body) }
+        readBody(connection)
+      }
+    }
+  }
+
   suspend fun getJson(url: String, headers: Map<String, String>, readTimeoutMillis: Int = 15_000): JsonElement? {
     val connection = open(url, "GET", headers, readTimeoutMillis)
     return connection.cancellable(io) { exchange(connection) { readBody(connection) } }
@@ -143,6 +168,9 @@ class TranscriptionHttp(
   /** Un errore durante la scrittura puo' nascondere una risposta gia' pronta: 413 arriva cosi'. */
   private fun mapHttp(connection: HttpURLConnection, t: Throwable): Throwable {
     if (t is kotlinx.coroutines.CancellationException) return t
+    // Gia' tradotto da [readBody], col corpo della risposta: rileggerlo qui dava un corpo vuoto (lo
+    // stream e' gia' consumato) e un «HTTP 404» al posto di quello che il server aveva detto.
+    if (t is dev.antigravity.fluidengine.ai.net.AiError) return t
     val code = runCatching { connection.responseCode }.getOrNull() ?: return AiErrorMapper.wrap(t)
     if (code in 200..299) return AiErrorMapper.wrap(t)
     val body = runCatching { connection.errorStream?.bufferedReader()?.use { it.readText() } }.getOrNull().orEmpty()
@@ -155,17 +183,20 @@ class TranscriptionHttp(
     fileName: String,
     fileMime: String,
   ): ByteArray {
-    val builder = StringBuilder()
-    fields.forEach { (name, value) ->
-      builder.append("--").append(boundary).append("\r\n")
-      builder.append("Content-Disposition: form-data; name=\"").append(name).append("\"\r\n\r\n")
-      builder.append(value).append("\r\n")
-    }
+    val builder = StringBuilder(fieldsPart(boundary, fields))
     builder.append("--").append(boundary).append("\r\n")
     builder.append("Content-Disposition: form-data; name=\"file\"; filename=\"")
       .append(sanitize(fileName)).append("\"\r\n")
     builder.append("Content-Type: ").append(fileMime).append("\r\n\r\n")
     return builder.toString().toByteArray(Charsets.UTF_8)
+  }
+
+  private fun fieldsPart(boundary: String, fields: Map<String, String>): String = buildString {
+    fields.forEach { (name, value) ->
+      append("--").append(boundary).append("\r\n")
+      append("Content-Disposition: form-data; name=\"").append(name).append("\"\r\n\r\n")
+      append(value).append("\r\n")
+    }
   }
 
   /** Un nome con virgolette o a capo dentro rompe l'intestazione multipart, e certi server lo rifiutano. */
