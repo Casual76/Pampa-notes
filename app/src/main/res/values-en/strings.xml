@@ -547,7 +547,7 @@
   <string name="export_sources">Original documents</string>
   <string name="export_audio">Recordings</string>
   <string name="export_share">Share</string>
-  <string name="export_save_folder">Save to a folder</string>
+  <string name="export_save_folder">Save</string>
   <string name="export_save_in">Save to %1$s</string>
   <string name="export_change_folder">Change folder</string>
   <string name="export_running">Writing the pack</string>
@@ -944,7 +944,7 @@
     <item quantity="one">One file is only on this device</item>
     <item quantity="other">%1$d files are only on this device</item>
   </plurals>
-  <string name="storage_verdict_risk_message">%1$s in total: if you lose the phone, you lose them. %2$s</string>
+  <string name="storage_verdict_risk_message">%1$s in total: if you lose the phone, no other copy is left. %2$s</string>
   <string name="storage_verdict_safe_title">Everything is safe</string>
   <string name="storage_verdict_safe_message">Every recording and original on this device is also on your home computer.</string>
   <string name="storage_outlook_no_computer">No home computer is connected: set one up in Settings → Services.</string>

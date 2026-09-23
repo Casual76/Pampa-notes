@@ -25,6 +25,7 @@ import dev.antigravity.fluidengine.ui.fluid.FluidSwitch
 import dev.antigravity.fluidengine.ui.theme.FluidListDivider
 import dev.antigravity.fluidengine.ui.theme.FluidListGroup
 import dev.antigravity.fluidengine.ui.theme.FluidListRow
+import dev.antigravity.fluidengine.ui.fluid.fluidRowPressable
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.export.ExportFormat
 import dev.pampa.pampanotes.core.export.ExportOptions
@@ -63,7 +64,9 @@ fun ExportChoices(
           title = target.label(),
           subtitle = target.detail(),
           leading = { SelectionMark(selected = options.target == target) },
-          onClick = { if (options.target != target) onOptions(options.withTarget(target)) },
+          // Il tocco sulla riga, non `onClick`: l'engine ci metterebbe la freccia «›», che promette
+          // una pagina dietro, e questa e' una scelta che si fa qui.
+          modifier = Modifier.fluidRowPressable(onClick = { if (options.target != target) onOptions(options.withTarget(target)) }),
         )
       }
     }
@@ -80,7 +83,7 @@ fun ExportChoices(
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
           )
         },
-        onClick = { expanded = !expanded },
+        modifier = Modifier.fluidRowPressable(onClick = { expanded = !expanded }),
       )
     }
 
@@ -167,7 +170,7 @@ private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChang
   FluidListRow(
     title = title,
     subtitle = subtitle,
-    onClick = { onChange(!checked) },
+    modifier = Modifier.fluidRowPressable(onClick = { onChange(!checked) }),
     badge = { FluidSwitch(checked = checked, onCheckedChange = onChange) },
   )
 }
