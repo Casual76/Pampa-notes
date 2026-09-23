@@ -787,6 +787,16 @@ una lezione solo se il lavoro e' sparito **e** l'`instance` e' cambiato (riavvio
 secondi di silenzio non risponde neanche `/health`; prima di rimandarla annulla quella vecchia. Il
 registro dei lavori non dimentica mai uno in corso, neanche oltre il limite o dopo sei ore.
 
+**Il companion non taglia chi e' a meta'.** `AuthGate` conta le richieste in volo dall'ingresso
+all'ultimo byte della risposta (`inflight` in `/health`): il riavvio da se' aspetta che non ci sia
+niente in coda, al lavoro o in volo — caricamenti e `PUT /v1/files` compresi — e chiude uvicorn con
+garbo; il tray e l'installer usano lo stesso «fermo». L'installer ferma il companion prima di
+toccare la venv. Modello, calcolo e lotto si fissano all'inizio del lavoro per tutti i pezzi, il
+precaricamento passa dalla stessa fila, l'allineatore resta uno (quello della lingua di adesso) e
+la sua memoria non finisce fra «gli altri». `config.json` si scrive tutto o niente, sotto un
+lucchetto. Un file dell'archivio aperto (un download, ffmpeg) non si cancella: la riga resta e la
+`DELETE` risponde 503 `file_in_use`.
+
 Il raffinamento passa da `ChatProvider.complete` di `engine-ai` su Groq. Non è un assistente: è un
 passaggio che toglie intercalari e rimette la punteggiatura senza cambiare il contenuto.
 
