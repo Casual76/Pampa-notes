@@ -840,4 +840,18 @@
   <string name="onboarding_next">Next</string>
   <string name="onboarding_start">Start</string>
   <string name="onboarding_skip">Skip</string>
+  <string name="onboarding_account_title">Used Pampa Notes before?</string>
+  <string name="onboarding_account_detail">Sign in with the same Google account as your other devices: notes, folders, transcripts and the home computer come along by themselves. First time here? Just go on.</string>
+  <string name="onboarding_account_signin">Sign in with Google</string>
+  <string name="onboarding_account_welcome">Welcome back, %1$s</string>
+  <plurals name="onboarding_account_notes">
+    <item quantity="one">%d note arrived</item>
+    <item quantity="other">%d notes arrived</item>
+  </plurals>
+  <string name="onboarding_account_empty">No notes yet: the account is ready, and so is this device.</string>
+  <string name="onboarding_account_background">Your notes are arriving in the background.</string>
+  <string name="onboarding_account_later">You can do this later too, in Settings, under Sync.</string>
+  <string name="onboarding_computer_from_account">Home computer: %1$s</string>
+  <string name="onboarding_computer_from_account_detail">Linked from your account</string>
+  <string name="onboarding_computer_change">Change</string>
 </resources>

@@ -7,6 +7,7 @@
  */
 
 import { bearerOf, loginWithGoogle, logout, ownerOf, Unauthorized, type Env } from "./auth";
+import { deleteComputer, getComputer, putComputer, type PutComputerBody } from "./computer";
 import { createGuest, listGuests, reportUsage, revokeGuest, verifyGuest } from "./guests";
 import { pageHtml } from "./page";
 import {
@@ -85,6 +86,24 @@ export default {
         if (path.length === 3 && method === "DELETE") {
           const revoked = await revokeGuest(env, ownerId, path[2]);
           return revoked ? json({ revoked: true }) : json({ error: "ospite inesistente" }, { status: 404 });
+        }
+      }
+
+      // --- il computer di casa, che segue l'account ---
+      if (url.pathname === "/v1/account/computer") {
+        const ownerId = await ownerOf(request, env);
+        if (method === "GET") {
+          const computer = await getComputer(env, ownerId);
+          return computer ? json(computer, { headers: { "cache-control": "no-store" } }) : json({ error: "nessun computer" }, { status: 404 });
+        }
+        if (method === "PUT") {
+          const body = (await request.json().catch(() => null)) as PutComputerBody | null;
+          if (!body || typeof body !== "object") return json({ error: "corpo mancante" }, { status: 400 });
+          return json(await putComputer(env, ownerId, body), { headers: { "cache-control": "no-store" } });
+        }
+        if (method === "DELETE") {
+          const removed = await deleteComputer(env, ownerId);
+          return removed ? json({ removed: true }) : json({ error: "nessun computer" }, { status: 404 });
         }
       }
 

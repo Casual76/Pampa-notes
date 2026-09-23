@@ -7,7 +7,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.CloudUpload
+import androidx.compose.material.icons.rounded.Computer
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.runtime.Composable
@@ -15,9 +17,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -56,21 +60,45 @@ import dev.pampa.pampanotes.ui.common.jobErrorText
  *
  * Non insegna l'interfaccia: dice cosa fa l'app, da dove arrivano gli appunti, chi li trascrive e
  * dove finisce il backup. Un tutorial dei gesti si dimentica prima di essere finito.
+ *
+ * Con l'accesso Google compilato c'e' un passo in piu', subito dopo il benvenuto: chi ha gia'
+ * usato l'app entra con l'account, e i passi dopo trovano gia' scritto quello che l'account sa —
+ * il computer di casa per primo.
  */
 @Composable
 fun OnboardingRoute(
   onDone: () -> Unit,
   viewModel: SettingsViewModel = hiltViewModel(),
+  onboarding: OnboardingViewModel = hiltViewModel(),
 ) {
-  var step by remember { mutableIntStateOf(0) }
+  // Il passo dell'account c'e' solo se questa build sa entrare con Google: senza client ID non
+  // c'e' niente da proporre, e un passo che dice «non disponibile» e' un passo in piu' e basta.
+  val steps = remember { OnboardingStep.entries.filter { it != OnboardingStep.ACCOUNT || onboarding.accountAvailable } }
+  // Salvabile: una rotazione a meta' del primo avvio non deve rimandare al benvenuto.
+  var index by rememberSaveable { mutableIntStateOf(0) }
+  val step = steps[index.coerceIn(0, steps.lastIndex)]
   val settings by viewModel.settings.collectAsStateWithLifecycle()
   val services by viewModel.services.collectAsStateWithLifecycle()
+  val account by onboarding.account.collectAsStateWithLifecycle()
   val context = LocalContext.current
 
   var groqKey by remember { mutableStateOf("") }
   var endpointUrl by remember(settings.endpointUrl) { mutableStateOf(settings.endpointUrl) }
   var endpointRemoteUrl by remember(settings.endpointRemoteUrl) { mutableStateOf(settings.endpointRemoteUrl) }
   var endpointToken by remember { mutableStateOf("") }
+  // Il computer arrivato dall'account si mostra come una riga; «Cambia» riapre i campi.
+  var editingEndpoint by rememberSaveable { mutableStateOf(false) }
+  val endpointFromAccount = settings.endpointFromAccount && settings.hasEndpoint && !editingEndpoint
+
+  // Quello che e' scritto nei campi vale anche senza «Prova»: andare avanti e' gia' un «si', questo».
+  val leaveStep = {
+    if (step == OnboardingStep.PROVIDER && !endpointFromAccount &&
+      (endpointUrl != settings.endpointUrl || endpointRemoteUrl != settings.endpointRemoteUrl || endpointToken.isNotBlank())
+    ) {
+      viewModel.saveEndpoint(endpointUrl, endpointRemoteUrl, endpointToken)
+      endpointToken = ""
+    }
+  }
 
   val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
     if (uri != null) {
@@ -84,19 +112,29 @@ fun OnboardingRoute(
     }
   }
 
-  val last = 3
+  val last = steps.lastIndex
   FluidScreen(
-    title = stringResource(titleOf(step)),
-    subtitle = stringResource(R.string.onboarding_step, step + 1, last + 1),
-    onBack = if (step > 0) ({ step-- }) else null,
+    title = stringResource(step.title),
+    subtitle = stringResource(R.string.onboarding_step, index + 1, last + 1),
+    onBack = if (index > 0) ({ leaveStep(); index-- }) else null,
     ambient = FluidAmbient(tone = FluidHeroTone.PrimaryToSecondary, motif = FluidHeroMotif.Glow),
   ) {
     when (step) {
-      0 -> welcomeStep()
-      1 -> importStep(settings.autoTranscribeOnImport, viewModel::setAutoTranscribe)
-      2 -> providerStep(
+      OnboardingStep.WELCOME -> welcomeStep()
+      OnboardingStep.ACCOUNT -> accountStep(
+        account = settings.syncAccount,
+        state = account,
+        computer = settings.endpointName.ifBlank { settings.endpointUrl.ifBlank { settings.endpointRemoteUrl } }
+          .takeIf { settings.endpointFromAccount && settings.hasEndpoint },
+        onSignIn = { onboarding.signIn(context) },
+      )
+      OnboardingStep.IMPORT -> importStep(settings.autoTranscribeOnImport, viewModel::setAutoTranscribe)
+      OnboardingStep.PROVIDER -> providerStep(
         provider = settings.preferredProvider,
         onProvider = viewModel::setPreferredProvider,
+        accountComputer = settings.endpointName.ifBlank { settings.endpointUrl.ifBlank { settings.endpointRemoteUrl } }
+          .takeIf { endpointFromAccount },
+        onChangeComputer = { editingEndpoint = true },
         services = services,
         groqKey = groqKey,
         onGroqKeyChange = { groqKey = it },
@@ -118,7 +156,7 @@ fun OnboardingRoute(
         },
       )
 
-      else -> backupStep(
+      OnboardingStep.BACKUP -> backupStep(
         folderChosen = settings.backupFolderUri.isNotBlank(),
         onPickFolder = { pickFolder.launch(null) },
       )
@@ -126,17 +164,26 @@ fun OnboardingRoute(
 
     item {
       FluidButton(
-        text = stringResource(if (step == last) R.string.onboarding_start else R.string.onboarding_next),
-        onClick = { if (step == last) onDone() else step++ },
+        text = stringResource(if (index == last) R.string.onboarding_start else R.string.onboarding_next),
+        onClick = {
+          leaveStep()
+          if (index == last) onDone() else index++
+        },
+        // Mentre l'accesso lavora si aspetta: andare avanti a meta' vorrebbe dire arrivare a «Chi
+        // trascrive» un attimo prima che il computer dell'account ci arrivi.
+        enabled = !account.busy,
         fillWidth = true,
         modifier = Modifier.fillMaxWidth(),
       )
     }
-    if (step < last) {
+    if (index < last) {
       item {
         FluidButton(
           text = stringResource(R.string.onboarding_skip),
-          onClick = onDone,
+          onClick = {
+            leaveStep()
+            onDone()
+          },
           style = FluidButtonStyle.Plain,
           fillWidth = true,
           modifier = Modifier.fillMaxWidth(),
@@ -146,11 +193,67 @@ fun OnboardingRoute(
   }
 }
 
-private fun titleOf(step: Int): Int = when (step) {
-  0 -> R.string.onboarding_welcome_title
-  1 -> R.string.onboarding_import_title
-  2 -> R.string.onboarding_provider_title
-  else -> R.string.onboarding_backup_title
+/** I passi, nell'ordine. L'account viene subito dopo il benvenuto: quello che porta cambia i passi dopo. */
+private enum class OnboardingStep(val title: Int) {
+  WELCOME(R.string.onboarding_welcome_title),
+  ACCOUNT(R.string.onboarding_account_title),
+  IMPORT(R.string.onboarding_import_title),
+  PROVIDER(R.string.onboarding_provider_title),
+  BACKUP(R.string.onboarding_backup_title),
+}
+
+/**
+ * «Hai gia' usato Pampa Notes?» Chi ha gia' un account entra, e trova le sue cose e il computer
+ * di casa; chi e' nuovo va avanti. Non e' una registrazione: non si crea niente che non si possa
+ * fare dopo, da Sincronizzazione.
+ */
+private fun LazyListScope.accountStep(
+  account: String,
+  state: AccountStepState,
+  /** Nome o indirizzo del computer arrivato dall'account, se e' arrivato. */
+  computer: String?,
+  onSignIn: () -> Unit,
+) {
+  item { FluidSectionFootnote(text = stringResource(R.string.onboarding_account_detail)) }
+  if (account.isNotBlank() && !state.busy) {
+    item {
+      FluidListGroup {
+        FluidListRow(
+          title = stringResource(R.string.onboarding_account_welcome, account),
+          subtitle = when (val notes = state.notes) {
+            null -> stringResource(R.string.onboarding_account_background)
+            0 -> stringResource(R.string.onboarding_account_empty)
+            else -> pluralStringResource(R.plurals.onboarding_account_notes, notes, notes)
+          },
+          tone = FluidTone.Success,
+          leading = { RowIcon(Icons.Rounded.CheckCircle, FluidTone.Success) },
+        )
+        if (computer != null) {
+          FluidListDivider()
+          FluidListRow(
+            title = stringResource(R.string.onboarding_computer_from_account, computer),
+            subtitle = stringResource(R.string.onboarding_computer_from_account_detail),
+            leading = { RowIcon(Icons.Rounded.Computer, FluidTone.Info) },
+          )
+        }
+      }
+    }
+  } else {
+    item {
+      FluidButton(
+        text = stringResource(R.string.onboarding_account_signin),
+        onClick = onSignIn,
+        enabled = !state.busy,
+        loading = state.busy,
+        fillWidth = true,
+        modifier = Modifier.fillMaxWidth(),
+      )
+    }
+  }
+  state.error?.let { error ->
+    item { FluidInlineMessage(title = stringResource(R.string.sync_google_failed), message = error, tone = FluidTone.Danger) }
+  }
+  item { FluidSectionFootnote(text = stringResource(R.string.onboarding_account_later)) }
 }
 
 private fun LazyListScope.welcomeStep() {
@@ -216,6 +319,9 @@ private fun LazyListScope.importStep(
 private fun LazyListScope.providerStep(
   provider: TranscriptionProviderId,
   onProvider: (TranscriptionProviderId) -> Unit,
+  /** Nome o indirizzo del computer arrivato dall'account e non ancora toccato qui; `null` altrimenti. */
+  accountComputer: String?,
+  onChangeComputer: () -> Unit,
   services: ServicesUiState,
   groqKey: String,
   onGroqKeyChange: (String) -> Unit,
@@ -283,6 +389,28 @@ private fun LazyListScope.providerStep(
           tone = FluidTone.Danger,
         )
       }
+    }
+  } else if (accountComputer != null) {
+    // Arrivato con l'accesso: indirizzi e token ci sono gia', e chiederli di nuovo sarebbe chiedere
+    // proprio quello che l'account doveva risparmiare.
+    item {
+      FluidListGroup {
+        FluidListRow(
+          title = stringResource(R.string.onboarding_computer_from_account, accountComputer),
+          subtitle = stringResource(R.string.onboarding_computer_from_account_detail),
+          tone = FluidTone.Success,
+          leading = { RowIcon(Icons.Rounded.Computer, FluidTone.Success) },
+        )
+      }
+    }
+    item {
+      FluidButton(
+        text = stringResource(R.string.onboarding_computer_change),
+        onClick = onChangeComputer,
+        style = FluidButtonStyle.Plain,
+        fillWidth = true,
+        modifier = Modifier.fillMaxWidth(),
+      )
     }
   } else {
     item { FluidSectionFootnote(text = stringResource(R.string.onboarding_server_detail)) }

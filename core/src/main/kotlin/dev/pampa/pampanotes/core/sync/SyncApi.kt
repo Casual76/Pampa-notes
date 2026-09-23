@@ -51,6 +51,28 @@ class SyncApi(
     call(baseUrl, "/v1/guests/${URLEncoder.encode(guestId, "UTF-8")}", token, "DELETE", null, Revoked.serializer())
   }
 
+  // --- il computer di casa dell'account ---
+
+  /** `null` se l'account non ne ha uno: un 404 qui e' una risposta, non un errore. */
+  suspend fun getComputer(baseUrl: String, token: String): AccountComputer? = try {
+    call(baseUrl, COMPUTER_PATH, token, "GET", null, AccountComputer.serializer())
+  } catch (missing: SyncException) {
+    if (missing.code == 404) null else throw missing
+  }
+
+  suspend fun putComputer(baseUrl: String, token: String, request: PutComputerRequest): PutComputerResponse =
+    call(baseUrl, COMPUTER_PATH, token, "PUT", SyncCodec.json.encodeToString(PutComputerRequest.serializer(), request), PutComputerResponse.serializer())
+
+  /** @return se c'era qualcosa da togliere. */
+  suspend fun deleteComputer(baseUrl: String, token: String): Boolean = try {
+    call(baseUrl, COMPUTER_PATH, token, "DELETE", null, Removed.serializer()).removed
+  } catch (missing: SyncException) {
+    if (missing.code == 404) false else throw missing
+  }
+
+  @kotlinx.serialization.Serializable
+  private data class Removed(val removed: Boolean = false)
+
   @kotlinx.serialization.Serializable
   private data class GuestName(val name: String)
 
@@ -98,6 +120,7 @@ class SyncApi(
   companion object {
     const val CONNECT_TIMEOUT_MS = 15_000
     const val READ_TIMEOUT_MS = 60_000
+    private const val COMPUTER_PATH = "/v1/account/computer"
 
     /** `https://pampa.qualcuno.workers.dev/` o `192.168.1.10:8787`: tutte e due devono andare. */
     fun normalize(raw: String): String {
