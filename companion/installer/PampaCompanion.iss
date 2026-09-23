@@ -41,6 +41,12 @@ DisableDirPage=yes
 DisableProgramGroupPage=yes
 DefaultGroupName=Pampa Notes companion
 PrivilegesRequired=lowest
+; Inno 6.5 accende RedirectionGuard, che i processi figli ereditano: blocca l'attraversamento delle
+; giunzioni create senza amministratore, e uv ne crea una (cpython-3.11 -> cpython-3.11.x) appena
+; scaricato Python — «Failed to create Python minor version link directory», os error 448. La
+; protezione serve agli installer che girano da amministratore; questo installa per utente, senza
+; privilegi, in una cartella dell'utente.
+RedirectionGuard=no
 OutputBaseFilename=PampaCompanionSetup-{#AppVersion}
 Compression=lzma2/max
 SolidCompression=yes
