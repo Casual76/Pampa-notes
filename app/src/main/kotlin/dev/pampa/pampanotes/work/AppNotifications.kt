@@ -1,13 +1,17 @@
 package dev.pampa.pampanotes.work
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import androidx.work.WorkManager
 import java.util.UUID
 import dev.pampa.pampanotes.MainActivity
@@ -121,6 +125,10 @@ object AppNotifications {
   private fun notify(context: Context, jobId: String, title: String, text: String) {
     val manager = NotificationManagerCompat.from(context)
     if (!manager.areNotificationsEnabled()) return
+    // Da Android 13 il permesso e' a parte: senza, notify non fa niente e lint lo segnala.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+      ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+    ) return
     val notification = NotificationCompat.Builder(context, CHANNEL_RESULTS)
       .setContentTitle(title)
       .setContentText(text)
