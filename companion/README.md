@@ -55,6 +55,66 @@ deve entrare nella tua rete Tailscale (pannello di Tailscale → *Users → Invi
 Una cucitura che non si fa è una cucitura che non può sbagliare: sul computer il file non viene mai
 diviso, quindi non c'è un confine in cui una frase possa perdersi.
 
+## Installazione per tutti
+
+Per chi non vuole sapere cos'è un ambiente Python: un setup, `PampaCompanionSetup-<versione>.exe`,
+dalle [release del repository](https://github.com/Casual76/Pampa-notes/releases) (quelle che
+cominciano per `companion-v`). Nell'app, *Impostazioni → Servizi → Installa sul tuo computer* porta lì,
+e «Condividi il link» lo manda al PC per mail o chat.
+
+Serve Windows 10 o 11, una decina di GB liberi e internet per la prima installazione. Una scheda
+NVIDIA è consigliata: senza, il companion trascrive sul processore con un modello più piccolo, e
+un'ora di lezione chiede mezz'ora.
+
+Cosa succede, in una finestra con la barra e con **«Riprova»** se la rete cade:
+
+1. il setup copia il companion in `%LOCALAPPDATA%\Programs\PampaCompanion`, senza chiedere
+   l'amministratore, e con [uv](https://github.com/astral-sh/uv) prepara un Python 3.11 tutto suo
+   dentro quella cartella (nessun altro Python del computer viene toccato);
+2. `installer\install.py` controlla Windows e spazio, legge la scheda con `nvidia-smi`, installa
+   WhisperX e poi torch per la scheda (cu128, o cu126 con un driver prima del 570, o per il
+   processore), mette ffmpeg in `bin\` se il computer non ce l'ha;
+3. sceglie il modello con la stessa stima della VRAM del server ([Quanta VRAM](#quanta-vram)) e lo
+   **scarica subito**, con la barra, insieme all'allineamento per l'italiano;
+4. scrive `config.json` (modello, porta, e un **codice** per i dispositivi senza account); apre la porta
+   nel firewall — qui Windows chiede il permesso, una volta; accende l'avvio automatico; dice se c'è
+   Tailscale e con quale indirizzo;
+5. avvia l'icona accanto all'orologio e apre nel browser **la pagina del QR** (`/pair/start`, che
+   risponde solo a questo computer).
+
+**L'account senza scrivere niente.** Il QR porta alla pagina del server, e finché il computer non è
+di nessuno il bottone «Apri Pampa Notes» porta anche un **codice di collegamento**, che vale dieci
+minuti e una volta sola. Se nell'app sei entrato con Google, dopo «Collega» l'app manda codice,
+account e indirizzo dell'indice a `POST /v1/pair/bind`, col suo biglietto per il PC; il companion
+chiede all'indice se il biglietto è davvero di quell'account e solo allora scrive `owner` e
+`index_url` in `config.json`. Da lì entra chi ha il tuo account. Un computer già di un account non
+cambia padrone dall'app (risponde 409): si cambia a mano in `config.json`. Il collegamento si fa solo
+dalla rete di casa o da Tailscale.
+
+**Gli aggiornamenti.** Una volta al giorno l'icona guarda l'ultima release `companion-v*`; se è più
+nuova di `VERSION`, il menu dice **«Aggiorna a vX»**: scarica il setup e lo lancia in modalità
+aggiornamento (`/SILENT /UPGRADE`). L'ambiente e il modello restano, cambia il codice, e l'icona si
+riavvia solo quando `/health` dice che non sta trascrivendo e non c'è nessuno in fila. Solo per chi
+ha installato col setup: una cartella preparata a mano con `installa.cmd` non riceve un setup che
+installerebbe altrove.
+
+Dal menu Start: **«Collega il telefono (QR)»**, **«ripara»** (rifà i passi, tenendo quello che c'è) e
+la disinstallazione, che toglie ambiente, collegamento di avvio e regola del firewall, e chiede se
+tenere l'archivio dei file e `config.json`. Il modello resta nella cache di Hugging Face
+(`%USERPROFILE%\.cache\huggingface`), condivisa con altri programmi: si cancella a mano.
+
+Per costruire il setup (Inno Setup 6 e uv sul computer di chi lo costruisce; lo script dice come
+averli se mancano):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File installer\build-installer.ps1
+```
+
+La versione sta solo in `VERSION`. Le prove: `.venv\Scripts\python.exe -m unittest discover -s installer -p "test_*.py"`.
+Per provare `install.py` senza toccare il companion vero, su una copia della cartella (il codice
+deve già stare in `--app`, come dopo il setup):
+`python C:\prova\installer\install.py --app C:\prova --port 8799 --no-autostart --no-firewall`.
+
 ## Tre doppi clic
 
 Nella cartella ci sono tre file da aprire com'è, senza terminale:

@@ -19,11 +19,20 @@ data class EndpointLink(
   val token: String?,
   /** L'indirizzo che vale fuori casa (Tailscale), quando il server ce l'ha. */
   val remoteUrl: String? = null,
+  /**
+   * Il codice per far diventare il computer del proprio account (`bind=`), che il companion mette
+   * nel link finche' non e' di nessuno. Vale dieci minuti e una volta sola, e senza un biglietto
+   * dell'account non apre niente: vedi `CompanionBinder`.
+   */
+  val bindCode: String? = null,
 ) {
 
   companion object {
     const val SCHEME = "pampanotes"
     const val HOST = "endpoint"
+
+    /** Come `secrets.token_urlsafe` del companion: lettere, cifre, `-` e `_`. */
+    private val BIND_CODE = Regex("^[A-Za-z0-9_-]{16,64}$")
 
     fun parse(raw: String?): EndpointLink? {
       val uri = runCatching { URI(raw?.trim().orEmpty()) }.getOrNull() ?: return null
@@ -41,7 +50,9 @@ data class EndpointLink(
       val url = httpUrl(params["url"]) ?: return null
       val token = params["token"]?.trim()?.takeIf { it.isNotEmpty() }
       // Un indirizzo di fuori che non e' http si ignora e basta: quello di casa c'e', il link vale.
-      return EndpointLink(url = url, token = token, remoteUrl = httpUrl(params["remote"]))
+      // Un codice che non ha la forma di quelli del companion si ignora, come un indirizzo non http.
+      val bind = params["bind"]?.trim()?.takeIf { BIND_CODE.matches(it) }
+      return EndpointLink(url = url, token = token, remoteUrl = httpUrl(params["remote"]), bindCode = bind)
     }
 
     private fun httpUrl(raw: String?): String? {

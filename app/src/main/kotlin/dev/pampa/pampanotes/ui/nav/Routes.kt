@@ -75,7 +75,10 @@ enum class SettingsSection(val route: String) {
   SYNC("sync"),
   SHARES("shares"),
   GUESTS("guests"),
-  ABOUT("about");
+  ABOUT("about"),
+
+  /** «Installa sul tuo computer»: non sta nell'indice, ci si arriva da Servizi. */
+  INSTALL("install");
 
   companion object {
     fun fromRoute(route: String?): SettingsSection? = entries.firstOrNull { it.route == route }

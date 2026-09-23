@@ -64,6 +64,7 @@ from starlette.datastructures import Headers
 import uvicorn
 
 import archive
+import binding
 import config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
@@ -978,6 +979,7 @@ def health() -> dict[str, Any]:
     alignment = dict(STATE["alignment"])
     return {
         "status": "ok",
+        "version": config.version(),
         "model": STATE["name"],
         "device": STATE["device"],
         "compute_type": STATE["compute_type"],
@@ -1064,6 +1066,12 @@ def pair(request: Request, k: str = "") -> Any:
 
     port = STATE["port"]
     link = pairing_link(port)
+    # Finche' il computer non e' di nessuno, il link porta anche il codice per diventarlo: l'app che
+    # e' entrata con Google lo usa dopo «Collega» (vedi binding.py). Non e' il token: vale dieci
+    # minuti, una volta sola, e senza un biglietto dell'account non apre niente.
+    unbound = not STATE["owner"]
+    if unbound:
+        link += "&bind=" + binding.CODES.current()
     intent = "intent://endpoint?" + link.split("?", 1)[1] + "#Intent;scheme=pampanotes;package=dev.pampa.pampanotes;end"
     lan = local_addresses(port)
     remote = tailscale_address(port)
@@ -1071,6 +1079,8 @@ def pair(request: Request, k: str = "") -> Any:
     rows += f"<p><b>Fuori casa:</b> {escape(remote)}</p>" if remote else "<p><b>Fuori casa:</b> installa Tailscale sul computer</p>"
     if STATE["index_url"] and STATE["owner"]:
         rows += "<p><b>Accesso:</b> entra nell'app con l'account Google di questo computer.</p>"
+    elif unbound:
+        rows += "<p><b>Accesso:</b> se nell'app sei entrato con Google, toccando il bottone il computer diventa del tuo account.</p>"
     if STATE["token"]:
         rows += "<p><b>Codice:</b> quello scritto in <code>config.json</code>, per i dispositivi senza account.</p>"
     body = f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
@@ -1161,7 +1171,7 @@ def identify(authorization: str) -> Caller:
 
 
 # Le uniche strade aperte a tutti: «ci sei?» e la pagina del QR, che ha la sua chiave.
-OPEN_PATHS = frozenset({"/health", "/pair"})
+OPEN_PATHS = frozenset({"/health", "/pair", *binding.OPEN_PATHS})
 TRANSCRIPTIONS_PATH = "/v1/audio/transcriptions"
 
 
@@ -1301,6 +1311,38 @@ def report_usage(token: str, seconds: float) -> None:
 
 
 app.include_router(archive.build_router(require_owner))
+
+
+def _bound(owner: str, index_url: str) -> None:
+    """Il computer e' appena diventato di un account (binding.py): da adesso i biglietti valgono."""
+    STATE["owner"] = owner
+    STATE["index_url"] = index_url
+    GUEST_CACHE.clear()
+    TICKET_CACHE.clear()
+
+
+def _home_addresses() -> tuple[str | None, str | None]:
+    lan = local_addresses(STATE["port"])
+    return (lan[0] if lan else None), tailscale_address(STATE["port"])
+
+
+def _pair_url() -> str:
+    """L'indirizzo del QR, con una chiave nuova: quello che `/pair/start` mostra sullo schermo."""
+    lan, _ = _home_addresses()
+    base = lan or "http://localhost:%d" % STATE["port"]
+    return f"{base}/pair?k={new_pairing_key()}"
+
+
+app.include_router(
+    binding.build_router(
+        STATE,
+        pair_url=_pair_url,
+        addresses=_home_addresses,
+        persist=lambda values: config.set_values(values, STATE["config_path"]),
+        on_bound=_bound,
+        user_agent=WORKER_USER_AGENT,
+    )
+)
 
 
 @app.post("/v1/admin/unload")

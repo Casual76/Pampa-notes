@@ -16,12 +16,24 @@
 
 .PARAMETER Port
   La porta del server. Deve essere la stessa che usa avvia.cmd (di suo, 8765).
+
+.PARAMETER NoPause
+  Non aspetta Invio alla fine: lo passa l'installer, che la lancia senza una console da leggere.
+
+.PARAMETER Remove
+  Toglie la regola invece di crearla: lo usa la disinstallazione.
 #>
 [CmdletBinding()]
-param([int]$Port = 8765)
+param([int]$Port = 8765, [switch]$NoPause, [switch]$Remove)
 
 $ErrorActionPreference = "Stop"
 $name = "Pampa Notes $Port"
+
+if ($Remove) {
+  Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+  Write-Host "  Regola «$name» tolta."
+  exit 0
+}
 
 Write-Host ""
 $profiles = Get-NetConnectionProfile -ErrorAction SilentlyContinue
@@ -55,4 +67,4 @@ Write-Host ""
 Write-Host "  Per toglierla, un giorno:" -ForegroundColor DarkGray
 Write-Host "     Remove-NetFirewallRule -DisplayName '$name'" -ForegroundColor DarkGray
 Write-Host ""
-Read-Host "  Premi Invio per chiudere"
+if (-not $NoPause) { Read-Host "  Premi Invio per chiudere" }

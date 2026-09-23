@@ -1262,4 +1262,39 @@
   <string name="home_resume_listened">ascoltata %1$s</string>
   <string name="home_resume_play">Riprendi</string>
   <string name="home_resume_hide">Nascondi</string>
+
+  <!-- installer -->
+  <string name="install_title">Installa sul tuo computer</string>
+  <string name="install_row_detail">Il companion per Windows: scaricalo sul PC, installalo, inquadra il QR</string>
+  <string name="install_onboarding_row">Non ce l\'hai ancora? Installalo sul tuo computer</string>
+  <string name="install_intro">Il tuo computer trascrive le lezioni al posto di Groq: niente limiti di dimensione, i file restano in casa, e le parole si allineano una per una.</string>
+  <string name="install_needs_header">Cosa serve</string>
+  <string name="install_need_windows">Windows 10 o 11</string>
+  <string name="install_need_windows_detail">Il setup non chiede l\'amministratore, tranne una volta per il firewall.</string>
+  <string name="install_need_gpu">Una scheda NVIDIA, consigliata</string>
+  <string name="install_need_gpu_detail">Senza, trascrive sul processore con un modello più piccolo: un\'ora di lezione può chiedere mezz\'ora.</string>
+  <string name="install_need_space">Una decina di GB liberi</string>
+  <string name="install_need_space_detail">Per Python, WhisperX e il modello, che si scaricano durante l\'installazione.</string>
+  <string name="install_steps_header">Tre passi</string>
+  <string name="install_step_download">1. Scarica sul PC</string>
+  <string name="install_step_download_detail">Apri il link sul computer, o mandatelo con «Condividi il link»: il file è PampaCompanionSetup.</string>
+  <string name="install_step_install">2. Installa</string>
+  <string name="install_step_install_detail">Doppio clic, poi segui la finestra: scarica WhisperX e il modello (qualche GB), con «Riprova» se la rete cade.</string>
+  <string name="install_step_scan">3. Inquadra il QR</string>
+  <string name="install_step_scan_detail">Alla fine il computer mostra un QR: inquadralo col telefono e tocca «Collega». Se qui sei entrato con Google, il computer diventa del tuo account.</string>
+  <string name="install_share">Condividi il link</string>
+  <string name="install_share_subject">Pampa Notes: il companion per Windows</string>
+  <string name="install_share_text">Il companion di Pampa Notes per Windows (PampaCompanionSetup): %1$s</string>
+  <string name="install_open">Apri</string>
+  <string name="install_link_footnote">Il link: %1$s</string>
+  <string name="install_search_header">Cerca il computer</string>
+  <string name="install_search_detail">Prova l\'indirizzo che il QR ha scritto: prima quello di casa, poi Tailscale.</string>
+  <string name="install_search_none">Nessun computer collegato: finita l\'installazione, inquadra il QR.</string>
+  <string name="install_search">Cerca il computer</string>
+  <string name="install_search_found">Il computer risponde</string>
+  <string name="install_search_missing">Il computer non risponde</string>
+  <string name="install_bind_bound">%1$s. Il computer adesso è del tuo account (%2$s): entra chi ha fatto l\'accesso con Google.</string>
+  <string name="install_bind_not_signed_in">%1$s. Il computer non è ancora di nessuno: entra con Google nell\'app e rifai il QR, oppure scrivi il codice che il computer mostra.</string>
+  <string name="install_bind_taken">%1$s. Il computer è già di un altro account: si cambia nel suo config.json.</string>
+  <string name="install_bind_failed">%1$s. Il computer non ha accettato l\'account: rifai il QR dal computer e riprova.</string>
 </resources>

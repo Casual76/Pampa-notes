@@ -11,6 +11,8 @@ import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.settings.SyncLink
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
+import dev.pampa.pampanotes.core.transcription.CompanionBindResult
+import dev.pampa.pampanotes.core.transcription.CompanionBinder
 import dev.pampa.pampanotes.ui.importing.ImportRequest
 import dev.pampa.pampanotes.ui.importing.ImportRequestHolder
 import javax.inject.Inject
@@ -25,6 +27,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
@@ -32,6 +35,7 @@ class MainViewModel @Inject constructor(
   private val settingsStore: PampaSettingsStore,
   private val importRequests: ImportRequestHolder,
   private val scheduler: dev.pampa.pampanotes.work.WorkScheduler,
+  private val binder: CompanionBinder,
 ) : ViewModel() {
 
   /** Il tema. Parte dai default compilati: un fotogramma con l'accento giusto vale piu' di uno vuoto. */
@@ -140,10 +144,17 @@ class MainViewModel @Inject constructor(
           // dentro farebbe rispondere 401 a un server che non ne vuole.
           settingsStore.setEndpointToken(link.token)
           settingsStore.setPreferredProvider(TranscriptionProviderId.CUSTOM)
+          // Un computer appena installato non e' di nessuno, e il suo QR porta il codice per
+          // diventare di questo account: senza, risponderebbe 401 al biglietto a ogni lezione.
+          // Qualche secondo al massimo (il companion chiede all'indice), poi la scheda lo dice.
+          val bound = link.bindCode?.let { code ->
+            withTimeoutOrNull(BIND_TIMEOUT_MS) { binder.bind(listOfNotNull(link.url, link.remoteUrl), code) }
+              ?: CompanionBindResult.Unreachable("tempo scaduto")
+          }
           // Sono i setter di chi scrive a mano: il computer e' sporco, e sale all'account adesso,
           // cosi' gli altri dispositivi lo trovano ricollegato senza rifare il QR.
           if (settings.value.syncEnabled) scheduler.syncNow()
-          _linkApplied.emit(IntentOutcome.EndpointLinked(link.url))
+          _linkApplied.emit(IntentOutcome.EndpointLinked(link.url, bound))
         }
       }
     }
@@ -170,6 +181,10 @@ class MainViewModel @Inject constructor(
   }
 
   private var pendingNoteId: String? = null
+
+  private companion object {
+    const val BIND_TIMEOUT_MS = 30_000L
+  }
 }
 
 /** Cosa ha trovato [MainViewModel.onIntent], e quindi dove deve andare la navigazione. */
@@ -180,8 +195,12 @@ sealed interface IntentOutcome {
   /** Un link di configurazione, messo da parte in attesa della conferma. */
   data object LinkPending : IntentOutcome
 
-  /** Il QR del server companion, confermato: le impostazioni sono salvate, si apre la pagina dei servizi. */
-  data class EndpointLinked(val url: String) : IntentOutcome
+  /**
+   * Il QR del server companion, confermato: le impostazioni sono salvate, si apre la pagina dei servizi.
+   *
+   * @param bound com'e' andato il collegamento all'account, se il QR portava il codice; `null` se no.
+   */
+  data class EndpointLinked(val url: String, val bound: CompanionBindResult? = null) : IntentOutcome
 
   /** Il link dell'indice in cloud, confermato: si apre la pagina Sincronizzazione. */
   data class SyncLinked(val url: String) : IntentOutcome

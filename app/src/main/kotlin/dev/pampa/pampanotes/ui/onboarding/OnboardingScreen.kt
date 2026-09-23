@@ -13,6 +13,7 @@ import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.Computer
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.InstallDesktop
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -49,6 +50,9 @@ import dev.pampa.pampanotes.ui.common.RowIcon
 import dev.pampa.pampanotes.ui.settings.CheckState
 import dev.pampa.pampanotes.ui.settings.ServicesUiState
 import dev.pampa.pampanotes.ui.settings.SettingsViewModel
+import dev.pampa.pampanotes.ui.settings.installCompanionContent
+import dev.pampa.pampanotes.ui.settings.openCompanionLink
+import dev.pampa.pampanotes.ui.settings.shareCompanionLink
 import dev.pampa.pampanotes.ui.common.jobErrorText
 
 /**
@@ -116,6 +120,31 @@ fun OnboardingRoute(
     }
   }
 
+  // «Installa sul tuo computer», aperta da «Chi trascrive»: la stessa pagina delle impostazioni, qui
+  // sopra al passo invece che in una rotta, perche' il primo avvio non ha navigazione.
+  var showInstall by rememberSaveable { mutableStateOf(false) }
+  var installSearched by remember { mutableStateOf(false) }
+  if (showInstall) {
+    BackHandler { showInstall = false }
+    FluidScreen(
+      title = stringResource(R.string.install_title),
+      onBack = { showInstall = false },
+      ambient = FluidAmbient(tone = FluidHeroTone.PrimaryToSecondary, motif = FluidHeroMotif.Glow),
+    ) {
+      installCompanionContent(
+        settings = settings,
+        check = if (installSearched) services.endpointCheck else CheckState.Idle,
+        onShare = { shareCompanionLink(context) },
+        onOpen = { openCompanionLink(context) },
+        onSearch = {
+          installSearched = true
+          viewModel.testEndpoint(settings.endpointUrl, settings.endpointRemoteUrl)
+        },
+      )
+    }
+    return
+  }
+
   val last = steps.lastIndex
   val goBack: () -> Unit = {
     leaveStep()
@@ -146,6 +175,10 @@ fun OnboardingRoute(
         accountComputer = settings.endpointName.ifBlank { settings.endpointUrl.ifBlank { settings.endpointRemoteUrl } }
           .takeIf { endpointFromAccount },
         onChangeComputer = { editingEndpoint = true },
+        onInstall = {
+          leaveStep()
+          showInstall = true
+        },
         services = services,
         groqKey = groqKey,
         onGroqKeyChange = { groqKey = it },
@@ -333,6 +366,7 @@ private fun LazyListScope.providerStep(
   /** Nome o indirizzo del computer arrivato dall'account e non ancora toccato qui; `null` altrimenti. */
   accountComputer: String?,
   onChangeComputer: () -> Unit,
+  onInstall: () -> Unit,
   services: ServicesUiState,
   groqKey: String,
   onGroqKeyChange: (String) -> Unit,
@@ -425,6 +459,17 @@ private fun LazyListScope.providerStep(
     }
   } else {
     item { FluidSectionFootnote(text = stringResource(R.string.onboarding_server_detail)) }
+    // Chi non ha ancora il companion: la strada per averlo, prima dei campi che presuppongono di si'.
+    item {
+      FluidListGroup {
+        FluidListRow(
+          title = stringResource(R.string.install_onboarding_row),
+          subtitle = stringResource(R.string.install_row_detail),
+          leading = { RowIcon(Icons.Rounded.InstallDesktop, FluidTone.Primary) },
+          onClick = onInstall,
+        )
+      }
+    }
     item {
       FluidTextField(
         value = endpointUrl,

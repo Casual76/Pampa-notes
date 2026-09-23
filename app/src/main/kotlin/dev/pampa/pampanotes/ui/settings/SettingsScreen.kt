@@ -54,8 +54,11 @@ import dev.pampa.pampanotes.core.export.ExportOptions
 import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.RefinementPreset
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
+import dev.pampa.pampanotes.ui.common.RowIcon
 import dev.pampa.pampanotes.ui.common.jobErrorText
 import dev.pampa.pampanotes.ui.export.ExportChoices
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.InstallDesktop
 import dev.pampa.pampanotes.ui.nav.SettingsSection
 
 /**
@@ -124,6 +127,7 @@ fun SettingsSection.label(): String = stringResource(
     SettingsSection.SHARES -> R.string.settings_section_shares
     SettingsSection.GUESTS -> R.string.settings_section_guests
     SettingsSection.ABOUT -> R.string.settings_section_about
+    SettingsSection.INSTALL -> R.string.install_title
   },
 )
 
@@ -141,6 +145,7 @@ private fun SettingsSection.detail(): String = stringResource(
     SettingsSection.SYNC -> R.string.settings_section_sync_detail
     SettingsSection.SHARES -> R.string.settings_section_shares_detail
     SettingsSection.GUESTS -> R.string.settings_section_guests_detail
+    SettingsSection.INSTALL -> R.string.install_row_detail
   },
 )
 
@@ -164,7 +169,8 @@ fun SettingsSectionRoute(
     SettingsSection.SYNC -> SyncSectionRoute(onBack = onBack)
     SettingsSection.SHARES -> SharesSectionRoute(onBack = onBack)
     SettingsSection.GUESTS -> GuestsSectionRoute(onBack = onBack)
-    else -> PreferencesSectionRoute(section = section, onBack = onBack)
+    SettingsSection.INSTALL -> InstallCompanionRoute(onBack = onBack)
+    else -> PreferencesSectionRoute(section = section, onBack = onBack, onOpenSection = onOpenSection)
   }
 }
 
@@ -172,6 +178,7 @@ fun SettingsSectionRoute(
 private fun PreferencesSectionRoute(
   section: SettingsSection,
   onBack: () -> Unit,
+  onOpenSection: (SettingsSection) -> Unit,
   viewModel: SettingsViewModel = hiltViewModel(),
 ) {
   val engine by viewModel.engineSettings.collectAsStateWithLifecycle()
@@ -221,6 +228,7 @@ private fun PreferencesSectionRoute(
           if (endpointToken.isNotBlank()) viewModel.setEndpointToken(endpointToken)
           viewModel.testEndpoint(endpointUrl, endpointRemoteUrl)
         },
+        onInstall = { onOpenSection(SettingsSection.INSTALL) },
       )
 
       SettingsSection.TRANSCRIPTION -> transcriptionSection(settings = settings, companion = companion, viewModel = viewModel)
@@ -229,7 +237,8 @@ private fun PreferencesSectionRoute(
       SettingsSection.ABOUT -> aboutSection()
       SettingsSection.EXPORT -> exportSection(defaults = exportDefaults, viewModel = viewModel)
       // Hanno una pagina loro, e qui non ci si arriva mai.
-      SettingsSection.BACKUP, SettingsSection.STORAGE, SettingsSection.SYNC, SettingsSection.SHARES, SettingsSection.GUESTS -> Unit
+      SettingsSection.BACKUP, SettingsSection.STORAGE, SettingsSection.SYNC, SettingsSection.SHARES, SettingsSection.GUESTS,
+      SettingsSection.INSTALL -> Unit
     }
   }
 }
@@ -250,6 +259,7 @@ private fun LazyListScope.servicesSection(
   endpointToken: String,
   onEndpointTokenChange: (String) -> Unit,
   onTestEndpoint: () -> Unit,
+  onInstall: () -> Unit,
 ) {
   item {
     FluidListGroup {
@@ -317,6 +327,17 @@ private fun LazyListScope.servicesSection(
       title = stringResource(R.string.settings_endpoint),
       detail = stringResource(R.string.settings_endpoint_detail),
     )
+  }
+  // Prima dei campi: chi non ha ancora il companion non ha niente da scriverci.
+  item {
+    FluidListGroup {
+      FluidListRow(
+        title = stringResource(R.string.install_title),
+        subtitle = stringResource(R.string.install_row_detail),
+        leading = { RowIcon(Icons.Rounded.InstallDesktop, FluidTone.Primary) },
+        onClick = onInstall,
+      )
+    }
   }
 
   item {
