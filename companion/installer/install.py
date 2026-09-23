@@ -177,8 +177,9 @@ def fallback_plan(total_gb: float, batch_max: int = 16) -> dict[str, Any]:
     fallback = None
     for model, compute in _CHAIN:
         factor = 1.0 if compute == "float16" else 0.55
-        fixed = _WEIGHTS[model] * factor + 0.4 + 0.7
-        per_item = 0.25 * _BATCH_SCALE[model]
+        # Allineamento 0,9 e contesto 0,9, 0,32 a elemento del lotto: le misure del 23/09 nel server.
+        fixed = _WEIGHTS[model] * factor + 0.9 + 0.9
+        per_item = 0.32 * _BATCH_SCALE[model]
         batch = min(batch_max, math.floor((usable - fixed) / per_item + 1e-9))
         if batch >= want:
             chosen = (model, compute, batch)
