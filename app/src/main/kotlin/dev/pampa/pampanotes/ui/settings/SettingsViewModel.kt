@@ -318,6 +318,8 @@ class SettingsViewModel @Inject constructor(
   /** I pezzi del computer di casa: null, il file intero. */
   fun setCustomMaxMinutes(minutes: Int?) = viewModelScope.launch { settingsStore.setCustomMaxMinutes(minutes) }
 
+  fun setCustomChunkAuto(on: Boolean) = viewModelScope.launch { settingsStore.setCustomChunkAuto(on) }
+
   // --- Memoria video del computer di casa ---
   private val _companion = MutableStateFlow(CompanionUiState())
   val companionState: StateFlow<CompanionUiState> = _companion.asStateFlow()

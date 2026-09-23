@@ -2,6 +2,13 @@ package dev.pampa.pampanotes.ui.settings
 
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import kotlin.math.roundToInt
+import dev.antigravity.fluidengine.ui.fluid.FluidSlider
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.material3.Text
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyListScope
@@ -493,28 +500,7 @@ private fun LazyListScope.transcriptionSection(settings: PampaSettings, companio
   }
 
   item { FluidSectionHeader(title = stringResource(R.string.provider_custom), detail = stringResource(R.string.settings_custom_chunk_detail)) }
-  // Una riga per scelta, con quello che vuol dire: un segmentato con «Intero · 30 · 60 · 120» non
-  // diceva ne' che intero e' il meglio per Whisper, ne' che un tetto lascia intera una lezione
-  // appena piu' lunga.
-  item {
-    val chosen: @Composable () -> Unit = {
-      FluidStatusBadge(label = stringResource(R.string.settings_model_chosen), tone = FluidTone.Success)
-    }
-    FluidListGroup {
-      listOf<Int?>(null, 30, 60, 120).forEachIndexed { index, minutes ->
-        if (index > 0) FluidListDivider()
-        FluidListRow(
-          title = minutes?.let { stringResource(R.string.settings_custom_chunk_title, it) } ?: stringResource(R.string.settings_custom_chunk_whole),
-          subtitle = minutes?.let {
-            stringResource(R.string.settings_custom_chunk_capped, it + (ChunkPolicy.COMPUTER_TOLERANCE_MS / 60_000L).toInt(), it)
-          } ?: stringResource(R.string.settings_custom_chunk_whole_detail),
-          // Una scelta, non una pagina: senza la freccia che FluidListRow mette a chi ha onClick.
-          modifier = Modifier.fluidRowPressable(onClick = { viewModel.setCustomMaxMinutes(minutes) }),
-          badge = if (settings.customMaxMinutes == minutes) chosen else null,
-        )
-      }
-    }
-  }
+  item { CustomChunkPicker(settings = settings, viewModel = viewModel) }
   item { FluidSectionFootnote(text = stringResource(R.string.settings_custom_chunk_on_computer)) }
 
   if (settings.hasEndpoint) vramSection(companion, viewModel)
@@ -543,6 +529,69 @@ private fun LazyListScope.transcriptionSection(settings: PampaSettings, companio
     )
   }
   item { FluidSectionFootnote(text = stringResource(R.string.settings_vocabulary_detail)) }
+}
+
+/**
+ * Quanto lunghi i pezzi del computer di casa: «Automatico», o uno slider da 10 minuti a «intera».
+ *
+ * Automatico e' la scelta di serie: prima di ogni lezione il computer la decide da quanto va veloce
+ * (`max_minutes=auto`). Lo slider allora resta a vista ma fermo, e dice cosa ha scelto l'ultima volta:
+ * un numero che cambia da solo e che non si puo' toccare deve almeno spiegare da dove viene. Spento,
+ * lo slider e' la scelta: dieci minuti a passi di cinque, e in fondo «intera».
+ */
+@Composable
+private fun CustomChunkPicker(settings: PampaSettings, viewModel: SettingsViewModel) {
+  val auto = settings.customChunkAuto
+  // L'ultima scelta del computer: 0 o mai = intera, com'e' di serie.
+  val shown = if (auto) settings.customLastMaxMinutes?.takeIf { it > 0 } else settings.customMaxMinutes
+  var index by remember(shown, auto) { mutableFloatStateOf(chunkIndexOf(shown).toFloat()) }
+  val minutes = chunkMinutesAt(index.roundToInt())
+  FluidListGroup {
+    FluidListRow(
+      title = stringResource(R.string.settings_custom_chunk_auto),
+      subtitle = stringResource(R.string.settings_custom_chunk_auto_detail),
+      badge = { FluidSwitch(checked = auto, onCheckedChange = viewModel::setCustomChunkAuto) },
+    )
+    FluidListDivider()
+    Column(
+      modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+      verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      Text(
+        text = when {
+          auto && settings.customLastMaxMinutes == null -> stringResource(R.string.settings_custom_chunk_auto_never)
+          auto -> minutes?.let { stringResource(R.string.settings_custom_chunk_auto_last, it) } ?: stringResource(R.string.settings_custom_chunk_auto_last_whole)
+          else -> minutes?.let { stringResource(R.string.settings_custom_chunk_title, it) } ?: stringResource(R.string.settings_custom_chunk_whole)
+        },
+        style = MaterialTheme.typography.titleMedium,
+      )
+      Text(
+        text = minutes?.let {
+          stringResource(R.string.settings_custom_chunk_capped, it + (ChunkPolicy.COMPUTER_TOLERANCE_MS / 60_000L).toInt(), it)
+        } ?: stringResource(R.string.settings_custom_chunk_whole_detail),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+      FluidSlider(
+        value = index,
+        onValueChange = { index = it.roundToInt().toFloat() },
+        valueRange = 0f..CHUNK_STOPS.lastIndex.toFloat(),
+        enabled = !auto,
+        onValueChangeFinished = { viewModel.setCustomMaxMinutes(chunkMinutesAt(index.roundToInt())) },
+      )
+    }
+  }
+}
+
+/** Le fermate dello slider: 10–120 minuti a passi di cinque, e in fondo null = intera. */
+private val CHUNK_STOPS: List<Int?> = (10..120 step 5).toList() + listOf(null)
+
+private fun chunkMinutesAt(index: Int): Int? = CHUNK_STOPS[index.coerceIn(0, CHUNK_STOPS.lastIndex)]
+
+/** La fermata piu' vicina a [minutes]: un valore di prima (30, 60, 120) cade esatto, gli altri accanto. */
+private fun chunkIndexOf(minutes: Int?): Int {
+  if (minutes == null) return CHUNK_STOPS.lastIndex
+  return CHUNK_STOPS.withIndex().filter { it.value != null }.minBy { kotlin.math.abs(it.value!! - minutes) }.index
 }
 
 /** I modelli che la pagina propone, dal piu' preciso al piu' leggero, con la riga che li distingue. */

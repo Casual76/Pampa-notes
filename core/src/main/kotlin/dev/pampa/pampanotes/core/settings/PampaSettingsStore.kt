@@ -49,6 +49,14 @@ data class PampaSettings(
    * meglio per Whisper, che ha piu' contesto; si accorcia solo su un PC con poca memoria video.
    */
   val customMaxMinutes: Int? = null,
+  /**
+   * La durata dei pezzi la sceglie il computer prima di ogni lezione, da quanto va veloce
+   * (`max_minutes=auto`): [customMaxMinutes] allora non conta. Di serie acceso, tranne per chi aveva
+   * gia' scelto un tetto a mano: quella scelta resta sua.
+   */
+  val customChunkAuto: Boolean = true,
+  /** L'ultima durata dei pezzi scelta dal computer, in minuti (0 = intera; null = mai). La mostra lo slider. */
+  val customLastMaxMinutes: Int? = null,
   val preferredProvider: TranscriptionProviderId = TranscriptionProviderId.GROQ,
   /**
    * Mai con Groq: ogni trascrizione, anche quella automatica all'import, va al computer di casa e
@@ -413,6 +421,11 @@ class PampaSettingsStore(
     if (minutes == null) prefs.remove(CustomMaxMinutes) else prefs[CustomMaxMinutes] = minutes.coerceIn(5, 240)
   }
 
+  suspend fun setCustomChunkAuto(on: Boolean) = edit { it[CustomChunkAuto] = on }
+
+  /** Quello che il computer ha scelto per l'ultima lezione, da `max_minutes_used` (0 = intera). */
+  suspend fun setCustomLastMaxMinutes(minutes: Int) = edit { it[CustomLastMaxMinutes] = minutes.coerceAtLeast(0) }
+
   /**
    * Il permesso delle notifiche si chiede una volta sola, al primo lavoro messo in coda: chi ha
    * detto di no non deve sentirselo richiedere a ogni lezione. Non sta in [PampaSettings] perche'
@@ -467,6 +480,8 @@ class PampaSettingsStore(
     chunkMinutes = this[ChunkMinutes] ?: 10,
     groqMaxUploadMb = this[GroqMaxUploadMb] ?: 25,
     customMaxMinutes = this[CustomMaxMinutes],
+    customChunkAuto = this[CustomChunkAuto] ?: (this[CustomMaxMinutes] == null),
+    customLastMaxMinutes = this[CustomLastMaxMinutes],
     preferredProvider = TranscriptionProviderId.fromId(this[PreferredProvider]),
     customOnly = this[CustomOnly] ?: false,
     autoTranscribeOnImport = this[AutoTranscribe] ?: true,
@@ -557,6 +572,8 @@ class PampaSettingsStore(
 
     // Trascrizione, coda e archivio.
     val CustomMaxMinutes = intPreferencesKey("custom_max_minutes")
+    val CustomChunkAuto = booleanPreferencesKey("custom_chunk_auto")
+    val CustomLastMaxMinutes = intPreferencesKey("custom_last_max_minutes")
     val NotificationPermissionAsked = booleanPreferencesKey("notification_permission_asked")
     val ArchiveFailures = stringSetPreferencesKey("archive_failures")
 
