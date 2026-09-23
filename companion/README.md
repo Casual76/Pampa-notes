@@ -104,7 +104,11 @@ e da ricordarsi di aprire. Col tasto destro sull'icona:
   fotocamera riconosce come link solo `http` — il resto lo mostra come testo;
 - **«Avvio automatico»** — un collegamento nella cartella Esecuzione automatica dell'utente, che si
   vede e si spegne anche da Impostazioni → App → Avvio. Non un'attività pianificata, che vorrebbe
-  i privilegi di amministratore; non un servizio di Windows, che non può disegnare un'icona;
+  i privilegi di amministratore; non un servizio di Windows, che non può disegnare un'icona. Il
+  collegamento lancia `avvio.pyw`, non `tray.py`: aspetta venti secondi dopo l'accesso, avvia
+  l'icona, controlla che `/health` risponda e se no riprova, scrivendo ogni tentativo in
+  `logs/avvio.log` e gli errori in `logs/tray-stderr.log`. Senza, un errore nei primi secondi dopo
+  un riavvio moriva senza traccia, e il tablet a scuola non trovava più il computer;
 - **«Apri le impostazioni»** e **«Apri i log»**.
 
 Il colore dell'icona dice la stessa cosa a colpo d'occhio: grigia in ascolto a scheda libera, verde

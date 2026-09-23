@@ -216,11 +216,13 @@ def autostart_enable() -> bool:
     da Impostazioni → App → Avvio, e non chiede niente a nessuno.
 
     `pythonw.exe` e non `python.exe`: e' la differenza fra un'icona e un'icona con appiccicata una
-    console vuota che non si puo' chiudere.
+    console vuota che non si puo' chiudere. E il collegamento punta ad `avvio.pyw`, non a questo
+    file: all'accesso un errore nei primi secondi non lascerebbe traccia, e il lanciatore lo scrive
+    e riprova.
     """
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     runner = pythonw if pythonw.exists() else Path(sys.executable)
-    script = Path(__file__).resolve()
+    script = Path(__file__).resolve().with_name("avvio.pyw")
     STARTUP_DIR.mkdir(parents=True, exist_ok=True)
     # Il collegamento lo scrive PowerShell: un .lnk e' un formato binario, e l'unico modo comodo
     # di produrlo senza dipendenze e' l'oggetto COM di Windows.
@@ -334,6 +336,10 @@ def main() -> None:
         menu=build_menu(),
     )
     threading.Thread(target=watch, args=(icon,), daemon=True).start()
+    # Un collegamento scritto da una versione precedente puntava a questo file, senza lanciatore:
+    # si riscrive, cosi' chi aveva gia' acceso l'avvio automatico non deve spegnerlo e riaccenderlo.
+    if autostart_enabled():
+        threading.Thread(target=autostart_enable, daemon=True).start()
     server.log.info("icona avviata, registro in %s", log_path)
     icon.run()
 
