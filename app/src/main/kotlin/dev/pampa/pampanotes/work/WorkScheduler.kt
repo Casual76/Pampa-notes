@@ -37,9 +37,9 @@ class WorkScheduler @Inject constructor(
   /**
    * Sveglia la coda di un provider quando c'e' motivo di credere che il suo servizio risponda.
    *
-   * Un worker che ha trovato il computer di casa muto si e' chiuso con `retry`, e sta aspettando il
-   * suo tentativo successivo — trenta secondi, poi uno, due, quattro minuti, fino a cinque ore. Se
-   * intanto qualcuno il computer l'ha visto (l'archivio che ha appena caricato, la sonda, l'app
+   * Un worker che ha trovato il computer di casa muto si e' chiuso e ha lasciato in coda il suo
+   * tentativo successivo ([retryForEndpoint]: un minuto, o cinque dopo mezz'ora). Se intanto
+   * qualcuno il computer l'ha visto (l'archivio che ha appena caricato, la sonda, «Prova», l'app
    * che si apre), aspettare quel tentativo e' tempo perso: si **sostituisce**. Mai pero' un worker
    * che sta lavorando: sostituirlo vorrebbe dire interrompere una trascrizione a meta'.
    */
@@ -68,6 +68,33 @@ class WorkScheduler @Inject constructor(
     WorkManager.getInstance(context).enqueueUniqueWork(workName(providerId), ExistingWorkPolicy.APPEND_OR_REPLACE, request)
   }
 
+  /**
+   * Il prossimo sguardo al computer di casa, fra [delayMillis]: lo chiede il worker che l'ha
+   * trovato muto, subito prima di chiudersi con `success`.
+   *
+   * Non il `retry` di WorkManager, perche' la sua attesa cresce (esponenziale o lineare, fino a
+   * cinque ore) e non si puo' fermare a un tetto: un PC riavviato faceva aspettare minuti una coda
+   * che poteva ripartire subito (vedi `EndpointWait`). Stesso meccanismo di [kickAfter]
+   * (`APPEND_OR_REPLACE` dietro il worker che sta chiudendo), con [waitingSince] che passa da un
+   * tentativo all'altro per sapere da quanto si aspetta. [kick] lo trova in attesa e lo lascia —
+   * il computer tanto non risponde — mentre [wake] lo sostituisce e parte subito.
+   */
+  fun retryForEndpoint(providerId: String, delayMillis: Long, waitingSince: Long) {
+    val request = OneTimeWorkRequestBuilder<TranscriptionQueueWorker>()
+      .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+      .setInputData(
+        workDataOf(
+          TranscriptionQueueWorker.KEY_PROVIDER to providerId,
+          TranscriptionQueueWorker.KEY_WAITING_SINCE to waitingSince,
+        ),
+      )
+      .setInitialDelay(delayMillis.coerceAtLeast(0L), TimeUnit.MILLISECONDS)
+      .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+      .addTag(TAG)
+      .build()
+    WorkManager.getInstance(context).enqueueUniqueWork(workName(providerId), ExistingWorkPolicy.APPEND_OR_REPLACE, request)
+  }
+
   private fun queueRequest(providerId: String) = OneTimeWorkRequestBuilder<TranscriptionQueueWorker>()
     .setConstraints(
       Constraints.Builder()
@@ -81,9 +108,10 @@ class WorkScheduler @Inject constructor(
 
   /**
    * La sonda: ogni quarto d'ora, finche' c'e' un lavoro in fila per il computer di casa, si guarda
-   * se il computer risponde e in quel caso si sveglia la coda. E' il tetto all'attesa: senza, un
-   * tentativo rimandato di cinque ore fa aspettare cinque ore una lezione che il PC avrebbe
-   * trascritto in tre minuti. Si spegne da sola quando la fila e' vuota.
+   * se il computer risponde e in quel caso si sveglia la coda. E' la rete di sicurezza sotto i
+   * tentativi di [retryForEndpoint]: se la loro catena si interrompe (un worker ucciso prima di
+   * chiedere il successivo), una lezione non aspetta piu' di un quarto d'ora un PC gia' acceso.
+   * Si spegne da sola quando la fila e' vuota.
    */
   fun watchEndpoint(enabled: Boolean) {
     val manager = WorkManager.getInstance(context)

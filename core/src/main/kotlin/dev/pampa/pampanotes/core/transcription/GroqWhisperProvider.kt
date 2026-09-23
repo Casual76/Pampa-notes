@@ -9,6 +9,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -151,6 +152,8 @@ class OpenAiCompatProvider(
   maxChunkMinutes: Int? = null,
   /** Ogni quanto chiedere a che punto e' il lavoro (vedi [RemoteJobPoller]); i test lo accorciano. */
   private val pollIntervalMs: Long = RemoteJobPoller.DEFAULT_INTERVAL_MS,
+  /** Dopo quanto silenzio il computer si da' per perso (vedi [RemoteJobPoller]); i test lo accorciano. */
+  private val lostAfterSilenceMs: Long = RemoteJobPoller.LOST_AFTER_SILENCE_MS,
 ) : TranscriptionProvider, CompanionTranscription {
 
   /** Normalizzato una volta: chi digita l'indirizzo mette o non mette la barra e il `/v1`. */
@@ -315,6 +318,14 @@ class OpenAiCompatProvider(
    * stesso anche se [authorized] rimanda la POST con un biglietto nuovo — il primo tentativo e'
    * stato rifiutato prima di arrivare al lavoro, e il companion lo registra solo se passa.
    *
+   * Due cose che la POST da sola non sa fare:
+   *  - **accorgersi che il computer ha perso il lavoro** (riavviato, spento a meta'): lo dice il
+   *    [RemoteJobPoller] con [RemoteJobLost], e qui diventa un [TranscriptionError.Network] che
+   *    annulla la POST e si riprova — invece di novanta minuti di timeout con la coda ferma dietro;
+   *  - **fermare il computer quando si annulla qui**: chiudere la connessione non bastava, il
+   *    companion 1.0.0 continuava a trascrivere per nessuno. Una coroutine annullata (l'utente,
+   *    il tetto di tempo, il sistema che ferma il worker) manda `DELETE /v1/jobs/<id>` ([cancelRemote]).
+   *
    * @param uploadedAlready vero quando non c'e' niente da caricare: si chiede da subito.
    */
   private suspend fun watching(
@@ -324,23 +335,63 @@ class OpenAiCompatProvider(
   ): JsonElement? {
     val jobId = UUID.randomUUID().toString()
     val uploaded = AtomicBoolean(uploadedAlready)
+    // Le credenziali con cui e' partita l'ultima POST: sono quelle che il companion accetta per
+    // annullare il lavoro che hanno creato. Null finche' non ne e' partita nessuna.
+    var sentWith: Map<String, String>? = null
+    val lost = AtomicBoolean(false)
     return coroutineScope {
       val poller = launch {
-        runCatching {
+        try {
           RemoteJobPoller(
             fetch = { http.getJson("$base/jobs/$jobId", headers(auth.bearer()), readTimeoutMillis = POLL_TIMEOUT_MS) },
             intervalMs = pollIntervalMs,
+            silenceLimitMs = lostAfterSilenceMs,
             onUpdate = onRemote,
           ).run(ready = { uploaded.get() })
-        }.onFailure { if (it is CancellationException) throw it }
+        } catch (cancelled: CancellationException) {
+          throw cancelled
+        } catch (gone: RemoteJobLost) {
+          // Un figlio che fallisce annulla lo scope, cioe' la POST, e `coroutineScope` rilancia
+          // questo errore al posto della cancellazione: chi chiama vede una rete caduta, e riprova.
+          lost.set(true)
+          throw TranscriptionError.Network(gone.message.orEmpty(), gone)
+        } catch (ignored: Throwable) {
+          // Qualunque altra cosa nelle domande sullo stato non tocca la trascrizione.
+          Unit
+        }
       }
       try {
-        authorized { headers -> post(headers + (JOB_HEADER to jobId), uploaded) }
+        authorized { headers ->
+          sentWith = headers
+          post(headers + (JOB_HEADER to jobId), uploaded)
+        }
+      } catch (cancelled: CancellationException) {
+        // Perso, il lavoro non c'e' piu' da fermare; e col PC muto la DELETE costerebbe solo attesa.
+        val headers = sentWith
+        if (headers != null && !lost.get()) withContext(NonCancellable) { cancelRemote(jobId, headers) }
+        throw cancelled
       } finally {
         // Aspettato, non solo annullato: una risposta di stato arrivata dopo la fine riscriverebbe
         // «trascrivo 90%» sopra il pezzo gia' finito.
         withContext(NonCancellable) { poller.cancelAndJoin() }
       }
+    }
+  }
+
+  /**
+   * Chiede al companion di fermare il lavoro [jobId]: `DELETE /v1/jobs/<id>`, con le stesse
+   * credenziali della POST che l'ha creato. Al meglio e mai piu' di [CANCEL_TIMEOUT_MS]: un
+   * annullamento non deve aspettare un PC che non risponde, e un companion che non conosce la rotta
+   * (404, 405) o il lavoro gia' finito non sono errori di nessuno. La connessione della POST intanto
+   * e' gia' chiusa: un companion che se ne accorge si ferma da se', questo e' il modo sicuro.
+   */
+  private suspend fun cancelRemote(jobId: String, headers: Map<String, String>) {
+    try {
+      withTimeoutOrNull(CANCEL_TIMEOUT_MS) {
+        http.delete("$base/jobs/$jobId", headers, timeoutMillis = CANCEL_SOCKET_TIMEOUT_MS)
+      }
+    } catch (ignored: Throwable) {
+      Unit
     }
   }
 
@@ -378,6 +429,13 @@ class OpenAiCompatProvider(
 
     /** Una domanda sullo stato risponde subito, o non serve: la prossima parte fra un secondo. */
     const val POLL_TIMEOUT_MS = 5_000
+
+    /**
+     * Quanto puo' durare la `DELETE` che ferma il lavoro sul computer quando qui si annulla: tre
+     * secondi per connettersi e tre per la risposta, e comunque mai piu' di quattro in tutto.
+     */
+    const val CANCEL_SOCKET_TIMEOUT_MS = 3_000
+    const val CANCEL_TIMEOUT_MS = 4_000L
 
     /** I campi del companion che lavora da se' (vedi [CompanionTranscription]). */
     const val FIELD_SHA = "source_sha256"

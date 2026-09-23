@@ -5,7 +5,11 @@ import dev.pampa.pampanotes.core.testing.TinyHttpServer
 import java.io.File
 import java.io.IOException
 import java.util.Collections
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -71,10 +75,80 @@ class RemoteProgressTest {
   }
 
   @Test
-  fun `un 404 dopo una risposta buona e' il lavoro scaduto`() = runTest {
-    val script = Script({ json("""{"state":"transcribing","fraction":0.5}""") }, { notFound() })
+  fun `un 404 isolato dopo una risposta buona non basta per dare il lavoro per perso`() = runTest {
+    val script = Script(
+      { json("""{"state":"transcribing","fraction":0.5}""") },
+      { notFound() },
+      { json("""{"state":"aligning","fraction":0.1}""") },
+      { notFound() },
+      { json("""{"state":"done","fraction":1}""") },
+    )
     RemoteJobPoller(script.fetch, intervalMs = 10) {}.run()
-    assertEquals(2, script.calls)
+    assertEquals(5, script.calls)
+  }
+
+  @Test
+  fun `due 404 di fila dopo averlo visto il lavoro e' perso - il companion e' ripartito`() = runTest {
+    val script = Script(
+      { json("""{"state":"transcribing","fraction":0.5}""") },
+      { notFound() },
+      { notFound() },
+    )
+    val lost = runCatching { RemoteJobPoller(script.fetch, intervalMs = 10) {}.run() }.exceptionOrNull()
+    assertTrue("era $lost", lost is RemoteJobLost && lost.reason == RemoteJobLost.Reason.FORGOTTEN)
+    assertEquals(3, script.calls)
+  }
+
+  /** Un fetch che non riceve mai una risposta HTTP: il PC spento, la rete sparita. */
+  private val silent: suspend () -> JsonElement? = { throw TranscriptionError.Network("connect failed", IOException("no route to host")) }
+
+  @Test
+  fun `novanta secondi senza nessuna risposta e il computer e' perso`() = runTest {
+    var calls = 0
+    val poller = RemoteJobPoller(
+      fetch = { calls++; silent() },
+      intervalMs = 1_000,
+      clock = { testScheduler.currentTime },
+    ) {}
+    val lost = runCatching { poller.run() }.exceptionOrNull()
+    assertTrue("era $lost", lost is RemoteJobLost && lost.reason == RemoteJobLost.Reason.SILENT)
+    // La prima domanda muta a un secondo, l'ultima novanta secondi dopo: non trenta tentativi e basta.
+    assertEquals(RemoteJobPoller.LOST_AFTER_SILENCE_MS / 1_000 + 1, calls.toLong())
+    assertEquals(RemoteJobPoller.LOST_AFTER_SILENCE_MS + 1_000, testScheduler.currentTime)
+  }
+
+  @Test
+  fun `una risposta qualunque, anche un 500, azzera il silenzio`() = runTest {
+    var calls = 0
+    // Muto per 80 secondi, poi un 500, poi muto per altri 80, poi il lavoro finisce: niente di perso.
+    val poller = RemoteJobPoller(
+      fetch = {
+        calls++
+        when {
+          calls == 81 -> throw TranscriptionError.Server(500, "boom")
+          calls == 162 -> json("""{"state":"done","fraction":1}""")
+          else -> silent()
+        }
+      },
+      intervalMs = 1_000,
+      clock = { testScheduler.currentTime },
+    ) {}
+    poller.run()
+    assertEquals(162, calls)
+  }
+
+  @Test
+  fun `un companion vecchio che poi si ammutolisce non trattiene niente, ma il silenzio conta lo stesso`() = runTest {
+    // 404 prima di ogni risposta buona: si smette subito, senza errori. Il silenzio non arriva mai.
+    val old = Script({ notFound() }, { notFound() })
+    RemoteJobPoller(old.fetch, intervalMs = 10, clock = { testScheduler.currentTime }) {}.run()
+    assertEquals(2, old.calls)
+
+    // Un PC spento fin dalla prima domanda: la POST e' partita, il lavoro non lo si e' mai visto.
+    val lost = runCatching {
+      RemoteJobPoller(silent, intervalMs = 1_000, clock = { testScheduler.currentTime }) {}.run()
+    }.exceptionOrNull()
+    assertTrue("era $lost", lost is RemoteJobLost)
   }
 
   @Test
@@ -164,6 +238,90 @@ class RemoteProgressTest {
     assertEquals("ciao", result.text)
     // Due 404 e basta, non una domanda ogni decimo di secondo per un secondo e mezzo.
     assertEquals(RemoteJobPoller.MAX_MISSES, server.requests.count { it.method == "GET" })
+  }
+
+  @Test
+  fun `il companion riavviato perde il lavoro e la POST appesa torna subito come errore di rete`() = runBlocking {
+    val polls = java.util.concurrent.atomic.AtomicInteger()
+    server.respond { request ->
+      when {
+        // La POST resta appesa: il PC si e' spento senza chiudere la connessione.
+        request.method == "POST" -> {
+          Thread.sleep(30_000)
+          TinyHttpServer.Response(200, answer)
+        }
+        request.path.startsWith("/v1/jobs/") ->
+          if (polls.incrementAndGet() == 1) {
+            TinyHttpServer.Response(200, """{"state":"transcribing","fraction":0.4}""")
+          } else {
+            TinyHttpServer.Response(404, """{"detail":"Not Found"}""")
+          }
+        else -> TinyHttpServer.Response(404, """{"detail":"Not Found"}""")
+      }
+    }
+    val provider = OpenAiCompatProvider(TranscriptionHttp("test"), server.url(""), CompanionAuth.fixed("segreto"), pollIntervalMs = 100)
+    val started = System.currentTimeMillis()
+    val error = runCatching {
+      withTimeout(10_000) { provider.transcribeByRef("ab".repeat(32), TranscribeRequest("m"), null) {} }
+    }.exceptionOrNull()
+    assertTrue("era $error", error is TranscriptionError.Network)
+    assertTrue((error as TranscriptionError).retryable)
+    assertTrue("ci ha messo troppo", System.currentTimeMillis() - started < 5_000)
+    // Perso: non c'e' niente da fermare, e nessuna DELETE.
+    assertTrue(server.requests.none { it.method == "DELETE" })
+  }
+
+  @Test
+  fun `annullare qui manda al computer la DELETE del lavoro, con le stesse credenziali`() = runBlocking {
+    server.respond { request ->
+      when {
+        request.method == "POST" -> {
+          Thread.sleep(30_000)
+          TinyHttpServer.Response(200, answer)
+        }
+        request.method == "DELETE" -> TinyHttpServer.Response(200, """{"cancelled":true}""")
+        request.path.startsWith("/v1/jobs/") -> TinyHttpServer.Response(200, """{"state":"transcribing","fraction":0.4}""")
+        else -> TinyHttpServer.Response(404, """{"detail":"Not Found"}""")
+      }
+    }
+    val provider = OpenAiCompatProvider(TranscriptionHttp("test"), server.url(""), CompanionAuth.fixed("segreto"), pollIntervalMs = 100)
+    val pending = async { provider.transcribe(audio, "audio/mp4", TranscribeRequest("m")) }
+    // Aspetta che il lavoro sia partito e che se ne sia chiesto lo stato almeno una volta.
+    withTimeout(5_000) { while (server.requests.none { it.method == "GET" }) delay(20) }
+    val started = System.currentTimeMillis()
+    pending.cancelAndJoin()
+    assertTrue("l'annullamento ci ha messo troppo", System.currentTimeMillis() - started < OpenAiCompatProvider.CANCEL_TIMEOUT_MS + 1_000)
+
+    val jobId = server.requests.first { it.method == "POST" }.header(OpenAiCompatProvider.JOB_HEADER)
+    val delete = server.requests.firstOrNull { it.method == "DELETE" }
+    assertNotNull("nessuna DELETE", delete)
+    assertEquals("/v1/jobs/$jobId", delete!!.path)
+    assertEquals("Bearer segreto", delete.header("Authorization"))
+  }
+
+  @Test
+  fun `un companion che non conosce la DELETE, o un PC che non risponde, non rallentano l'annullamento`() = runBlocking {
+    server.respond { request ->
+      when (request.method) {
+        "POST" -> {
+          Thread.sleep(30_000)
+          TinyHttpServer.Response(200, answer)
+        }
+        // Il companion 1.0.0 non ha la rotta, e qui per giunta ci pensa su.
+        "DELETE" -> {
+          Thread.sleep(10_000)
+          TinyHttpServer.Response(405, """{"detail":"Method Not Allowed"}""")
+        }
+        else -> TinyHttpServer.Response(200, """{"state":"transcribing","fraction":0.4}""")
+      }
+    }
+    val provider = OpenAiCompatProvider(TranscriptionHttp("test"), server.url(""), pollIntervalMs = 100)
+    val pending = async { provider.transcribeByRef("ab".repeat(32), TranscribeRequest("m"), null) {} }
+    withTimeout(5_000) { while (server.requests.none { it.method == "GET" }) delay(20) }
+    val started = System.currentTimeMillis()
+    pending.cancelAndJoin()
+    assertTrue(pending.isCancelled)
+    assertTrue("l'annullamento ci ha messo troppo", System.currentTimeMillis() - started < OpenAiCompatProvider.CANCEL_TIMEOUT_MS + 1_000)
   }
 
   // --- la barra dell'intera sessione ---
