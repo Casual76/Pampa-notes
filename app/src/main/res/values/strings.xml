@@ -505,6 +505,10 @@
   <string name="settings_vocabulary_hint">Termidoro, Monti, Feuerbach…</string>
   <string name="settings_vocabulary_detail">Nomi e termini che il modello non conosce. Vederli prima e\u0300 la differenza fra «Termidoro» e «term e d\'oro».</string>
   <string name="language_auto">Auto</string>
+  <string name="settings_provider_header">Chi trascrive</string>
+  <string name="settings_provider_header_detail">Quello che importi va a questo servizio, se non scegli altro sul momento.</string>
+  <string name="settings_language_header">Lingua delle lezioni</string>
+  <string name="settings_language_detail">Auto la riconosce da sola. Sceglierla aiuta quando la lezione inizia con una citazione in un\'altra lingua.</string>
   <string name="note_transcript_meta">%1$d parole · %2$s</string>
 
   <!-- Sessione: il lettore e la trascrizione -->

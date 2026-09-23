@@ -475,6 +475,10 @@
   <string name="settings_vocabulary_hint">Thermidor, Feuerbach, Termidoro…</string>
   <string name="settings_vocabulary_detail">Names and terms the model does not know. Seeing them first is the difference between a name and nonsense.</string>
   <string name="language_auto">Auto</string>
+  <string name="settings_provider_header">Who transcribes</string>
+  <string name="settings_provider_header_detail">What you import goes to this service, unless you pick another one at the time.</string>
+  <string name="settings_language_header">Lecture language</string>
+  <string name="settings_language_detail">Auto detects it. Picking one helps when a lecture opens with a quote in another language.</string>
   <string name="note_transcript_meta">%1$d words · %2$s</string>
 
   <!-- Session: the player and the transcript -->

@@ -20,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import dev.antigravity.fluidengine.ui.fluid.fluidRowPressable
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -389,6 +390,7 @@ private fun LazyListScope.transcriptionSection(settings: PampaSettings, companio
   // Con «solo il computer di casa» la scelta non esiste piu': il selettore sparisce invece di
   // restare li' a proporre Groq come se contasse.
   if (!settings.customOnly) {
+    item { FluidSectionHeader(title = stringResource(R.string.settings_provider_header), detail = stringResource(R.string.settings_provider_header_detail)) }
     item {
       val providerLabels = mapOf(
         TranscriptionProviderId.GROQ to stringResource(R.string.provider_groq),
@@ -480,7 +482,8 @@ private fun LazyListScope.transcriptionSection(settings: PampaSettings, companio
           subtitle = minutes?.let {
             stringResource(R.string.settings_custom_chunk_capped, it + (ChunkPolicy.COMPUTER_TOLERANCE_MS / 60_000L).toInt(), it)
           } ?: stringResource(R.string.settings_custom_chunk_whole_detail),
-          onClick = { viewModel.setCustomMaxMinutes(minutes) },
+          // Una scelta, non una pagina: senza la freccia che FluidListRow mette a chi ha onClick.
+          modifier = Modifier.fluidRowPressable(onClick = { viewModel.setCustomMaxMinutes(minutes) }),
           badge = if (settings.customMaxMinutes == minutes) chosen else null,
         )
       }
@@ -489,6 +492,7 @@ private fun LazyListScope.transcriptionSection(settings: PampaSettings, companio
 
   if (settings.hasEndpoint) vramSection(companion, viewModel)
 
+  item { FluidSectionHeader(title = stringResource(R.string.settings_language_header), detail = stringResource(R.string.settings_language_detail)) }
   item {
     val autoLabel = stringResource(R.string.language_auto)
     FluidSegmentedControl(
@@ -658,7 +662,7 @@ private fun LazyListScope.vramSection(companion: CompanionUiState, viewModel: Se
         FluidListRow(
           title = model,
           subtitle = stringResource(detail),
-          onClick = { viewModel.updateCompanionDraft { it.copy(model = model) } },
+          modifier = Modifier.fluidRowPressable(onClick = { viewModel.updateCompanionDraft { it.copy(model = model) } }),
           badge = if (draft.model == model) chosen else null,
         )
       }
@@ -760,7 +764,7 @@ private fun LazyListScope.refinementSection(
         title = stringResource(R.string.settings_model_auto),
         subtitle = services.refinementAuto?.let { stringResource(R.string.settings_model_auto_detail, it) }
           ?: stringResource(R.string.settings_refinement_model_detail),
-        onClick = { viewModel.setRefinementModel("") },
+        modifier = Modifier.fluidRowPressable(onClick = { viewModel.setRefinementModel("") }),
         badge = if (settings.refinementModel.isBlank()) chosen else null,
       )
       services.refinementModels.forEach { model ->
@@ -770,7 +774,7 @@ private fun LazyListScope.refinementSection(
           // ha un sottotitolo che non sia una ripetizione.
           title = model.substringAfterLast('/'),
           subtitle = model,
-          onClick = { viewModel.setRefinementModel(model) },
+          modifier = Modifier.fluidRowPressable(onClick = { viewModel.setRefinementModel(model) }),
           badge = if (settings.refinementModel == model) chosen else null,
         )
       }
