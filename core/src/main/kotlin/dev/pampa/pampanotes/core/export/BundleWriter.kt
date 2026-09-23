@@ -25,6 +25,12 @@ class BundleWriter(
   private val audioDir: File,
   private val sourcesDir: File,
   private val labels: ExportLabels = ExportLabels(),
+  /**
+   * Chiamato fra un file e l'altro, e fra un blocco e l'altro di un file lungo: e' il posto dove un
+   * «Annulla» si fa sentire, lanciando. Il writer e' puro e non sa niente di coroutine; chi lo usa
+   * da una coroutine passa `ensureActive`.
+   */
+  private val checkpoint: () -> Unit = {},
 ) {
 
   private val markdown = MarkdownWriter(labels)
@@ -48,7 +54,7 @@ class BundleWriter(
     val layout = BundleLayout(set, options)
     val manifest = manifest(layout, options)
     val root = layout.root + "/"
-    val progress = Progress(set, options, onProgress)
+    val progress = Progress(set, options, onProgress, checkpoint)
 
     ZipOutputStream(out.buffered()).use { zip ->
       // Le cartelle come voci proprie: quasi tutti gli strumenti se le creano da soli, ma qualcuno
@@ -137,10 +143,11 @@ class BundleWriter(
     onProgress: (Float) -> Unit = {},
   ): List<File> {
     val layout = BundleLayout(set, options, loose = true)
-    val progress = Progress(set, options.copy(includeAudio = false, includeSources = false), onProgress)
+    val progress = Progress(set, options.copy(includeAudio = false, includeSources = false), onProgress, checkpoint)
     directory.mkdirs()
     val written = mutableListOf<File>()
     fun text(path: String, content: String) {
+      checkpoint()
       val file = File(directory, path)
       file.writeText(content, Charsets.UTF_8)
       written += file
@@ -158,6 +165,7 @@ class BundleWriter(
       note.handwriting.forEachIndexed { index, image ->
         val source = File(sourcesDir, image.storedFileName)
         if (source.exists()) {
+          checkpoint()
           val target = File(directory, files.images[index])
           source.copyTo(target, overwrite = true)
           written += target
@@ -188,7 +196,12 @@ class BundleWriter(
   // -----------------------------------------------------------------------------------------------
 
   /** Il conto del lavoro: una unita' per nota, una per ogni file allegato. */
-  private class Progress(set: ExportSet, options: ExportOptions, private val onProgress: (Float) -> Unit) {
+  private class Progress(
+    set: ExportSet,
+    options: ExportOptions,
+    private val onProgress: (Float) -> Unit,
+    private val checkpoint: () -> Unit,
+  ) {
     private val total = (
       set.notes.size +
         set.notes.sumOf { it.handwriting.size } +
@@ -198,6 +211,7 @@ class BundleWriter(
     private var done = 0
 
     fun step() {
+      checkpoint()
       done++
       onProgress((done.toFloat() / total).coerceIn(0f, 1f))
     }
@@ -283,6 +297,7 @@ class BundleWriter(
   }
 
   private fun ZipOutputStream.writeText(path: String, text: String) {
+    checkpoint()
     putNextEntry(ZipEntry(path))
     write(text.toByteArray(Charsets.UTF_8))
     closeEntry()
@@ -305,7 +320,22 @@ class BundleWriter(
       time = file.lastModified()
     }
     putNextEntry(entry)
-    file.inputStream().use { it.copyTo(this, BUFFER) }
+    // Un'ora di registrazione sono cento megabyte: l'annullamento si controlla a ogni blocco, non
+    // solo alla fine del file.
+    file.inputStream().use { input ->
+      val buffer = ByteArray(BUFFER)
+      var sinceCheck = 0L
+      while (true) {
+        val read = input.read(buffer)
+        if (read < 0) break
+        write(buffer, 0, read)
+        sinceCheck += read
+        if (sinceCheck >= CHECK_EVERY) {
+          checkpoint()
+          sinceCheck = 0
+        }
+      }
+    }
     closeEntry()
   }
 
@@ -313,10 +343,16 @@ class BundleWriter(
     val crc = CRC32()
     inputStream().use { input ->
       val buffer = ByteArray(BUFFER)
+      var sinceCheck = 0L
       while (true) {
         val read = input.read(buffer)
         if (read < 0) break
         crc.update(buffer, 0, read)
+        sinceCheck += read
+        if (sinceCheck >= CHECK_EVERY) {
+          checkpoint()
+          sinceCheck = 0
+        }
       }
     }
     return crc.value
@@ -324,5 +360,6 @@ class BundleWriter(
 
   companion object {
     private const val BUFFER = 64 * 1024
+    private const val CHECK_EVERY = 4L * 1024 * 1024
   }
 }

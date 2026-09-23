@@ -177,8 +177,14 @@ class BundleLayout(
   val root: String = SkillWriter.skillNameOf(set)
 
   private val notesDir = if (loose) "" else "notes/"
-  private val used = mutableSetOf<String>()
-  private val stems = mutableSetOf<String>()
+
+  /**
+   * I nomi della radice sono presi prima di cominciare. Nel formato sciolto le note stanno accanto
+   * a `INDEX.md` e `instructions.md`: una nota intitolata «Index» diventava `index.md`, e su un disco
+   * che non distingue le maiuscole sovrascriveva l'indice — o l'indice sovrascriveva lei.
+   */
+  private val used = ROOT_FILES.map { it.lowercase() }.toMutableSet()
+  private val stems = (if (loose) ROOT_FILES.map { it.substringBeforeLast('.').lowercase() } else emptyList()).toMutableSet()
 
   val notes: Map<String, NoteFiles> = set.notes.associate { note -> note.note.id to filesOf(note) }
 
@@ -265,12 +271,14 @@ class BundleLayout(
     return candidate
   }
 
-  private fun claim(path: String): String {
-    used += path.lowercase()
-    return path
-  }
+  /**
+   * Prende un nome. I nomi che discendono da una base unica non dovrebbero mai scontrarsi, ma «non
+   * dovrebbero» non basta: due voci uguali in uno ZIP fanno fallire tutta la scrittura, e due file
+   * sciolti uguali si sovrascrivono in silenzio. Se il nome e' gia' preso, prende un numero.
+   */
+  private fun claim(path: String): String = claimUnique(path)
 
-  /** Come [claim], ma un nome gia' preso prende un numero prima dell'estensione. */
+  /** Un nome gia' preso prende un numero prima dell'estensione. */
   private fun claimUnique(path: String): String {
     val dot = path.lastIndexOf('.').takeIf { it > path.lastIndexOf('/') } ?: path.length
     val stem = path.substring(0, dot)
@@ -278,11 +286,15 @@ class BundleLayout(
     var candidate = path
     var counter = 2
     while (candidate.lowercase() in used) candidate = "$stem-${counter++}$extension"
-    return claim(candidate)
+    used += candidate.lowercase()
+    return candidate
   }
 
   companion object {
     private const val MAX_BASE = 100
+
+    /** I file che il pacchetto scrive nella sua radice, in tutti e due i formati. */
+    val ROOT_FILES = listOf(IndexWriter.INDEX, "instructions.md", "SKILL.md", "README-FOR-AI.md", "manifest.json")
 
     /** I nomi che Windows non lascia creare, qualunque sia l'estensione. */
     private val reserved = setOf("con", "prn", "aux", "nul") + (1..9).flatMap { listOf("com$it", "lpt$it") }

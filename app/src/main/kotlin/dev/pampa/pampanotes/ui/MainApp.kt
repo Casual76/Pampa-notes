@@ -40,6 +40,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import dev.antigravity.fluidengine.ui.fluid.FluidAlert
+import dev.antigravity.fluidengine.ui.fluid.FluidAlertAction
 import dev.antigravity.fluidengine.ui.fluid.FluidBarFold
 import dev.antigravity.fluidengine.ui.fluid.FluidChromeController
 import dev.antigravity.fluidengine.ui.fluid.FluidFoldAlignment
@@ -134,16 +136,30 @@ fun MainApp(
             when (onboardingDone) {
               null -> Unit
               false -> {
-                OnboardingLinks(incomingIntents = incomingIntents, onLinkIntent = viewModel::onLinkIntent)
+                OnboardingLinks(
+                  incomingIntents = incomingIntents,
+                  onLinkIntent = viewModel::onLinkIntent,
+                  linkApplied = viewModel.linkApplied,
+                )
                 OnboardingRoute(onDone = viewModel::completeOnboarding)
               }
               true -> AppShell(
                 chromeController = chromeController,
                 incomingIntents = incomingIntents,
                 onIntent = viewModel::onIntent,
+                linkApplied = viewModel.linkApplied,
                 onPickFiles = viewModel::onFilesPicked,
+                onPickerCancelled = viewModel::onPickerCancelled,
               )
             }
+          }
+          val pendingLink by viewModel.pendingLink.collectAsStateWithLifecycle()
+          pendingLink?.let { link ->
+            PendingLinkAlert(
+              link = link,
+              onConfirm = viewModel::confirmPendingLink,
+              onDismiss = viewModel::dismissPendingLink,
+            )
           }
           FluidGlassModalHost(
             state = glassModalHostState,
@@ -161,16 +177,46 @@ fun MainApp(
 }
 
 /**
+ * La conferma di un link di configurazione: dice a chi andranno le note, o le registrazioni, prima
+ * che ci vadano. L'host sta nel titolo del messaggio perche' e' la cosa da riconoscere: il proprio
+ * computer, il proprio Worker, o un nome che non si e' mai visto.
+ */
+@Composable
+private fun PendingLinkAlert(
+  link: PendingLink,
+  onConfirm: () -> Unit,
+  onDismiss: () -> Unit,
+) {
+  val host = remember(link.url) {
+    runCatching { java.net.URI(link.url).host }.getOrNull()?.takeIf { it.isNotBlank() } ?: link.url
+  }
+  val (title, message) = when (link) {
+    is PendingLink.Sync -> stringResource(R.string.link_confirm_sync_title) to stringResource(R.string.link_confirm_sync_message, host, link.url)
+    is PendingLink.Endpoint -> stringResource(R.string.link_confirm_endpoint_title) to stringResource(R.string.link_confirm_endpoint_message, host, link.url)
+  }
+  FluidAlert(
+    onDismissRequest = onDismiss,
+    title = title,
+    message = message,
+    actions = listOf(
+      FluidAlertAction(label = stringResource(R.string.link_confirm_connect), onClick = onConfirm, emphasis = FluidAlertAction.Emphasis.Preferred),
+      FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = onDismiss),
+    ),
+  )
+}
+
+/**
  * I link di configurazione durante il primo avvio: il QR del companion e il link dell'indice si
- * applicano subito, e il passo «Chi trascrive» li mostra gia' scritti. Tutto il resto — una
- * condivisione, un «Apri con» — resta nel flusso (che ha replay) e lo raccoglie la shell quando il
- * primo avvio finisce. Un link gia' applicato qui ha perso il suo `data`, quindi la shell non lo
- * riapplica.
+ * possono collegare subito — con la stessa conferma della shell — e il passo «Chi trascrive» li
+ * mostra gia' scritti. Tutto il resto — una condivisione, un «Apri con» — resta nel flusso (che ha
+ * replay) e lo raccoglie la shell quando il primo avvio finisce. Un link gia' preso qui ha perso il
+ * suo `data`, quindi la shell non lo richiede.
  */
 @Composable
 private fun OnboardingLinks(
   incomingIntents: Flow<Intent>,
   onLinkIntent: (Intent) -> IntentOutcome?,
+  linkApplied: Flow<IntentOutcome>,
 ) {
   val notifications = LocalFluidNotificationHostState.current
   val linkedTitle = stringResource(R.string.settings_endpoint_linked_title)
@@ -178,8 +224,11 @@ private fun OnboardingLinks(
   val syncLinkedTitle = stringResource(R.string.sync_linked_title)
   val syncLinkedMessage = stringResource(R.string.sync_linked)
   LaunchedEffect(incomingIntents) {
-    incomingIntents.collect { intent ->
-      val (id, title, message) = when (val outcome = onLinkIntent(intent)) {
+    incomingIntents.collect { intent -> onLinkIntent(intent) }
+  }
+  LaunchedEffect(linkApplied) {
+    linkApplied.collect { outcome ->
+      val (id, title, message) = when (outcome) {
         is IntentOutcome.EndpointLinked -> Triple("endpoint-linked", linkedTitle, linkedMessage.format(outcome.url))
         is IntentOutcome.SyncLinked -> Triple("sync-linked", syncLinkedTitle, syncLinkedMessage.format(outcome.url))
         else -> return@collect
@@ -203,7 +252,9 @@ private fun AppShell(
   chromeController: FluidChromeController,
   incomingIntents: Flow<Intent>,
   onIntent: (Intent) -> IntentOutcome,
+  linkApplied: Flow<IntentOutcome>,
   onPickFiles: (List<android.net.Uri>, String?) -> Unit,
+  onPickerCancelled: () -> Unit,
 ) {
   val listNav = rememberNavController()
   val detailNav = rememberNavController()
@@ -244,6 +295,8 @@ private fun AppShell(
       if (uris.isNotEmpty()) {
         onPickFiles(uris, null)
         actions.openImport()
+      } else {
+        onPickerCancelled()
       }
     }
     launchPicker.value = { pickFiles.launch(ImportRequest.PICKER_MIME_TYPES) }
@@ -258,8 +311,17 @@ private fun AppShell(
     LaunchedEffect(listNav, incomingIntents) {
       incomingIntents.collect { intent ->
         // Prima la condivisione, poi i deep link: un intent di SEND non e' un link e non ha una rotta.
-        when (val outcome = onIntent(intent)) {
+        when (onIntent(intent)) {
           IntentOutcome.Import -> actions.openImport()
+          // La conferma la mostra la radice; quello che segue a «Collega» arriva da `linkApplied`.
+          IntentOutcome.LinkPending, is IntentOutcome.EndpointLinked, is IntentOutcome.SyncLinked -> Unit
+          IntentOutcome.None -> listNav.handleDeepLink(intent)
+        }
+      }
+    }
+    LaunchedEffect(listNav, linkApplied) {
+      linkApplied.collect { outcome ->
+        when (outcome) {
           is IntentOutcome.EndpointLinked -> {
             // La pagina dei servizi, cosi' si vede cosa e' stato scritto e si prova la connessione subito.
             actions.openSettingsSection(SettingsSection.SERVICES)
@@ -288,7 +350,7 @@ private fun AppShell(
               )
             }
           }
-          IntentOutcome.None -> listNav.handleDeepLink(intent)
+          else -> Unit
         }
       }
     }

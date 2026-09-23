@@ -193,6 +193,9 @@ class NoteViewModel @Inject constructor(
   /**
    * Rifa' le pagine scritte a mano dai `.sdocx` della nota: per una nota importata prima che l'app
    * sapesse disegnarle, o il cui originale stava solo sul computer quando e' passato il giro unico.
+   *
+   * Il lavoro vero gira nello scope di [HandwritingPages], non in quello del ViewModel: uscire dalla
+   * nota a meta' non lo interrompe. Qui si aspetta solo il conto, per dirlo.
    */
   fun rederiveHandwriting(onDone: (Int) -> Unit, onError: (String) -> Unit) = viewModelScope.launch {
     try {
@@ -212,13 +215,16 @@ class NoteViewModel @Inject constructor(
    * dopo, e [onError] se non si e' riusciti. Un originale che non e' mai stato archiviato non si
    * puo' chiedere a nessuno, e la riga non e' cliccabile.
    */
-  fun openSource(source: SourceEntity, onReady: (File) -> Unit, onError: (String) -> Unit) {
+  fun openSource(source: SourceEntity, onReady: (File) -> Unit, onError: (String) -> Unit, onUnavailable: () -> Unit = {}) {
     val file = source.storedFileName?.let(files::sourceFile) ?: return
     if (file.exists()) {
       onReady(file)
       return
     }
-    if (source.archivedAt <= 0) return
+    if (source.archivedAt <= 0) {
+      onUnavailable()
+      return
+    }
     viewModelScope.launch {
       try {
         val got = fetcher.fetchSource(source)

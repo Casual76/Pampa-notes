@@ -1,5 +1,7 @@
 package dev.pampa.pampanotes.core.importing
 
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.zip.ZipFile
@@ -70,13 +72,44 @@ object SdocxInk {
   private const val PROP_COMPRESSED = 0x1L
 
   /** Le pagine del quaderno, nell'ordine in cui stanno. Vuota se non c'e' inchiostro o non si legge. */
-  fun read(zip: ZipFile): List<InkPage> = runCatching {
-    pageIds(zip).mapIndexedNotNull { index, id ->
-      val entry = zip.getEntry("$id.page") ?: return@mapIndexedNotNull null
-      val bytes = zip.getInputStream(entry).use { it.readBytes() }
-      runCatching { readPage(bytes, index) }.getOrNull()
+  fun read(zip: ZipFile): List<InkPage> = pages(zip).toList()
+
+  /**
+   * Le pagine una alla volta, lette quando si chiedono.
+   *
+   * Un quaderno di un semestre sono decine di pagine con migliaia di tratti ciascuna: tenerle tutte
+   * in memoria per disegnarle una dopo l'altra vuol dire tenere tutto il quaderno per disegnarne
+   * una pagina. Chi disegna prende la pagina, la taglia, la disegna e la lascia andare.
+   */
+  fun pages(zip: ZipFile): Sequence<InkPage> {
+    val ids = runCatching { pageIds(zip) }.getOrDefault(emptyList())
+    return ids.asSequence().mapIndexedNotNull { index, id ->
+      runCatching {
+        val entry = zip.getEntry("$id.page") ?: return@runCatching null
+        // Una voce che dichiara (o si rivela) piu' grande di cosi' non e' una pagina di appunti: e'
+        // un file rotto o fatto apposta, e decomprimerlo in memoria finirebbe la memoria.
+        if (entry.size > MAX_PAGE_BYTES) return@runCatching null
+        val bytes = zip.getInputStream(entry).use { readCapped(it) } ?: return@runCatching null
+        readPage(bytes, index)
+      }.getOrNull()
     }
-  }.getOrDefault(emptyList())
+  }
+
+  /** Quante immagini diventera' l'inchiostro, senza tenere le pagine: si conta e si butta. */
+  fun countSlices(zip: ZipFile): Int =
+    runCatching { pages(zip).sumOf { page -> runCatching { InkLayout.slices(page).size }.getOrDefault(0) } }.getOrDefault(0)
+
+  private fun readCapped(input: InputStream): ByteArray? {
+    val out = ByteArrayOutputStream()
+    val buffer = ByteArray(64 * 1024)
+    while (true) {
+      val read = input.read(buffer)
+      if (read < 0) break
+      out.write(buffer, 0, read)
+      if (out.size() > MAX_PAGE_BYTES) return null
+    }
+    return out.toByteArray()
+  }
 
   /** Gli uuid delle pagine; se l'indice non si legge, tutte le `.page` nell'ordine dello ZIP. */
   private fun pageIds(zip: ZipFile): List<String> {
@@ -102,13 +135,20 @@ object SdocxInk {
     val layersAt = buffer.getInt(0)
     val width = buffer.getInt(0x16)
     val height = buffer.getInt(0x1A)
+    // Una larghezza da pagina, o niente: tutto il resto (le fette, la scala del disegno) si misura
+    // su questa, e una larghezza di 3 o di due miliardi vuol dire che si sta leggendo altro.
+    if (width !in MIN_PAGE_WIDTH..MAX_PAGE_WIDTH) return InkPage(index, width, height, emptyList())
     val strokes = mutableListOf<InkStroke>()
 
     val layers = buffer.getInt(layersAt)
+    require(layers in 0..MAX_LAYERS) { "livelli non plausibili" }
     var layer = layersAt + 4
     repeat(layers) {
       val header = buffer.getInt(layer)
       val objects = buffer.getInt(layer + header)
+      // Un'intestazione negativa riporterebbe il cursore indietro, e lo stesso livello si
+      // rileggerebbe per miliardi di volte: ogni passo deve andare avanti.
+      require(header >= 0 && objects >= 0) { "livello fuori dal file" }
       var offset = layer + header + 4
       repeat(objects) { offset = readObject(buffer, offset, strokes) }
       layer = offset + HASH
@@ -198,8 +238,15 @@ object SdocxInk {
       }
       field += 4
     }
+    // Una coordinata infinita, o a chilometri dalla pagina, non e' un tratto: e' un byte letto come
+    // numero. Tenerla allargherebbe l'inchiostro a tutto lo spazio, e le fette con lui.
+    if (!plausible(xs) || !plausible(ys)) return null
+    for (i in pressures.indices) if (!pressures[i].isFinite()) pressures[i] = 0f
     return InkStroke(xs, ys, pressures, argb, size)
   }
+
+  internal fun plausible(values: FloatArray): Boolean =
+    values.all { it.isFinite() && it >= -MAX_COORDINATE && it <= MAX_COORDINATE }
 
   private fun readMask(buffer: ByteBuffer, at: Int, length: Int): Long {
     var mask = 0L
@@ -223,4 +270,14 @@ object SdocxInk {
   private const val FIELD_SIZE = 3
   private const val DEFAULT_ARGB = 0xFF252525.toInt()
   private const val DEFAULT_SIZE = 6f
+
+  /** Le larghezze da pagina: il tablet scrive 1080, un telefono meno, uno schermo grande di piu'. */
+  const val MIN_PAGE_WIDTH = 200
+  const val MAX_PAGE_WIDTH = 5_000
+
+  /** Oltre questa distanza dall'origine una coordinata non sta su nessuna pagina. */
+  const val MAX_COORDINATE = 50_000f
+
+  private const val MAX_LAYERS = 1_000
+  private const val MAX_PAGE_BYTES = 64L * 1024 * 1024
 }

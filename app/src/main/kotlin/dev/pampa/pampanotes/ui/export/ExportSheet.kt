@@ -35,6 +35,7 @@ import dev.antigravity.fluidengine.ui.theme.FluidListGroup
 import dev.antigravity.fluidengine.ui.theme.FluidListRow
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
+import dev.pampa.pampanotes.core.export.ExportFailure
 import dev.pampa.pampanotes.core.export.ExportFormat
 import dev.pampa.pampanotes.core.export.ExportOptions
 import dev.pampa.pampanotes.core.export.ExportScope
@@ -229,7 +230,8 @@ private fun ColumnScope.ConfiguringBody(state: ExportUiState, onOptions: (Export
     }
   }
 
-  state.error?.let { error ->
+  val failureText = state.failure?.let { exportFailureText(it) } ?: state.error
+  failureText?.let { error ->
     FluidInlineMessage(
       title = stringResource(R.string.export_failed),
       message = error,
@@ -237,6 +239,17 @@ private fun ColumnScope.ConfiguringBody(state: ExportUiState, onOptions: (Export
     )
   }
 }
+
+@Composable
+private fun exportFailureText(reason: ExportFailure.Reason): String = stringResource(
+  when (reason) {
+    ExportFailure.Reason.WRITE -> R.string.export_failure_write
+    ExportFailure.Reason.CREATE -> R.string.export_failure_create
+    ExportFailure.Reason.NOT_WRITABLE -> R.string.export_failure_not_writable
+    ExportFailure.Reason.FOLDER_GONE -> R.string.export_failure_folder_gone
+    ExportFailure.Reason.INTERRUPTED -> R.string.export_failure_interrupted
+  },
+)
 
 @Composable
 private fun ColumnScope.ConfiguringActions(

@@ -29,12 +29,13 @@ class NoteRepository @Inject constructor(
   suspend fun tags(noteId: String): List<String> = tags.tags(noteId)
   suspend fun searchByTitle(query: String, limit: Int = 20): List<NoteEntity> = notes.byTitle(query, limit)
 
-  suspend fun create(folderId: String, title: String, body: String = "", language: String? = null): NoteEntity {
+  /** [untitled] e' il titolo di una nota senza titolo nella lingua di chi chiama: il modulo core non ha stringhe. */
+  suspend fun create(folderId: String, title: String, body: String = "", language: String? = null, untitled: String = "Senza titolo"): NoteEntity {
     val now = System.currentTimeMillis()
     val note = NoteEntity(
       id = Ids.newId(),
       folderId = folderId,
-      title = title.trim().ifEmpty { "Senza titolo" },
+      title = title.trim().ifEmpty { untitled },
       body = body,
       language = language,
       createdAt = now,
@@ -48,6 +49,39 @@ class NoteRepository @Inject constructor(
     notes.updateTitle(id, title.trim().ifEmpty { "Senza titolo" }, System.currentTimeMillis())
 
   suspend fun setBody(id: String, body: String) = notes.updateBody(id, body, System.currentTimeMillis())
+
+  /**
+   * Salva quello che l'editor ha in mano, senza schiacciare quello che e' arrivato nel frattempo.
+   *
+   * [baseBody] e' il corpo su cui l'editor ha cominciato a scrivere (o l'ultimo che ha salvato).
+   * Se nel database adesso c'e' altro — un giro di sync, un `.sdocx` aggiornato mentre si scriveva —
+   * le due versioni sono cambiate tutte e due. Si fa come il sync: vince la piu' recente, che e'
+   * quella che si sta scrivendo adesso, e l'altra diventa una nota «(conflitto — altrove, data)»
+   * nella stessa cartella. Il testo di qualcuno non si perde mai, e l'editor non si vede cambiare
+   * le parole sotto le dita.
+   *
+   * @return la nota di conflitto, se e' nata
+   */
+  suspend fun saveEdit(id: String, title: String, body: String, baseBody: String): NoteEntity? {
+    val current = notes.get(id) ?: return null
+    val now = System.currentTimeMillis()
+    var conflict: NoteEntity? = null
+    if (current.body != baseBody && current.body != body) {
+      val stamp = java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.getDefault()).format(java.util.Date(now))
+      conflict = current.copy(
+        id = Ids.newId(),
+        title = "${current.title} (conflitto — altrove, $stamp)",
+        pinned = false,
+        createdAt = now,
+        updatedAt = now,
+      )
+      notes.upsert(conflict)
+    }
+    val cleanTitle = title.trim().ifEmpty { current.title }
+    if (cleanTitle != current.title) notes.updateTitle(id, cleanTitle, now)
+    if (body != current.body) notes.updateBody(id, body, now)
+    return conflict
+  }
 
   /** Aggiunge testo in fondo alla nota, separato da una riga vuota: quello che fa ogni import. */
   suspend fun appendBody(id: String, text: String) {

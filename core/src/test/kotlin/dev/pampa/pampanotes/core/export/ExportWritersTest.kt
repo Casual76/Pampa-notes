@@ -506,6 +506,61 @@ class ExportWritersTest {
   }
 
   // -----------------------------------------------------------------------------------------------
+  // Nomi riservati e annullamento
+  // -----------------------------------------------------------------------------------------------
+
+  @Test
+  fun `in formato sciolto una nota chiamata come l'indice non gli prende il posto`() {
+    // Su un disco che non distingue le maiuscole `index.md` e `INDEX.md` sono lo stesso file: una
+    // delle due scritture spariva sotto l'altra.
+    val notes = listOf(
+      note(id = "a", title = "Index", folderPath = emptyList(), sessions = emptyList()),
+      note(id = "b", title = "Instructions", folderPath = emptyList(), sessions = emptyList()),
+      note(id = "c", title = "Skill", folderPath = emptyList(), sessions = emptyList()),
+    )
+    val layout = BundleLayout(set(notes), options, loose = true)
+    val reserved = BundleLayout.ROOT_FILES.map { it.lowercase() }.toSet()
+
+    notes.forEach { note -> assertFalse(layout.of(note).notes.lowercase() in reserved) }
+
+    val directory = temp.newFolder("sciolti-riservati")
+    val written = BundleWriter(temp.newFolder(), temp.newFolder()).writeLoose(set(notes), options, directory)
+    assertEquals(written.size, written.map { it.name.lowercase() }.toSet().size)
+    assertTrue(java.io.File(directory, IndexWriter.INDEX).readText().contains("Index"))
+  }
+
+  @Test
+  fun `nel pacchetto nessun nome si ripete, nemmeno cambiando le maiuscole`() {
+    val notes = listOf(
+      note(id = "a", title = "Lezione", folderPath = emptyList()),
+      note(id = "b", title = "LEZIONE", folderPath = emptyList()),
+    )
+    val layout = BundleLayout(set(notes), options)
+    val paths = notes.flatMap { note ->
+      val files = layout.of(note)
+      listOf(files.notes) + files.transcripts.values.flatten().map { it.path } + files.images + files.audio.values
+    }
+    assertEquals(paths.size, paths.map { it.lowercase() }.toSet().size)
+  }
+
+  @Test
+  fun `annullare ferma la scrittura invece di arrivare in fondo`() {
+    // Il writer non sa niente di coroutine: chiede a ogni passo se deve continuare, e un
+    // annullamento arriva come un'eccezione che lo ferma li'.
+    var calls = 0
+    val writer = BundleWriter(temp.newFolder(), temp.newFolder(), checkpoint = {
+      if (++calls > 2) throw java.util.concurrent.CancellationException("annullato")
+    })
+    val notes = (1..10).map { note(id = "n$it", title = "Lezione $it") }
+    val out = ByteArrayOutputStream()
+
+    val failure = runCatching { writer.write(set(notes), options, out) }.exceptionOrNull()
+
+    assertTrue(failure is java.util.concurrent.CancellationException)
+    assertTrue(calls < 10)
+  }
+
+  // -----------------------------------------------------------------------------------------------
 
   private fun entriesOf(bytes: ByteArray): LinkedHashMap<String, String> {
     val result = LinkedHashMap<String, String>()

@@ -38,7 +38,7 @@ object GoogleIdentity {
       throw Cancelled()
     } catch (none: NoCredentialException) {
       // Il messaggio di Android e' «No credentials available», in inglese, e non dice cosa fare.
-      throw IllegalStateException("su questo dispositivo non c'e' un account Google: aggiungilo nelle impostazioni di Android e riprova", none)
+      throw IllegalStateException(context.getString(dev.pampa.pampanotes.R.string.account_no_google_account), none)
     } catch (error: GetCredentialException) {
       throw IllegalStateException(error.message ?: error.type, error)
     }

@@ -10,7 +10,32 @@ import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import kotlinx.serialization.json.Json
 
-class BackupFailure(message: String, cause: Throwable? = null) : IOException(message, cause)
+/**
+ * Un backup o un ripristino non riuscito, col perche' in un codice: la frase la sceglie la
+ * schermata, nella lingua dell'app.
+ */
+class BackupFailure(val reason: Reason, cause: Throwable? = null) : IOException(reason.name, cause) {
+  enum class Reason {
+    /** La cartella scelta non si raggiunge piu'. */
+    FOLDER_GONE,
+    /** Non si puo' scrivere nella cartella scelta. */
+    NOT_WRITABLE,
+    /** La cartella non ha lasciato creare il file. */
+    CREATE,
+    /** La scrittura si e' fermata a meta'. */
+    INTERRUPTED,
+    /** Il file scelto non si apre. */
+    OPEN,
+    /** Non e' un backup di Pampa Notes. */
+    NOT_A_BACKUP,
+    /** Viene da una versione dell'app piu' recente di questa. */
+    NEWER,
+    /** Il manifesto c'e' ma non si legge. */
+    BAD_MANIFEST,
+    /** Manca il database. */
+    NO_DATABASE,
+  }
+}
 
 /** Un backup aperto in una cartella di lavoro, prima che qualcuno decida di prenderlo sul serio. */
 data class StagedBackup(val manifest: BackupManifest, val root: File) {
@@ -120,7 +145,7 @@ object BackupArchive {
         entry = zip.nextEntry
       }
     }
-    throw BackupFailure("questo file non e' un backup di Pampa Notes")
+    throw BackupFailure(BackupFailure.Reason.NOT_A_BACKUP)
   }
 
   /**
@@ -129,8 +154,18 @@ object BackupArchive {
    * Si estrae in una cartella di lavoro e non sopra i file veri: se lo zip si interrompe a meta',
    * l'archivio dell'utente e' ancora quello di prima. Il passaggio da staging ai file veri e' un
    * rinomina, ed e' l'ultima cosa che succede.
+   *
+   * Il manifesto e' la prima voce, e si guarda **prima** di estrarre il resto: un backup di una
+   * versione piu' recente (schema, o database oltre [maxDatabaseVersion]) si rifiuta subito, invece
+   * di scoprirlo dopo aver scritto gigabyte di registrazioni nella cartella di lavoro. Un archivio
+   * la cui prima voce non e' il manifesto non l'ha scritto questa app.
    */
-  fun extract(input: InputStream, staging: File, onProgress: (Float) -> Unit = {}): StagedBackup {
+  fun extract(
+    input: InputStream,
+    staging: File,
+    onProgress: (Float) -> Unit = {},
+    maxDatabaseVersion: Int = Int.MAX_VALUE,
+  ): StagedBackup {
     staging.deleteRecursively()
     staging.mkdirs()
     var manifest: BackupManifest? = null
@@ -146,9 +181,14 @@ object BackupArchive {
       var entry = zip.nextEntry
       while (entry != null) {
         val name = entry.name
+        if (manifest == null && name != BackupEntries.MANIFEST) throw BackupFailure(BackupFailure.Reason.NOT_A_BACKUP)
         if (accepts(name)) {
           if (name == BackupEntries.MANIFEST) {
-            manifest = parseManifest(zip.readBytes())
+            val read = parseManifest(zip.readBytes())
+            if (read.schema > BackupManifest.SCHEMA || read.databaseVersion > maxDatabaseVersion) {
+              throw BackupFailure(BackupFailure.Reason.NEWER)
+            }
+            manifest = read
           } else {
             val target = File(staging, name)
             target.parentFile?.mkdirs()
@@ -169,13 +209,10 @@ object BackupArchive {
       }
     }
 
-    val found = manifest ?: throw BackupFailure("questo file non e' un backup di Pampa Notes")
-    if (found.schema > BackupManifest.SCHEMA) {
-      throw BackupFailure("questo backup viene da una versione piu' recente dell'app")
-    }
+    val found = manifest ?: throw BackupFailure(BackupFailure.Reason.NOT_A_BACKUP)
     val staged = StagedBackup(found, staging)
     if (!staged.database.isFile || staged.database.length() == 0L) {
-      throw BackupFailure("il backup non contiene il database")
+      throw BackupFailure(BackupFailure.Reason.NO_DATABASE)
     }
     onProgress(1f)
     return staged
@@ -183,7 +220,7 @@ object BackupArchive {
 
   private fun parseManifest(bytes: ByteArray): BackupManifest = runCatching {
     json.decodeFromString(BackupManifest.serializer(), bytes.toString(Charsets.UTF_8))
-  }.getOrElse { throw BackupFailure("il backup ha un indice illeggibile", it) }
+  }.getOrElse { throw BackupFailure(BackupFailure.Reason.BAD_MANIFEST, it) }
 
   private fun copy(file: File, out: OutputStream, before: Long, total: Long, onProgress: (Float) -> Unit): Long {
     var moved = 0L

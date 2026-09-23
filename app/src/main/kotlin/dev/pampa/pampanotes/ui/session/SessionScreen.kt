@@ -17,6 +17,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -85,7 +88,9 @@ fun SessionRoute(
   viewModel: SessionViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
-  val playback by viewModel.playback.collectAsStateWithLifecycle()
+  // Lo stato, non il valore: la posizione cambia cinque volte al secondo, e letta qui farebbe
+  // ricomporre tutta la pagina a ogni battito. La leggono solo il lettore e il paragrafo acceso.
+  val playback = viewModel.playback.collectAsStateWithLifecycle()
   val following by viewModel.followPlayback.collectAsStateWithLifecycle()
   val refineDefaults by viewModel.refineDefaults.collectAsStateWithLifecycle()
 
@@ -119,7 +124,7 @@ fun SessionRoute(
 @Composable
 private fun SessionScreen(
   state: SessionUiState,
-  playback: PlaybackState,
+  playback: State<PlaybackState>,
   following: Boolean,
   onBack: () -> Unit,
   onPlayPause: () -> Unit,
@@ -153,20 +158,20 @@ private fun SessionScreen(
   val paragraphs = remember(state.segments) { paragraphsOf(state.segments) }
   // Quale paragrafo si sta ascoltando: l'ultimo cominciato.
   //
-  // Calcolato, non derivato. derivedStateOf osserva le letture di stato dello snapshot, e la
-  // posizione qui arriva come parametro: la lambda ricordata si teneva quella del momento in cui
-  // era nata, e il paragrafo attivo restava il primo per tutta la lezione. Una scorsa di quaranta
-  // elementi cinque volte al secondo non si misura.
-  val activeParagraph = remember(paragraphs, playback.positionMs) {
-    paragraphs.indexOfLast { it.startMs <= playback.positionMs }.coerceAtLeast(0)
+  // Derivato dallo stato della posizione, letto dentro il calcolo: la pagina si ricompone quando
+  // cambia il paragrafo, cioe' ogni qualche decina di secondi, e non a ogni battito del lettore.
+  // Con la posizione passata come valore (com'era prima) derivedStateOf non vedeva cambiare niente,
+  // e il paragrafo attivo restava il primo per tutta la lezione.
+  val activeParagraph by remember(paragraphs) {
+    derivedStateOf { paragraphs.indexOfLast { it.startMs <= playback.value.positionMs }.coerceAtLeast(0) }
   }
+  val playing by remember { derivedStateOf { playback.value.playing } }
 
   ScrollFollower(
     listState = listState,
     following = following,
-    playing = playback.playing,
+    playing = playing,
     targetIndex = activeParagraph,
-    headerCount = headerItemCount(state),
     onUserScrolled = onUserScrolled,
   )
 
@@ -223,7 +228,7 @@ private fun SessionScreen(
     overlay = { backdrop ->
       if (state.playable) {
         PlayerBar(
-          state = playback,
+          state = playback.value,
           backdrop = backdrop,
           onPlayPause = onPlayPause,
           onSkip = onSkip,
@@ -244,7 +249,7 @@ private fun SessionScreen(
       onPrepareRefinement()
       refining = true
     }
-    transcriptBody(state, paragraphs, activeParagraph, playback.positionMs, onSeek)
+    transcriptBody(state, paragraphs, activeParagraph, { playback.value.positionMs }, onSeek)
   }
 
   if (renaming && state.session != null) {
@@ -311,21 +316,6 @@ private fun SessionScreen(
       ),
     )
   }
-}
-
-/** Quanti elementi stanno prima dei paragrafi: l'inseguimento deve saperlo per scorrere al posto giusto. */
-private fun headerItemCount(state: SessionUiState): Int {
-  var count = 0
-  if (state.job != null) count++
-  if (!state.missing.isNullOrEmpty()) count++
-  if (state.parts.isNotEmpty()) count++
-  if (state.untranscribed.isNotEmpty()) count++
-  if (state.transcripts.size > 1) count++
-  if (state.raw != null && state.transcripts.size == 1 && state.job == null) count++
-  if (state.activeTranscript?.status == TranscriptStatus.SUSPICIOUS) count++
-  // Lo stato vuoto e il tasto "Trascrivi" non si contano: esistono solo quando di paragrafi non ce
-  // n'e' nessuno, e allora non c'e' niente da inseguire.
-  return count
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -546,7 +536,7 @@ private fun LazyListScope.transcriptBody(
   state: SessionUiState,
   paragraphs: List<Paragraph>,
   activeParagraph: Int,
-  positionMs: Long,
+  positionMs: () -> Long,
   onSeek: (Long) -> Unit,
 ) {
   val active = state.activeTranscript ?: return
@@ -570,14 +560,14 @@ private fun LazyListScope.transcriptBody(
     }
   }
 
-  itemsIndexed(items = paragraphs, key = { index, _ -> "paragraph-$index" }) { index, paragraph ->
+  itemsIndexed(items = paragraphs, key = { index, _ -> "$PARAGRAPH_KEY$index" }) { index, paragraph ->
     val isActive = index == activeParagraph
     ParagraphCard(
       paragraph = paragraph,
       isActive = isActive,
       // Una lambda e non un valore: la posizione cambia cinque volte al secondo, e passandola come
       // parametro ogni battito rimisurerebbe il paragrafo. Cosi' cambia solo il disegno.
-      positionMs = { if (isActive) positionMs else 0L },
+      positionMs = { if (isActive) positionMs() else 0L },
       onSeek = onSeek,
     )
   }
@@ -731,7 +721,6 @@ private fun ScrollFollower(
   following: Boolean,
   playing: Boolean,
   targetIndex: Int,
-  headerCount: Int,
   onUserScrolled: () -> Unit,
 ) {
   LaunchedEffect(listState) {
@@ -740,12 +729,37 @@ private fun ScrollFollower(
     }
   }
 
+  // Il paragrafo si trova per chiave, non contando quello che gli sta sopra. Il conto a mano
+  // (lavoro, parti, versioni, avviso...) sbagliava ogni volta che sopra compariva una riga nuova —
+  // la nota «tempi stimati», l'intestazione della pagina — e il lettore portava la lista un
+  // paragrafo o due fuori posto. Da un paragrafo visibile qualunque si ricava di quanto sono
+  // spostati tutti; se non se ne vede nessuno, ci si avvicina e si corregge.
   LaunchedEffect(targetIndex, following, playing) {
     if (!following || !playing) return@LaunchedEffect
-    val index = (targetIndex + headerCount).coerceAtLeast(0)
-    runCatching { listState.animateScrollToItem(index) }
+    runCatching {
+      val offset = paragraphOffset(listState)
+      if (offset != null) {
+        listState.animateScrollToItem(targetIndex + offset)
+      } else {
+        // Nessun paragrafo a schermo: stanno in fondo alla lista, dopo tutto il resto. Un salto
+        // all'ultimo elemento ne mette qualcuno a schermo, e al fotogramma dopo si misura.
+        listState.scrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
+        withFrameNanos { }
+        val measured = paragraphOffset(listState) ?: return@runCatching
+        listState.animateScrollToItem(targetIndex + measured)
+      }
+    }
   }
 }
+
+/** Di quanto l'indice nella lista e' spostato rispetto al numero del paragrafo, se se ne vede uno. */
+private fun paragraphOffset(listState: LazyListState): Int? =
+  listState.layoutInfo.visibleItemsInfo.firstNotNullOfOrNull { info ->
+    val number = (info.key as? String)?.takeIf { it.startsWith(PARAGRAPH_KEY) }?.removePrefix(PARAGRAPH_KEY)?.toIntOrNull()
+    number?.let { info.index - it }
+  }
+
+private const val PARAGRAPH_KEY = "paragraph-"
 
 // -------------------------------------------------------------------------------------------------
 // Etichette

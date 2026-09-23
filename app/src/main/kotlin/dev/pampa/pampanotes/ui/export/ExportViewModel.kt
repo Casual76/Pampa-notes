@@ -36,6 +36,8 @@ data class ExportUiState(
   val progress: Float = 0f,
   val result: ExportResult? = null,
   val error: String? = null,
+  /** Il perche' di un export fallito, quando si sa: la schermata lo dice con le sue parole. */
+  val failure: ExportFailure.Reason? = null,
   /** L'URI SAF della cartella scelta in precedenza, se c'e': il salvataggio non richiede altro. */
   val folderUri: String = "",
   val folderName: String = "",
@@ -81,8 +83,12 @@ class ExportViewModel @Inject constructor(
           // stesse cose dentro, e cinque interruttori da rimettere ogni volta sono il tipo di
           // attrito per cui una funzione smette di essere usata.
           options = ExportOptionsCodec.decode(current.exportDefaultsJson),
+          // La raccolta di un altro ambito, rimasta dall'apertura di prima: finche' non arriva
+          // quella nuova non c'e' niente da esportare, o «Condividi» manderebbe le note sbagliate.
+          set = null,
           result = null,
           error = null,
+          failure = null,
           progress = 0f,
           folderUri = current.backupFolderUri,
           folderName = folderNameOf(current.backupFolderUri),
@@ -125,7 +131,7 @@ class ExportViewModel @Inject constructor(
   }
 
   fun dismissResult() {
-    _uiState.update { it.copy(stage = ExportStage.CONFIGURING, result = null, error = null, progress = 0f) }
+    _uiState.update { it.copy(stage = ExportStage.CONFIGURING, result = null, error = null, failure = null, progress = 0f) }
   }
 
   /**
@@ -177,7 +183,7 @@ class ExportViewModel @Inject constructor(
     val set = _uiState.value.set ?: return
     running?.cancel()
     running = viewModelScope.launch {
-      _uiState.update { it.copy(stage = ExportStage.RUNNING, progress = 0f, error = null) }
+      _uiState.update { it.copy(stage = ExportStage.RUNNING, progress = 0f, error = null, failure = null) }
       try {
         val result = service.export(
           set = set,
@@ -190,8 +196,8 @@ class ExportViewModel @Inject constructor(
       } catch (cancelled: kotlinx.coroutines.CancellationException) {
         throw cancelled
       } catch (failure: Throwable) {
-        val message = (failure as? ExportFailure)?.message ?: failure.message
-        _uiState.update { it.copy(stage = ExportStage.FAILED, error = message) }
+        val reason = (failure as? ExportFailure)?.reason
+        _uiState.update { it.copy(stage = ExportStage.FAILED, error = if (reason == null) failure.message.orEmpty() else null, failure = reason) }
       }
     }
   }

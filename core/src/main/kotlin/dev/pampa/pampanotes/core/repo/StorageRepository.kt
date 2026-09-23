@@ -56,7 +56,7 @@ class StorageRepository @Inject constructor(
     val remoteParts = parts.filter { it.archivedAt > 0 && partHere[it] == false }
     val remoteDocs = docs.filter { it.archivedAt > 0 && docHere[it] == false }
     val evictableParts = parts.filter { it.archivedAt > 0 && partHere[it] == true }
-    val evictableDocs = docs.filter { it.archivedAt > 0 && docHere[it] == true }
+    val evictableDocs = docs.filter { it.archivedAt > 0 && it.derivedFromId == null && docHere[it] == true }
     StorageUsage(
       evictableSources = SizeTotal(evictableDocs.size, evictableDocs.sumOf { files.sourceFile(it.storedFileName!!).length() }),
       evictableAudio = SizeTotal(evictableParts.size, evictableParts.sumOf { files.audioFile(it.fileName).length() }),
@@ -84,13 +84,16 @@ class StorageRepository @Inject constructor(
    * Le righe restano: da quel momento «il file non c'e'» e' lo stato normale che il resto
    * dell'app sa gestire — la fonte si riscarica al tocco, la registrazione dal lettore o dalla
    * coda. Non si tocca una registrazione con una trascrizione in corso: il worker la sta leggendo.
+   * Non si toccano nemmeno le pagine scritte a mano (`derivedFromId`): pesano qualche centinaio di
+   * kB, stanno a schermo dentro la nota, e senza computer la nota resterebbe con dei buchi al posto
+   * degli appunti per risparmiare quanto una foto.
    * Torna quanti file e quanti byte se ne sono andati.
    */
   suspend fun evictArchived(sources: Boolean, audio: Boolean): SizeTotal = withContext(Dispatchers.IO) {
     var count = 0
     var bytes = 0L
     if (sources) {
-      this@StorageRepository.sources.all().filter { it.archivedAt > 0 && it.storedFileName != null }.forEach { source ->
+      this@StorageRepository.sources.all().filter { it.archivedAt > 0 && it.storedFileName != null && it.derivedFromId == null }.forEach { source ->
         val file = files.sourceFile(source.storedFileName!!)
         if (file.exists()) {
           val size = file.length()
