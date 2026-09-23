@@ -36,6 +36,7 @@ import uvicorn
 
 import archive
 import config
+import updater
 import whisperx_server as server
 
 # I tre colori dell'icona. Non sono decorativi: dicono a colpo d'occhio se la scheda video e'
@@ -174,6 +175,55 @@ def on_qr(icon: pystray.Icon, _: Any) -> None:
     config.LOG_DIR.mkdir(exist_ok=True)
     image.save(target)
     open_path(target)
+
+
+# --- aggiornamenti ------------------------------------------------------------------------------
+#
+# Solo per chi ha installato col setup (vedi updater.py): il controllo e' una volta al giorno, e la
+# voce del menu compare quando c'e' qualcosa di nuovo. Mai durante una trascrizione, ne' con qualcuno
+# in fila: il setup ferma l'icona per rimetterla in piedi.
+
+UPDATES: updater.UpdateWatcher | None = None
+
+
+def update_available(_: Any = None) -> bool:
+    return UPDATES is not None and UPDATES.release is not None
+
+
+def update_label(_: Any = None) -> str:
+    release = UPDATES.release if UPDATES is not None else None
+    return f"Aggiorna a v{release.label}" if release else "Aggiorna"
+
+
+def idle_for_update() -> bool:
+    return not server.STATE["busy"] and server.GATE.waiting == 0
+
+
+def on_update(icon: pystray.Icon, _: Any) -> None:
+    if UPDATES is None:
+        return
+    icon.notify("Scarico l'aggiornamento...", "Pampa Notes")
+
+    def run() -> None:
+        outcome = UPDATES.apply(idle_for_update)
+        messages = {
+            "started": "Aggiornamento avviato: l'icona torna fra poco.",
+            "busy": "Non ora: c'e' una trascrizione in corso. Riprova quando ha finito.",
+            "running": "L'aggiornamento e' gia' in corso.",
+            "none": "Niente da aggiornare.",
+        }
+        server.log.info("aggiornamento dal menu: %s", outcome)
+        icon.notify(messages.get(outcome, f"Aggiornamento non riuscito: {outcome}"), "Pampa Notes")
+
+    threading.Thread(target=run, daemon=True, name="aggiorna").start()
+
+
+def start_update_watch(icon: pystray.Icon) -> None:
+    global UPDATES
+    if not updater.installed(config.HERE):
+        return
+    UPDATES = updater.UpdateWatcher(config.version(), on_change=icon.update_menu)
+    UPDATES.start()
 
 
 def on_logs(_: pystray.Icon = None, __: Any = None) -> None:
@@ -363,6 +413,7 @@ def build_menu() -> pystray.Menu:
         # Predefinita: un clic sinistro sull'icona apre il QR, che dopo la prima volta e' l'unica
         # cosa che si viene a cercare qui.
         pystray.MenuItem("Mostra il QR per i dispositivi", on_qr, default=True),
+        pystray.MenuItem(update_label, on_update, visible=update_available),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Apri la cartella dell'archivio", on_archive),
         pystray.MenuItem("Apri le impostazioni (config.json)", on_config),
@@ -405,6 +456,7 @@ def main() -> None:
         menu=build_menu(),
     )
     threading.Thread(target=watch, args=(icon,), daemon=True).start()
+    start_update_watch(icon)
     # Un collegamento scritto da una versione precedente puntava a questo file, senza lanciatore:
     # si riscrive, cosi' chi aveva gia' acceso l'avvio automatico non deve spegnerlo e riaccenderlo.
     if autostart_enabled():

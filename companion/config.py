@@ -26,6 +26,39 @@ from typing import Any
 HERE = Path(__file__).resolve().parent
 CONFIG_PATH = HERE / "config.json"
 LOG_DIR = HERE / "logs"
+# La versione del companion, una sola: la leggono /health, l'icona (per gli aggiornamenti) e
+# `installer/build-installer.ps1` (per il nome del setup). Senza il file e' una copia di sviluppo.
+VERSION_PATH = HERE / "VERSION"
+# Programmi che l'installer mette accanto al codice quando sul computer non ci sono: ffmpeg, per
+# ora. WhisperX lo chiama per nome, quindi deve stare nel PATH di questo processo.
+LOCAL_BIN = HERE / "bin"
+
+
+def version() -> str:
+    try:
+        return VERSION_PATH.read_text(encoding="utf-8").strip() or "dev"
+    except OSError:
+        return "dev"
+
+
+def add_local_bin() -> None:
+    """
+    `bin/` accanto al codice davanti al PATH, se c'e'.
+
+    Chi ha installato col setup non ha ffmpeg nel PATH di sistema, e non glielo si mette: toccare il
+    PATH di tutto il computer per un programma che lo usa da solo e' un posto in piu' da ripulire
+    alla disinstallazione, e un ffmpeg diverso per gli altri programmi. Qui vale per questo
+    processo e per quelli che lancia, e basta.
+    """
+    if not LOCAL_BIN.is_dir():
+        return
+    current = os.environ.get("PATH", "")
+    entries = [entry for entry in current.split(os.pathsep) if entry]
+    if str(LOCAL_BIN) not in entries:
+        os.environ["PATH"] = os.pathsep.join([str(LOCAL_BIN), *entries])
+
+
+add_local_bin()
 
 DEFAULTS: dict[str, Any] = {
     # large-v3, medium, small... Il modello e' quello scelto qui e non cambia per richiesta:

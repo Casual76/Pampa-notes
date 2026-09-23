@@ -31,6 +31,9 @@ companion/logs/
 companion/config.json
 
 companion/models/
+# L'installer: uv.exe si mette qui per costruire il setup, e non si versiona.
+companion/installer/vendor/
+companion/installer/__pycache__/
 
 # Room schema exports are versioned on purpose (core/schemas)
 
