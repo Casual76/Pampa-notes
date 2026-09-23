@@ -350,6 +350,7 @@ fun NavGraphBuilder.detailDestinations(actions: PampaNavActions, host: NavHostCo
       SettingsSectionRoute(
         section = SettingsSection.fromRoute(entry.arguments?.getString("section")) ?: SettingsSection.SERVICES,
         onBack = { host.popBackStack() },
+        onOpenSection = actions::openSettingsSection,
       )
     }
   }

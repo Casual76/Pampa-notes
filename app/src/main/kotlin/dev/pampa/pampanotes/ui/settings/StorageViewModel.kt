@@ -4,8 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.pampa.pampanotes.core.archive.ArchiveRepository
+import dev.pampa.pampanotes.core.files.ArchiveOutlook
 import dev.pampa.pampanotes.core.repo.StorageRepository
 import dev.pampa.pampanotes.core.repo.StorageUsage
+import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.work.ArchiveWorker
 import dev.pampa.pampanotes.work.FetchWorker
@@ -14,6 +17,8 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -34,6 +39,23 @@ data class ArchiveLast(val uploaded: Int, val alreadyThere: Int, val failed: Int
 data class FetchRun(val done: Int, val total: Int, val label: String)
 data class FetchLast(val downloaded: Int, val failed: Int, val bytes: Long, val error: String?)
 
+/** Il computer di casa, visto da qui adesso. */
+enum class ComputerState { UNCONFIGURED, CHECKING, REACHABLE, UNREACHABLE }
+
+/**
+ * I file che il computer ha rifiutato: quanti, e di questi quanti sono messi da parte per qualche
+ * giorno (tre rifiuti di fila), con il momento in cui si riprova il primo.
+ */
+data class ArchiveRejections(val files: Int = 0, val parked: Int = 0, val retryAt: Long = 0L)
+
+/** I lavori di archiviazione in coda, come li dice WorkManager: da qui si ricava [ArchiveOutlook]. */
+private data class ArchiveQueue(
+  val running: Boolean = false,
+  val oneShotNextAt: Long? = null,
+  val oneShotAttempts: Int = 0,
+  val periodicNextAt: Long? = null,
+)
+
 data class StorageUiState(
   val usage: StorageUsage? = null,
   val working: Boolean = false,
@@ -49,6 +71,16 @@ data class StorageUiState(
   val mirrorEnabled: Boolean = false,
   val fetchRun: FetchRun? = null,
   val fetchLast: FetchLast? = null,
+  /** Uno scarico in coda che aspetta la rete (o il Wi-Fi). */
+  val fetchQueued: Boolean = false,
+  val computer: ComputerState = ComputerState.CHECKING,
+  /** Il nome che il computer ha dato di se', se l'ha dato. */
+  val computerName: String = "",
+  /** Senza sincronizzazione non arrivano righe dagli altri dispositivi, quindi niente da scaricare. */
+  val syncEnabled: Boolean = false,
+  val rejections: ArchiveRejections = ArchiveRejections(),
+  /** Quando salira' quello che sta solo qui, con le impostazioni di adesso. */
+  val archiveOutlook: ArchiveOutlook = ArchiveOutlook.Unknown,
 ) {
   val archiving: Boolean get() = archiveRun != null
   val fetching: Boolean get() = fetchRun != null
@@ -66,10 +98,13 @@ class StorageViewModel @Inject constructor(
   private val storage: StorageRepository,
   private val settingsStore: PampaSettingsStore,
   private val scheduler: WorkScheduler,
+  private val transcription: TranscriptionRepository,
 ) : ViewModel() {
 
   private val _uiState = MutableStateFlow(StorageUiState())
   val uiState: StateFlow<StorageUiState> = _uiState.asStateFlow()
+
+  private var archiveQueue = ArchiveQueue()
 
   init {
     refresh()
@@ -82,9 +117,20 @@ class StorageViewModel @Inject constructor(
             hasEndpoint = settings.hasEndpoint,
             lastArchiveAt = settings.lastArchiveAt,
             mirrorEnabled = settings.mirrorEnabled,
+            computerName = settings.endpointName,
+            syncEnabled = settings.syncEnabled,
           )
         }
+        updateOutlook()
       }
+    }
+    // Il computer si interroga quando si apre la pagina e quando ne cambiano gli indirizzi: e' una
+    // domanda di rete da due secondi, non qualcosa da ripetere a ogni ridisegno.
+    viewModelScope.launch {
+      settingsStore.settings
+        .map { it.endpointUrl to it.endpointRemoteUrl }
+        .distinctUntilChanged()
+        .collect { checkComputer() }
     }
     viewModelScope.launch {
       var wasRunning = false
@@ -107,7 +153,8 @@ class StorageViewModel @Inject constructor(
               error = it.getString(FetchWorker.KEY_ERROR),
             )
           }
-        _uiState.update { it.copy(fetchRun = run, fetchLast = last) }
+        val queued = run == null && infos.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
+        _uiState.update { it.copy(fetchRun = run, fetchLast = last, fetchQueued = queued) }
         if (wasRunning && run == null) refresh()
         wasRunning = run != null
       }
@@ -136,7 +183,19 @@ class StorageViewModel @Inject constructor(
               error = it.getString(ArchiveWorker.KEY_ERROR),
             )
           }
+        // Il giro «adesso» in coda (anche un nuovo tentativo) e il prossimo periodico: da qui la
+        // frase «quando sale quello che sta solo qui», che e' la domanda vera dietro l'interruttore.
+        val waiting = infos.filter { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
+        val oneShot = waiting.firstOrNull { it.periodicityInfo == null }
+        val periodic = waiting.firstOrNull { it.periodicityInfo != null }
+        archiveQueue = ArchiveQueue(
+          running = running != null,
+          oneShotNextAt = oneShot?.nextScheduleTimeMillis,
+          oneShotAttempts = oneShot?.runAttemptCount ?: 0,
+          periodicNextAt = periodic?.nextScheduleTimeMillis,
+        )
         _uiState.update { it.copy(archiveRun = run, archiveLast = last) }
+        updateOutlook()
         // Finito un giro, i totali sono cambiati: si rileggono una volta, non a ogni progresso.
         if (wasRunning && run == null) refresh()
         wasRunning = run != null
@@ -147,7 +206,57 @@ class StorageViewModel @Inject constructor(
   fun refresh() {
     viewModelScope.launch {
       val usage = runCatching { storage.usage() }.getOrNull()
-      _uiState.update { it.copy(usage = usage) }
+      val rejections = runCatching { rejections() }.getOrDefault(ArchiveRejections())
+      _uiState.update { it.copy(usage = usage, rejections = rejections) }
+    }
+  }
+
+  /** La domanda al computer: all'apertura, e di nuovo da un tocco sulla sua riga. */
+  fun checkComputer() {
+    viewModelScope.launch {
+      val configured = settingsStore.current().hasEndpoint
+      _uiState.update { it.copy(computer = if (configured) ComputerState.CHECKING else ComputerState.UNCONFIGURED) }
+      if (!configured) return@launch
+      val state = runCatching { transcription.endpointState() }.getOrNull()
+      _uiState.update {
+        it.copy(
+          computer = when (state) {
+            TranscriptionRepository.EndpointState.UNCONFIGURED -> ComputerState.UNCONFIGURED
+            TranscriptionRepository.EndpointState.REACHABLE -> ComputerState.REACHABLE
+            TranscriptionRepository.EndpointState.UNREACHABLE, null -> ComputerState.UNREACHABLE
+          },
+        )
+      }
+    }
+  }
+
+  /** I rifiuti che l'archivio si ricorda fra un giro e l'altro (`ArchiveFailures` nel DataStore). */
+  private suspend fun rejections(): ArchiveRejections {
+    val failures = settingsStore.archiveFailures().values
+    val now = System.currentTimeMillis()
+    val parked = failures.filter {
+      it.count >= ArchiveRepository.MAX_FILE_FAILURES && now - it.lastAt < ArchiveRepository.FAILURE_COOLDOWN_MS
+    }
+    return ArchiveRejections(
+      files = failures.size,
+      parked = parked.size,
+      retryAt = parked.minOfOrNull { it.lastAt + ArchiveRepository.FAILURE_COOLDOWN_MS } ?: 0L,
+    )
+  }
+
+  private fun updateOutlook() {
+    _uiState.update {
+      it.copy(
+        archiveOutlook = ArchiveOutlook.of(
+          hasComputer = it.hasEndpoint,
+          enabled = it.archiveEnabled,
+          running = archiveQueue.running,
+          oneShotNextAt = archiveQueue.oneShotNextAt,
+          oneShotAttempts = archiveQueue.oneShotAttempts,
+          periodicNextAt = archiveQueue.periodicNextAt,
+          now = System.currentTimeMillis(),
+        ),
+      )
     }
   }
 
