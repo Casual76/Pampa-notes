@@ -869,6 +869,16 @@
   <string name="settings_subject_accent_detail">Con i colori del marchio, l\'app prende il colore della materia in cui ti trovi. Con Material You o una tinta scelta, resta quella.</string>
   <string name="note_sources_hint">I file da cui è arrivato il testo. Tocca una riga per riaprire l\'originale.</string>
   <string name="session_words_estimated">I tempi delle singole parole sono stimati: Groq dà i tempi di ogni frase, non di ogni parola. Con il computer di casa sono allineati davvero.</string>
+  <string name="session_incoming_title">In arrivo dal computer · %1$s</string>
+  <plurals name="session_incoming_pieces">
+    <item quantity="one">%1$d pezzo di %2$d</item>
+    <item quantity="other">%1$d pezzi di %2$d</item>
+  </plurals>
+  <plurals name="session_incoming_parts">
+    <item quantity="one">%1$d registrazione di %2$d</item>
+    <item quantity="other">%1$d registrazioni di %2$d</item>
+  </plurals>
+  <string name="session_incoming_note">Testo provvisorio: quando il computer ha finito, al suo posto arriva la trascrizione vera.</string>
   <string name="session_remote_title">Le registrazioni stanno sul computer di casa</string>
   <plurals name="session_remote_detail">
     <item quantity="one">Un file, %2$s. Da fuori casa passa da Tailscale.</item>

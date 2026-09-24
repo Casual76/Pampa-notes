@@ -838,6 +838,16 @@
   <string name="settings_subject_accent_detail">With the brand colours, the app takes the colour of the subject you are in. With Material You or a chosen tint, that one stays.</string>
   <string name="note_sources_hint">The files the text came from. Tap a row to reopen the original.</string>
   <string name="session_words_estimated">Per-word timings are estimated: Groq gives per-sentence times, not per-word. With the home computer they are truly aligned.</string>
+  <string name="session_incoming_title">Coming in from the computer · %1$s</string>
+  <plurals name="session_incoming_pieces">
+    <item quantity="one">%1$d of %2$d pieces</item>
+    <item quantity="other">%1$d of %2$d pieces</item>
+  </plurals>
+  <plurals name="session_incoming_parts">
+    <item quantity="one">%1$d of %2$d recordings</item>
+    <item quantity="other">%1$d of %2$d recordings</item>
+  </plurals>
+  <string name="session_incoming_note">Provisional text: when the computer is done, the real transcript takes its place.</string>
   <string name="session_remote_title">The recordings are on your home computer</string>
   <plurals name="session_remote_detail">
     <item quantity="one">One file, %2$s. Away from home it comes through Tailscale.</item>

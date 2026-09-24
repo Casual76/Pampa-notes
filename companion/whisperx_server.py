@@ -277,6 +277,11 @@ JOB_KEEP_S = 10 * 60
 JOB_STALE_S = 6 * 3600
 JOB_LIMIT = 256
 ACTIVE_JOB_STATES = ("decoding", "loading_model", "transcribing", "aligning", "diarizing")
+# «Il testo che arriva a pezzi»: i segmenti dei pezzi gia' finiti si tengono al massimo fin qui, per
+# lavoro (circa quindici ore di lezione). Oltre, i pezzi dopo si contano ma restano vuoti: la memoria
+# del computer non deve crescere con una registrazione da un giorno intero, e il testo vero arriva
+# comunque con la risposta.
+PARTIAL_MAX_SEGMENTS = 12_000
 
 
 def bearer_hash(bearer: str) -> str:
@@ -326,6 +331,11 @@ class JobProgress:
         # Il lavoro condiviso che questa richiesta aspetta (vedi [SharedWork]): finche' la richiesta
         # non ha un esito suo, a che punto e' lo dice lui.
         self._leader: JobProgress | None = None
+        # I segmenti dei pezzi gia' finiti, un elenco per pezzo (vedi [add_partial]): provvisori, li
+        # legge `GET /v1/jobs/{id}/partial` mentre il computer fa il pezzo dopo. Solo testo e tempi.
+        self._partial: list[list[dict]] = []
+        self._partial_count = 0
+        self._partial_truncated = False
         self._lock = threading.Lock()
 
     def follow(self, leader: "JobProgress") -> None:
@@ -367,6 +377,56 @@ class JobProgress:
             self.state_since = now
             if state in ("done", "failed"):
                 self.finished = now
+                # Finito: il testo vero e' nella risposta, e il provvisorio non serve piu' a nessuno.
+                # Il lavoro resta leggibile dieci minuti ([JobRegistry]), i suoi segmenti no.
+                self._partial = []
+                self._partial_count = 0
+
+    def add_partial(self, segments: list[dict]) -> None:
+        """
+        Un pezzo e' finito: i suoi segmenti, gia' nel tempo del file intero e nella forma della
+        risposta finale ([response_segment]), si tengono per chi chiede `/partial`.
+
+        Provvisori per costruzione: il filtro delle allucinazioni sull'intera lezione, la separazione
+        delle voci e la numerazione finale arrivano dopo, e vince la risposta. Oltre
+        [PARTIAL_MAX_SEGMENTS] un pezzo si conta ma resta vuoto, e `/partial` lo dice (`truncated`).
+        """
+        with self._lock:
+            if self.finished is not None:
+                return
+            if self._partial_count + len(segments) > PARTIAL_MAX_SEGMENTS:
+                self._partial_truncated = True
+                self._partial.append([])
+                return
+            self._partial.append(list(segments))
+            self._partial_count += len(segments)
+
+    def partial(self, first: int = 0) -> dict[str, Any]:
+        """
+        I pezzi finiti da [first] (da zero) in poi, con i loro segmenti in fila.
+
+        Una richiesta agganciata a un lavoro condiviso ([SharedWork]) legge quelli del lavoro: e' li'
+        che il thread li scrive, e chi si e' agganciato dopo vede gli stessi pezzi. `pieces_done` e'
+        quanti pezzi sono finiti: la domanda dopo chiede `from=pieces_done`, e non riceve due volte
+        lo stesso testo.
+        """
+        src = self._leader if self._leader is not None else self
+        first = max(0, int(first))
+        with src._lock:
+            done = len(src._partial)
+            chunks = src.chunks
+            pieces = src._partial[first:]
+            truncated = src._partial_truncated
+        return {
+            "id": self.id,
+            "state": self.current_state(),
+            "pieces_done": done,
+            "pieces_total": max(chunks, done),
+            "from": first,
+            "segments": [segment for piece in pieces for segment in piece],
+            "truncated": truncated,
+            "instance": INSTANCE,
+        }
 
     def admitted(self, now: float | None = None) -> None:
         """Il turno e' arrivato: da qui si conta `processing_s`, la coda non e' lavoro."""
@@ -1451,8 +1511,9 @@ def _load_align_model(whisperx: Any, language: str, device: str):
 # * `archive_upload`: `archive=1` tiene nell'archivio il file mandato, invece di buttarlo dopo;
 # * `server_chunks`: `max_minutes` divide qui una lezione lunga, invece che sul telefono;
 # * `file_meta`: `GET /v1/files/<sha>/meta`, le date vere di un `.sdocx` o di una registrazione;
-# * `prompt`: il campo `prompt` arriva davvero a Whisper (prima si accettava e si ignorava).
-FEATURES = ("by_ref", "archive_upload", "server_chunks", "file_meta", "prompt", "auto_chunks")
+# * `prompt`: il campo `prompt` arriva davvero a Whisper (prima si accettava e si ignorava);
+# * `partial`: `GET /v1/jobs/<id>/partial` da' il testo dei pezzi gia' finiti mentre si fa il resto.
+FEATURES = ("by_ref", "archive_upload", "server_chunks", "file_meta", "prompt", "auto_chunks", "partial")
 
 
 @app.get("/health")
@@ -2365,6 +2426,25 @@ async def job_status(job_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="lavoro sconosciuto")
     position = GATE.position(job.gate_key) if job.current_state() == "queued" else None
     return job.snapshot(position=position)
+
+
+@app.get("/v1/jobs/{job_id}/partial")
+async def job_partial(job_id: str, request: Request) -> dict[str, Any]:
+    """
+    «Il testo che arriva a pezzi»: i segmenti dei pezzi gia' finiti di una lezione che il computer
+    divide da se' (`max_minutes`), da `from` (il numero di pezzi gia' ricevuti) in poi.
+
+    Chi puo' leggerli e' chi puo' leggere lo stato ([job_status]): il proprietario tutti, un ospite
+    i suoi, gli altri 404. Sono **provvisori**: la risposta della POST, che arriva alla fine, passa
+    ancora dal filtro sulla lezione intera e dalla separazione delle voci, e vince lei. Con un pezzo
+    solo non c'e' niente da mandare prima, e i segmenti restano vuoti fino alla fine.
+    """
+    caller = caller_of(request)
+    job = JOBS.get(job_id)
+    if job is None or not JOBS.visible_to(job, caller):
+        raise HTTPException(status_code=404, detail="lavoro sconosciuto")
+    first = _positive_int(request.query_params.get("from", "")) or 0
+    return job.partial(first)
 
 
 # --- il lavoro ---------------------------------------------------------------------------------
@@ -3438,6 +3518,55 @@ def describe_dropped(counts: dict[str, int]) -> str:
     return ", ".join(f"{count} {HALLUCINATION_REASONS[reason]}" for reason, count in counts.items() if count) or "niente"
 
 
+def share_piece(progress: JobProgress, segments: list[dict], energies: Any, frame_s: float, prompt: str | None) -> None:
+    """
+    «Il testo che arriva a pezzi»: il pezzo appena finito va nel lavoro ([JobProgress.add_partial]),
+    e l'app lo mostra mentre il computer fa il resto invece di aspettare la fine della lezione.
+
+    Passa dallo stesso filtro delle allucinazioni della fine, ma sul pezzo solo, e nella forma della
+    risposta ([response_segment]): e' provvisorio, e la risposta — col filtro sulla lezione intera e
+    le voci — lo sostituisce. Un errore qui non tocca la trascrizione: al peggio il pezzo si vede
+    solo alla fine, come prima.
+    """
+    try:
+        kept, _ = drop_hallucinations(segments, energies, frame_s, prompt=prompt)
+        out: list[dict] = []
+        for segment in kept:
+            entry = response_segment(segment, len(out))
+            if entry is not None:
+                out.append(entry)
+        progress.add_partial(out)
+    except Exception:  # noqa: BLE001
+        log.warning("pezzo provvisorio non preparato: si vedra' alla fine", exc_info=True)
+        progress.add_partial([])
+
+
+def response_segment(segment: dict, index: int) -> dict | None:
+    """Un segmento nella forma della risposta (`verbose_json` di OpenAI, con le parole). None se vuoto."""
+    text = (segment.get("text") or "").strip()
+    if not text:
+        return None
+    return {
+        # Numerati dopo aver messo in fila i pezzi: ogni pezzo ripartirebbe da zero.
+        "id": index,
+        "seek": 0,
+        "start": _finite(segment.get("start"), 0.0),
+        "end": _finite(segment.get("end"), 0.0),
+        "text": text,
+        # La confidenza la da' WhisperX; la probabilita' di silenzio no, e resta null: prima
+        # era 0,0 — «voce di sicuro» — e il filtro dell'app non poteva scattare mai. Il
+        # rapporto di compressione e' quello vero del testo ([compression_ratio]).
+        "avg_logprob": _finite_or_none(segment.get("avg_logprob")),
+        "no_speech_prob": None,
+        "compression_ratio": round(compression_ratio(text), 3),
+        "temperature": 0.0,
+        "tokens": [],
+        "words": words_of(segment),
+        # La voce, solo quando le voci sono state separate: senza, la risposta e' quella di sempre.
+        **({"speaker": segment["speaker"]} if segment.get("speaker") else {}),
+    }
+
+
 def transcribe_audio(
     audio: Any,
     sample_rate: int,
@@ -3491,7 +3620,10 @@ def transcribe_audio(
         job = run_job(piece, detected, engine, batch_size, device, progress, prompt=prompt)
         piece = None
         detected = detected or job.get("language")
-        segments.extend(_shifted(segment, start_s) for segment in job["segments"])
+        shifted = [_shifted(segment, start_s) for segment in job["segments"]]
+        segments.extend(shifted)
+        if len(bounds) > 1:
+            share_piece(progress, shifted, energies, frame_s, prompt)
         if job.get("device_used") == "cpu":
             device_used = "cpu"
         status = job.get("alignment", "ok")
@@ -3576,30 +3708,9 @@ def _transcribe(
 
     out = []
     for segment in job["segments"]:
-        text = (segment.get("text") or "").strip()
-        if not text:
-            continue
-        out.append(
-            {
-                # Numerati dopo aver messo in fila i pezzi: ogni pezzo ripartirebbe da zero.
-                "id": len(out),
-                "seek": 0,
-                "start": _finite(segment.get("start"), 0.0),
-                "end": _finite(segment.get("end"), 0.0),
-                "text": text,
-                # La confidenza la da' WhisperX; la probabilita' di silenzio no, e resta null: prima
-                # era 0,0 — «voce di sicuro» — e il filtro dell'app non poteva scattare mai. Il
-                # rapporto di compressione e' quello vero del testo ([compression_ratio]).
-                "avg_logprob": _finite_or_none(segment.get("avg_logprob")),
-                "no_speech_prob": None,
-                "compression_ratio": round(compression_ratio(text), 3),
-                "temperature": 0.0,
-                "tokens": [],
-                "words": words_of(segment),
-                # La voce, solo quando le voci sono state separate: senza, la risposta e' quella di sempre.
-                **({"speaker": segment["speaker"]} if segment.get("speaker") else {}),
-            }
-        )
+        entry = response_segment(segment, len(out))
+        if entry is not None:
+            out.append(entry)
 
     # Niente di grande resta nel frame: se qualcuno lo conserva (una libreria che tiene da parte un
     # errore d'import col suo traceback, vedi [warm_imports]) si porterebbe dietro il modello e

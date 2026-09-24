@@ -150,6 +150,25 @@ data class RemoteProgress(
   val chunks: Int? = null,
 )
 
+/**
+ * «Il testo che arriva a pezzi»: i segmenti dei pezzi che il computer di casa ha gia' finito, mentre
+ * fa il resto (`GET /v1/jobs/<id>/partial`, solo con [CompanionFeatures.PARTIAL]).
+ *
+ * **Provvisori**: la risposta finale passa ancora dal filtro sulla lezione intera e dalla separazione
+ * delle voci, e vince lei. Non si salvano e non si sincronizzano: servono solo a leggere prima.
+ *
+ * @property from il primo pezzo che questi segmenti coprono, da zero: 0 vuol dire «da capo», e chi li
+ *   raccoglie butta quello che aveva (un secondo tentativo, un lavoro agganciato a quello di un altro).
+ * @property piecesDone quanti pezzi sono finiti; la domanda dopo parte da qui.
+ * @property segments i segmenti di quei pezzi, nel tempo della **registrazione** (della parte).
+ */
+data class RemotePartial(
+  val from: Int,
+  val piecesDone: Int,
+  val piecesTotal: Int,
+  val segments: List<RawSegment>,
+)
+
 /** Se il server risponde, e cosa dice di se'. */
 data class EndpointHealth(
   val reachable: Boolean,
@@ -212,6 +231,12 @@ object CompanionFeatures {
    * c'e' il token di Hugging Face che il modello chiede.
    */
   const val DIARIZE = "diarize"
+
+  /**
+   * Da' il testo dei pezzi gia' finiti mentre fa il resto (`GET /v1/jobs/<id>/partial`): la sessione
+   * lo mostra «in arrivo» invece di aspettare la fine di una lezione lunga. Vedi [RemotePartial].
+   */
+  const val PARTIAL = "partial"
 }
 
 /** Come caricare un file al companion quando sa fare di piu' di un server qualsiasi. */
@@ -245,16 +270,23 @@ interface CompanionTranscription {
     sha256: String,
     request: TranscribeRequest,
     maxMinutes: Int?,
+    // Prima di [onRemote], che resta l'ultimo: chi lo passa come lambda in coda continua a passare lui.
+    onPartial: (RemotePartial) -> Unit = {},
     onRemote: (RemoteProgress) -> Unit = {},
   ): TranscriptResult
 
-  /** Carica e trascrive, chiedendo al computer di tenerlo e di dividerlo da se' ([upload]). */
+  /**
+   * Carica e trascrive, chiedendo al computer di tenerlo e di dividerlo da se' ([upload]).
+   *
+   * @param onPartial il testo dei pezzi gia' finiti, se il computer lo sa dare ([CompanionFeatures.PARTIAL]).
+   */
   suspend fun transcribeUpload(
     file: File,
     mime: String,
     request: TranscribeRequest,
     upload: CompanionUpload,
     onProgress: (UploadProgress) -> Unit = {},
+    onPartial: (RemotePartial) -> Unit = {},
     onRemote: (RemoteProgress) -> Unit = {},
   ): TranscriptResult
 }

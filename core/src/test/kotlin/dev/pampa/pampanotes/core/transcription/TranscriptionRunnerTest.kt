@@ -205,6 +205,7 @@ class TranscriptionRunnerTest {
     val plainCalls = mutableListOf<File>()
     val requests = mutableListOf<TranscribeRequest>()
     var remoteToSend: List<RemoteProgress> = emptyList()
+    var partialsToSend: List<RemotePartial> = emptyList()
 
     override val id = OpenAiCompatProvider.ID
     override val capabilities = TranscriptionCapabilities(
@@ -230,11 +231,13 @@ class TranscriptionRunnerTest {
       sha256: String,
       request: TranscribeRequest,
       maxMinutes: Int?,
+      onPartial: (RemotePartial) -> Unit,
       onRemote: (RemoteProgress) -> Unit,
     ): TranscriptResult {
       byRefCalls += sha256 to maxMinutes
       requests += request
       remoteToSend.forEach(onRemote)
+      partialsToSend.forEach(onPartial)
       return byRef(sha256)
     }
 
@@ -244,12 +247,14 @@ class TranscriptionRunnerTest {
       request: TranscribeRequest,
       upload: CompanionUpload,
       onProgress: (UploadProgress) -> Unit,
+      onPartial: (RemotePartial) -> Unit,
       onRemote: (RemoteProgress) -> Unit,
     ): TranscriptResult {
       uploadCalls += upload
       requests += request
       onProgress(UploadProgress(16, 16))
       remoteToSend.forEach(onRemote)
+      partialsToSend.forEach(onPartial)
       return upload(upload)
     }
 
@@ -299,6 +304,34 @@ class TranscriptionRunnerTest {
     // Il secondo pezzo a meta' sta a tre quarti della parte: meta' per il primo, un quarto dentro il secondo.
     val expected = ProgressScale.MAX * (1f + ProgressScale.TRANSCRIBE_SHARE * 0.5f) / 2f
     assertEquals(expected, working.overall!!, 0.001f)
+  }
+
+  @Test
+  fun `i pezzi finiti arrivano prima, nel tempo della sessione, e alla fine il testo della parte`() = runBlocking {
+    val companion = FakeCompanion(allFeatures + CompanionFeatures.PARTIAL, maxChunkMinutes = 30)
+    companion.partialsToSend = listOf(
+      RemotePartial(from = 0, piecesDone = 1, piecesTotal = 3, segments = listOf(RawSegment(1_000, 2_000, "uno"))),
+      RemotePartial(from = 1, piecesDone = 2, piecesTotal = 3, segments = listOf(RawSegment(30_000, 31_000, "due"))),
+    )
+    val published = mutableListOf<SessionPartial>()
+
+    val result = runner.transcribeSession(
+      "job", listOf(archivedPart("a")), companion, TranscribeRequest("m"), chunkMinutes = 10, onPartial = { published += it },
+    )
+
+    assertEquals("dall'archivio", result.text)
+    assertEquals(listOf(listOf("uno"), listOf("uno", "due"), listOf("dall'archivio")), published.map { p -> p.segments.map { it.text } })
+    assertEquals(listOf(1 to 3, 2 to 3), published.take(2).map { it.piecesDone to it.piecesTotal })
+    assertEquals(listOf(1_000L, 30_000L), published[1].segments.map { it.sessionStartMs })
+    assertTrue(published.all { p -> p.segments.all { it.transcriptId == PartialCollector.TRANSCRIPT_ID && it.id < 0 } })
+  }
+
+  @Test
+  fun `una parte sola senza pezzi non mostra niente prima del salvataggio`() = runBlocking {
+    val companion = FakeCompanion(allFeatures + CompanionFeatures.PARTIAL)
+    val published = mutableListOf<SessionPartial>()
+    runner.transcribeSession("job", listOf(archivedPart("a")), companion, TranscribeRequest("m"), chunkMinutes = 10, onPartial = { published += it })
+    assertTrue(published.isEmpty())
   }
 
   @Test

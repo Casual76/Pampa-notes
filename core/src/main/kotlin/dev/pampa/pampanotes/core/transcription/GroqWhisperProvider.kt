@@ -3,6 +3,7 @@ package dev.pampa.pampanotes.core.transcription
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
@@ -158,6 +159,8 @@ class OpenAiCompatProvider(
   private val lostAfterSilenceMs: Long = RemoteJobPoller.LOST_AFTER_SILENCE_MS,
   /** Ogni quanto la sola sonda chiede `/health` (vedi [RemoteJobPoller]); i test lo accorciano. */
   private val blindIntervalMs: Long = RemoteJobPoller.BLIND_INTERVAL_MS,
+  /** Al piu' una domanda sui pezzi finiti ogni tanto (vedi [followPieces]); i test lo accorciano. */
+  private val partialIntervalMs: Long = PARTIAL_INTERVAL_MS,
   /**
    * I lavori lasciati indietro sul companion (vedi [AbandonedCompanionJobs]). Di serie uno suo, che
    * vale per i tentativi di questo provider; la coda gli passa quello del processo, cosi' vale anche
@@ -255,6 +258,7 @@ class OpenAiCompatProvider(
     sha256: String,
     request: TranscribeRequest,
     maxMinutes: Int?,
+    onPartial: (RemotePartial) -> Unit,
     onRemote: (RemoteProgress) -> Unit,
   ): TranscriptResult {
     val fields = baseFields(request).apply {
@@ -263,7 +267,7 @@ class OpenAiCompatProvider(
     }
     // Niente da caricare: le domande sullo stato possono partire subito.
     return VerboseJson.parse(
-      watching(onRemote, uploadedAlready = true) { headers, _ ->
+      watching(onRemote, uploadedAlready = true, onPartial = partialsIfKnown(onPartial)) { headers, _ ->
         companionRefusals {
           http.postForm("$base/audio/transcriptions", headers, fields, readTimeoutMillis)
         }
@@ -288,6 +292,7 @@ class OpenAiCompatProvider(
     request: TranscribeRequest,
     upload: CompanionUpload,
     onProgress: (UploadProgress) -> Unit,
+    onPartial: (RemotePartial) -> Unit,
     onRemote: (RemoteProgress) -> Unit,
   ): TranscriptResult {
     val fields = baseFields(request).apply {
@@ -300,7 +305,7 @@ class OpenAiCompatProvider(
       putMaxMinutes(upload.maxMinutes)
     }
     return VerboseJson.parse(
-      watching(onRemote, uploadedAlready = false) { headers, uploaded ->
+      watching(onRemote, uploadedAlready = false, onPartial = partialsIfKnown(onPartial)) { headers, uploaded ->
         companionRefusals {
           http.postAudio(
             url = "$base/audio/transcriptions",
@@ -353,11 +358,12 @@ class OpenAiCompatProvider(
   private suspend fun watching(
     onRemote: (RemoteProgress) -> Unit,
     uploadedAlready: Boolean,
+    onPartial: ((RemotePartial) -> Unit)? = null,
     post: suspend (headers: Map<String, String>, uploaded: AtomicBoolean) -> JsonElement?,
   ): JsonElement? {
     while (true) {
       try {
-        return watchOnce(onRemote, uploadedAlready, post)
+        return watchOnce(onRemote, uploadedAlready, onPartial, post)
       } catch (error: TranscriptionError.Server) {
         val wait = restartWait(error) ?: throw error
         if (++restartWaits > MAX_RESTART_WAITS) throw error
@@ -395,14 +401,18 @@ class OpenAiCompatProvider(
    *    fermerebbe il lavoro vecchio proprio mentre quello nuovo poteva riprenderlo da dove era.
    *
    * @param uploadedAlready vero quando non c'e' niente da caricare: si chiede da subito.
+   * @param onPartial null se il computer non da' i pezzi finiti prima ([partialsIfKnown]).
    */
   private suspend fun watchOnce(
     onRemote: (RemoteProgress) -> Unit,
     uploadedAlready: Boolean,
+    onPartial: ((RemotePartial) -> Unit)?,
     post: suspend (headers: Map<String, String>, uploaded: AtomicBoolean) -> JsonElement?,
   ): JsonElement? {
     val jobId = UUID.randomUUID().toString()
     val uploaded = AtomicBoolean(uploadedAlready)
+    // L'ultimo stato raccontato dal companion: dice ai pezzi provvisori quando ce n'e' uno nuovo.
+    val lastSeen = AtomicReference<RemoteProgress?>(null)
     // Le credenziali con cui e' partita l'ultima POST: sono quelle che il companion accetta per
     // annullare il lavoro che hanno creato. Null finche' non ne e' partita nessuna.
     var sentWith: Map<String, String>? = null
@@ -428,6 +438,7 @@ class OpenAiCompatProvider(
             blindIntervalMs = blindIntervalMs,
             onUpdate = { progress ->
               attached.complete(Unit)
+              lastSeen.set(progress)
               onRemote(progress)
             },
           ).run(ready = { uploaded.get() })
@@ -443,6 +454,9 @@ class OpenAiCompatProvider(
           Unit
         }
       }
+      // «Il testo che arriva a pezzi», accanto alle domande sullo stato: un di piu' che non puo'
+      // fermare niente (vedi [followPieces]).
+      val pieces = onPartial?.let { deliver -> launch { followPieces(jobId, lastSeen, deliver) } }
       try {
         authorized { headers ->
           sentWith = headers
@@ -475,8 +489,56 @@ class OpenAiCompatProvider(
         // «trascrivo 90%» sopra il pezzo gia' finito.
         withContext(NonCancellable) {
           poller.cancelAndJoin()
+          pieces?.cancelAndJoin()
           sweeper?.join()
         }
+      }
+    }
+  }
+
+  /** Il callback dei pezzi provvisori, solo se il companion ha detto di saperli dare. */
+  private fun partialsIfKnown(onPartial: (RemotePartial) -> Unit): ((RemotePartial) -> Unit)? =
+    onPartial.takeIf { knownFeatures?.contains(CompanionFeatures.PARTIAL) == true }
+
+  /**
+   * Chiede i pezzi finiti (`GET /v1/jobs/<id>/partial?from=<n>`) quando lo stato dice che ce n'e' uno
+   * nuovo ([PartialPieces.ready]) — e non piu' di una volta ogni [partialIntervalMs]: un pezzo dura
+   * minuti, e le domande sullo stato sono gia' una al secondo. Parte da zero a ogni POST: un secondo
+   * tentativo e' un lavoro nuovo, e chi raccoglie butta quello che aveva (`from = 0`).
+   *
+   * Non lancia mai: un errore, un 404, una risposta strana valgono «niente di nuovo», e al peggio il
+   * testo arriva alla fine, come prima.
+   */
+  private suspend fun followPieces(
+    jobId: String,
+    lastSeen: AtomicReference<RemoteProgress?>,
+    deliver: (RemotePartial) -> Unit,
+  ) {
+    var received = 0
+    var nextTryAt = Long.MIN_VALUE
+    while (true) {
+      delay(pollIntervalMs)
+      val ready = PartialPieces.ready(lastSeen.get())
+      val now = RemoteJobPoller.MONOTONIC_MS()
+      if (ready <= received || now < nextTryAt) continue
+      nextTryAt = now + partialIntervalMs
+      val body = try {
+        http.getJson("$base/jobs/$jobId/partial?from=$received", headers(auth.bearer()), readTimeoutMillis = POLL_TIMEOUT_MS)
+      } catch (cancelled: CancellationException) {
+        throw cancelled
+      } catch (ignored: Throwable) {
+        null
+      }
+      val partial = VerboseJson.parsePartial(body) ?: continue
+      // Una risposta che non parte da dove si e' chiesto, o che non porta niente di nuovo, non si usa.
+      if (partial.from != received || partial.piecesDone <= received) continue
+      received = partial.piecesDone
+      try {
+        deliver(partial)
+      } catch (cancelled: CancellationException) {
+        throw cancelled
+      } catch (ignored: Throwable) {
+        Unit
       }
     }
   }
@@ -567,6 +629,9 @@ class OpenAiCompatProvider(
 
     /** Una domanda sullo stato risponde subito, o non serve: la prossima parte fra un secondo. */
     const val POLL_TIMEOUT_MS = 5_000
+
+    /** Il testo dei pezzi finiti si chiede al piu' ogni cinque secondi: un pezzo dura minuti. */
+    const val PARTIAL_INTERVAL_MS = 5_000L
 
     /**
      * Quanto puo' durare la `DELETE` che ferma il lavoro sul computer quando qui si annulla: tre
