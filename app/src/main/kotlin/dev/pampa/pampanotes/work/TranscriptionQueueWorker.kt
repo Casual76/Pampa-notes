@@ -68,6 +68,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
   private val refinement: RefinementRepository,
   private val settingsStore: PampaSettingsStore,
   private val scheduler: WorkScheduler,
+  private val computerOnly: dev.pampa.pampanotes.core.archive.ComputerOnlyScope,
 ) : CoroutineWorker(context, params) {
 
   /** Cosa fare dopo un lavoro: il prossimo, aspettare il computer di casa, o riprendere a un'ora. */
@@ -402,6 +403,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       val transcript = saved.transcript
       val run = transcript?.let { repository.recordRun(job.copy(sessionId = saved.sessionId, model = model), startedAt, it) }
       AppNotifications.notifyDone(applicationContext, job.id, transcript?.wordCount ?: 0, run)
+      archiveIfComputerOnly(saved.sessionId)
     } catch (timeout: IdleTimeoutException) {
       val error = TranscriptionError.Timeout(applicationContext.getString(dev.pampa.pampanotes.R.string.error_timeout), timeout)
       return lostComputer(job, error, bound.baseUrl) ?: run {
@@ -428,6 +430,22 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       }
     }
     return Step.Next
+  }
+
+  /**
+   * Una lezione che una regola «solo sul computer» copre — le Registrazioni lo sono di serie — non
+   * aspetta il giro periodico dell'archivio per andarsene: diciannove ore di audio restavano sul
+   * telefono fino a sei ore dopo la trascrizione. Un giro adesso la porta sul PC se non c'e' ancora,
+   * e alla fine `evictComputerOnly` la toglie da qui, con le sue guardie (il `HEAD` per file, la
+   * lezione che si sta ascoltando). Mai un errore del lavoro: e' gia' `DONE`.
+   */
+  private suspend fun archiveIfComputerOnly(sessionId: String) {
+    runCatching {
+      val settings = settingsStore.current()
+      if (!settings.archiveEnabled) return
+      if (sessionId !in computerOnly.current().sessionIds) return
+      scheduler.archiveNow(settings.archiveOnlyUnmetered)
+    }
   }
 
   /**

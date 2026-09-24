@@ -1,5 +1,6 @@
 package dev.pampa.pampanotes.core.sync
 
+import dev.pampa.pampanotes.core.db.FolderEntity
 import dev.pampa.pampanotes.core.db.NoteEntity
 import dev.pampa.pampanotes.core.db.SegmentEntity
 import dev.pampa.pampanotes.core.files.Hashing
@@ -8,6 +9,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 
@@ -227,6 +229,11 @@ object SyncCodec {
           // di prima (senza, l'aggiornamento avrebbe sporcato tutte le sessioni di tutti). Pieno,
           // conta: e' cosi' che il segno sale e arriva agli altri.
           key in TRANSCRIBING_KEYS && value is JsonNull -> Unit
+          // Il tipo di una cartella, quando e' quello di serie: una materia di prima, riletta da una
+          // versione che ha `kind`, e' la stessa materia di prima — senza, l'aggiornamento avrebbe
+          // sporcato tutte le cartelle di tutti. Solo le cartelle hanno un `kind` minuscolo: quello
+          // di fonti e trascrizioni e' il nome di un enum (`PDF`, `RAW`) e resta com'e'.
+          key == "kind" && value is JsonPrimitive && value.isString && value.content == FolderEntity.KIND_SCHOOL -> Unit
           key == "note" && value is JsonObject -> put(key, strip(value))
           else -> put(key, value)
         }

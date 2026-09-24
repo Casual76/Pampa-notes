@@ -53,7 +53,10 @@ interface FolderDao {
   @Query("SELECT COUNT(*) FROM folders")
   fun observeCount(): Flow<Int>
 
-  /** La cartella con piu' audio dentro. Null finche' non c'e' una registrazione. */
+  /**
+   * La cartella con piu' audio dentro. Null finche' non c'e' una registrazione. Solo fra le materie:
+   * diciannove ore di una registrazione personale non fanno di «Viaggio» la materia piu' ascoltata.
+   */
   @Query(
     """
     SELECT f.name AS name, COALESCE(SUM(p.durationMs), 0) AS durationMs
@@ -61,6 +64,7 @@ interface FolderDao {
       JOIN notes n ON n.folderId = f.id
       JOIN sessions s ON s.noteId = n.id
       JOIN audio_parts p ON p.sessionId = s.id
+    WHERE f.id NOT IN ${PersonalSql.FOLDER_IDS}
     GROUP BY f.id ORDER BY durationMs DESC LIMIT 1
     """,
   )
@@ -98,6 +102,7 @@ interface NoteDao {
       (SELECT COUNT(*) FROM sessions s WHERE s.noteId = n.id AND s.activeTranscriptId IS NULL
          AND EXISTS (SELECT 1 FROM audio_parts p WHERE p.sessionId = s.id)) AS untranscribedSessions
     FROM notes n
+    WHERE n.folderId NOT IN ${PersonalSql.FOLDER_IDS}
     ORDER BY n.pinned DESC, n.updatedAt DESC
     LIMIT :limit
     """,
@@ -105,8 +110,9 @@ interface NoteDao {
   fun observeRecent(limit: Int): Flow<List<NoteRow>>
 
   /**
-   * Le note con qualcosa da fare: una sessione con l'audio e senza trascrizione, o un lavoro in
-   * corso. La sezione «Da fare» della home.
+   * Le note della sezione Registrazioni, di tutte le sue cartelle, dalla piu' recente. E' l'elenco
+   * della sezione: li' le cartelle sono poche e le registrazioni lunghe, e quello che si cerca e'
+   * «quella di ieri», non «quella dentro la cartella giusta».
    */
   @Query(
     """
@@ -118,10 +124,32 @@ interface NoteDao {
       (SELECT COUNT(*) FROM sessions s WHERE s.noteId = n.id AND s.activeTranscriptId IS NULL
          AND EXISTS (SELECT 1 FROM audio_parts p WHERE p.sessionId = s.id)) AS untranscribedSessions
     FROM notes n
-    WHERE EXISTS (SELECT 1 FROM sessions s WHERE s.noteId = n.id AND s.activeTranscriptId IS NULL
+    WHERE n.folderId IN ${PersonalSql.FOLDER_IDS}
+    ORDER BY n.pinned DESC, n.updatedAt DESC
+    """,
+  )
+  fun observePersonalRows(): Flow<List<NoteRow>>
+
+  /**
+   * Le note con qualcosa da fare: una sessione con l'audio e senza trascrizione, o un lavoro in
+   * corso. La sezione «Da fare» della home, che e' della scuola: una registrazione personale ha la
+   * sua sezione, e non deve stare in testa alle lezioni da trascrivere per settimane.
+   */
+  @Query(
+    """
+    SELECT n.*,
+      (SELECT COUNT(*) FROM sessions s WHERE s.noteId = n.id) AS sessionCount,
+      (SELECT COUNT(*) FROM audio_parts p JOIN sessions s ON p.sessionId = s.id WHERE s.noteId = n.id) AS audioCount,
+      (SELECT COALESCE(SUM(p.durationMs), 0) FROM audio_parts p JOIN sessions s ON p.sessionId = s.id WHERE s.noteId = n.id) AS audioDurationMs,
+      (SELECT COUNT(*) FROM sources src WHERE src.noteId = n.id) AS sourceCount,
+      (SELECT COUNT(*) FROM sessions s WHERE s.noteId = n.id AND s.activeTranscriptId IS NULL
+         AND EXISTS (SELECT 1 FROM audio_parts p WHERE p.sessionId = s.id)) AS untranscribedSessions
+    FROM notes n
+    WHERE n.folderId NOT IN ${PersonalSql.FOLDER_IDS}
+      AND (EXISTS (SELECT 1 FROM sessions s WHERE s.noteId = n.id AND s.activeTranscriptId IS NULL
                     AND EXISTS (SELECT 1 FROM audio_parts p WHERE p.sessionId = s.id))
        OR EXISTS (SELECT 1 FROM jobs j JOIN sessions s ON j.sessionId = s.id WHERE s.noteId = n.id
-                    AND j.state IN ('QUEUED','PREPARING','UPLOADING','TRANSCRIBING','STITCHING','CANCEL_REQUESTED'))
+                    AND j.state IN ('QUEUED','PREPARING','UPLOADING','TRANSCRIBING','STITCHING','CANCEL_REQUESTED')))
     ORDER BY n.updatedAt DESC
     LIMIT :limit
     """,
@@ -184,6 +212,10 @@ interface NoteDao {
 
   @Query("SELECT COUNT(*) FROM notes")
   fun observeCount(): Flow<Int>
+
+  /** Le note di una sezione sola: le materie ([personal] falso) o Registrazioni. */
+  @Query("SELECT COUNT(*) FROM notes WHERE (folderId IN ${PersonalSql.FOLDER_IDS}) = :personal")
+  fun observeCountIn(personal: Boolean): Flow<Int>
 
   @Query("SELECT COUNT(*) FROM notes")
   suspend fun count(): Int
@@ -294,7 +326,8 @@ interface SessionDao {
   @Query("UPDATE sessions SET transcribingOn = NULL, transcribingSince = NULL WHERE id = :id AND transcribingOn = :device")
   suspend fun clearMarker(id: String, device: String): Int
 
-  @Query("SELECT COUNT(DISTINCT date) FROM sessions")
+  /** I giorni di lezione: quelli delle materie, non quelli in cui si e' registrato altro. */
+  @Query("SELECT COUNT(DISTINCT s.date) FROM sessions s JOIN notes n ON n.id = s.noteId WHERE n.folderId NOT IN ${PersonalSql.FOLDER_IDS}")
   fun observeLessonDays(): Flow<Int>
 
   @Query("SELECT COUNT(*) FROM sessions")
@@ -342,6 +375,13 @@ interface AudioPartDao {
   @Query("SELECT COALESCE(SUM(durationMs), 0) FROM audio_parts")
   fun observeTotalDuration(): Flow<Long>
 
+  /** L'audio di una sezione sola: le materie ([personal] falso) o Registrazioni. */
+  @Query(
+    "SELECT COALESCE(SUM(p.durationMs), 0) FROM audio_parts p JOIN sessions s ON s.id = p.sessionId " +
+      "JOIN notes n ON n.id = s.noteId WHERE (n.folderId IN ${PersonalSql.FOLDER_IDS}) = :personal",
+  )
+  fun observeDurationIn(personal: Boolean): Flow<Long>
+
   @Query("SELECT fileName FROM audio_parts")
   suspend fun fileNames(): List<String>
 
@@ -367,6 +407,13 @@ interface TranscriptDao {
   /** Le parole trascritte in tutto. Solo le grezze: una raffinata e' la stessa lezione detta di nuovo. */
   @Query("SELECT COALESCE(SUM(wordCount), 0) FROM transcripts WHERE kind = 'RAW'")
   fun observeWordTotal(): Flow<Long>
+
+  /** Lo stesso, per una sezione sola: le materie ([personal] falso) o Registrazioni. */
+  @Query(
+    "SELECT COALESCE(SUM(t.wordCount), 0) FROM transcripts t JOIN sessions s ON s.id = t.sessionId " +
+      "JOIN notes n ON n.id = s.noteId WHERE t.kind = 'RAW' AND (n.folderId IN ${PersonalSql.FOLDER_IDS}) = :personal",
+  )
+  fun observeWordTotalIn(personal: Boolean): Flow<Long>
 
   @Query("SELECT * FROM transcripts WHERE sessionId = :sessionId ORDER BY createdAt")
   suspend fun bySession(sessionId: String): List<TranscriptEntity>

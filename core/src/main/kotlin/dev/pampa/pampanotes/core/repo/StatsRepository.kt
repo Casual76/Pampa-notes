@@ -37,10 +37,11 @@ class StatsRepository @Inject constructor(
   private val settings: PampaSettingsStore,
 ) {
 
-  fun observe(): Flow<TranscriptionStats> =
+  /** [personal]: i numeri della sezione Registrazioni invece di quelli delle materie. */
+  fun observe(personal: Boolean = false): Flow<TranscriptionStats> =
     combine(
-      stats.observeRuns(),
-      stats.observeTranscribedSessions(),
+      stats.observeRunsIn(personal),
+      stats.observeTranscribedSessions(personal),
       settings.settings.map { it.deviceLabel() }.distinctUntilChanged(),
     ) { runs, lessons, thisDevice ->
       TranscriptionStats.aggregate(runs, lessons, thisDevice)

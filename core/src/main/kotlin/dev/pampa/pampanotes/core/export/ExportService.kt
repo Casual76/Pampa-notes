@@ -23,6 +23,7 @@ import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.files.FilesInUse
 import dev.pampa.pampanotes.core.model.slugify
 import dev.pampa.pampanotes.core.repo.FolderRepository
+import dev.pampa.pampanotes.core.repo.PersonalScope
 import java.io.File
 import java.io.IOException
 import java.time.Instant
@@ -153,7 +154,12 @@ class ExportService @Inject constructor(
     }
 
     val (selected, label) = when (scope) {
-      is ExportScope.Everything -> notes.all() to everythingLabel
+      // «Tutto» e' l'archivio della scuola: una registrazione personale di diciannove ore non entra
+      // nel pacchetto delle lezioni senza che nessuno l'abbia chiesto. Si esporta dalla sua cartella.
+      is ExportScope.Everything -> {
+        val personal = PersonalScope.folderIds(all.values.toList())
+        notes.all().filterNot { it.folderId in personal } to everythingLabel
+      }
       is ExportScope.Note -> {
         val note = notes.get(scope.id) ?: return@withContext empty(everythingLabel, generator)
         listOf(note) to note.title

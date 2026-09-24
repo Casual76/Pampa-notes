@@ -1244,6 +1244,40 @@
   <string name="home_resume_play">Riprendi</string>
   <string name="home_resume_hide">Nascondi</string>
 
+  <!-- Registrazioni: l'audio che non e' una lezione -->
+  <string name="tab_recordings">Registrazioni</string>
+  <string name="recordings_title">Registrazioni</string>
+  <string name="recordings_subtitle">L\'audio che non è una lezione</string>
+  <string name="recordings_empty_title">Qui va l\'audio che non è scuola</string>
+  <string name="recordings_empty_detail">Una registrazione di un giorno intero, un\'intervista, un viaggio: stanno qui, con i loro numeri, e non finiscono fra le lezioni da trascrivere né nelle statistiche delle materie. Di serie i file restano solo sul computer di casa. Comincia con una cartella.</string>
+  <string name="recordings_none_title">Ancora nessuna registrazione</string>
+  <string name="recordings_none_detail">Importa un audio dentro una di queste cartelle, o condividilo con Pampa Notes e scegli una cartella di Registrazioni.</string>
+  <string name="recordings_section_list">Ascolta</string>
+  <string name="recordings_hero_eyebrow">Registrazioni</string>
+  <string name="recordings_hero_title">di audio registrato</string>
+  <plurals name="recordings_hero_description">
+    <item quantity="one">%1$s già trascritte, in %2$d registrazione.</item>
+    <item quantity="other">%1$s già trascritte, in %2$d registrazioni.</item>
+  </plurals>
+  <string name="recordings_hero_description_none">Niente di trascritto per ora: si ascolta lo stesso.</string>
+  <string name="recordings_metric_transcribed">Trascritte</string>
+  <string name="recordings_listen">Ascolta</string>
+  <string name="recordings_open_note">Apri la nota</string>
+  <string name="recordings_import_here">Importa qui</string>
+  <string name="recordings_transcribed">Trascritta</string>
+  <string name="recordings_move_in">Sposta in Registrazioni</string>
+  <string name="recordings_move_out">Sposta fra le materie</string>
+  <string name="recordings_move_in_title">«%1$s» in Registrazioni?</string>
+  <string name="recordings_move_out_title">«%1$s» fra le materie?</string>
+  <string name="recordings_move_in_message">La cartella, con tutto quello che ha dentro, esce dalle materie: non conta più nella home né in «Da fare», e i suoi file, una volta sul computer di casa, non restano su questo dispositivo.</string>
+  <string name="recordings_move_out_message">La cartella torna fra le tessere delle materie, con tutto quello che ha dentro, e conta di nuovo nella home e nelle statistiche della scuola.</string>
+  <string name="recordings_keep_here">Tieni le registrazioni anche qui</string>
+  <string name="recordings_computer_only">Registrazioni solo sul computer</string>
+  <string name="recordings_footnote_computer">I file di Registrazioni stanno solo sul computer di casa: quando ci sono arrivati se ne vanno da qui, e si scaricano quando le ascolti.</string>
+  <string name="recordings_footnote_no_computer">Di serie i file di Registrazioni stanno solo sul computer di casa: finché non ne colleghi uno restano qui.</string>
+  <string name="recordings_footnote_here">Questo dispositivo tiene le registrazioni anche qui.</string>
+  <string name="recordings_computer_only_inherited">Sul computer, come le Registrazioni</string>
+
   <!-- installer -->
   <string name="install_title">Installa sul tuo computer</string>
   <string name="install_row_detail">Il companion per Windows: scaricalo sul PC, installalo, inquadra il QR</string>

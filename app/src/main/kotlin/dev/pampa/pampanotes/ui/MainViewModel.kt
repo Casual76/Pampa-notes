@@ -167,8 +167,18 @@ class MainViewModel @Inject constructor(
       pendingNoteId = intoNoteId
       return
     }
-    importRequests.offer(ImportRequest(uris = uris, intoNoteId = intoNoteId ?: pendingNoteId))
+    importRequests.offer(ImportRequest(uris = uris, intoNoteId = intoNoteId ?: pendingNoteId, intoFolderId = pendingFolderId))
     pendingNoteId = null
+    pendingFolderId = null
+  }
+
+  /**
+   * «Importa» da dentro una cartella di Registrazioni: la cartella arriva prima del selettore, come
+   * la nota di [onFilesPicked], e il wizard la trova gia' scelta.
+   */
+  fun onPickIntoFolder(folderId: String) {
+    pendingNoteId = null
+    pendingFolderId = folderId
   }
 
   /**
@@ -178,9 +188,11 @@ class MainViewModel @Inject constructor(
    */
   fun onPickerCancelled() {
     pendingNoteId = null
+    pendingFolderId = null
   }
 
   private var pendingNoteId: String? = null
+  private var pendingFolderId: String? = null
 
   private companion object {
     const val BIND_TIMEOUT_MS = 30_000L

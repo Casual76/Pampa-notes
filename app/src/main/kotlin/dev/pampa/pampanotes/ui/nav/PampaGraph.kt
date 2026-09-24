@@ -35,6 +35,7 @@ import dev.pampa.pampanotes.ui.importing.ImportRoute
 import dev.pampa.pampanotes.ui.jobs.JobsRoute
 import dev.pampa.pampanotes.ui.more.MoreRoute
 import dev.pampa.pampanotes.ui.note.NoteRoute
+import dev.pampa.pampanotes.ui.recordings.RecordingsRoute
 import dev.pampa.pampanotes.ui.search.SearchRoute
 import dev.pampa.pampanotes.ui.session.SessionRoute
 import dev.pampa.pampanotes.ui.settings.SettingsRoute
@@ -58,6 +59,8 @@ class PampaNavActions(
   val pickFiles: () -> Unit,
   /** Lo stesso, ma dentro una nota gia' esistente. */
   val pickFilesInto: (String) -> Unit,
+  /** Lo stesso, con la cartella gia' scelta: «Importa» dentro Registrazioni. */
+  val pickFilesIntoFolder: (String) -> Unit,
 ) {
   fun openNote(id: String, tab: String? = null) = openDetail(Routes.note(id, tab), fresh = true)
   fun openSession(id: String) = openDetail(Routes.session(id))
@@ -264,6 +267,17 @@ fun NavGraphBuilder.listDestinations(actions: PampaNavActions, host: NavHostCont
       )
     }
   }
+  composable(Routes.RECORDINGS) {
+    FluidRouteMotionHost(this@composable) {
+      RecordingsRoute(
+        onOpenFolder = actions::openFolder,
+        onOpenNote = actions::openNote,
+        onOpenSession = actions::openSession,
+        onImportInto = actions.pickFilesIntoFolder,
+        onImport = actions.pickFiles,
+      )
+    }
+  }
   composable(Routes.MORE) {
     FluidRouteMotionHost(this@composable) {
       MoreRoute(
@@ -303,6 +317,7 @@ fun NavGraphBuilder.listDestinations(actions: PampaNavActions, host: NavHostCont
         onOpenNote = actions::openNote,
         onImport = actions.pickFiles,
         onOpenEditor = actions::openEditor,
+        onImportInto = actions.pickFilesIntoFolder,
       )
     }
   }

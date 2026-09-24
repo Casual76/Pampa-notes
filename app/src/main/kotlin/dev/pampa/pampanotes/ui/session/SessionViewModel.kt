@@ -205,7 +205,13 @@ class SessionViewModel @Inject constructor(
 
   @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
   private val folderFlow: Flow<FolderEntity?> = noteFlow.flatMapLatest { note ->
-    note?.let { folders.observe(it.folderId) } ?: flowOf(null)
+    // Una nota di Registrazioni non ha una materia: la schermata resta dell'accento dell'app, come
+    // la sezione da cui si arriva (vedi `PersonalScope`).
+    note?.let { n ->
+      folders.observeAll().map { all ->
+        all.firstOrNull { it.id == n.folderId }?.takeUnless { dev.pampa.pampanotes.core.repo.PersonalScope.isPersonal(it.id, all) }
+      }
+    } ?: flowOf(null)
   }
 
   @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)

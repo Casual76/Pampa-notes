@@ -15,6 +15,7 @@ import dev.pampa.pampanotes.core.db.SubjectMinutes
 import dev.pampa.pampanotes.core.db.TranscriptDao
 import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.repo.NoteRepository
+import dev.pampa.pampanotes.core.repo.PersonalScope
 import dev.pampa.pampanotes.core.repo.StatsRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.LastListened
@@ -71,11 +72,12 @@ data class ResumeCard(
 )
 
 /**
- * I numeri della scheda in cima alla home, contati su **tutto** l'archivio.
+ * I numeri della scheda in cima alla home, contati su **tutto** l'archivio della scuola.
  *
  * Prima l'audio si sommava sulle dodici note recenti e diceva «63′» a chi aveva quattordici ore di
  * lezione: un numero che mente e' peggio di nessun numero. Questi vengono dal database con una
- * query ciascuno, e si aggiornano da soli.
+ * query ciascuno, e si aggiornano da soli. La sezione Registrazioni ne resta fuori — diciannove ore
+ * di una registrazione personale non sono ore di lezione — e ha i suoi (`RecordingsViewModel`).
  */
 data class HomeStats(
   val audioMs: Long = 0,
@@ -126,11 +128,11 @@ class HomeViewModel @Inject constructor(
 ) : ViewModel() {
 
   private val stats = combine(
-    audioParts.observeTotalDuration(),
-    transcripts.observeWordTotal(),
+    audioParts.observeDurationIn(personal = false),
+    transcripts.observeWordTotalIn(personal = false),
     sessions.observeLessonDays(),
     folderDao.observeTopSubject(),
-    transcriptionStats.observe(),
+    transcriptionStats.observe(personal = false),
   ) { audioMs, words, days, top, transcription ->
     HomeStats(audioMs = audioMs, words = words, lessonDays = days, topSubject = top, transcription = transcription)
   }
@@ -193,14 +195,15 @@ class HomeViewModel @Inject constructor(
       todoRest = todo.drop(TODO_SHOWN).take(TODO_EXPANDED - TODO_SHOWN).map(::wrap),
       canTranscribeAll = todo.any { row -> wrap(row).toTranscribe > byNote[row.note.id].orEmpty().size },
       resume = resume?.copy(folder = byId[resume.folderId]),
-      folderCount = allFolders.size,
+      // Le cartelle delle materie: quelle di Registrazioni hanno la loro scheda.
+      folderCount = allFolders.size - PersonalScope.folderIds(allFolders).size,
       loading = false,
     )
   }
 
   val uiState: StateFlow<HomeUiState> = combine(
     home,
-    notes.observeCount(),
+    noteDao.observeCountIn(personal = false),
     jobs.observeActiveCount(),
     stats,
   ) { home, noteCount, activeJobs, stats ->
@@ -217,7 +220,8 @@ class HomeViewModel @Inject constructor(
 
   /**
    * «Trascrivi tutte»: in coda le sessioni senza trascrizione di tutte le note da fare, anche di
-   * quelle oltre le cinque mostrate — il tasto dice «tutte». Col servizio delle impostazioni, come
+   * quelle oltre le cinque mostrate — il tasto dice «tutte». Solo della scuola, come «Da fare»: una
+   * registrazione personale da diciannove ore non parte da un tasto che parla di lezioni. Col servizio delle impostazioni, come
    * la selezione nella cartella; una sessione gia' in coda non si accoda due volte.
    */
   fun transcribeAll() {

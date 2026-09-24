@@ -6,6 +6,7 @@ import android.net.Uri
 object Routes {
   const val HOME = "home"
   const val FOLDERS = "folders"
+  const val RECORDINGS = "recordings"
   const val MORE = "more"
   const val SEARCH = "search"
   const val JOBS = "jobs"
@@ -53,13 +54,16 @@ object Routes {
   fun settingsSection(section: String) = "settings/${Uri.encode(section)}"
 
   /**
-   * Le tre schede della barra, nell'ordine in cui stanno.
+   * Le quattro schede della barra, nell'ordine in cui stanno.
    *
-   * Tre e non sei: Home e' quello che si e' caricato per ultimo, Cartelle l'archivio per materia, e
-   * il resto — cerca, lavori, export, impostazioni — sta dietro Altro. Una barra con sei voci
-   * costringe a leggerle ogni volta invece di riconoscerle.
+   * Quattro e non sei: Home e' quello che si e' caricato per ultimo, Cartelle l'archivio per
+   * materia, Registrazioni l'audio che non e' una lezione, e il resto — cerca, lavori, export,
+   * impostazioni — sta dietro Altro. Registrazioni ha una scheda sua e non una voce in Altro perche'
+   * e' un archivio, non un'impostazione: si apre per ascoltare, e tenerla accanto alle materie senza
+   * mescolarla con loro e' tutto il suo senso. Una barra con sei voci costringe a leggerle ogni volta
+   * invece di riconoscerle; quattro si riconoscono ancora.
    */
-  val topLevel: List<String> = listOf(HOME, FOLDERS, MORE)
+  val topLevel: List<String> = listOf(HOME, FOLDERS, RECORDINGS, MORE)
   val topLevelSet: Set<String> = topLevel.toSet()
 }
 

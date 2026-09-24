@@ -21,8 +21,19 @@ class FolderRepository @Inject constructor(
   suspend fun get(id: String): FolderEntity? = folders.get(id)
   suspend fun all(): List<FolderEntity> = folders.all()
 
-  /** [untitled] e' il nome di ripiego nella lingua di chi chiama: il modulo core non ha stringhe. */
-  suspend fun create(name: String, parentId: String? = null, tone: String? = null, icon: String? = null, untitled: String = "Cartella"): FolderEntity {
+  /**
+   * [untitled] e' il nome di ripiego nella lingua di chi chiama: il modulo core non ha stringhe.
+   * [kind] conta solo al primo livello (vedi [FolderEntity.kind]): una sottocartella lo scrive lo
+   * stesso uguale alla sua radice, cosi' chi guarda la riga da sola non si confonde.
+   */
+  suspend fun create(
+    name: String,
+    parentId: String? = null,
+    tone: String? = null,
+    icon: String? = null,
+    untitled: String = "Cartella",
+    kind: String = FolderEntity.KIND_SCHOOL,
+  ): FolderEntity {
     val now = System.currentTimeMillis()
     val siblings = folders.children(parentId)
     val folder = FolderEntity(
@@ -34,10 +45,26 @@ class FolderRepository @Inject constructor(
       icon = icon,
       createdAt = now,
       updatedAt = now,
+      kind = if (parentId == null) kind else (rootOf(parentId)?.kind ?: kind),
     )
     folders.upsert(folder)
     return folder
   }
+
+  /**
+   * «Sposta in Registrazioni» / «Sposta fra le materie»: solo una cartella di primo livello, che e'
+   * quella che decide per tutto quello che ha dentro. Le sottocartelle non si riscrivono: la loro
+   * colonna non conta, e riscriverle sporcherebbe per niente mezzo archivio nel sync.
+   */
+  suspend fun setKind(id: String, kind: String): Boolean {
+    val folder = folders.get(id) ?: return false
+    if (folder.parentId != null || folder.kind == kind) return false
+    folders.upsert(folder.copy(kind = kind, updatedAt = System.currentTimeMillis()))
+    return true
+  }
+
+  /** La cartella di primo livello che contiene questa: e' lei che dice di che sezione e'. */
+  suspend fun rootOf(id: String): FolderEntity? = pathTo(id).firstOrNull()
 
   suspend fun rename(id: String, name: String) {
     val folder = folders.get(id) ?: return

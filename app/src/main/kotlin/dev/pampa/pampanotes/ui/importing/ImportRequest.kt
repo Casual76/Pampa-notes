@@ -40,6 +40,11 @@ data class ImportRequest(
   val text: String? = null,
   /** La nota in cui importare, quando si e' partiti da dentro una nota. */
   val intoNoteId: String? = null,
+  /**
+   * La cartella proposta, quando si e' partiti da dentro una cartella di Registrazioni: il wizard
+   * la trova scelta, e chiede solo la nota.
+   */
+  val intoFolderId: String? = null,
 ) {
   val isEmpty: Boolean get() = uris.isEmpty() && text.isNullOrBlank()
 

@@ -510,6 +510,18 @@ class PampaSettingsStore(
     noteIds.forEach { prefs.toggle(ComputerOnlyNotes, it, on) }
   }
 
+  /**
+   * Le Registrazioni stanno di serie **solo sul computer**: sono l'audio lungo e personale che non si
+   * riascolta in autobus, e diciannove ore su un telefono sono gigabyte. Acceso, questo dispositivo
+   * le tiene anche qui (il tablet a casa, per esempio). Come le regole di sopra, e' di questo
+   * dispositivo e non sale sull'indice.
+   */
+  val keepPersonalHere: Flow<Boolean> = store.data.map { it[KeepPersonalHere] ?: false }
+
+  suspend fun setKeepPersonalHere(keep: Boolean) = edit { prefs ->
+    if (keep) prefs[KeepPersonalHere] = true else prefs.remove(KeepPersonalHere)
+  }
+
   private fun MutablePreferences.toggle(key: Preferences.Key<Set<String>>, id: String, on: Boolean) {
     val next = (this[key] ?: emptySet()).let { if (on) it + id else it - id }
     if (next.isEmpty()) remove(key) else this[key] = next
@@ -627,6 +639,7 @@ class PampaSettingsStore(
     // «Solo sul computer», per dispositivo.
     val ComputerOnlyFolders = stringSetPreferencesKey("computer_only_folders")
     val ComputerOnlyNotes = stringSetPreferencesKey("computer_only_notes")
+    val KeepPersonalHere = booleanPreferencesKey("keep_personal_here")
     // Date vere e «Riprendi ad ascoltare».
     val LastListenedKey = stringPreferencesKey("last_listened")
     val RealDatesPending = stringSetPreferencesKey("real_dates_pending")

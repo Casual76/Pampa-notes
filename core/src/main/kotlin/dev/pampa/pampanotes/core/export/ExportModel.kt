@@ -11,6 +11,7 @@ import kotlinx.serialization.json.jsonObject
 
 /** Cosa si esporta: una nota, una cartella con tutto quello che contiene, o l'archivio intero. */
 sealed interface ExportScope {
+  /** Tutte le materie: la sezione Registrazioni no (vedi `PersonalScope`), si esporta cartella per cartella. */
   data object Everything : ExportScope
   data class Folder(val id: String) : ExportScope
   data class Note(val id: String) : ExportScope

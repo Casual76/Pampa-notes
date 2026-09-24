@@ -205,12 +205,71 @@ Cinque cose non ovvie, tutte in `core/backup/`:
 | M16 caccia ai problemi: sync senza corse ne' orfani, coda che si annulla e non si appende, il PC riconosce l'account, parole allineate in italiano, link che chiedono conferma | fatto |
 | M17 export per destinazione, tre pallini al tocco, data vera delle registrazioni, pezzi uguali, VRAM stimata, avanzamento in tempo reale dal computer, statistiche | fatto |
 | M18 il PC trascrive per impronta e taglia da se', «solo sul computer», date vere delle note, home con «Da fare» e «Riprendi ad ascoltare», statistiche sincronizzate | fatto |
+| M19 Registrazioni: una sezione per l'audio che non e' scuola, coi suoi numeri e di serie solo sul computer | fatto |
 
 Dopo M7, il rifacimento dell'interfaccia (engine 1.32–1.35): misura di lettura e pagine intere,
 vetro solo sugli elementi piccoli, tre pannelli sul tablet, la materia che colora l'app, il testo
 che si accende.
 
 Il piano per esteso: `C:\Users\casua\.claude\plans\praticamente-vorrei-un-applicazione-che-crispy-falcon.md`
+
+## Registrazioni
+
+L'audio che non e' una lezione — una registrazione di diciannove ore, un'intervista, un viaggio —
+ha una **quarta scheda**, fra Cartelle e Altro (`Routes.RECORDINGS`, `ui/recordings/`; sul tablet
+una riga sotto le materie nella barra laterale). Prima finiva in una materia, e da li' in testa a
+«Da fare» per settimane, nelle ore «di lezione» della home, nel pacchetto «Esporta tutto» e sul
+telefono, dove diciannove ore sono gigabyte.
+
+**La regola sta sulla radice.** `FolderEntity.kind` (database 9, `"school"` di serie, `"personal"`)
+conta solo su una cartella di primo livello: una sottocartella sta dove sta la sua radice, qualunque
+cosa dica la sua colonna, cosi' spostarla non chiede di ricordarsi di cambiarle il tipo.
+`FolderRepository.create` scrive lo stesso il tipo della radice (chi guarda la riga da sola non si
+confonde), `setKind` cambia solo una cartella di primo livello («Sposta in Registrazioni» dalle
+tessere e dal menu della cartella, «Sposta fra le materie» dalla scheda e dal menu). La stessa
+regola sta in due posti che devono dire la stessa cosa: in SQL `PersonalSql.FOLDER_IDS`, una
+sottoselect ricorsiva da mettere dopo `IN`/`NOT IN` (Room la accetta dentro una sottoselect e tiene
+d'occhio `folders` per i `Flow`), e in Kotlin `PersonalScope` (`rootIds`, `folderIds`, `isPersonal`,
+e `current()` fino a note e sessioni). `PersonalSqlTest` le confronta.
+
+**Cosa ne resta fuori**, e resta della scuola: «Da fare» e le ultime note della home
+(`NoteDao.observeTodo`/`observeRecent`), «Trascrivi tutte», i numeri della home (ore, parole,
+giorni di lezione, materia piu' ascoltata, note e cartelle, e le statistiche delle trascrizioni:
+`StatsRepository.observe(personal)`, con le corse lette dalla sessione che hanno adesso — quella di
+una sessione cancellata resta fra le materie), le tessere di Cartelle e la barra laterale
+(`FoldersViewModel`), `ExportScope.Everything`. «Riprendi ad ascoltare» e la ricerca le mostrano:
+sono di chi ascolta, non della scuola. Una cartella, una nota o una sessione di Registrazioni **non
+e' una materia**: niente `ReportSubject` (la cartella lo salta, `NoteViewModel` e
+`SessionViewModel` le danno `folder = null`), e l'app resta del suo accento.
+
+**Di serie solo sul computer.** `ComputerOnlyScope.current()` tratta le cartelle di Registrazioni
+come se avessero la regola, a meno che questo dispositivo non chieda di tenerle
+(`keepPersonalHere` in DataStore, per dispositivo, dal menu della scheda); la conferma di una regola
+nuova (`resolve` senza `includePersonal`) le lascia fuori, perche' conta solo quello che quella
+regola toglierebbe. Mirror, «Libera spazio» e Archiviazione seguono da li'; nei menu la voce «Solo
+sul computer» di una cartella di Registrazioni dice che la regola e' della sezione. E non si aspetta
+il giro periodico: quando una trascrizione finisce su una sessione coperta da una regola,
+`TranscriptionQueueWorker` chiede un giro dell'archivio (`archiveIfComputerOnly`, solo con
+l'archivio acceso), che porta il file sul PC se non c'e' e alla fine chiama `evictComputerOnly` —
+con le sue guardie: il `HEAD` per file, la lezione ascoltata nelle ultime 24 ore, i lavori in corso.
+Un file mai archiviato non se ne va.
+
+**La scheda** e' fatta per ascoltare: in cima i numeri della sola sezione (ore registrate, ore e
+parole trascritte, velocita', dagli stessi `TranscriptionStats.aggregate` della home), poi le
+cartelle, poi tutte le registrazioni di tutte le cartelle dalla piu' recente. Un tocco **ascolta**
+(la sessione con l'audio piu' recente), tenendo premuto c'e' «Apri la nota», «Trascrivi», esporta,
+elimina; il badge e' quello della home (lavoro, «Da trascrivere», «In trascrizione su …»). Vuota,
+spiega a cosa serve. **L'import**: «Importa» dentro una cartella di Registrazioni (o dalla scheda,
+con una cartella sola) apre il wizard con la cartella gia' scelta (`ImportRequest.intoFolderId`,
+`MainViewModel.onPickIntoFolder`); da qualunque altra parte il wizard mostra le cartelle di
+Registrazioni in un gruppo loro sotto le materie, e di ripiego sceglie la prima materia, mai una
+cartella di Registrazioni. Il `.sdocx` indovina la materia solo fra le materie.
+
+Nel sync `kind` viaggia dentro il payload della cartella, e il Worker non lo guarda. L'impronta salta
+`kind = "school"` come salta un `derivedFromId` vuoto: le cartelle di prima hanno l'impronta di
+prima, e l'aggiornamento non le sporca tutte (`FolderPayloadTest`). Un dispositivo con l'app di
+prima che riscrive una cartella di Registrazioni (un nome cambiato) la rimanda senza `kind`, e la
+cartella torna una materia: si aggiornano tutti e due.
 
 ## Sincronizzazione
 

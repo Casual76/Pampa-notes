@@ -1214,6 +1214,40 @@
   <string name="home_resume_play">Resume</string>
   <string name="home_resume_hide">Hide</string>
 
+  <!-- Recordings: audio that is not a lesson -->
+  <string name="tab_recordings">Recordings</string>
+  <string name="recordings_title">Recordings</string>
+  <string name="recordings_subtitle">Audio that isn\'t a lesson</string>
+  <string name="recordings_empty_title">Audio that isn\'t school goes here</string>
+  <string name="recordings_empty_detail">A day-long recording, an interview, a trip: they live here, with their own numbers, and stay out of the lessons to transcribe and out of the subject stats. By default their files are kept only on your home computer. Start with a folder.</string>
+  <string name="recordings_none_title">No recordings yet</string>
+  <string name="recordings_none_detail">Import audio into one of these folders, or share it with Pampa Notes and pick a Recordings folder.</string>
+  <string name="recordings_section_list">Listen</string>
+  <string name="recordings_hero_eyebrow">Recordings</string>
+  <string name="recordings_hero_title">of recorded audio</string>
+  <plurals name="recordings_hero_description">
+    <item quantity="one">%1$s already transcribed, in %2$d recording.</item>
+    <item quantity="other">%1$s already transcribed, in %2$d recordings.</item>
+  </plurals>
+  <string name="recordings_hero_description_none">Nothing transcribed yet: you can listen all the same.</string>
+  <string name="recordings_metric_transcribed">Transcribed</string>
+  <string name="recordings_listen">Listen</string>
+  <string name="recordings_open_note">Open note</string>
+  <string name="recordings_import_here">Import here</string>
+  <string name="recordings_transcribed">Transcribed</string>
+  <string name="recordings_move_in">Move to Recordings</string>
+  <string name="recordings_move_out">Move to subjects</string>
+  <string name="recordings_move_in_title">Move “%1$s” to Recordings?</string>
+  <string name="recordings_move_out_title">Move “%1$s” to subjects?</string>
+  <string name="recordings_move_in_message">The folder, with everything in it, leaves the subjects: it no longer counts on Home or in “To do”, and once its files are on your home computer they don\'t stay on this device.</string>
+  <string name="recordings_move_out_message">The folder goes back among the subject tiles, with everything in it, and counts again on Home and in the school stats.</string>
+  <string name="recordings_keep_here">Keep recordings here too</string>
+  <string name="recordings_computer_only">Recordings on computer only</string>
+  <string name="recordings_footnote_computer">Recordings files live only on your home computer: once they get there they leave this device, and download when you listen.</string>
+  <string name="recordings_footnote_no_computer">By default Recordings files live only on your home computer: until you connect one they stay here.</string>
+  <string name="recordings_footnote_here">This device keeps recordings here too.</string>
+  <string name="recordings_computer_only_inherited">On the computer, like all Recordings</string>
+
   <!-- installer -->
   <string name="install_title">Install on your computer</string>
   <string name="install_row_detail">The companion for Windows: download it on the PC, install it, scan the QR</string>

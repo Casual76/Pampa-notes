@@ -38,7 +38,22 @@ data class FolderEntity(
   val icon: String? = null,
   val createdAt: Long,
   val updatedAt: Long,
-)
+  /**
+   * Di che sezione e': [KIND_SCHOOL] (le materie) o [KIND_PERSONAL] (Registrazioni, l'audio che non
+   * e' una lezione). Conta solo su una cartella di primo livello: una sottocartella sta dove sta la
+   * sua radice (vedi `PersonalScope`), cosi' spostarla non chiede di ricordarsi di cambiarle il tipo.
+   * Una stringa e non un enum: una versione vecchia dell'app che riceve un tipo che non conosce lo
+   * ignora, invece di non riuscire a leggere la cartella.
+   */
+  @ColumnInfo(defaultValue = KIND_SCHOOL) val kind: String = KIND_SCHOOL,
+) {
+  val isPersonal: Boolean get() = kind == KIND_PERSONAL
+
+  companion object {
+    const val KIND_SCHOOL = "school"
+    const val KIND_PERSONAL = "personal"
+  }
+}
 
 /** Una nota: il testo dell'utente in Markdown, piu' tutto quello che le si aggancia. */
 @Serializable

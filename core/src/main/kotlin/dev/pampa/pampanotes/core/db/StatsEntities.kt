@@ -124,6 +124,18 @@ interface StatsDao {
   @Query("SELECT * FROM transcription_runs ORDER BY finishedAt DESC")
   fun observeRuns(): Flow<List<TranscriptionRunEntity>>
 
+  /**
+   * Le corse di una sezione sola: le materie ([personal] falso) o Registrazioni. Una corsa non ha
+   * padre (vedi sopra), quindi la sezione si legge dalla sessione che ha adesso: quella di una
+   * sessione cancellata resta fra le materie, che e' dove stava tutto prima che le sezioni
+   * esistessero.
+   */
+  @Query(
+    "SELECT * FROM transcription_runs WHERE (sessionId IN (SELECT s.id FROM sessions s JOIN notes n ON n.id = s.noteId " +
+      "WHERE n.folderId IN ${PersonalSql.FOLDER_IDS})) = :personal ORDER BY finishedAt DESC",
+  )
+  fun observeRunsIn(personal: Boolean): Flow<List<TranscriptionRunEntity>>
+
   /** Quanti segmenti ha una trascrizione e dove finisce l'ultimo, senza caricare le parole di ognuno. */
   @Query("SELECT COUNT(*) AS count, COALESCE(MAX(sessionEndMs), 0) AS endMs FROM segments WHERE transcriptId = :transcriptId")
   suspend fun segmentSpan(transcriptId: String): SegmentSpan
@@ -133,7 +145,8 @@ interface StatsDao {
 
   /**
    * Le grezze con la loro durata. Solo le grezze: una raffinata e' la stessa lezione detta di nuovo,
-   * e contarla raddoppierebbe ore e parole.
+   * e contarla raddoppierebbe ore e parole. Di una sezione sola: le lezioni ([personal] falso) o
+   * Registrazioni, che ha i suoi numeri e non deve gonfiare quelli della scuola.
    */
   @Query(
     "SELECT t.sessionId AS sessionId, s.noteId AS noteId, n.title AS noteTitle, s.title AS sessionTitle, " +
@@ -142,7 +155,7 @@ interface StatsDao {
       "(SELECT DISTINCT g.partId FROM segments g WHERE g.transcriptId = t.id)), 0) AS audioMs, " +
       "COALESCE((SELECT MAX(g.sessionEndMs) FROM segments g WHERE g.transcriptId = t.id), 0) AS spokenEndMs " +
       "FROM transcripts t JOIN sessions s ON s.id = t.sessionId JOIN notes n ON n.id = s.noteId " +
-      "WHERE t.kind = 'RAW'",
+      "WHERE t.kind = 'RAW' AND (n.folderId IN ${PersonalSql.FOLDER_IDS}) = :personal",
   )
-  fun observeTranscribedSessions(): Flow<List<TranscribedSessionRow>>
+  fun observeTranscribedSessions(personal: Boolean): Flow<List<TranscribedSessionRow>>
 }
