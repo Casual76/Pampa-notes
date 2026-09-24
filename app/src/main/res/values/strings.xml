@@ -1220,8 +1220,8 @@
   <!-- apptx -->
   <string name="settings_custom_chunk_on_computer">Con il programma sul computer aggiornato i pezzi li taglia il computer, e una registrazione che ha già nel suo archivio non passa dal telefono: qui non si decodifica niente.</string>
   <string name="settings_speakers_header">Chi parla</string>
-  <string name="settings_speakers_detail">Separa le voci: «Voce 1», «Voce 2»</string>
-  <string name="settings_speakers_personal">Solo in Registrazioni</string>
+  <string name="settings_speakers_detail">Separa le voci («Voce 1», «Voce 2»): nelle Registrazioni, sempre o mai</string>
+  <string name="settings_speakers_personal">Registrazioni</string>
   <string name="settings_speakers_always">Sempre</string>
   <string name="settings_speakers_never">Mai</string>
   <string name="settings_speakers_ready">Il computer di casa separa le voci dopo aver trascritto, e ogni paragrafo dice di chi è. Solo il computer: con Groq le registrazioni tornano senza voci.</string>
