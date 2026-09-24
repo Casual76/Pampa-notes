@@ -591,8 +591,8 @@
   <!-- Il lettore -->
   <string name="player_play">Riproduci</string>
   <string name="player_pause">Pausa</string>
-  <string name="player_back">Indietro di 15 secondi</string>
-  <string name="player_forward">Avanti di 15 secondi</string>
+  <string name="player_back">Indietro di 10 secondi</string>
+  <string name="player_forward">Avanti di 10 secondi</string>
   <string name="player_back_long">Indietro di 5 minuti</string>
   <string name="player_forward_long">Avanti di 5 minuti</string>
   <string name="player_remaining">−%1$s</string>

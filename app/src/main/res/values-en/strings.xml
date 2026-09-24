@@ -561,8 +561,8 @@
   <!-- The player -->
   <string name="player_play">Play</string>
   <string name="player_pause">Pause</string>
-  <string name="player_back">Back 15 seconds</string>
-  <string name="player_forward">Forward 15 seconds</string>
+  <string name="player_back">Back 10 seconds</string>
+  <string name="player_forward">Forward 10 seconds</string>
   <string name="player_back_long">Back 5 minutes</string>
   <string name="player_forward_long">Forward 5 minutes</string>
   <string name="player_remaining">−%1$s</string>

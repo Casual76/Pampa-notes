@@ -190,8 +190,11 @@ class SessionPlayer(
     /** Cinque volte al secondo: sotto non si vede, sopra si sente sulla batteria e non si vede lo stesso. */
     private const val TICK_MS = 200L
 
-    /** Quanto salta un tocco sulle frecce. Quindici secondi e' la frase che non si e' capita. */
-    const val SKIP_MS = 15_000L
+    /**
+     * Quanto salta un tocco sulle frecce: dieci secondi, quelli che le icone dicono. Erano quindici
+     * sotto un'icona con scritto 10, e un tasto che fa un'altra cosa da quella che dice non si impara.
+     */
+    const val SKIP_MS = 10_000L
 
     /** Le velocita' che si possono scegliere: una lezione a 1,5 si ascolta, a 3 non si capisce. */
     val SPEEDS = listOf(1f, 1.25f, 1.5f, 2f)
