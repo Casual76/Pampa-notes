@@ -54,6 +54,7 @@ export function pageHtml(): string {
   .w.now { background: var(--hl); }
   .static .w { opacity: 1; cursor: default; }
   .note { color: var(--muted); font-size: 14px; margin: 8px 0 0; }
+  .silence { color: var(--muted); font-size: 13px; text-align: center; margin: 4px 0 16px; cursor: pointer; }
   .missing { color: var(--muted); font-size: 15px; padding: 12px 0; }
   footer { margin-top: 48px; color: var(--muted); font-size: 13px; text-align: center; }
   .tags span { display: inline-block; background: var(--hl); border-radius: 999px; padding: 2px 10px; font-size: 13px; margin: 6px 6px 0 0; }
@@ -122,10 +123,21 @@ export function pageHtml(): string {
     for (var i = 0; i < segments.length; i++) {
       var seg = segments[i];
       var gap = cur ? seg.sessionStartMs - cur.end : 0;
-      if (!cur || gap > 2000 || chars > 600) { cur = { start: seg.sessionStartMs, end: seg.sessionEndMs, segs: [] }; out.push(cur); chars = 0; }
+      if (!cur || gap > 2000 || chars > 600) {
+        // Un minuto o piu' senza parlato si dice, come nell'app: sedici minuti di silenzio non sono
+        // la pausa fra due frasi.
+        cur = { start: seg.sessionStartMs, end: seg.sessionEndMs, segs: [], silence: gap >= 60000 ? gap : 0 };
+        out.push(cur); chars = 0;
+      }
       cur.segs.push(seg); cur.end = seg.sessionEndMs; chars += seg.text.length;
     }
     return out;
+  }
+
+  function silenceText(ms) {
+    var min = Math.round(ms / 60000), h = Math.floor(min / 60), m = min % 60;
+    var d = h ? (m ? h + ' h ' + m + ' min' : h + ' h') : Math.max(1, min) + ' min';
+    return '— ' + d + ' di silenzio —';
   }
 
   function locate(parts, ms) {
@@ -210,6 +222,11 @@ export function pageHtml(): string {
       var paras = paragraphs(raw.segments);
       for (var p = 0; p < paras.length; p++) {
         var para = paras[p], row = el('div', 'para'), t = el('span', 't', fmt(para.start)), x = el('span', 'x');
+        if (para.silence) {
+          var quiet = el('div', 'silence', silenceText(para.silence));
+          (function (start) { quiet.addEventListener('click', function () { seek(start); }); })(para.start);
+          rawView.appendChild(quiet);
+        }
         (function (start) { t.addEventListener('click', function () { seek(start); }); })(para.start);
         for (var s = 0; s < para.segs.length; s++) {
           var ws = wordsOf(para.segs[s]);
