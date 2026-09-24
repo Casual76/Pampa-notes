@@ -1253,7 +1253,16 @@ sostituisce la grezza e porta via le raffinate. **Selezione multipla** («Selezi
 barra): nella nota, le sessioni (ritrascrivi, elimina); nella cartella, le note (trascrivi quelle
 da fare, sposta con `FolderPickerSheet`, esporta con `ExportScope.Notes`, elimina). La barra in alto
 diventa quella della selezione — titolo «N selezionate», indietro la chiude — invece di una barra
-in basso che non esiste nell'engine. In Lavori, «Riprova tutti i falliti», che conta e rimanda solo
+in basso che non esiste nell'engine. Lo stesso fuori da una cartella, per note di materie diverse:
+nella home («Da fare» e «Ultime note»: esporta come «4 note», trascrivi quelle da fare, elimina), in
+Registrazioni (esporta, trascrivi — con la stessa domanda di «Trascrivi tutte», ore e servizio —,
+elimina), nei risultati della ricerca (esporta) e nella griglia delle materie (esporta con
+`ExportScope.Folders`: ogni materia con le sue sottocartelle, l'unione senza doppioni). Si entra
+dai tre pallini o tenendo premuta una riga («Seleziona», con quella riga gia' scelta). Le parti
+comuni stanno in `ui/common/Selection.kt` (`rememberSelection`: stato salvato alla rotazione e tasto
+indietro collegato; `SelectionMark`, anche nel colore di una tessera; `ConfirmDeleteNotes`) e
+`NoteBulkActions` (trascrivi ed elimina, per tutti i ViewModel). Sul tablet la selezione vive nel
+pannello dell'elenco. In Lavori, «Riprova tutti i falliti», che conta e rimanda solo
 quelli che vale la pena (`FailedJobs.standing`, puro): non quelli superati da una trascrizione (o
 una raffinata) piu' recente o da un lavoro dello stesso tipo partito dopo — la riga dice
 «Superato», in grigio —, non le registrazioni mute (`no_speech`), non i lavori di una sessione che

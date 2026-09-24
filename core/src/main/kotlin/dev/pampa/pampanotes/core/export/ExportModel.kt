@@ -17,6 +17,11 @@ sealed interface ExportScope {
   data class Note(val id: String) : ExportScope
   /** Alcune note scelte a mano; [label] e' il nome che prende il pacchetto. */
   data class Notes(val ids: List<String>, val label: String) : ExportScope
+  /**
+   * Alcune cartelle scelte a mano (piu' materie insieme dalla griglia), ognuna con le sue
+   * sottocartelle; [label] e' il nome del pacchetto.
+   */
+  data class Folders(val ids: List<String>, val label: String) : ExportScope
 }
 
 enum class ExportFormat {

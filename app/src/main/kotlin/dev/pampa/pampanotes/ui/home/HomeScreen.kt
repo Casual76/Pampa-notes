@@ -65,6 +65,15 @@ import dev.pampa.pampanotes.ui.common.toneFromName
 import dev.pampa.pampanotes.ui.common.rememberComputerOnly
 import dev.pampa.pampanotes.ui.common.rememberPullToSync
 import dev.pampa.pampanotes.ui.export.ExportSheet
+import dev.pampa.pampanotes.ui.common.ConfirmDeleteNotes
+import dev.pampa.pampanotes.ui.common.OverflowMenuButton
+import dev.pampa.pampanotes.ui.common.SelectionMark
+import dev.pampa.pampanotes.ui.common.SelectionState
+import dev.pampa.pampanotes.ui.common.rememberSelection
+import dev.pampa.pampanotes.ui.common.selectedNotesLabel
+import dev.pampa.pampanotes.ui.common.selectionTitle
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Upload
 import java.time.LocalDate
 
 /**
@@ -101,6 +110,21 @@ fun HomeRoute(
   val importLabel = stringResource(R.string.action_import)
   var todoExpanded by rememberSaveable { mutableStateOf(false) }
   val hideLabel = stringResource(R.string.home_resume_hide)
+  val selectLabel = stringResource(R.string.action_select)
+  val transcribeLabel = stringResource(R.string.selection_transcribe)
+
+  // La selezione: note di materie diverse, per darle insieme a un assistente (o trascriverle, o
+  // eliminarle) senza passare da una cartella per volta. Aperta, la home mostra solo «Da fare» e
+  // «Ultime note», ogni riga col suo segno; indietro la chiude.
+  val selection = rememberSelection()
+  val selecting = selection.active
+  var exportingSelection by remember { mutableStateOf(false) }
+  var confirmingDeleteSelection by remember { mutableStateOf(false) }
+  val visibleNotes = remember(state.todo, state.todoRest, state.recent) {
+    (state.todo + state.todoRest + state.recent).associateBy { it.row.note.id }
+  }
+  // Quelle da fare che nessuno sta gia' trascrivendo, qui o altrove: senza, il tasto non c'e'.
+  val anyPending = selection.ids.any { id -> visibleNotes[id]?.let { it.toTranscribe > 0 && it.job == null } == true }
 
   // Il menu tenendo premuto una nota, uguale in «Da fare» e in «Ultime note».
   val noteContextActions: (RecentNote) -> List<FluidContextAction> = { recent ->
@@ -108,6 +132,7 @@ fun HomeRoute(
       FluidContextAction(label = if (recent.row.note.pinned) unpinLabel else pinLabel) {
         viewModel.togglePinned(recent.row.note.id, !recent.row.note.pinned)
       },
+      FluidContextAction(label = selectLabel) { selection.start(recent.row.note.id) },
       FluidContextAction(label = exportLabel) { exporting = recent },
       computerOnly.noteAction(recent.row.note.id, recent.row.note.folderId, recent.row.note.title),
       FluidContextAction(label = deleteLabel, destructive = true) { pendingDelete = recent },
@@ -115,28 +140,48 @@ fun HomeRoute(
   }
 
   FluidScreen(
-    title = stringResource(R.string.home_title),
-    subtitle = stringResource(R.string.home_subtitle),
+    title = if (selecting) selectionTitle(selection) else stringResource(R.string.home_title),
+    subtitle = if (selecting) null else stringResource(R.string.home_subtitle),
+    onBack = if (selecting) selection::exit else null,
     // Il fondale: e' quello che il vetro delle card ha da rifrangere. Senza, il materiale non si
     // vede e la pagina torna quella grigia di prima.
     ambient = FluidAmbient(tone = FluidHeroTone.PrimaryToSecondary, motif = FluidHeroMotif.Glow),
     isRefreshing = pull.isRefreshing,
-    onRefresh = pull.onRefresh,
+    onRefresh = pull.onRefresh.takeUnless { selecting },
     actions = {
-      // Sul telefono la ricerca stava solo in «Altro»: e' la cosa che si cerca dalla home.
-      FluidBarAction(
-        icon = Icons.Rounded.Search,
-        contentDescription = stringResource(R.string.search_title),
-        onClick = onSearch,
-      )
-      FluidBarAction(
-        icon = Icons.Rounded.Add,
-        contentDescription = importLabel,
-        onClick = onImport,
-      )
+      if (selecting) {
+        if (anyPending) {
+          FluidBarAction(
+            icon = Icons.Rounded.Mic,
+            contentDescription = transcribeLabel,
+            onClick = {
+              viewModel.transcribeSelected(selection.ids)
+              selection.exit()
+            },
+          )
+        }
+        FluidBarAction(icon = Icons.Rounded.Upload, contentDescription = exportLabel, enabled = selection.count > 0, onClick = { exportingSelection = true })
+        FluidBarAction(icon = Icons.Rounded.Delete, contentDescription = deleteLabel, enabled = selection.count > 0, onClick = { confirmingDeleteSelection = true })
+      } else {
+        // Sul telefono la ricerca stava solo in «Altro»: e' la cosa che si cerca dalla home.
+        FluidBarAction(
+          icon = Icons.Rounded.Search,
+          contentDescription = stringResource(R.string.search_title),
+          onClick = onSearch,
+        )
+        FluidBarAction(
+          icon = Icons.Rounded.Add,
+          contentDescription = importLabel,
+          onClick = onImport,
+        )
+        // «Seleziona» nei tre pallini, come nella cartella: tenere premuta una nota e' l'altra strada.
+        if (!state.isEmpty) {
+          OverflowMenuButton(actions = { listOf(FluidContextAction(label = selectLabel) { selection.start() }) })
+        }
+      }
     },
   ) {
-    item {
+    if (!selecting) item {
       FluidHero(
         tone = FluidHeroTone.PrimaryToSecondary,
         motif = FluidHeroMotif.Glow,
@@ -172,7 +217,7 @@ fun HomeRoute(
     }
 
     // Una versione nuova, sopra tutto il resto: e' l'unico modo in cui la trova chi non apre lo store.
-    if (update.supported && update.offerOnHome) {
+    if (!selecting && update.supported && update.offerOnHome) {
       item(key = "update") { UpdateHomeCard(update, updates) }
     }
 
@@ -191,7 +236,7 @@ fun HomeRoute(
         )
       }
     } else {
-      state.resume?.let { card ->
+      state.resume?.takeUnless { selecting }?.let { card ->
         item(key = "resume-header") { FluidSectionHeader(title = stringResource(R.string.home_resume_section)) }
         item(key = "resume") {
           ResumeRow(
@@ -216,7 +261,7 @@ fun HomeRoute(
         }
         item(key = "todo") {
           Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            NoteGroup(notes = shownTodo, onOpenNote = onOpenNote, contextActions = noteContextActions)
+            NoteGroup(notes = shownTodo, onOpenNote = onOpenNote, contextActions = noteContextActions, selection = selection)
             if (state.todoRest.isNotEmpty()) {
               FluidButton(
                 text = if (todoExpanded) stringResource(R.string.home_todo_less) else stringResource(R.string.home_todo_all, state.todoCount),
@@ -225,7 +270,7 @@ fun HomeRoute(
                 fillWidth = true,
               )
             }
-            if (state.canTranscribeAll) {
+            if (state.canTranscribeAll && !selecting) {
               FluidButton(
                 text = stringResource(R.string.home_todo_transcribe_all),
                 onClick = viewModel::transcribeAll,
@@ -248,16 +293,37 @@ fun HomeRoute(
           } else {
             state.recent
           }
-          NoteGroup(notes = recent, onOpenNote = onOpenNote, contextActions = noteContextActions)
+          NoteGroup(notes = recent, onOpenNote = onOpenNote, contextActions = noteContextActions, selection = selection)
         }
       }
 
-      transcriptionStatsSection(state.stats.transcription)
+      if (!selecting) transcriptionStatsSection(state.stats.transcription)
     }
   }
 
   exporting?.let { recent ->
     ExportSheet(scope = ExportScope.Note(recent.row.note.id), onDismiss = { exporting = null })
+  }
+
+  if (exportingSelection) {
+    ExportSheet(
+      scope = ExportScope.Notes(selection.ids.toList(), selectedNotesLabel(selection.count)),
+      onDismiss = {
+        exportingSelection = false
+        selection.exit()
+      },
+    )
+  }
+
+  if (confirmingDeleteSelection) {
+    ConfirmDeleteNotes(
+      count = selection.count,
+      onConfirm = {
+        viewModel.deleteNotes(selection.ids)
+        selection.exit()
+      },
+      onDismiss = { confirmingDeleteSelection = false },
+    )
   }
 
   pendingDelete?.let { recent ->
@@ -290,6 +356,8 @@ private fun NoteGroup(
   notes: List<RecentNote>,
   onOpenNote: (String) -> Unit,
   contextActions: (RecentNote) -> List<FluidContextAction>,
+  /** Aperta, il tocco sceglie invece di aprire e il segno prende il posto dell'icona della materia. */
+  selection: SelectionState,
 ) {
   val pinned = stringResource(R.string.note_pinned)
   FluidListGroup {
@@ -297,24 +365,29 @@ private fun NoteGroup(
       if (index > 0) FluidListDivider()
       val note = recent.row.note
       val date = Formats.relativeDate(note.updatedAt)
+      val checked = note.id in selection
       FluidListRow(
         title = note.title,
         subtitle = noteSubtitle(recent.row),
         eyebrow = recent.folder?.name,
         meta = if (note.pinned) "$pinned · $date" else date,
-        tone = toneFromName(recent.folder?.tone),
+        tone = if (checked) FluidTone.Primary else toneFromName(recent.folder?.tone),
         badge = noteBadge(recent),
         // L'icona nel colore della materia, come la sua tessera: la riga e' compatta, ma Storia si
         // riconosce ancora a colpo d'occhio.
         leading = {
-          Icon(
-            imageVector = folderIconOf(recent.folder?.icon),
-            contentDescription = null,
-            tint = folderVividColors(toneFromName(recent.folder?.tone)).start,
-          )
+          if (selection.active) {
+            SelectionMark(checked)
+          } else {
+            Icon(
+              imageVector = folderIconOf(recent.folder?.icon),
+              contentDescription = null,
+              tint = folderVividColors(toneFromName(recent.folder?.tone)).start,
+            )
+          }
         },
-        onClick = { onOpenNote(note.id) },
-        contextActions = { contextActions(recent) },
+        onClick = { if (selection.active) selection.toggle(note.id) else onOpenNote(note.id) },
+        contextActions = if (selection.active) null else ({ contextActions(recent) }),
       )
     }
   }

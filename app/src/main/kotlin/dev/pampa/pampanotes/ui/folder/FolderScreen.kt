@@ -3,7 +3,6 @@ package dev.pampa.pampanotes.ui.folder
 import dev.pampa.pampanotes.ui.common.jobBadgeLabel
 import dev.pampa.pampanotes.core.db.JobEntity
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Computer
@@ -15,6 +14,9 @@ import dev.pampa.pampanotes.ui.common.ComputerOnlyViewModel
 import dev.pampa.pampanotes.core.repo.PersonalScope
 import dev.pampa.pampanotes.ui.common.FolderPickerSheet
 import dev.pampa.pampanotes.ui.common.SelectionMark
+import dev.pampa.pampanotes.ui.common.ConfirmDeleteNotes
+import dev.pampa.pampanotes.ui.common.rememberSelection
+import dev.pampa.pampanotes.ui.common.selectionTitle
 import dev.pampa.pampanotes.ui.common.rememberComputerOnly
 import dev.pampa.pampanotes.ui.common.rememberPullToSync
 import dev.pampa.pampanotes.core.transcription.NoteTranscribingElsewhere
@@ -124,18 +126,15 @@ private fun FolderScreen(
   var movingSection by remember { mutableStateOf<Boolean?>(null) }
   // La selezione delle note: la barra in alto diventa quella della selezione, le sottocartelle e
   // la ricerca spariscono, ogni nota e' una riga con il suo segno. Indietro la chiude.
-  var selecting by remember { mutableStateOf(false) }
-  var selected by remember { mutableStateOf(emptySet<String>()) }
+  val selection = rememberSelection()
+  val selecting = selection.active
+  val selected = selection.ids
   var confirmingDeleteMany by remember { mutableStateOf(false) }
   var movingMany by remember { mutableStateOf(false) }
   // La cartella di arrivo, quando e' dell'altra sezione: si conferma prima di spostare.
   var movingAcross by remember { mutableStateOf<String?>(null) }
   var exportingMany by remember { mutableStateOf(false) }
-  val exitSelection = {
-    selecting = false
-    selected = emptySet()
-  }
-  BackHandler(enabled = selecting) { exitSelection() }
+  val exitSelection: () -> Unit = selection::exit
   var creatingNote by remember { mutableStateOf(false) }
   var renaming by remember { mutableStateOf<FolderRow?>(null) }
   var pendingFolderDelete by remember { mutableStateOf<FolderRow?>(null) }
@@ -175,7 +174,7 @@ private fun FolderScreen(
   val anyPending = selectedRows.any { state.toTranscribe(it) > 0 }
 
   FluidScreen(
-    title = if (selecting) pluralStringResource(R.plurals.selection_count, selected.size, selected.size) else state.folder?.name ?: stringResource(R.string.folder_loading),
+    title = if (selecting) selectionTitle(selection) else state.folder?.name ?: stringResource(R.string.folder_loading),
     subtitle = if (selecting) null else state.path.dropLast(1).joinToString(" / ") { it.name }.takeIf { it.isNotEmpty() },
     onBack = if (selecting) exitSelection else onBack,
     // Il fondale prende il colore della cartella: la pagina e la sua tessera si somigliano.
@@ -206,7 +205,7 @@ private fun FolderScreen(
             buildList {
               add(FluidContextAction(label = importLabel) { onImport() })
               add(FluidContextAction(label = newSubfolderLabel) { creatingFolder = true })
-              if (state.notes.isNotEmpty()) add(FluidContextAction(label = selectLabel) { selecting = true })
+              if (state.notes.isNotEmpty()) add(FluidContextAction(label = selectLabel) { selection.start() })
               add(FluidContextAction(label = exportLabel) { exporting = true })
               state.folder?.let { folder ->
                 add(computerOnly.folderAction(folder.id, folder.name))
@@ -235,7 +234,7 @@ private fun FolderScreen(
               badge = noteBadge(state.toTranscribe(row), state.elsewhere[row.note.id], state.jobs[row.note.id]),
               tone = if (checked) FluidTone.Primary else FluidTone.Neutral,
               leading = { SelectionMark(checked) },
-              onClick = { selected = if (checked) selected - row.note.id else selected + row.note.id },
+              onClick = { selection.toggle(row.note.id) },
             )
           }
         }
@@ -300,6 +299,7 @@ private fun FolderScreen(
                   FluidContextAction(label = if (row.note.pinned) unpinLabel else pinLabel) {
                     onTogglePinned(row.note.id, !row.note.pinned)
                   },
+                  FluidContextAction(label = selectLabel) { selection.start(row.note.id) },
                   FluidContextAction(label = exportLabel) { exportingScope = ExportScope.Note(row.note.id) },
                   computerOnly.noteAction(row.note.id, row.note.folderId, row.note.title),
                   FluidContextAction(label = deleteLabel, destructive = true) { pendingNoteDelete = row },
@@ -429,22 +429,13 @@ private fun FolderScreen(
   }
 
   if (confirmingDeleteMany) {
-    FluidAlert(
-      onDismissRequest = { confirmingDeleteMany = false },
-      title = stringResource(R.string.selection_delete_title),
-      message = pluralStringResource(R.plurals.selection_delete_notes_message, selected.size, selected.size),
-      actions = listOf(
-        FluidAlertAction(
-          label = deleteLabel,
-          emphasis = FluidAlertAction.Emphasis.Destructive,
-          onClick = {
-            confirmingDeleteMany = false
-            onDeleteNotes(selected)
-            exitSelection()
-          },
-        ),
-        FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = { confirmingDeleteMany = false }),
-      ),
+    ConfirmDeleteNotes(
+      count = selected.size,
+      onConfirm = {
+        onDeleteNotes(selected)
+        exitSelection()
+      },
+      onDismiss = { confirmingDeleteMany = false },
     )
   }
 

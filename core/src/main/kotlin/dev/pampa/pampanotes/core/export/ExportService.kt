@@ -174,6 +174,13 @@ class ExportService @Inject constructor(
         val wanted = FolderRepository.descendants(scope.id, all.values.toList())
         notes.all().filter { it.folderId in wanted } to (all[scope.id]?.name ?: everythingLabel)
       }
+
+      is ExportScope.Folders -> {
+        // Come una cartella sola, per ognuna: l'unione, cosi' una sottocartella scelta insieme alla
+        // sua materia non mette le stesse note due volte.
+        val wanted = scope.ids.flatMapTo(HashSet()) { FolderRepository.descendants(it, all.values.toList()) }
+        notes.all().filter { it.folderId in wanted } to scope.label
+      }
     }
 
     val gathered = selected

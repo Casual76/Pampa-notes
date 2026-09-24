@@ -48,6 +48,11 @@ import dev.pampa.pampanotes.ui.common.folderVividColors
 import dev.pampa.pampanotes.ui.common.toneFromName
 import dev.pampa.pampanotes.core.export.ExportScope
 import dev.pampa.pampanotes.ui.export.ExportSheet
+import dev.pampa.pampanotes.ui.common.OverflowMenuButton
+import dev.pampa.pampanotes.ui.common.SelectionMark
+import dev.pampa.pampanotes.ui.common.rememberSelection
+import dev.pampa.pampanotes.ui.common.selectionTitle
+import androidx.compose.material.icons.rounded.Upload
 import dev.pampa.pampanotes.ui.folder.SectionMoveAlert
 import androidx.compose.foundation.layout.BoxWithConstraints
 import dev.antigravity.fluidengine.ui.fluid.FluidScreenDefaults
@@ -81,6 +86,14 @@ fun FoldersRoute(
   val deleteLabel = stringResource(R.string.action_delete)
   val exportLabel = stringResource(R.string.action_export)
   val toRecordingsLabel = stringResource(R.string.recordings_move_in)
+  val selectLabel = stringResource(R.string.action_select)
+
+  // La selezione delle materie: Storia e Filosofia in un pacchetto solo, ognuna con le sue
+  // sottocartelle (`ExportScope.Folders`). Aperta, il tocco su una tessera la sceglie e il segno sta
+  // nell'angolo; indietro la chiude.
+  val selection = rememberSelection()
+  val selecting = selection.active
+  var exportingSelection by remember { mutableStateOf(false) }
 
   // Le colonne dalla misura, non dal tipo di schermo: una tessera vale 180 dp, e quante ne stanno
   // nella colonna di lettura lo dice la larghezza.
@@ -88,17 +101,25 @@ fun FoldersRoute(
     val sidePadding = fluidScreenPadding(maxWidth, FluidScreenDefaults.HorizontalPadding, FluidScreenDefaults.ContentMaxWidth)
     val columns = fluidGridColumns(maxWidth - sidePadding * 2)
   FluidScreen(
-    title = stringResource(R.string.folders_title),
-    subtitle = stringResource(R.string.folders_subtitle),
+    title = if (selecting) selectionTitle(selection) else stringResource(R.string.folders_title),
+    subtitle = if (selecting) null else stringResource(R.string.folders_subtitle),
+    onBack = if (selecting) selection::exit else null,
     ambient = FluidAmbient(tone = FluidHeroTone.Primary, motif = FluidHeroMotif.Cards),
     isRefreshing = pull.isRefreshing,
-    onRefresh = pull.onRefresh,
+    onRefresh = pull.onRefresh.takeUnless { selecting },
     actions = {
-      FluidBarAction(
-        icon = Icons.Rounded.Add,
-        contentDescription = newLabel,
-        onClick = { editing = FolderEdit.New },
-      )
+      if (selecting) {
+        FluidBarAction(icon = Icons.Rounded.Upload, contentDescription = exportLabel, enabled = selection.count > 0, onClick = { exportingSelection = true })
+      } else {
+        FluidBarAction(
+          icon = Icons.Rounded.Add,
+          contentDescription = newLabel,
+          onClick = { editing = FolderEdit.New },
+        )
+        if (!state.isEmpty) {
+          OverflowMenuButton(actions = { listOf(FluidContextAction(label = selectLabel) { selection.start() }) })
+        }
+      }
     },
   ) {
     if (state.isEmpty) {
@@ -127,10 +148,12 @@ fun FoldersRoute(
               row = row,
               onComputer = if (computerOnly.folderMarked(row.folder.id)) computerOnly.marker else null,
               modifier = Modifier.weight(1f),
-              onClick = { onOpenFolder(row.folder.id) },
-              contextActions = {
+              selected = if (selecting) row.folder.id in selection else null,
+              onClick = { if (selecting) selection.toggle(row.folder.id) else onOpenFolder(row.folder.id) },
+              contextActions = if (selecting) null else ({
                 listOf(
                   FluidContextAction(label = editLabel) { editing = FolderEdit.Existing(row) },
+                  FluidContextAction(label = selectLabel) { selection.start(row.folder.id) },
                   // Dove uno lo cerca: tenendo premuta la materia da dare all'assistente.
                   FluidContextAction(label = exportLabel) { exporting = row },
                   computerOnly.folderAction(row.folder.id, row.folder.name),
@@ -139,7 +162,7 @@ fun FoldersRoute(
                   FluidContextAction(label = toRecordingsLabel) { movingToRecordings = row },
                   FluidContextAction(label = deleteLabel, destructive = true) { pendingDelete = row },
                 )
-              },
+              }),
             )
           }
           // L'ultima riga non lascia tessere piu' larghe delle altre: sarebbero diverse per il solo
@@ -165,6 +188,24 @@ fun FoldersRoute(
 
   exporting?.let { row ->
     ExportSheet(scope = ExportScope.Folder(row.folder.id), onDismiss = { exporting = null })
+  }
+
+  if (exportingSelection) {
+    // Il nome del pacchetto dice le materie finche' si leggono in una riga («Storia, Filosofia»);
+    // oltre, quante sono.
+    val names = state.folders.filter { it.folder.id in selection }.map { it.folder.name }
+    val label = if (names.size in 1..3) {
+      names.joinToString(", ")
+    } else {
+      pluralStringResource(R.plurals.selection_export_subjects, selection.count, selection.count)
+    }
+    ExportSheet(
+      scope = ExportScope.Folders(selection.ids.toList(), label),
+      onDismiss = {
+        exportingSelection = false
+        selection.exit()
+      },
+    )
   }
 
   editing?.let { request ->
@@ -213,8 +254,10 @@ private fun FolderTile(
   /** «sul computer» in coda al sottotitolo, se una regola la copre. */
   onComputer: String?,
   modifier: Modifier = Modifier,
+  /** In selezione, se e' scelta; `null` fuori dalla selezione, e il segno non c'e'. */
+  selected: Boolean? = null,
   onClick: () -> Unit,
-  contextActions: () -> List<FluidContextAction>,
+  contextActions: (() -> List<FluidContextAction>)?,
 ) {
   val colors = folderVividColors(toneFromName(row.folder.tone))
 
@@ -227,12 +270,20 @@ private fun FolderTile(
     onClick = onClick,
     contextActions = contextActions,
   ) {
-    Icon(
-      imageVector = folderIconOf(row.folder.icon),
-      contentDescription = null,
-      tint = colors.content,
-      modifier = Modifier.size(30.dp),
-    )
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+      Icon(
+        imageVector = folderIconOf(row.folder.icon),
+        contentDescription = null,
+        tint = colors.content,
+        modifier = Modifier.size(30.dp),
+      )
+      // Il segno nel colore del testo della tessera: l'accento dell'app sopra un colore pieno non si
+      // leggerebbe, e ogni tessera ha gia' il suo.
+      if (selected != null) {
+        Box(modifier = Modifier.weight(1f))
+        SelectionMark(selected, tint = colors.content)
+      }
+    }
     Box(modifier = Modifier.weight(1f))
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
       Text(

@@ -26,6 +26,7 @@ import dev.pampa.pampanotes.core.stats.TranscriptionStats
 import dev.pampa.pampanotes.core.transcription.NoteTranscribingElsewhere
 import dev.pampa.pampanotes.core.transcription.TranscribingMarker
 import dev.pampa.pampanotes.work.WorkScheduler
+import dev.pampa.pampanotes.ui.common.NoteBulkActions
 import javax.inject.Inject
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
@@ -148,6 +149,7 @@ class RecordingsViewModel @Inject constructor(
   transcripts: TranscriptDao,
   stats: StatsRepository,
   jobDao: JobDao,
+  private val bulk: NoteBulkActions,
 ) : ViewModel() {
 
   private val sectionStats: Flow<RecordingsStats> = combine(
@@ -227,6 +229,11 @@ class RecordingsViewModel @Inject constructor(
     viewModelScope.launch { notes.delete(id) }
   }
 
+  /** La selezione: le registrazioni scelte se ne vanno, con audio e trascrizioni. */
+  fun deleteNotes(ids: Collection<String>) {
+    viewModelScope.launch { bulk.delete(ids) }
+  }
+
   /**
    * «Ascolta»: si riprende da dove ci si era fermati, se l'ultima cosa ascoltata qui e' una sessione
    * di questa nota e non e' finita; altrimenti la sessione piu' recente, dall'inizio. In tutti e due
@@ -261,9 +268,19 @@ class RecordingsViewModel @Inject constructor(
    * «Trascrivi tutte»: prima si conta, poi si chiede. Una sezione che ha diciannove ore di audio non
    * parte con un tocco solo — e con Groq quelle ore andrebbero nel cloud.
    */
-  fun askTranscribeAll() {
+  fun askTranscribeAll() = askTranscribe(null)
+
+  /**
+   * La stessa domanda per le registrazioni scelte a mano: diciannove ore scelte una per una sono
+   * sempre diciannove ore, e con Groq finirebbero nel cloud.
+   *
+   * @param only le note fra cui scegliere; `null` e' «tutte».
+   */
+  fun askTranscribe(only: Set<String>?) {
     viewModelScope.launch {
-      val ids = uiState.value.recordings.filter { it.worthTranscribing > 0 && it.job == null }.map { it.row.note.id }
+      val ids = uiState.value.recordings
+        .filter { it.worthTranscribing > 0 && it.job == null && (only == null || it.row.note.id in only) }
+        .map { it.row.note.id }
       val all = pendingSessions(ids)
       val silent = silentSessionIds()
       val wanted = all.filter { it.first !in silent }

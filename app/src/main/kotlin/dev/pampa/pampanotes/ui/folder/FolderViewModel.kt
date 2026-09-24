@@ -13,10 +13,9 @@ import dev.pampa.pampanotes.core.repo.NoteRepository
 import dev.pampa.pampanotes.core.repo.PersonalScope
 import dev.pampa.pampanotes.core.repo.SessionRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
-import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.transcription.NoteTranscribingElsewhere
 import dev.pampa.pampanotes.core.transcription.TranscribingMarker
-import dev.pampa.pampanotes.work.WorkScheduler
+import dev.pampa.pampanotes.ui.common.NoteBulkActions
 import javax.inject.Inject
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -66,8 +65,7 @@ class FolderViewModel @Inject constructor(
   private val notes: NoteRepository,
   private val sessions: SessionRepository,
   private val transcription: TranscriptionRepository,
-  private val settingsStore: PampaSettingsStore,
-  private val scheduler: WorkScheduler,
+  private val bulk: NoteBulkActions,
 ) : ViewModel() {
 
   private val folderId: String = savedStateHandle.get<String>("folderId").orEmpty()
@@ -146,7 +144,7 @@ class FolderViewModel @Inject constructor(
   // --- la selezione ---
 
   fun deleteNotes(ids: Collection<String>) {
-    viewModelScope.launch { ids.forEach { notes.delete(it) } }
+    viewModelScope.launch { bulk.delete(ids) }
   }
 
   fun moveNotes(ids: Collection<String>, targetFolderId: String) {
@@ -155,16 +153,6 @@ class FolderViewModel @Inject constructor(
 
   /** Le sessioni senza trascrizione delle note scelte vanno in coda, col provider delle impostazioni. */
   fun transcribePending(ids: Collection<String>) {
-    viewModelScope.launch {
-      val provider = settingsStore.current().transcriptionProvider
-      var any = false
-      ids.forEach { noteId ->
-        sessions.byNote(noteId)
-          .filter { it.parts.isNotEmpty() && it.session.activeTranscriptId == null }
-          // Quelle che un altro dispositivo sta trascrivendo le salta `enqueue`.
-          .forEach { if (transcription.enqueue(it.session.id, provider) != null) any = true }
-      }
-      if (any) scheduler.kick(provider.id)
-    }
+    viewModelScope.launch { bulk.transcribePending(ids) }
   }
 }

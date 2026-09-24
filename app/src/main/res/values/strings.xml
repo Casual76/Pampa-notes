@@ -37,6 +37,19 @@
   </plurals>
   <string name="selection_move">Sposta in</string>
   <string name="selection_transcribe">Trascrivi quelle da fare</string>
+  <!-- Il nome del pacchetto quando le note scelte vengono da piu' materie o cartelle. -->
+  <plurals name="selection_export_notes">
+    <item quantity="one">%d nota</item>
+    <item quantity="other">%d note</item>
+  </plurals>
+  <plurals name="selection_export_recordings">
+    <item quantity="one">%d registrazione</item>
+    <item quantity="other">%d registrazioni</item>
+  </plurals>
+  <plurals name="selection_export_subjects">
+    <item quantity="one">%d materia</item>
+    <item quantity="other">%d materie</item>
+  </plurals>
   <string name="folder_picker_empty">Nessun\u2019altra cartella</string>
   <plurals name="session_part_count">
     <item quantity="one">%d registrazione</item>

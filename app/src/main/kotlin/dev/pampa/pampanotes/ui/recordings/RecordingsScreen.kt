@@ -53,6 +53,12 @@ import dev.pampa.pampanotes.ui.common.jobBadgeLabel
 import dev.pampa.pampanotes.ui.common.rememberPullToSync
 import dev.pampa.pampanotes.ui.common.toneFromName
 import dev.pampa.pampanotes.ui.export.ExportSheet
+import dev.pampa.pampanotes.ui.common.ConfirmDeleteNotes
+import dev.pampa.pampanotes.ui.common.SelectionMark
+import dev.pampa.pampanotes.ui.common.rememberSelection
+import dev.pampa.pampanotes.ui.common.selectionTitle
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Upload
 import dev.pampa.pampanotes.ui.folder.SectionMoveAlert
 
 /**
@@ -97,6 +103,16 @@ fun RecordingsRoute(
   val toSchoolLabel = stringResource(R.string.recordings_move_out)
   val keepHereLabel = stringResource(R.string.recordings_keep_here)
   val computerOnlyLabel = stringResource(R.string.recordings_computer_only)
+  val selectLabel = stringResource(R.string.action_select)
+
+  // La selezione, come nella cartella: registrazioni di cartelle diverse, da esportare, trascrivere
+  // o eliminare insieme. Aperta, la scheda mostra solo l'elenco delle registrazioni; indietro la chiude.
+  val selection = rememberSelection()
+  val selecting = selection.active
+  var exportingSelection by remember { mutableStateOf(false) }
+  var confirmingDeleteSelection by remember { mutableStateOf(false) }
+  // Quelle che «Trascrivi» manderebbe davvero: non gia' in coda, non mute, non trascritte altrove.
+  val anyPending = state.recordings.any { it.row.note.id in selection && it.worthTranscribing > 0 && it.job == null }
 
   // «Importa» della barra: dentro l'unica cartella, se ce n'e' una sola; se no il wizard, che le
   // mostra tutte con Registrazioni a parte e ne sceglie gia' una — da qui non si importa una lezione.
@@ -105,32 +121,50 @@ fun RecordingsRoute(
   }
 
   FluidScreen(
-    title = stringResource(R.string.recordings_title),
-    subtitle = stringResource(R.string.recordings_subtitle),
+    title = if (selecting) selectionTitle(selection) else stringResource(R.string.recordings_title),
+    subtitle = if (selecting) null else stringResource(R.string.recordings_subtitle),
+    onBack = if (selecting) selection::exit else null,
     // Onde e non le righe del quaderno: qui si ascolta, non si prendono appunti.
     ambient = FluidAmbient(tone = FluidHeroTone.Secondary, motif = FluidHeroMotif.Ripples),
     isRefreshing = pull.isRefreshing,
-    onRefresh = pull.onRefresh,
+    onRefresh = pull.onRefresh.takeUnless { selecting },
     actions = {
-      FluidBarAction(icon = Icons.Rounded.Add, contentDescription = newFolderLabel, onClick = { editing = RecordingsFolderEdit.New })
-      if (!state.isEmpty) {
-        OverflowMenuButton(
-          actions = {
-            buildList {
-              add(FluidContextAction(label = importLabel) { importAction() })
-              // Di serie le Registrazioni stanno solo sul computer; il tablet a casa puo' tenerle.
-              // Con «tieni tutto anche qui» acceso la scelta non cambierebbe niente: la voce non c'e',
-              // e la nota in fondo dice perche'.
-              if (!state.mirror) {
-                if (state.keepHere) {
-                  add(FluidContextAction(label = computerOnlyLabel, enabled = state.hasComputer) { viewModel.askComputerOnly() })
-                } else {
-                  add(FluidContextAction(label = keepHereLabel) { viewModel.keepHere() })
+      if (selecting) {
+        if (anyPending) {
+          // Passa dalla stessa domanda di «Trascrivi tutte»: quante, quanto audio, con chi.
+          FluidBarAction(
+            icon = Icons.Rounded.Mic,
+            contentDescription = transcribeLabel,
+            onClick = {
+              viewModel.askTranscribe(selection.ids)
+              selection.exit()
+            },
+          )
+        }
+        FluidBarAction(icon = Icons.Rounded.Upload, contentDescription = exportLabel, enabled = selection.count > 0, onClick = { exportingSelection = true })
+        FluidBarAction(icon = Icons.Rounded.Delete, contentDescription = deleteLabel, enabled = selection.count > 0, onClick = { confirmingDeleteSelection = true })
+      } else {
+        FluidBarAction(icon = Icons.Rounded.Add, contentDescription = newFolderLabel, onClick = { editing = RecordingsFolderEdit.New })
+        if (!state.isEmpty) {
+          OverflowMenuButton(
+            actions = {
+              buildList {
+                add(FluidContextAction(label = importLabel) { importAction() })
+                if (state.recordings.isNotEmpty()) add(FluidContextAction(label = selectLabel) { selection.start() })
+                // Di serie le Registrazioni stanno solo sul computer; il tablet a casa puo' tenerle.
+                // Con «tieni tutto anche qui» acceso la scelta non cambierebbe niente: la voce non c'e',
+                // e la nota in fondo dice perche'.
+                if (!state.mirror) {
+                  if (state.keepHere) {
+                    add(FluidContextAction(label = computerOnlyLabel, enabled = state.hasComputer) { viewModel.askComputerOnly() })
+                  } else {
+                    add(FluidContextAction(label = keepHereLabel) { viewModel.keepHere() })
+                  }
                 }
               }
-            }
-          },
-        )
+            },
+          )
+        }
       }
     },
   ) {
@@ -148,10 +182,10 @@ fun RecordingsRoute(
     }
 
     // Senza audio la tessera direbbe «< 1 min»: niente di vero da dire, niente tessera.
-    if (state.stats.recordedMs > 0) item(key = "hero") { RecordingsHero(state.stats) }
+    if (!selecting && state.stats.recordedMs > 0) item(key = "hero") { RecordingsHero(state.stats) }
 
-    item(key = "folders-header") { FluidSectionHeader(title = stringResource(R.string.home_section_folders)) }
-    item(key = "folders") {
+    if (!selecting) item(key = "folders-header") { FluidSectionHeader(title = stringResource(R.string.home_section_folders)) }
+    if (!selecting) item(key = "folders") {
       FluidListGroup {
         state.folders.forEachIndexed { index, row ->
           if (index > 0) FluidListDivider()
@@ -192,36 +226,43 @@ fun RecordingsRoute(
           state.recordings.forEachIndexed { index, item ->
             if (index > 0) FluidListDivider()
             val note = item.row.note
+            val checked = note.id in selection
             FluidListRow(
               title = note.title,
               subtitle = recordingSubtitle(item),
               meta = Formats.relativeDate(note.updatedAt),
               badge = recordingBadge(item),
+              tone = if (checked) FluidTone.Primary else FluidTone.Neutral,
               // Il tocco ascolta: e' la cosa che si viene a fare qui. Una nota senza audio si apre e
               // basta, e l'icona non promette un play che non c'e'.
               leading = {
-                if (item.row.audioCount > 0) {
+                if (selecting) {
+                  SelectionMark(checked)
+                } else if (item.row.audioCount > 0) {
                   Icon(imageVector = Icons.Rounded.PlayArrow, contentDescription = stringResource(R.string.recordings_listen))
                 } else {
                   Icon(imageVector = Icons.Rounded.Description, contentDescription = openNoteLabel)
                 }
               },
-              onClick = { viewModel.listen(note.id, onSession = onListenSession, onNote = onOpenNote) },
-              contextActions = {
+              onClick = {
+                if (selecting) selection.toggle(note.id) else viewModel.listen(note.id, onSession = onListenSession, onNote = onOpenNote)
+              },
+              contextActions = if (selecting) null else ({
                 buildList {
                   add(FluidContextAction(label = openNoteLabel) { onOpenNote(note.id) })
+                  add(FluidContextAction(label = selectLabel) { selection.start(note.id) })
                   if (item.toTranscribe > 0 && item.job == null) {
                     add(FluidContextAction(label = transcribeLabel) { viewModel.transcribe(listOf(note.id)) })
                   }
                   add(FluidContextAction(label = exportLabel) { exporting = ExportScope.Note(note.id) })
                   add(FluidContextAction(label = deleteLabel, destructive = true) { pendingNoteDelete = item })
                 }
-              },
+              }),
             )
           }
         }
       }
-      if (state.canTranscribeAll) {
+      if (state.canTranscribeAll && !selecting) {
         item(key = "transcribe-all") {
           FluidButton(
             text = stringResource(R.string.home_todo_transcribe_all),
@@ -234,7 +275,7 @@ fun RecordingsRoute(
       }
     }
 
-    item(key = "where") {
+    if (!selecting) item(key = "where") {
       FluidSectionFootnote(
         text = stringResource(
           when (state.where) {
@@ -298,6 +339,30 @@ fun RecordingsRoute(
   }
 
   exporting?.let { scope -> ExportSheet(scope = scope, onDismiss = { exporting = null }) }
+
+  if (exportingSelection) {
+    ExportSheet(
+      scope = ExportScope.Notes(
+        selection.ids.toList(),
+        pluralStringResource(R.plurals.selection_export_recordings, selection.count, selection.count),
+      ),
+      onDismiss = {
+        exportingSelection = false
+        selection.exit()
+      },
+    )
+  }
+
+  if (confirmingDeleteSelection) {
+    ConfirmDeleteNotes(
+      count = selection.count,
+      onConfirm = {
+        viewModel.deleteNotes(selection.ids)
+        selection.exit()
+      },
+      onDismiss = { confirmingDeleteSelection = false },
+    )
+  }
 
   movingOut?.let { row ->
     SectionMoveAlert(

@@ -24,6 +24,7 @@ import dev.pampa.pampanotes.core.stats.TranscriptionStats
 import dev.pampa.pampanotes.core.transcription.NoteTranscribingElsewhere
 import dev.pampa.pampanotes.core.transcription.TranscribingMarker
 import dev.pampa.pampanotes.work.WorkScheduler
+import dev.pampa.pampanotes.ui.common.NoteBulkActions
 import javax.inject.Inject
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -125,6 +126,7 @@ class HomeViewModel @Inject constructor(
   private val transcription: TranscriptionRepository,
   private val settingsStore: PampaSettingsStore,
   private val scheduler: WorkScheduler,
+  private val bulk: NoteBulkActions,
 ) : ViewModel() {
 
   private val stats = combine(
@@ -236,6 +238,16 @@ class HomeViewModel @Inject constructor(
       }
       if (any) scheduler.kick(provider.id)
     }
+  }
+
+  // --- la selezione: note di materie diverse, scelte dalla home ---
+
+  fun transcribeSelected(ids: Collection<String>) {
+    viewModelScope.launch { bulk.transcribePending(ids) }
+  }
+
+  fun deleteNotes(ids: Collection<String>) {
+    viewModelScope.launch { bulk.delete(ids) }
   }
 
   /** «Nascondi» sulla scheda: la sessione non si riprende piu' da qui. */

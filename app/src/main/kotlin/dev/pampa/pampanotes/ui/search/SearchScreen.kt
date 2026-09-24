@@ -32,6 +32,19 @@ import dev.pampa.pampanotes.core.model.Dates
 import dev.pampa.pampanotes.core.repo.SearchResult
 import dev.pampa.pampanotes.core.repo.TranscriptSnippet
 import dev.pampa.pampanotes.ui.common.Formats
+import dev.pampa.pampanotes.ui.common.OverflowMenuButton
+import dev.pampa.pampanotes.ui.common.SelectionMark
+import dev.pampa.pampanotes.ui.common.rememberSelection
+import dev.pampa.pampanotes.ui.common.selectedNotesLabel
+import dev.pampa.pampanotes.ui.common.selectionTitle
+import dev.pampa.pampanotes.core.export.ExportScope
+import dev.pampa.pampanotes.ui.export.ExportSheet
+import dev.antigravity.fluidengine.ui.fluid.FluidBarAction
+import dev.antigravity.fluidengine.ui.fluid.FluidContextAction
+import dev.antigravity.fluidengine.ui.theme.FluidTone
+import androidx.compose.material.icons.rounded.Upload
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 
 @Composable
 fun SearchRoute(
@@ -48,12 +61,28 @@ fun SearchRoute(
   val focus = remember { FocusRequester() }
   LaunchedEffect(Unit) { if (state.query.isBlank()) runCatching { focus.requestFocus() } }
 
+  // La selezione: note trovate in materie diverse, da esportare insieme — «tutto quello che ho su
+  // Kant» senza passare cartella per cartella. Aperta, restano le sole righe delle note, ognuna col
+  // suo segno; il campo sparisce, perche' cambiare ricerca a meta' cambierebbe le righe sotto il dito.
+  val selection = rememberSelection()
+  val selecting = selection.active
+  var exportingSelection by remember { mutableStateOf(false) }
+  val selectLabel = stringResource(R.string.action_select)
+  val exportLabel = stringResource(R.string.action_export)
+
   FluidScreen(
-    title = stringResource(R.string.search_title),
-    onBack = onBack,
+    title = if (selecting) selectionTitle(selection) else stringResource(R.string.search_title),
+    onBack = if (selecting) selection::exit else onBack,
     ambient = FluidAmbient(tone = FluidHeroTone.Secondary, motif = FluidHeroMotif.Ripples),
+    actions = {
+      if (selecting) {
+        FluidBarAction(icon = Icons.Rounded.Upload, contentDescription = exportLabel, enabled = selection.count > 0, onClick = { exportingSelection = true })
+      } else if (state.results.isNotEmpty()) {
+        OverflowMenuButton(actions = { listOf(FluidContextAction(label = selectLabel) { selection.start() }) })
+      }
+    },
   ) {
-    item {
+    if (!selecting) item {
       FluidTextField(
         value = state.query,
         onValueChange = viewModel::setQuery,
@@ -84,13 +113,19 @@ fun SearchRoute(
       // gruppi comporre, e quindi di quali registrazioni cercare il minuto (vedi `lookUp`).
       else -> items(state.results, key = { it.note.id }) { result ->
         FluidListGroup {
+          val checked = result.note.id in selection
           FluidListRow(
             title = result.note.title,
             subtitle = noteSubtitle(result),
             eyebrow = result.folderPath.takeIf { it.isNotBlank() },
-            onClick = { onOpenNote(result.note.id) },
+            tone = if (checked) FluidTone.Primary else FluidTone.Neutral,
+            leading = if (selecting) ({ SelectionMark(checked) }) else null,
+            onClick = { if (selecting) selection.toggle(result.note.id) else onOpenNote(result.note.id) },
+            contextActions = if (selecting) null else ({
+              listOf(FluidContextAction(label = selectLabel) { selection.start(result.note.id) })
+            }),
           )
-          result.transcriptHits.forEach { hit ->
+          if (!selecting) result.transcriptHits.forEach { hit ->
             FluidListDivider()
             val lookup = moments[viewModel.momentKey(hit.sessionId, state.resultsFor)]
             // La riga chiede il suo momento quando compare: solo le registrazioni che si vedono.
@@ -104,6 +139,16 @@ fun SearchRoute(
         }
       }
     }
+  }
+
+  if (exportingSelection) {
+    ExportSheet(
+      scope = ExportScope.Notes(selection.ids.toList(), selectedNotesLabel(selection.count)),
+      onDismiss = {
+        exportingSelection = false
+        selection.exit()
+      },
+    )
   }
 }
 
