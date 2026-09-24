@@ -16,7 +16,7 @@ import javax.inject.Singleton
 /**
  * Il database: entita', DAO e l'indice di ricerca.
  *
- * Versione 10. Le aggiunte di colonna e di tabella passano da `@AutoMigration`; tutto il resto si
+ * Versione 11. Le aggiunte di colonna e di tabella passano da `@AutoMigration`; tutto il resto si
  * scrive a mano in [Migrations] e si prova con `MigrationTest` sugli schemi esportati in
  * `core/schemas`.
  *
@@ -43,6 +43,8 @@ import javax.inject.Singleton
  * (`"school"`). Una colonna col suo default: le cartelle di prima sono tutte materie, ed e' giusto.
  * 9 -> 10: `speaker` sui segmenti, la voce che il computer di casa ha separato («chi parla»). Una
  * colonna che puo' essere nulla, e nulla per tutte le righe di prima: nessuno aveva separato niente.
+ * 10 -> 11: `voiceNames` sulle sessioni, i nomi dati alle voci («Voce 2» -> «Marco», vedi
+ * `VoiceNames`). Nulla per tutte le righe di prima, e nulla non entra nell'impronta della sessione.
  */
 @Database(
   entities = [
@@ -65,9 +67,9 @@ import javax.inject.Singleton
     SyncOriginEntity::class,
     TranscriptionRunEntity::class,
   ],
-  version = 10,
+  version = 11,
   exportSchema = true,
-  autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7), AutoMigration(from = 7, to = 8), AutoMigration(from = 8, to = 9), AutoMigration(from = 9, to = 10)],
+  autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7), AutoMigration(from = 7, to = 8), AutoMigration(from = 8, to = 9), AutoMigration(from = 9, to = 10), AutoMigration(from = 10, to = 11)],
 )
 abstract class PampaDatabase : RoomDatabase() {
   abstract fun folders(): FolderDao

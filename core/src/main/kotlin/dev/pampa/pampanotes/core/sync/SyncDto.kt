@@ -247,6 +247,10 @@ object SyncCodec {
           // di prima (senza, l'aggiornamento avrebbe sporcato tutte le sessioni di tutti). Pieno,
           // conta: e' cosi' che il segno sale e arriva agli altri.
           key in TRANSCRIBING_KEYS && value is JsonNull -> Unit
+          // I nomi delle voci (database 11): nessun nome, la sessione e' quella di prima — senza,
+          // l'aggiornamento avrebbe sporcato tutte le sessioni di tutti. Con un nome, conta: e' una
+          // modifica vera, e sale come un titolo.
+          key == "voiceNames" && value is JsonNull -> Unit
           // Il tipo di una cartella, quando e' quello di serie: una materia di prima, riletta da una
           // versione che ha `kind`, e' la stessa materia di prima — senza, l'aggiornamento avrebbe
           // sporcato tutte le cartelle di tutti. Solo le cartelle hanno un `kind` minuscolo: quello

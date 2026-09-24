@@ -267,6 +267,40 @@ export interface PageSession {
   raw: { model: string; text: string; wordsEstimated: boolean; segments: PageSegment[] } | null;
   /** La ripulita mostrata nell'app, se ce n'e' una: solo testo, niente tempi. */
   refined: { model: string; text: string } | null;
+  /**
+   * «Rinomina le voci»: i nomi dati alle voci, dalla chiave `<partId>|<etichetta>` al nome. Vuoto
+   * quando nessuna voce ha un nome, e allora la pagina scrive «Voce N».
+   */
+  voiceNames: Record<string, string>;
+}
+
+/** Il nome piu' lungo che si mostra, come `VoiceNames.MAX_LENGTH` nell'app. */
+const VOICE_NAME_MAX = 40;
+
+/**
+ * I nomi delle voci dalla colonna `voiceNames` di una sessione (un oggetto JSON in una stringa),
+ * con le stesse regole di `VoiceNames.decode` nell'app: una colonna vuota o rotta vuol dire nessun
+ * nome, solo valori di testo, spazi e caratteri di controllo ridotti a uno, al massimo quaranta
+ * caratteri. Il nome lo ha scritto un utente e finisce in una pagina pubblica: la pagina lo mette
+ * nel DOM passando da `esc`, qui si toglie solo quello che non e' un nome.
+ */
+export function voiceNamesOf(raw: unknown): Record<string, string> {
+  if (typeof raw !== "string" || !raw.trim()) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof value !== "string" || !key.trim()) continue;
+    const clean = value.replace(/[\s\u0000-\u001f\u007f-\u009f]+/g, " ").trim();
+    if (!clean) continue;
+    out[key] = Array.from(clean).slice(0, VOICE_NAME_MAX).join("").trim();
+  }
+  return out;
 }
 
 export interface PageData {
@@ -298,7 +332,7 @@ export async function pageData(env: ShareEnv, token: string): Promise<PageData |
 
   const sessions: PageSession[] = [];
   for (const row of sessionRows.results) {
-    const session = JSON.parse(row.payload) as { id: string; title: string; date: string; activeTranscriptId?: string | null };
+    const session = JSON.parse(row.payload) as { id: string; title: string; date: string; activeTranscriptId?: string | null; voiceNames?: string | null };
     const partRows = await env.DB.prepare(
       "SELECT payload FROM state WHERE ownerId = ? AND tbl = 'audio_parts' AND op = 'U' AND json_extract(payload, '$.sessionId') = ? ORDER BY json_extract(payload, '$.position')",
     ).bind(ownerId, session.id).all<{ payload: string }>();
@@ -339,6 +373,7 @@ export async function pageData(env: ShareEnv, token: string): Promise<PageData |
       parts,
       raw: rawPage,
       refined: refined ? { model: refined.model, text: refined.text } : null,
+      voiceNames: voiceNamesOf(session.voiceNames),
     });
   }
 

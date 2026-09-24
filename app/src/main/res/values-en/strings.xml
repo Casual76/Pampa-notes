@@ -550,6 +550,13 @@
   <string name="session_silence">— %1$s of silence —</string>
   <string name="session_silence_hours">h</string>
   <string name="session_voice">Voice %1$d</string>
+  <string name="session_voice_rename_title">Who is %1$s?</string>
+  <string name="session_voice_rename_action">Name this voice</string>
+  <string name="session_voice_name_label">Name</string>
+  <string name="session_voice_name_placeholder">Marco, the teacher, me…</string>
+  <string name="session_voice_reset">Back to %1$s</string>
+  <string name="session_voice_suggestions">Already used in this note</string>
+  <string name="session_voice_rename_footnote">Applies to this session: in the text, the export and the shared page.</string>
   <string name="session_silence_resume">%1$s. Tap to resume at %2$s</string>
   <!-- Chapters: stretches of speech between long silences. Boundaries and first words, never summaries. -->
   <string name="session_chapters">Chapters</string>

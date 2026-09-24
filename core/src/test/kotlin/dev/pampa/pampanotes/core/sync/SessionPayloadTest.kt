@@ -1,6 +1,7 @@
 package dev.pampa.pampanotes.core.sync
 
 import dev.pampa.pampanotes.core.db.SessionEntity
+import dev.pampa.pampanotes.core.transcription.VoiceNames
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -8,7 +9,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
-/** Una sessione sul filo, col segno «in trascrizione su» dalla versione 8 del database. */
+/** Una sessione sul filo, col segno «in trascrizione su» (database 8) e i nomi delle voci (database 11). */
 class SessionPayloadTest {
 
   private val session = SessionEntity(
@@ -52,6 +53,36 @@ class SessionPayloadTest {
     assertNotEquals(encode(session).hash, marked.hash)
     assertNotEquals(marked.hash, encode(session.copy(transcribingOn = "Pixel 8", transcribingSince = 6)).hash)
     assertEquals(encode(session).hash, encode(session.copy(transcribingOn = null, transcribingSince = null)).hash)
+  }
+
+  @Test
+  fun `senza nomi delle voci l'impronta e' quella di prima dell'aggiornamento`() {
+    // Database 11: `voiceNames` e' null su ogni sessione di prima. Scritta come null nell'impronta,
+    // l'aggiornamento avrebbe fatto risalire tutte le sessioni di tutti come «cambiate».
+    val before = JsonObject(encode(session).payload.jsonObject.filterKeys { it != "voiceNames" })
+    assertEquals(SyncCodec.hash(before), encode(session).hash)
+    assertEquals(SyncCodec.hash(before), encode(session.copy(voiceNames = null)).hash)
+  }
+
+  @Test
+  fun `i nomi delle voci vanno e tornano, e cambiano l'impronta`() {
+    val named = session.copy(voiceNames = VoiceNames.rename(null, VoiceNames.key("p1", "SPEAKER_00"), "Marco"), updatedAt = 3)
+    val encoded = encode(named)
+    assertEquals(named, SyncCodec.json.decodeFromJsonElement(SessionEntity.serializer(), encoded.payload))
+    assertNotEquals(encode(session).hash, encoded.hash)
+    // Un nome e' una modifica vera: alza il tempo, e vince per ultimo-che-scrive come un titolo.
+    assertEquals(3L, SyncCodec.updatedAtOf(encoded.payload))
+    // Tolto l'ultimo nome, la sessione torna quella di prima.
+    val cleared = named.copy(voiceNames = VoiceNames.rename(named.voiceNames, VoiceNames.key("p1", "SPEAKER_00"), null))
+    assertEquals(encode(session).hash, encode(cleared.copy(updatedAt = session.updatedAt)).hash)
+  }
+
+  @Test
+  fun `una sessione arrivata da un'app di prima si legge senza nomi`() {
+    // Un'app di prima non scrive il campo: la sessione arriva senza, e le voci restano «Voce N».
+    val named = session.copy(voiceNames = "{\"p1|SPEAKER_00\":\"Marco\"}")
+    val old = JsonObject(encode(named).payload.jsonObject.filterKeys { it != "voiceNames" })
+    assertEquals(session, SyncCodec.json.decodeFromJsonElement(SessionEntity.serializer(), old))
   }
 
   @Test

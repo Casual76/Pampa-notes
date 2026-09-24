@@ -7,6 +7,7 @@ import dev.pampa.pampanotes.core.db.SourceStatus
 import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.db.TranscriptKind
 import dev.pampa.pampanotes.core.export.BundleLayout.Companion.sanitized
+import dev.pampa.pampanotes.core.transcription.VoiceNames
 import java.io.ByteArrayOutputStream
 import java.util.zip.ZipInputStream
 import kotlinx.serialization.json.Json
@@ -225,6 +226,29 @@ class ExportWritersTest {
     val plain = writer.transcriptFile(note(), layout(listOf(note())).of(note()).transcripts.values.single().single(), layout(listOf(note())))
     assertFalse(plain.contains("Capitoli"))
     assertFalse(plain.contains("chapters:"))
+  }
+
+  @Test
+  fun `una voce con un nome si scrive col nome, le altre restano Voce N`() {
+    val session = session(
+      parts = listOf(part("p1", "riunione.m4a", 60_000L, 0)),
+      segments = listOf(
+        segment("p1", 1_000, 3_000, "Cominciamo?").copy(speaker = "SPEAKER_01"),
+        segment("p1", 3_500, 5_000, "Si', cominciamo.").copy(speaker = "SPEAKER_00"),
+        segment("p1", 5_500, 7_000, "Allora.").copy(speaker = "SPEAKER_01"),
+      ),
+    ).copy(voiceNames = mapOf(VoiceNames.key("p1", "SPEAKER_01") to "Marco *il prof*"))
+    val note = note(sessions = listOf(session))
+    val layout = layout(listOf(note))
+    val piece = layout.of(note).transcripts.values.single().single()
+    val text = writer.transcriptFile(note, piece, layout)
+
+    // L'asterisco del nome non chiude il grassetto: si scrive com'e', reso letterale.
+    assertTrue(
+      text,
+      text.contains("[00:01] **Marco \\*il prof\\*:** Cominciamo?\n\n[00:03] **Voce 2:** Si', cominciamo.\n\n[00:05] **Marco \\*il prof\\*:** Allora."),
+    )
+    assertTrue("il nome non conta come parole", piece.blocks.none { it.text.contains("Marco") })
   }
 
   @Test

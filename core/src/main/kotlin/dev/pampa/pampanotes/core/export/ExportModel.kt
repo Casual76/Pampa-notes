@@ -197,6 +197,11 @@ data class ExportSession(
   /** La grezza, sempre: e' lei che porta i segmenti, anche quando a stampare e' l'altra. */
   val raw: TranscriptEntity?,
   val segments: List<SegmentEntity>,
+  /**
+   * «Rinomina le voci»: i nomi dati alle voci di questa sessione, dalla chiave della voce
+   * (`VoiceNames.key`). Una voce senza nome resta «Voce N».
+   */
+  val voiceNames: Map<String, String> = emptyMap(),
 ) {
   val durationMs: Long get() = parts.sumOf { it.durationMs }
 

@@ -496,6 +496,9 @@ class SessionViewModel @Inject constructor(
 
   fun rename(title: String, date: String) = viewModelScope.launch { repository.rename(sessionId, title, date) }
 
+  /** «Rinomina le voci»: il nome della voce [key], o null per tornare a «Voce N». */
+  fun renameVoice(key: String, name: String?) = viewModelScope.launch { repository.renameVoice(sessionId, key, name) }
+
   fun showTranscript(transcriptId: String) = viewModelScope.launch { repository.setActiveTranscript(sessionId, transcriptId) }
 
   fun transcribe() = viewModelScope.launch {

@@ -252,6 +252,26 @@ class MigrationTest {
     }
   }
 
+  @Test
+  fun migrazione10a11_le_sessioni_di_prima_non_hanno_nomi_di_voci() {
+    helper.createDatabase(NAME, 10).use { db ->
+      db.execSQL("INSERT INTO folders (id, name, sortOrder, createdAt, updatedAt) VALUES ('f', 'Riunioni', 0, 1, 1)")
+      db.execSQL("INSERT INTO notes (id, folderId, title, body, pinned, createdAt, updatedAt) VALUES ('n', 'f', 'Martedi', '', 0, 1, 1)")
+      db.execSQL("INSERT INTO sessions (id, noteId, title, date, position, createdAt, updatedAt) VALUES ('s', 'n', 'Prima', '2026-09-24', 0, 1, 7)")
+    }
+
+    helper.runMigrationsAndValidate(NAME, 11, true).use { db ->
+      db.query("SELECT title, updatedAt, voiceNames FROM sessions").use { cursor ->
+        cursor.moveToFirst()
+        assertEquals("Prima", cursor.getString(0))
+        // La migrazione non tocca il tempo: una sessione migrata non e' una sessione modificata.
+        assertEquals(7L, cursor.getLong(1))
+        // Nessun nome: le voci restano «Voce N», e l'impronta della sessione quella di prima.
+        assertNull(cursor.getString(2))
+      }
+    }
+  }
+
   private companion object {
     const val NAME = "migration-test.db"
   }

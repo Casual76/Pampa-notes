@@ -47,6 +47,8 @@ fun ChaptersSheet(
   current: Int,
   onPick: (Chapters.Chapter) -> Unit,
   onDismiss: () -> Unit,
+  /** Il nome dato a una voce («Marco»), se c'e': senza, resta «Voce N». */
+  voiceName: (Int) -> String? = { null },
 ) {
   FluidGlassModalPortal(
     visible = true,
@@ -71,7 +73,7 @@ fun ChaptersSheet(
       FluidListGroup {
         chapters.forEachIndexed { index, chapter ->
           if (index > 0) FluidListDivider()
-          ChapterRow(chapter = chapter, isCurrent = index == current, onClick = { onPick(chapter) })
+          ChapterRow(chapter = chapter, isCurrent = index == current, onClick = { onPick(chapter) }, voiceName = voiceName)
         }
       }
     }
@@ -79,13 +81,13 @@ fun ChaptersSheet(
 }
 
 @Composable
-private fun ChapterRow(chapter: Chapters.Chapter, isCurrent: Boolean, onClick: () -> Unit) {
+private fun ChapterRow(chapter: Chapters.Chapter, isCurrent: Boolean, onClick: () -> Unit, voiceName: (Int) -> String?) {
   val nowState = stringResource(R.string.session_chapter_now_state)
   FluidListRow(
     title = chapterQuote(chapter),
     subtitle = chapterRange(chapter),
     eyebrow = stringResource(if (isCurrent) R.string.session_chapter_now else R.string.session_chapter_number, chapter.number),
-    meta = chapterMeta(chapter),
+    meta = chapterMeta(chapter, voiceName),
     // Il tono sta sull'occhiello: il capitolo di adesso si riconosce senza colorare la riga intera.
     tone = if (isCurrent) FluidTone.Primary else FluidTone.Neutral,
     onClick = onClick,
@@ -138,9 +140,9 @@ private fun chapterRange(chapter: Chapters.Chapter): String = stringResource(
 
 /** «1240 parole · Voce 1, Voce 2». */
 @Composable
-private fun chapterMeta(chapter: Chapters.Chapter): String {
+private fun chapterMeta(chapter: Chapters.Chapter, voiceName: (Int) -> String?): String {
   val words = pluralStringResource(R.plurals.session_words, chapter.words, chapter.words)
   if (chapter.voices.isEmpty()) return words
-  val voices = chapter.voices.map { stringResource(R.string.session_voice, it) }
+  val voices = chapter.voices.map { voiceName(it) ?: stringResource(R.string.session_voice, it) }
   return "$words · ${voices.joinToString(", ")}"
 }

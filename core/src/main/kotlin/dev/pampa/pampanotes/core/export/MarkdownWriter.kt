@@ -248,8 +248,21 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
       block.startMs?.let { append('[').append(timestamp(it)).append("] ") }
       // «Chi parla»: davanti a ogni paragrafo, non solo al cambio. Un assistente cita un paragrafo
       // alla volta, e un «ha detto» senza chi l'ha detto nel paragrafo stesso si perde.
-      block.voice?.let { append("**").append(labels.voice.replace("%1\$d", it.toString())).append(":** ") }
+      // Il nome dato alla voce («Rinomina le voci») al posto di «Voce N», con la punteggiatura del
+      // Markdown neutralizzata: un «*» in un nome chiuderebbe il grassetto a meta'.
+      block.voice?.let { number ->
+        val label = block.voiceName?.let(::escapeInline) ?: labels.voice.replace("%1\$d", number.toString())
+        append("**").append(label).append(":** ")
+      }
       append(block.text)
+    }
+  }
+
+  /** Un testo scritto dall'utente dentro una riga di Markdown, coi segni che contano resi letterali. */
+  private fun escapeInline(text: String): String = buildString {
+    text.forEach { char ->
+      if (char in MARKDOWN_INLINE) append('\\')
+      append(char)
     }
   }
 
@@ -325,6 +338,9 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
      * ed e' il genere di differenza che rende due esportazioni identiche diverse per un diff.
      */
     internal const val NL = "\n"
+
+    /** I segni che dentro una riga cambiano il senso del testo: enfasi, codice, collegamenti, HTML. */
+    private const val MARKDOWN_INLINE = "\\`*_[]<>"
 
     /** Una stringa YAML sempre fra virgolette: un titolo con i due punti dentro romperebbe il documento. */
     fun yaml(value: String): String = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""

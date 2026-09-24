@@ -20,6 +20,7 @@ import dev.pampa.pampanotes.core.transcription.SessionAssembler
 import dev.pampa.pampanotes.core.transcription.SessionSegment
 import dev.pampa.pampanotes.core.transcription.SessionTranscript
 import dev.pampa.pampanotes.core.transcription.TranscriptPlacement
+import dev.pampa.pampanotes.core.transcription.VoiceNames
 import androidx.room.withTransaction
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -65,6 +66,22 @@ class SessionRepository @Inject constructor(
     val clean = Dates.parseOrNull(date)?.let { date } ?: sessions.get(sessionId)?.date ?: Dates.today()
     sessions.rename(sessionId, title.trim(), clean, System.currentTimeMillis())
     touchNote(sessionId)
+  }
+
+  /**
+   * «Rinomina le voci»: dà un nome alla voce [key] di questa sessione, o lo toglie con un nome vuoto
+   * (torna «Voce N»). E' una modifica dell'utente come il titolo: alza `updatedAt`, sale col sync e
+   * vince per ultimo-che-scrive. Un nome uguale a quello che c'era non scrive niente.
+   */
+  suspend fun renameVoice(sessionId: String, key: String, name: String?) {
+    val changed = db.withTransaction {
+      val session = sessions.get(sessionId) ?: return@withTransaction false
+      val updated = VoiceNames.rename(session.voiceNames, key, name)
+      if (updated == session.voiceNames) return@withTransaction false
+      sessions.setVoiceNames(sessionId, updated, System.currentTimeMillis())
+      true
+    }
+    if (changed) touchNote(sessionId)
   }
 
   /** Quale trascrizione si mostra e si esporta: la grezza, o una delle sue raffinate. */
@@ -127,6 +144,7 @@ class SessionRepository @Inject constructor(
     if (part.sessionId == targetSessionId) return
     val source = part.sessionId
     parts.move(partId, targetSessionId, parts.nextPosition(targetSessionId))
+    carryVoiceNames(source, targetSessionId, listOf(partId))
     renumber(parts.bySession(source))
     renumber(parts.bySession(targetSessionId))
     // Prima chi riceve, poi chi perde: e' l'ordine che salva i segmenti. Ricomporre prima la
@@ -158,6 +176,7 @@ class SessionRepository @Inject constructor(
     val moving = ordered.drop(index)
     val created = insertAfter(source, title = "", date = source.date)
     moving.forEachIndexed { position, item -> parts.move(item.id, created.id, position) }
+    carryVoiceNames(source.id, created.id, moving.map { it.id })
     renumber(parts.bySession(source.id))
     rebuildRaw(created.id)
     rebuildRaw(source.id)
@@ -178,10 +197,12 @@ class SessionRepository @Inject constructor(
     val previous = sessions.previous(session.noteId, session.position) ?: return null
 
     var position = parts.nextPosition(previous.id)
-    parts.bySession(sessionId).forEach { part ->
+    val moving = parts.bySession(sessionId)
+    moving.forEach { part ->
       parts.move(part.id, previous.id, position)
       position++
     }
+    carryVoiceNames(sessionId, previous.id, moving.map { it.id })
     // Prima la ricomposizione, poi la cancellazione, e non e' un dettaglio: cancellare la sessione
     // porta via le sue trascrizioni, e con loro i segmenti delle parti appena spostate. Ricomporre
     // adesso li riadotta sotto la trascrizione della sessione che resta.
@@ -375,6 +396,12 @@ class SessionRepository @Inject constructor(
         transcripts.delete(it.id)
       }
       sessions.setActiveTranscript(target.sessionId, transcript.id, now)
+      // Le parti appena trascritte hanno una separazione delle voci nuova, con etichette ridate da
+      // capo: i nomi di prima potrebbero finire sulle frasi di un altro (vedi `VoiceNames.forget`).
+      sessions.get(target.sessionId)?.let { session ->
+        val kept = VoiceNames.forget(session.voiceNames, written)
+        if (kept != session.voiceNames) sessions.setVoiceNames(target.sessionId, kept, now)
+      }
       rebuildRawNow(target.sessionId)
     }
     // La nota non si tocca: una trascrizione finita non e' una modifica di chi l'ha scritta, e la
@@ -486,6 +513,19 @@ class SessionRepository @Inject constructor(
     )
     sessions.upsert(created)
     return created
+  }
+
+  /**
+   * I nomi delle voci seguono le parti che cambiano sessione: la chiave e' della parte, e chi parla
+   * in quella registrazione resta la stessa persona (vedi `VoiceNames.carry`).
+   */
+  private suspend fun carryVoiceNames(fromSessionId: String, toSessionId: String, partIds: List<String>) {
+    val from = sessions.get(fromSessionId) ?: return
+    val to = sessions.get(toSessionId) ?: return
+    val (newFrom, newTo) = VoiceNames.carry(from.voiceNames, to.voiceNames, partIds)
+    val now = System.currentTimeMillis()
+    if (newTo != to.voiceNames) sessions.setVoiceNames(toSessionId, newTo, now)
+    if (newFrom != from.voiceNames) sessions.setVoiceNames(fromSessionId, newFrom, now)
   }
 
   private suspend fun touchNote(sessionId: String) {

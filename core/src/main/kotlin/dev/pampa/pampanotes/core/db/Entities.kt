@@ -122,6 +122,14 @@ data class SessionEntity(
    */
   val transcribingOn: String? = null,
   val transcribingSince: Long? = null,
+  /**
+   * «Rinomina le voci»: i nomi dati alle voci separate dal computer, un oggetto JSON dalla chiave
+   * della voce (parte ed etichetta, `VoiceNames.key`) al nome. Null quando nessuna voce ha un nome,
+   * che e' il caso di ogni sessione di prima (database 11). Lo legge e lo scrive solo `VoiceNames`.
+   * Viaggia col resto della sessione, e cambiarlo e' una modifica vera: alza [updatedAt] come il
+   * titolo.
+   */
+  val voiceNames: String? = null,
 )
 
 /** Un file audio dentro una sessione, copiato in filesDir/audio: gli URI condivisi non durano. */
