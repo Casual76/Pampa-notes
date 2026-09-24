@@ -1,5 +1,6 @@
 package dev.pampa.pampanotes.core.importing
 
+import dev.pampa.pampanotes.core.db.AudioPartEntity
 import dev.pampa.pampanotes.core.db.SourceEntity
 import dev.pampa.pampanotes.core.db.SourceKind
 import org.junit.Assert.assertEquals
@@ -90,5 +91,37 @@ class SdocxUpdateTest {
     assertNull(SdocxUpdate.mergeBody("## Kant\n\nCritica.", "Fichte.", "Fichte", "", onlySource = false))
     // Uguale a prima: niente da scrivere.
     assertNull(SdocxUpdate.mergeBody("Fichte.\n\n## Kant", "Fichte.", "Fichte", "Fichte.", onlySource = false))
+  }
+
+  // --- la stessa registrazione con l'intestazione riscritta ---
+
+  private fun part(name: String, durationMs: Long, size: Long) = AudioPartEntity(
+    id = name, sessionId = "s", position = 0, fileName = "$name.m4a", originalName = name, mime = "audio/mp4",
+    sizeBytes = size, durationMs = durationMs, sha256 = "vecchia-$name", createdAt = 0,
+  )
+
+  @Test
+  fun `stesso nome e stessa durata con quattordici byte di differenza e' la stessa registrazione`() {
+    // I numeri veri di «Impressionismo», 24/09.
+    val old = part("Voce 002.m4a", 3_082_981, 49_944_368)
+    assertEquals(old, SdocxUpdate.sameRecording(listOf(old), "Voce 002.m4a", 3_082_981, 49_944_354))
+  }
+
+  @Test
+  fun `una registrazione nuova col nome di una vecchia ma un'altra durata resta nuova`() {
+    val old = part("Voce 002.m4a", 3_082_981, 49_944_368)
+    assertNull(SdocxUpdate.sameRecording(listOf(old), "Voce 002.m4a", 2_910_675, 47_153_042))
+  }
+
+  @Test
+  fun `la durata identica al millesimo vale anche con un nome cambiato`() {
+    val old = part("Voce 002.m4a", 3_082_981, 49_944_368)
+    assertEquals(old, SdocxUpdate.sameRecording(listOf(old), "Lezione.m4a", 3_082_981, 49_944_300))
+    assertNull(SdocxUpdate.sameRecording(listOf(old), "Lezione.m4a", 3_082_500, 49_944_300))
+  }
+
+  @Test
+  fun `senza una durata non si indovina niente`() {
+    assertNull(SdocxUpdate.sameRecording(listOf(part("Voce 001.m4a", 0, 10)), "Voce 001.m4a", 0, 10))
   }
 }

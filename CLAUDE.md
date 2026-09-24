@@ -745,8 +745,9 @@ il testo di una nota scritta tutta a mano: ora si scarta.
 **La stessa nota, una versione dopo.** Gli appunti si prendono in Samsung Notes e si ricondividono
 quando crescono: se il titolo e' quello di una nota gia' importata da un `.sdocx`
 (`ImportCandidate.updateOfNoteId`, cercato all'ispezione) il wizard propone «Aggiorna» per primo.
-`ImportTarget.UpdateNote`: il testo si **sostituisce**, le registrazioni con la stessa impronta
-restano con le loro trascrizioni, le nuove entrano una sessione per giorno di registrazione (in coda
+`ImportTarget.UpdateNote`: il testo si **sostituisce**, le registrazioni gia' presenti — stessa impronta, o stesso nome e stessa durata
+(`SdocxUpdate.sameRecording`: Samsung Notes riscrive l'intestazione dei file a ogni condivisione, e
+il 24/09 «Voce 002» e' rientrata come nuova, ritrascritta) — le nuove entrano una sessione per giorno di registrazione (in coda
 a quella della nota che ha gia' quel giorno), e il `.sdocx` vecchio se ne va — riga, file, pagine a
 mano e blob sul PC (`DELETE /v1/files/<sha>` del companion, solo se nessun'altra fonte lo cita).
 **Uno solo**: quello col titolo uguale (`ImportCandidate.updateOfSourceId`, `SdocxUpdate.pick`); un

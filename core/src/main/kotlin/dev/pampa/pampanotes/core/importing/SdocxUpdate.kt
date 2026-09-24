@@ -1,5 +1,6 @@
 package dev.pampa.pampanotes.core.importing
 
+import dev.pampa.pampanotes.core.db.AudioPartEntity
 import dev.pampa.pampanotes.core.db.SourceEntity
 import dev.pampa.pampanotes.core.db.SourceKind
 
@@ -86,4 +87,26 @@ object SdocxUpdate {
     if (current.isBlank()) return fresh
     return current.trimEnd() + "\n\n" + (heading?.let { "$it\n\n" } ?: "") + fresh
   }
+
+  /**
+   * La registrazione della nota che e' la stessa di quella appena estratta, anche se l'impronta e'
+   * cambiata.
+   *
+   * Samsung Notes, ricondividendo la nota, riscrive l'intestazione dei file audio: «Voce 002» del 21
+   * settembre tornava con quattordici byte in piu' e un'altra impronta, e un aggiornamento la
+   * importava di nuovo — in una sessione nuova, datata oggi, ritrascritta da capo (24/09). Lo stesso
+   * nome con la stessa durata (entro un secondo) e quasi lo stesso peso e' la stessa registrazione;
+   * la durata identica al millesimo, anche con un nome diverso, pure.
+   */
+  fun sameRecording(existing: List<AudioPartEntity>, originalName: String, durationMs: Long, sizeBytes: Long): AudioPartEntity? {
+    if (durationMs <= 0) return null
+    val closeSize = { part: AudioPartEntity -> kotlin.math.abs(part.sizeBytes - sizeBytes) <= SIZE_SLACK_BYTES }
+    return existing.firstOrNull { part ->
+      part.originalName.equals(originalName, ignoreCase = true) &&
+        kotlin.math.abs(part.durationMs - durationMs) <= DURATION_SLACK_MS && closeSize(part)
+    } ?: existing.firstOrNull { part -> part.durationMs == durationMs && closeSize(part) }
+  }
+
+  private const val DURATION_SLACK_MS = 1_000L
+  private const val SIZE_SLACK_BYTES = 64L * 1024
 }

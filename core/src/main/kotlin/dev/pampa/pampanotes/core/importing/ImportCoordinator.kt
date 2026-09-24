@@ -441,7 +441,8 @@ class ImportCoordinator @Inject constructor(
 
     // 3. Le registrazioni. In un aggiornamento quelle che c'erano gia' — stessa impronta — restano
     //    con le loro trascrizioni; entrano solo le nuove, una sessione per giorno di registrazione.
-    val known: Set<String> = if (replace) sessions.byNote(noteId).flatMap { it.parts }.map { it.sha256 }.toSet() else emptySet()
+    val existingParts = if (replace) sessions.byNote(noteId).flatMap { it.parts } else emptyList()
+    val known: Set<String> = existingParts.map { it.sha256 }.toSet()
     var alreadyThere = 0
     val extracted = mutableListOf<ImportCandidate>()
     java.util.zip.ZipFile(stored).use { zip ->
@@ -450,14 +451,17 @@ class ImportCoordinator @Inject constructor(
         val extension = recording.entryName.substringAfterLast('.', "m4a")
         val audioTemp = files.tempFile(prefix = "sdocx", suffix = ".$extension")
         val (sha, size) = zip.getInputStream(entry).use { input -> Hashing.copyHashing(input, audioTemp) }
-        if (sha in known) {
+        // Un nome che ordina come Samsung Notes: «Voce 001» viene prima di «Voce 002» anche
+        // quando i file dentro lo ZIP si chiamano al contrario.
+        val name = recording.title ?: "Registrazione ${"%02d".format(index + 1)}"
+        val probed = audioImporter.probeDuration(audioTemp).takeIf { it > 0 } ?: recording.durationMs
+        // La stessa impronta, o la stessa registrazione con l'intestazione riscritta da Samsung Notes
+        // ([SdocxUpdate.sameRecording]): resta quella che c'e', con la sua trascrizione.
+        if (sha in known || (replace && SdocxUpdate.sameRecording(existingParts, "$name.$extension", probed, size) != null)) {
           audioTemp.delete()
           alreadyThere++
           return@forEachIndexed
         }
-        // Un nome che ordina come Samsung Notes: «Voce 001» viene prima di «Voce 002» anche
-        // quando i file dentro lo ZIP si chiamano al contrario.
-        val name = recording.title ?: "Registrazione ${"%02d".format(index + 1)}"
         extracted += ImportCandidate(
           id = Ids.newId(),
           uri = null,
@@ -467,7 +471,7 @@ class ImportCoordinator @Inject constructor(
           mime = MimeSniffer.mimeFor(SourceKind.AUDIO, null),
           sizeBytes = size,
           sha256 = sha,
-          durationMs = audioImporter.probeDuration(audioTemp).takeIf { it > 0 } ?: recording.durationMs,
+          durationMs = probed,
           // Il giorno in cui e' stata fatta, dal record di `mediaInfo.dat`: e' quello che divide le
           // registrazioni in lezioni ([RecordingDate.groupByDay]).
           recordedOn = recording.createdAtMillis
