@@ -516,7 +516,7 @@ class ReleaseContentsTest(unittest.TestCase):
         self.assertFalse(server.pyannote_version_ok(""))
 
     def test_version_is_the_release(self) -> None:
-        self.assertEqual((COMPANION / "VERSION").read_text(encoding="utf-8").strip(), "1.0.2")
+        self.assertEqual((COMPANION / "VERSION").read_text(encoding="utf-8").strip(), "1.0.3")
 
     @staticmethod
     def local_imports(path: Path) -> set[str]:
