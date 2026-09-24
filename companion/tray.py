@@ -36,6 +36,7 @@ import uvicorn
 
 import archive
 import config
+import fuori
 import updater
 import whisperx_server as server
 
@@ -435,6 +436,20 @@ def main() -> None:
 
     # Prima il registro: la decisione sulla VRAM che [server.configure] prende deve finirci dentro.
     log_path = server.setup_file_logging()
+    # Mai dentro il contenitore di un'altra app (vedi fuori.py): l'archivio finirebbe in una
+    # cartella che il companion avviato da Windows non vede. Si riparte da avvio.pyw, fuori.
+    boxed = fuori.redirected_to()
+    if boxed:
+        here = Path(__file__).resolve().parent
+        pythonw = Path(sys.prefix) / "Scripts" / "pythonw.exe"
+        runner = pythonw if pythonw.exists() else Path(sys.executable)
+        again = fuori.relaunch_outside([str(runner), str(here / "avvio.pyw"), "--dopo"], here)
+        server.log.warning(
+            "avviato dentro il contenitore di %s: %s", boxed,
+            "mi rilancio fuori con WMI" if again else "WMI ha rifiutato, parto lo stesso (l'archivio andra' nel contenitore)",
+        )
+        if again:
+            return
     SETTINGS = server.configure(config.load())
     # WhisperX si importa adesso, fuori da ogni lezione: vedi server.warm_imports.
     server.warm_imports()

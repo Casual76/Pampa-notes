@@ -862,6 +862,15 @@ una lezione solo se il lavoro e' sparito **e** l'`instance` e' cambiato (riavvio
 secondi di silenzio non risponde neanche `/health`; prima di rimandarla annulla quella vecchia. Il
 registro dei lavori non dimentica mai uno in corso, neanche oltre il limite o dopo sei ore.
 
+**Il companion non gira mai dentro un'altra app.** Avviato da un terminale dentro un'app che
+virtualizza `%LOCALAPPDATA%` (l'app di Claude sul PC), le sue scritture finivano nella copia privata
+di quell'app (`%LOCALAPPDATA%\Packages\<app>\LocalCache\Local\PampaNotes`): il 24/09 c'erano 80
+registrazioni li' dentro, e il companion ripartito normale rispondeva `blob_missing` — il telefono
+ricaricava da fuori casa file che il computer aveva. Non c'e' un'API che lo dica (il processo non ha
+identita' di pacchetto): `fuori.redirected_to` scrive una sonda e guarda dove finisce, e `tray.py` e
+`avvio.pyw` in quel caso si rilanciano con WMI (`Win32_Process.Create`, fuori da ogni contenitore).
+`Archive.get` non cancella piu' una riga il cui file non si vede: risponde «non c'e'» e lo scrive.
+
 **Il companion non taglia chi e' a meta'.** `AuthGate` conta le richieste in volo dall'ingresso
 all'ultimo byte della risposta (`inflight` in `/health`): il riavvio da se' aspetta che non ci sia
 niente in coda, al lavoro o in volo — caricamenti e `PUT /v1/files` compresi — e chiude uvicorn con

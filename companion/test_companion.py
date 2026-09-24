@@ -33,6 +33,7 @@ from unittest import mock
 
 import archive
 import config
+import fuori
 import whisperx_server as server
 
 
@@ -42,6 +43,11 @@ def setUpModule() -> None:
     patcher = mock.patch.object(server, "nvidia_query", return_value=None)
     patcher.start()
     unittest.addModuleCleanup(patcher.stop)
+    # Ne' la sonda del contenitore: lanciati da un terminale dentro un'app che virtualizza AppData,
+    # i test di avvio.pyw si rilanciavano davvero fuori con WMI. Chi la prova la finge.
+    boxed = mock.patch.object(fuori, "redirected_to", return_value=None)
+    boxed.start()
+    unittest.addModuleCleanup(boxed.stop)
 
 HERE = Path(__file__).resolve().parent
 
@@ -2290,3 +2296,33 @@ class SentenceSplitterTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# La sonda vera, presa prima che setUpModule la spenga per tutti gli altri test.
+REAL_REDIRECTED = fuori.redirected_to
+
+
+class FuoriTest(unittest.TestCase):
+    """Il companion che si accorge di essere dentro il contenitore di un'altra app."""
+
+    def test_a_probe_that_lands_in_a_package_is_a_container(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            box = Path(root) / "Packages" / "Claude_prova" / "LocalCache" / "Local" / "PampaNotes"
+            box.mkdir(parents=True)
+            real_write = Path.write_text
+
+            # La scrittura finisce anche nel contenitore, come fa Windows con un processo virtualizzato.
+            def redirect(self: Path, data: str, encoding: str | None = None) -> int:
+                if self.name.startswith(".sonda-"):
+                    real_write(box / self.name, data, encoding=encoding)
+                return real_write(self, data, encoding=encoding)
+
+            with mock.patch.dict(os.environ, {"LOCALAPPDATA": root}), mock.patch.object(Path, "write_text", redirect),                     mock.patch.object(fuori.sys, "platform", "win32"):
+                self.assertEqual(REAL_REDIRECTED(), "Claude_prova")
+
+    def test_a_probe_that_stays_home_is_no_container(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            (Path(root) / "Packages" / "Altra").mkdir(parents=True)
+            with mock.patch.dict(os.environ, {"LOCALAPPDATA": root}), mock.patch.object(fuori.sys, "platform", "win32"):
+                self.assertIsNone(REAL_REDIRECTED())
+            self.assertEqual(list((Path(root) / "PampaNotes").iterdir()), [], "la sonda resta in giro")

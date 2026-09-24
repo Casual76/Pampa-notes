@@ -148,11 +148,13 @@ class Archive:
             return None
         record = dict(zip(("sha256", "name", "mime", "ext", "size", "added_at"), row))
         path = self.path_for(record["sha256"], record["ext"])
-        # Una riga senza il suo file e' una riga bugiarda: chi l'ha cancellato a mano ha vinto.
+        # Una riga senza il suo file non si cancella: si risponde «non c'e'» e basta. Il file puo'
+        # essere solo invisibile a questo processo — il 24/09 un companion avviato dall'app di Claude
+        # aveva scritto 80 registrazioni nella copia di AppData che Windows tiene per quell'app, e
+        # quello avviato da Windows, non vedendole, cancellava le righe una per una. Se torna
+        # visibile (lo si rimette al suo posto, o riparte il processo giusto) la riga e' ancora li'.
         if not path.exists():
-            with self.lock:
-                self.db.execute("DELETE FROM files WHERE sha256 = ?", (sha256,))
-                self.db.commit()
+            log.warning("archivio: %s ha la riga ma non il file (%s)", sha256[:12], path)
             return None
         record["path"] = path
         return record

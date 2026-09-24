@@ -28,6 +28,8 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
+import fuori
+
 HERE = Path(__file__).resolve().parent
 LOGS = HERE / "logs"
 DEFAULT_PORT = 8765
@@ -77,6 +79,15 @@ def launch() -> subprocess.Popen[bytes]:
 
 def main() -> None:
     at = port()
+    # Lanciato da dentro un'altra app (un terminale in un'app che virtualizza AppData): ci si
+    # rilancia fuori prima di fare qualunque cosa. Vedi fuori.py.
+    boxed = fuori.redirected_to()
+    if boxed:
+        runner = Path(sys.executable)
+        if fuori.relaunch_outside([str(runner), str(HERE / "avvio.pyw"), *sys.argv[1:]], HERE):
+            log(f"partito dentro il contenitore di {boxed}: rilanciato fuori con WMI")
+            return
+        log(f"partito dentro il contenitore di {boxed} e WMI ha rifiutato: vado avanti lo stesso")
     if "--dopo" in sys.argv:
         # Chiamato dal server che si riavvia da se' (vedi `restart_when_idle`): quello vecchio sta
         # uscendo, e finche' risponde non si lancia niente. Poi niente attesa iniziale: il sistema
