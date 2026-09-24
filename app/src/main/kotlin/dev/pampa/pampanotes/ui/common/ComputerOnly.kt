@@ -39,8 +39,9 @@ import kotlinx.coroutines.launch
  * Le regole «solo sul computer» di questo dispositivo, come le guardano menu e righe.
  *
  * [folders] e [notes] sono le regole scritte; [coveredFolders] le cartelle che ne sono coperte,
- * sottocartelle comprese, e fra queste [personalFolders], le Registrazioni, che lo sono di serie
- * finche' questo dispositivo non chiede di tenerle qui. Senza un computer collegato ([available]
+ * sottocartelle comprese, e fra queste [personalFolders], le Registrazioni, quando la regola di
+ * serie vale su questo dispositivo (`ComputerOnlyScope.personalByDefault`: non se le tiene qui, non
+ * senza un computer, non con «tieni tutto anche qui»). Senza un computer collegato ([available]
  * falso) la regola non avrebbe dove tenere i file, e la voce e' spenta.
  */
 data class ComputerOnlyUi(
@@ -49,7 +50,14 @@ data class ComputerOnlyUi(
   val coveredFolders: Set<String> = emptySet(),
   val personalFolders: Set<String> = emptySet(),
   val available: Boolean = false,
+  /** «Tieni tutto anche qui» e' acceso: questo dispositivo scarica tutto, Registrazioni comprese. */
+  val mirror: Boolean = false,
+  /** Questo dispositivo ha chiesto di tenere le Registrazioni anche qui. */
+  val keepPersonal: Boolean = false,
 ) {
+  /** Le Registrazioni stanno solo sul computer, su questo dispositivo: la regola di serie vale. */
+  val personalOnComputer: Boolean get() = ComputerOnlyScope.personalByDefault(keepPersonal, available, mirror)
+
   fun folderCovered(id: String): Boolean = id in coveredFolders
   fun noteCovered(id: String, folderId: String?): Boolean = id in notes || (folderId != null && folderId in coveredFolders)
 }
@@ -94,17 +102,20 @@ class ComputerOnlyViewModel @Inject constructor(
     settingsStore.computerOnlyFolders,
     settingsStore.computerOnlyNotes,
     folders.observeAll(),
-    settingsStore.settings.map { it.hasEndpoint }.distinctUntilChanged(),
+    settingsStore.settings.map { it.hasEndpoint to it.mirrorEnabled }.distinctUntilChanged(),
     settingsStore.keepPersonalHere,
-  ) { folderRules, noteRules, all, available, keepPersonal ->
-    // Le Registrazioni come le vede `ComputerOnlyScope.current`: sul computer di serie.
-    val personal = if (keepPersonal) emptySet() else PersonalScope.folderIds(all)
+  ) { folderRules, noteRules, all, (available, mirror), keepPersonal ->
+    // Le Registrazioni come le vede `ComputerOnlyScope.current`: sul computer di serie, solo quando
+    // la regola di serie vale qui. Senza computer niente «· sul computer» su una nota che sta qui.
+    val personal = if (ComputerOnlyScope.personalByDefault(keepPersonal, available, mirror)) PersonalScope.folderIds(all) else emptySet()
     ComputerOnlyUi(
       folders = folderRules,
       notes = noteRules,
       coveredFolders = (if (folderRules.isEmpty()) emptySet() else ComputerOnlyScope.closure(folderRules, all)) + personal,
       personalFolders = personal,
       available = available,
+      mirror = mirror,
+      keepPersonal = keepPersonal,
     )
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ComputerOnlyUi())
 
@@ -267,7 +278,22 @@ private fun ComputerOnlyConfirm(ask: ComputerOnlyAsk, onConfirm: () -> Unit, onD
     is ComputerOnlyTarget.Notes -> target.title?.let { stringResource(R.string.computer_only_confirm_title, it) }
       ?: pluralStringResource(R.plurals.computer_only_confirm_title_notes, target.ids.size, target.ids.size)
   }
-  val preview = ask.preview
+  ComputerOnlyConfirmAlert(title = title, preview = ask.preview, onConfirm = onConfirm, onDismiss = onDismiss)
+}
+
+/**
+ * La conferma di «solo sul computer»: quanto se ne va da qui, e quando. La stessa per una cartella,
+ * per delle note e per la sezione Registrazioni intera (dalla sua scheda), che cambia solo il titolo
+ * e la parola del tasto.
+ */
+@Composable
+internal fun ComputerOnlyConfirmAlert(
+  title: String,
+  preview: ComputerOnlyPreview,
+  onConfirm: () -> Unit,
+  onDismiss: () -> Unit,
+  confirmLabel: String = stringResource(R.string.computer_only_on),
+) {
   val message = if (preview.here.count == 0) {
     stringResource(R.string.computer_only_confirm_nothing)
   } else {
@@ -292,7 +318,7 @@ private fun ComputerOnlyConfirm(ask: ComputerOnlyAsk, onConfirm: () -> Unit, onD
     title = title,
     message = message,
     actions = listOf(
-      FluidAlertAction(label = stringResource(R.string.computer_only_on), emphasis = FluidAlertAction.Emphasis.Preferred, onClick = onConfirm),
+      FluidAlertAction(label = confirmLabel, emphasis = FluidAlertAction.Emphasis.Preferred, onClick = onConfirm),
       FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = onDismiss),
     ),
   )

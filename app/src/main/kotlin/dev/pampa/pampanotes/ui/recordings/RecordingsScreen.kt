@@ -3,6 +3,7 @@ package dev.pampa.pampanotes.ui.recordings
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -41,6 +42,8 @@ import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.db.FolderRow
 import dev.pampa.pampanotes.core.export.ExportScope
+import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
+import dev.pampa.pampanotes.ui.common.ComputerOnlyConfirmAlert
 import dev.pampa.pampanotes.core.stats.StatsFormat
 import dev.pampa.pampanotes.ui.common.FolderEditorSheet
 import dev.pampa.pampanotes.ui.common.Formats
@@ -65,12 +68,16 @@ import dev.pampa.pampanotes.ui.folder.SectionMoveAlert
 fun RecordingsRoute(
   onOpenFolder: (String) -> Unit,
   onOpenNote: (String) -> Unit,
-  onOpenSession: (String) -> Unit,
+  /** Apre la sessione e la fa suonare: la strada di «Riprendi» della home, al posto di quello che era aperto. */
+  onListenSession: (String) -> Unit,
   onImportInto: (String) -> Unit,
-  onImport: () -> Unit,
+  /** Il wizard con una cartella di Registrazioni gia' scelta (la prima), invece di una materia. */
+  onImportPersonal: () -> Unit,
   viewModel: RecordingsViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
+  val transcribeAllAsk by viewModel.transcribeAllAsk.collectAsStateWithLifecycle()
+  val computerOnlyAsk by viewModel.computerOnlyAsk.collectAsStateWithLifecycle()
   var editing by remember { mutableStateOf<RecordingsFolderEdit?>(null) }
   var pendingFolderDelete by remember { mutableStateOf<FolderRow?>(null) }
   var pendingNoteDelete by remember { mutableStateOf<RecordingItem?>(null) }
@@ -92,9 +99,9 @@ fun RecordingsRoute(
   val computerOnlyLabel = stringResource(R.string.recordings_computer_only)
 
   // «Importa» della barra: dentro l'unica cartella, se ce n'e' una sola; se no il wizard, che le
-  // mostra tutte con Registrazioni a parte.
+  // mostra tutte con Registrazioni a parte e ne sceglie gia' una — da qui non si importa una lezione.
   val importAction: () -> Unit = {
-    state.folders.singleOrNull()?.let { onImportInto(it.folder.id) } ?: onImport()
+    state.folders.singleOrNull()?.let { onImportInto(it.folder.id) } ?: onImportPersonal()
   }
 
   FluidScreen(
@@ -112,10 +119,14 @@ fun RecordingsRoute(
             buildList {
               add(FluidContextAction(label = importLabel) { importAction() })
               // Di serie le Registrazioni stanno solo sul computer; il tablet a casa puo' tenerle.
-              if (state.keepHere) {
-                add(FluidContextAction(label = computerOnlyLabel, enabled = state.hasComputer) { viewModel.setKeepHere(false) })
-              } else {
-                add(FluidContextAction(label = keepHereLabel) { viewModel.setKeepHere(true) })
+              // Con «tieni tutto anche qui» acceso la scelta non cambierebbe niente: la voce non c'e',
+              // e la nota in fondo dice perche'.
+              if (!state.mirror) {
+                if (state.keepHere) {
+                  add(FluidContextAction(label = computerOnlyLabel, enabled = state.hasComputer) { viewModel.askComputerOnly() })
+                } else {
+                  add(FluidContextAction(label = keepHereLabel) { viewModel.keepHere() })
+                }
               }
             }
           },
@@ -186,9 +197,16 @@ fun RecordingsRoute(
               subtitle = recordingSubtitle(item),
               meta = Formats.relativeDate(note.updatedAt),
               badge = recordingBadge(item),
-              // Il tocco ascolta: e' la cosa che si viene a fare qui.
-              leading = { Icon(imageVector = Icons.Rounded.PlayArrow, contentDescription = stringResource(R.string.recordings_listen)) },
-              onClick = { viewModel.listen(note.id, onSession = onOpenSession, onNote = onOpenNote) },
+              // Il tocco ascolta: e' la cosa che si viene a fare qui. Una nota senza audio si apre e
+              // basta, e l'icona non promette un play che non c'e'.
+              leading = {
+                if (item.row.audioCount > 0) {
+                  Icon(imageVector = Icons.Rounded.PlayArrow, contentDescription = stringResource(R.string.recordings_listen))
+                } else {
+                  Icon(imageVector = Icons.Rounded.Description, contentDescription = openNoteLabel)
+                }
+              },
+              onClick = { viewModel.listen(note.id, onSession = onListenSession, onNote = onOpenNote) },
               contextActions = {
                 buildList {
                   add(FluidContextAction(label = openNoteLabel) { onOpenNote(note.id) })
@@ -207,7 +225,7 @@ fun RecordingsRoute(
         item(key = "transcribe-all") {
           FluidButton(
             text = stringResource(R.string.home_todo_transcribe_all),
-            onClick = viewModel::transcribeAll,
+            onClick = viewModel::askTranscribeAll,
             style = FluidButtonStyle.Tinted,
             fillWidth = true,
             leading = { Icon(Icons.Rounded.Mic, contentDescription = null) },
@@ -219,14 +237,48 @@ fun RecordingsRoute(
     item(key = "where") {
       FluidSectionFootnote(
         text = stringResource(
-          when {
-            state.keepHere -> R.string.recordings_footnote_here
-            state.hasComputer -> R.string.recordings_footnote_computer
-            else -> R.string.recordings_footnote_no_computer
+          when (state.where) {
+            RecordingsWhere.MIRROR -> R.string.recordings_footnote_mirror
+            RecordingsWhere.HERE -> R.string.recordings_footnote_here
+            RecordingsWhere.COMPUTER -> R.string.recordings_footnote_computer
+            RecordingsWhere.NO_ARCHIVE -> R.string.recordings_footnote_no_archive
+            RecordingsWhere.NO_COMPUTER -> R.string.recordings_footnote_no_computer
           },
         ),
       )
     }
+  }
+
+  transcribeAllAsk?.let { ask ->
+    val duration = Formats.durationShort(ask.durationMs)
+    val custom = ask.provider == TranscriptionProviderId.CUSTOM
+    FluidAlert(
+      onDismissRequest = viewModel::dismissTranscribeAll,
+      title = pluralStringResource(R.plurals.recordings_transcribe_all_title, ask.sessionIds.size, ask.sessionIds.size),
+      message = listOfNotNull(
+        stringResource(if (custom) R.string.recordings_transcribe_all_message_computer else R.string.recordings_transcribe_all_message_groq, duration),
+        if (custom) null else stringResource(R.string.recordings_transcribe_all_cloud),
+        if (ask.skippedSilent > 0) stringResource(R.string.recordings_transcribe_all_skipped) else null,
+      ).joinToString(" "),
+      actions = listOf(
+        FluidAlertAction(
+          label = stringResource(R.string.home_todo_transcribe_all),
+          emphasis = FluidAlertAction.Emphasis.Preferred,
+          onClick = viewModel::confirmTranscribeAll,
+        ),
+        FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = viewModel::dismissTranscribeAll),
+      ),
+    )
+  }
+
+  computerOnlyAsk?.let { preview ->
+    ComputerOnlyConfirmAlert(
+      title = stringResource(R.string.computer_only_confirm_title, stringResource(R.string.recordings_title)),
+      preview = preview,
+      onConfirm = viewModel::confirmComputerOnly,
+      onDismiss = viewModel::dismissComputerOnly,
+      confirmLabel = computerOnlyLabel,
+    )
   }
 
   editing?.let { request ->
@@ -357,7 +409,8 @@ private fun recordingSubtitle(item: RecordingItem): String {
   val parts = buildList {
     item.folder?.name?.let(::add)
     if (item.row.audioCount > 0) add(Formats.durationShort(item.row.audioDurationMs))
-    if (item.row.sessionCount > 1) add(pluralStringResource(R.plurals.home_session_count, item.row.sessionCount, item.row.sessionCount))
+    // «3 sessioni», non «3 lezioni»: qui non c'e' scuola.
+    if (item.row.sessionCount > 1) add(pluralStringResource(R.plurals.recordings_session_count, item.row.sessionCount, item.row.sessionCount))
   }
   return parts.ifEmpty { listOf(stringResource(R.string.note_text_only)) }.joinToString(" · ")
 }

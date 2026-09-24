@@ -548,6 +548,12 @@ private fun CustomChunkPicker(settings: PampaSettings, viewModel: SettingsViewMo
   val shown = if (auto) settings.customLastMaxMinutes?.takeIf { it > 0 } else settings.customMaxMinutes
   var index by remember(shown, auto) { mutableFloatStateOf(chunkIndexOf(shown).toFloat()) }
   val minutes = chunkMinutesAt(index.roundToInt())
+  // Il titolo e' anche quello che TalkBack legge come valore dello slider: «30 minuti», non «48%».
+  val title = when {
+    auto && settings.customLastMaxMinutes == null -> stringResource(R.string.settings_custom_chunk_auto_never)
+    auto -> minutes?.let { stringResource(R.string.settings_custom_chunk_auto_last, it) } ?: stringResource(R.string.settings_custom_chunk_auto_last_whole)
+    else -> minutes?.let { stringResource(R.string.settings_custom_chunk_title, it) } ?: stringResource(R.string.settings_custom_chunk_whole)
+  }
   FluidListGroup {
     FluidListRow(
       title = stringResource(R.string.settings_custom_chunk_auto),
@@ -560,11 +566,7 @@ private fun CustomChunkPicker(settings: PampaSettings, viewModel: SettingsViewMo
       verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
       Text(
-        text = when {
-          auto && settings.customLastMaxMinutes == null -> stringResource(R.string.settings_custom_chunk_auto_never)
-          auto -> minutes?.let { stringResource(R.string.settings_custom_chunk_auto_last, it) } ?: stringResource(R.string.settings_custom_chunk_auto_last_whole)
-          else -> minutes?.let { stringResource(R.string.settings_custom_chunk_title, it) } ?: stringResource(R.string.settings_custom_chunk_whole)
-        },
+        text = title,
         style = MaterialTheme.typography.titleMedium,
       )
       Text(
@@ -583,6 +585,7 @@ private fun CustomChunkPicker(settings: PampaSettings, viewModel: SettingsViewMo
         snap = { it.roundToInt().toFloat() },
         onValueChangeFinished = { viewModel.setCustomMaxMinutes(chunkMinutesAt(index.roundToInt())) },
         contentDescription = stringResource(R.string.settings_custom_chunk_slider),
+        stateDescription = title,
       )
     }
   }

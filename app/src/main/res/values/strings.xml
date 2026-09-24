@@ -203,6 +203,7 @@
   <string name="note_empty_detail">Scrivi qualcosa, oppure importa un file: il testo finisce qui.</string>
   <string name="note_audio_empty_title">Nessuna registrazione</string>
   <string name="note_audio_empty_detail">Aggiungi un audio e lo trascriviamo. Le parti di una stessa lezione restano insieme.</string>
+  <string name="note_audio_empty_detail_personal">Aggiungi un audio e lo trascriviamo. Le parti di una stessa registrazione restano insieme.</string>
   <string name="note_add_audio">Aggiungi audio</string>
   <string name="note_retranscribe_all">Ritrascrivi tutto</string>
   <string name="note_choose_sessions">Scegli cosa ritrascrivere o eliminare</string>
@@ -371,6 +372,8 @@
   <string name="job_state_failed">Fallito</string>
   <string name="job_state_cancelled">Annullato</string>
   <string name="job_state_cancelling">Sto annullando</string>
+  <string name="job_state_superseded">Superata</string>
+  <string name="job_superseded_detail">Una trascrizione più recente ha preso il suo posto: non c\'è niente da riprovare.</string>
   <string name="job_phase_waiting">In attesa del limite, %1$d s</string>
   <string name="job_phase_endpoint">In attesa del computer di casa</string>
   <string name="job_phase_part">Registrazione %1$d di %2$d</string>
@@ -536,6 +539,7 @@
   <string name="job_no_speech_title">Nessuna parola in questa registrazione</string>
   <string name="job_no_speech_retry">Trascrivi lo stesso</string>
   <string name="job_retry">Riprova</string>
+  <string name="job_dismiss">Nascondi</string>
   <string name="part_delete">Elimina la registrazione</string>
   <string name="part_delete_title">Eliminare la registrazione?</string>
   <string name="part_delete_message">«%1$s» (%2$s) se ne va con il suo tratto di trascrizione, anche dagli altri dispositivi. Se non è archiviata sul computer di casa, questa era l\'unica copia.</string>
@@ -589,6 +593,12 @@
   <string name="player_pause">Pausa</string>
   <string name="player_back">Indietro di 15 secondi</string>
   <string name="player_forward">Avanti di 15 secondi</string>
+  <string name="player_back_long">Indietro di 5 minuti</string>
+  <string name="player_forward_long">Avanti di 5 minuti</string>
+  <string name="player_remaining">−%1$s</string>
+  <string name="player_time_remaining">Mancano %1$s</string>
+  <string name="player_time_total">Dura %1$s</string>
+  <string name="player_time_toggle">Mostra quanto manca o quanto dura</string>
   <string name="player_speed">%1$s×</string>
   <string name="player_scrubber">Punto della registrazione</string>
   <string name="note_open_session">Ascolta e leggi</string>
@@ -612,6 +622,7 @@
   <string name="export_label_note">nota</string>
   <string name="export_label_notes_plural">note</string>
   <string name="export_label_index_how_to">Ogni nota ha un file di appunti e un file per ogni lezione registrata; le lezioni lunghe sono divise in parti. Scegli per titolo e per data, e apri solo i file che servono alla domanda.</string>
+  <string name="export_label_index_how_to_personal">Ogni nota ha un file di appunti e un file per ogni giorno di registrazione; le registrazioni lunghe sono divise in parti. Scegli per titolo e per data, e apri solo i file che servono alla domanda.</string>
   <string name="export_label_page_singular">pagina a mano</string>
   <string name="export_label_pages">pagine a mano</string>
   <string name="export_label_page">Pagina</string>
@@ -693,6 +704,7 @@
   <string name="import_samsung_eyebrow">Samsung Notes</string>
   <string name="import_samsung_title">Titolo della nota</string>
   <string name="import_samsung_folder">In quale materia</string>
+  <string name="import_samsung_folder_any">In quale cartella</string>
   <string name="import_samsung_empty">Solo inchiostro: niente testo battuto né registrazioni</string>
   <plurals name="import_samsung_paragraphs">
     <item quantity="one">%d paragrafo</item>
@@ -709,8 +721,10 @@
   <string name="import_group_each">Una per una</string>
   <string name="import_group_as_notes">Note separate</string>
   <string name="import_group_as_sessions">Una nota, più lezioni</string>
+  <string name="import_group_as_sessions_personal">Una nota, più sessioni</string>
   <string name="import_group_note_n">Nota %1$d</string>
   <string name="import_group_session_n">Lezione %1$d</string>
+  <string name="import_group_session_n_personal">Sessione %1$d</string>
   <string name="import_group_switch_note">L\'interruttore stacca la registrazione da quella sopra: da lì ne comincia una nuova.</string>
   <string name="import_group_titles">Titoli</string>
   <string name="import_done_notes">Note create</string>
@@ -1275,14 +1289,43 @@
   <string name="recordings_move_out">Sposta fra le materie</string>
   <string name="recordings_move_in_title">«%1$s» in Registrazioni?</string>
   <string name="recordings_move_out_title">«%1$s» fra le materie?</string>
-  <string name="recordings_move_in_message">La cartella, con tutto quello che ha dentro, esce dalle materie: non conta più nella home né in «Da fare», e i suoi file, una volta sul computer di casa, non restano su questo dispositivo.</string>
+  <string name="recordings_move_in_message">La cartella, con tutto quello che ha dentro, esce dalle materie: non conta più nella home né in «Da fare».</string>
   <string name="recordings_move_out_message">La cartella torna fra le tessere delle materie, con tutto quello che ha dentro, e conta di nuovo nella home e nelle statistiche della scuola.</string>
+  <string name="recordings_move_in_files_leave">I suoi file, una volta sul computer di casa, se ne vanno da qui e dagli altri dispositivi che non tengono le Registrazioni.</string>
+  <string name="recordings_move_in_files_kept_here">Questo dispositivo tiene le Registrazioni anche qui, e i file restano; dagli altri dispositivi, una volta sul computer di casa, se ne vanno.</string>
+  <string name="recordings_move_in_files_mirror">Con «Tieni tutto anche qui» acceso questo dispositivo tiene tutto, e i file restano; dagli altri dispositivi, una volta sul computer di casa, possono andarsene.</string>
+  <string name="recordings_move_in_files_no_computer">Senza un computer di casa collegato i suoi file restano qui.</string>
+  <string name="recordings_move_out_files">I file che stanno solo sul computer restano lì finché non servono: si scaricano quando li apri.</string>
+  <plurals name="notes_move_in_title">
+    <item quantity="one">Spostare %1$d nota in «%2$s»?</item>
+    <item quantity="other">Spostare %1$d note in «%2$s»?</item>
+  </plurals>
+  <plurals name="notes_move_out_title">
+    <item quantity="one">Spostare %1$d nota in «%2$s»?</item>
+    <item quantity="other">Spostare %1$d note in «%2$s»?</item>
+  </plurals>
+  <string name="notes_move_in_message">«%1$s» è una cartella di Registrazioni: le note escono dalle materie, e non contano più nella home né in «Da fare».</string>
+  <string name="notes_move_out_message">«%1$s» è una materia: le note escono da Registrazioni, e contano di nuovo nella home e nelle statistiche della scuola.</string>
   <string name="recordings_keep_here">Tieni le registrazioni anche qui</string>
   <string name="recordings_computer_only">Registrazioni solo sul computer</string>
   <string name="recordings_footnote_computer">I file di Registrazioni stanno solo sul computer di casa: quando ci sono arrivati se ne vanno da qui, e si scaricano quando le ascolti.</string>
+  <string name="recordings_footnote_no_archive">Di serie i file di Registrazioni stanno solo sul computer di casa, ma l\'archivio sul computer è spento: finché non lo accendi (Archiviazione) restano qui.</string>
   <string name="recordings_footnote_no_computer">Di serie i file di Registrazioni stanno solo sul computer di casa: finché non ne colleghi uno restano qui.</string>
-  <string name="recordings_footnote_here">Questo dispositivo tiene le registrazioni anche qui.</string>
+  <string name="recordings_footnote_here">Questo dispositivo tiene le registrazioni anche qui: quelle che stanno sul computer di casa si scaricano subito.</string>
+  <string name="recordings_footnote_mirror">«Tieni tutto anche qui» è acceso: questo dispositivo scarica tutto dal computer di casa, Registrazioni comprese.</string>
   <string name="recordings_computer_only_inherited">Sul computer, come le Registrazioni</string>
+  <plurals name="recordings_session_count">
+    <item quantity="one">%d sessione</item>
+    <item quantity="other">%d sessioni</item>
+  </plurals>
+  <plurals name="recordings_transcribe_all_title">
+    <item quantity="one">Trascrivere %1$d registrazione?</item>
+    <item quantity="other">Trascrivere %1$d registrazioni?</item>
+  </plurals>
+  <string name="recordings_transcribe_all_message_computer">%1$s di audio, trascritte dal computer di casa.</string>
+  <string name="recordings_transcribe_all_message_groq">%1$s di audio, trascritte da Groq.</string>
+  <string name="recordings_transcribe_all_cloud">Con Groq l\'audio va nel cloud: per le registrazioni lunghe o private conviene il computer di casa.</string>
+  <string name="recordings_transcribe_all_skipped">Quelle senza parole restano fuori.</string>
 
   <!-- installer -->
   <string name="install_title">Installa sul tuo computer</string>

@@ -165,6 +165,21 @@ class WorkScheduler @Inject constructor(
     WorkManager.getInstance(context).enqueueUniqueWork(FETCH_NOW, if (force) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP, request)
   }
 
+  /**
+   * Un giro di scarico della sola sezione Registrazioni, una volta: «Tieni le registrazioni anche
+   * qui» appena acceso le riporta subito, anche con «tieni tutto anche qui» spento. Un nome suo e
+   * `KEEP`: non sostituisce un giro intero in corso, e due tocchi non ne fanno due.
+   */
+  fun fetchPersonal(unmeteredOnly: Boolean) {
+    val request = OneTimeWorkRequestBuilder<FetchWorker>()
+      .setConstraints(archiveConstraints(unmeteredOnly))
+      .setInputData(workDataOf(FetchWorker.KEY_FORCE to true, FetchWorker.KEY_ONLY_PERSONAL to true))
+      .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
+      .addTag(TAG_FETCH)
+      .build()
+    WorkManager.getInstance(context).enqueueUniqueWork(FETCH_PERSONAL, ExistingWorkPolicy.KEEP, request)
+  }
+
   fun observeFetch(): Flow<List<WorkInfo>> = WorkManager.getInstance(context).getWorkInfosByTagFlow(TAG_FETCH)
 
   // --- l'indice in cloud ---
@@ -266,6 +281,28 @@ class WorkScheduler @Inject constructor(
   }
 
   /**
+   * Un giro che veda quello che e' appena cambiato, anche se uno sta gia' girando.
+   *
+   * [archiveNow] con `KEEP` si accoda a un giro in corso, ma quel giro ha gia' letto il suo elenco:
+   * una trascrizione finita a meta' giro chiedeva di portare la lezione sul computer e di toglierla
+   * da qui, e la richiesta spariva. Qui, se un giro sta girando e dietro non ce n'e' gia' un altro,
+   * se ne accoda uno dopo di lui (`APPEND_OR_REPLACE`, come [syncSoon]); se ce n'e' gia' uno in
+   * attesa, quello basta — leggera' l'elenco quando parte.
+   */
+  suspend fun archiveSoon(unmeteredOnly: Boolean) {
+    val manager = WorkManager.getInstance(context)
+    val infos = manager.getWorkInfosForUniqueWorkFlow(ARCHIVE_NOW).first()
+    val running = infos.any { it.state == WorkInfo.State.RUNNING }
+    val waiting = infos.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
+    val request = OneTimeWorkRequestBuilder<ArchiveWorker>()
+      .setConstraints(archiveConstraints(unmeteredOnly))
+      .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
+      .addTag(TAG_ARCHIVE)
+      .build()
+    manager.enqueueUniqueWork(ARCHIVE_NOW, if (running && !waiting) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.KEEP, request)
+  }
+
+  /**
    * Il giro periodico, ogni sei ore, oppure niente.
    *
    * `UPDATE` e non `KEEP`: cambiare «solo su Wi-Fi» deve cambiare il vincolo del lavoro gia' in
@@ -305,6 +342,7 @@ class WorkScheduler @Inject constructor(
     const val TAG_SYNC = "sync"
     const val TAG_FETCH = "fetch"
     private const val FETCH_NOW = "fetch-now"
+    private const val FETCH_PERSONAL = "fetch-personal"
     private const val ENDPOINT_WATCH = "endpoint-watch"
     private const val SYNC_NOW = "sync-now"
     private const val SYNC_SOON = "sync-soon"

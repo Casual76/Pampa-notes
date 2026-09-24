@@ -113,7 +113,9 @@ class SessionPlayer(
    */
   fun load(playable: List<PlayablePart>) {
     val next = playable.map { SessionAssembler.Part(it.id, it.durationMs) }
-    if (next == parts && player.mediaItemCount == playable.size) return
+    // Dopo un errore si ricarica anche la stessa playlist: il file che mancava puo' essere tornato
+    // (scaricato dal computer), e il lettore fermo sull'errore non se ne accorgerebbe.
+    if (next == parts && player.mediaItemCount == playable.size && !_state.value.error) return
 
     parts = next
     val position = _state.value.positionMs

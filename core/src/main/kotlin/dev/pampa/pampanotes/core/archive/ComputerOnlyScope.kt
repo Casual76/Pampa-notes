@@ -52,7 +52,7 @@ class ComputerOnlyItems(
  * e qui si risolve ogni volta che serve, invece di scriverla sulle righe: una nota spostata dentro
  * una cartella esclusa e' esclusa da quel momento, una registrazione arrivata dal sync pure, senza
  * che nessuno debba ricordarsi di marcarla. Le cartelle della sezione Registrazioni ci stanno di
- * serie, come se avessero la regola (vedi [current]). Due posti la leggono: «tieni tutto anche qui», che salta
+ * serie, come se avessero la regola (vedi [personalByDefault]). Due posti la leggono: «tieni tutto anche qui», che salta
  * quello che copre, e `StorageRepository.evictComputerOnly`, che lo toglie una volta archiviato.
  * Chi chiede un file per usarlo — il lettore, l'export, la trascrizione, una fonte toccata — lo
  * scarica lo stesso: la regola dice dove stanno i file, non che non si possono avere.
@@ -64,15 +64,27 @@ class ComputerOnlyScope @Inject constructor(
   private val sync: SyncDao,
 ) {
   /**
-   * Quello che coprono le regole di adesso: quelle scritte e, se questo dispositivo non ha chiesto di
-   * tenerle qui, le Registrazioni ([PampaSettingsStore.keepPersonalHere]).
+   * Quello che coprono le regole di adesso: quelle scritte e, quando vale la regola di serie
+   * ([personalByDefault]), le Registrazioni.
    */
-  suspend fun current(): ComputerOnlyItems =
-    resolve(
+  suspend fun current(): ComputerOnlyItems {
+    val settings = settingsStore.current()
+    return resolve(
       settingsStore.computerOnlyFolders.first(),
       settingsStore.computerOnlyNotes.first(),
-      includePersonal = !settingsStore.keepPersonalHere.first(),
+      includePersonal = personalByDefault(
+        keepPersonalHere = settingsStore.keepPersonalHere.first(),
+        hasComputer = settings.hasEndpoint,
+        mirrorEnabled = settings.mirrorEnabled,
+      ),
     )
+  }
+
+  /**
+   * Tutta la sezione Registrazioni, fino ai file, qualunque cosa dicano le regole: per scaricarla
+   * («Tieni le registrazioni anche qui») o per contare quello che la regola di serie toglierebbe.
+   */
+  suspend fun personal(): ComputerOnlyItems = resolve(emptySet(), emptySet(), includePersonal = true)
 
   /**
    * Quello che coprirebbero queste regole: serve anche alla conferma, prima di accenderne una.
@@ -99,6 +111,18 @@ class ComputerOnlyScope @Inject constructor(
   }
 
   companion object {
+    /**
+     * Se le Registrazioni stanno sul computer di serie, su questo dispositivo. Non quando il
+     * dispositivo ha chiesto di tenerle ([PampaSettingsStore.keepPersonalHere]); non senza un
+     * computer, che non avrebbe dove tenerle (la voce nei menu direbbe una cosa non vera); e non con
+     * «tieni tutto anche qui» acceso: il tablet che scarica tutto per consultarlo senza rete non deve
+     * perdere una cartella perche' sul telefono qualcuno l'ha spostata in Registrazioni — la regola di
+     * serie arriverebbe col sync, senza nessuna conferma su questo dispositivo. Le regole scritte a
+     * mano valgono sempre.
+     */
+    fun personalByDefault(keepPersonalHere: Boolean, hasComputer: Boolean, mirrorEnabled: Boolean): Boolean =
+      !keepPersonalHere && hasComputer && !mirrorEnabled
+
     /** Le cartelle scelte e tutte quelle dentro. */
     fun closure(rules: Set<String>, all: List<FolderEntity>): Set<String> =
       rules.flatMapTo(LinkedHashSet()) { FolderRepository.descendants(it, all) }

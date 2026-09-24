@@ -21,7 +21,7 @@ class IndexWriter(private val labels: ExportLabels = ExportLabels()) {
     val set = layout.set
     append("# ").append(labels.index).append(": ").append(set.scopeLabel).append(NL).append(NL)
     append(summary(set)).append(NL).append(NL)
-    append(labels.indexHowTo).append(NL).append(NL)
+    append(if (set.personal) labels.indexHowToPersonal else labels.indexHowTo).append(NL).append(NL)
 
     // Raggruppate per cartella, nell'ordine in cui compaiono: l'albero dell'archivio e' informazione,
     // ed e' la stessa che l'utente usa per orientarsi nell'app.

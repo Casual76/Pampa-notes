@@ -37,6 +37,7 @@ fun exportLabels(): ExportLabels = ExportLabels(
   pages = stringResource(R.string.export_label_pages),
   pageSingular = stringResource(R.string.export_label_page_singular),
   indexHowTo = stringResource(R.string.export_label_index_how_to),
+  indexHowToPersonal = stringResource(R.string.export_label_index_how_to_personal),
   sources = stringResource(R.string.export_label_sources),
   index = stringResource(R.string.export_label_index),
   recording = stringResource(R.string.export_label_recording),

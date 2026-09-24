@@ -35,12 +35,14 @@ class FetchWorker @AssistedInject constructor(
 
   override suspend fun doWork(): Result {
     val forced = inputData.getBoolean(KEY_FORCE, false)
+    // Solo Registrazioni: «Tieni le registrazioni anche qui» appena acceso (vedi `WorkScheduler.fetchPersonal`).
+    val onlyPersonal = inputData.getBoolean(KEY_ONLY_PERSONAL, false)
     val settings = settingsStore.current()
     // Spento nel frattempo, o senza un computer da cui prendere: niente da fare.
     if (!settings.hasEndpoint) return Result.success()
     if (!forced && !settings.mirrorEnabled) return Result.success()
     // Niente da scaricare: si chiude senza nemmeno mostrare la notifica.
-    if (fetcher.pendingCount() == 0) return Result.success(workDataOf(KEY_DOWNLOADED to 0, KEY_FAILED to 0, KEY_BYTES to 0L))
+    if (fetcher.pendingCount(onlyPersonal) == 0) return Result.success(workDataOf(KEY_DOWNLOADED to 0, KEY_FAILED to 0, KEY_BYTES to 0L))
     // Il primo piano negato a un'app in background (Android 12+) e' un «non adesso»: si riprova.
     try {
       setForeground(getForegroundInfo())
@@ -49,7 +51,7 @@ class FetchWorker @AssistedInject constructor(
     }
 
     var lastPublished = 0L
-    val outcome = fetcher.fetchAll { progress ->
+    val outcome = fetcher.fetchAll(onlyPersonal) { progress ->
       val now = System.currentTimeMillis()
       val boundary = progress.done == progress.total || progress.fraction == 0f
       if (!boundary && now - lastPublished < PUBLISH_EVERY_MS) return@fetchAll
@@ -87,6 +89,7 @@ class FetchWorker @AssistedInject constructor(
 
   companion object {
     const val KEY_FORCE = "force"
+    const val KEY_ONLY_PERSONAL = "onlyPersonal"
     const val KEY_DONE = "done"
     const val KEY_TOTAL = "total"
     const val KEY_LABEL = "label"

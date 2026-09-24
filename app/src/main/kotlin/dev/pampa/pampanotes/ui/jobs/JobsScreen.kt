@@ -79,22 +79,35 @@ fun JobsRoute(
         FluidListGroup {
           state.finished.forEachIndexed { index, row ->
             if (index > 0) FluidListDivider()
+            // Un fallimento che una trascrizione piu' recente ha gia' rimediato non e' un guasto da
+            // guardare: «Superata», nel grigio, e niente «Riprova».
+            val superseded = row.superseded
             FluidListRow(
               title = row.noteTitle.ifBlank { stringResource(R.string.jobs_unknown_note) },
-              subtitle = row.job.errorCode?.let { jobErrorText(it, row.job.errorMessage, row.job.provider) }
-                ?: jobStateLabel(row.job.state),
+              subtitle = if (superseded) {
+                stringResource(R.string.job_superseded_detail)
+              } else {
+                row.job.errorCode?.let { jobErrorText(it, row.job.errorMessage, row.job.provider) } ?: jobStateLabel(row.job.state)
+              },
               eyebrow = sessionDateLabel(row.sessionDate),
-              tone = when (row.job.state) {
-                JobState.DONE -> FluidTone.Success
-                JobState.FAILED -> FluidTone.Danger
+              tone = when {
+                superseded -> FluidTone.Neutral
+                row.job.state == JobState.DONE -> FluidTone.Success
+                row.job.state == JobState.FAILED -> FluidTone.Danger
                 else -> FluidTone.Neutral
               },
-              badge = { FluidStatusBadge(label = jobStateLabel(row.job.state), tone = toneOf(row.job.state)) },
+              badge = {
+                if (superseded) {
+                  FluidStatusBadge(label = stringResource(R.string.job_state_superseded), tone = FluidTone.Neutral)
+                } else {
+                  FluidStatusBadge(label = jobStateLabel(row.job.state), tone = toneOf(row.job.state))
+                }
+              },
               // Un lavoro fallito si apre sulla sua lezione: e' li' che si capisce quale fosse.
               onClick = { onOpenSession(row.job.sessionId) }.takeIf { row.sessionExists },
               contextActions = {
                 buildList {
-                  if (row.job.state == JobState.FAILED) {
+                  if (row.job.state == JobState.FAILED && !superseded && row.sessionExists) {
                     add(FluidContextAction(label = retryLabel) { viewModel.retry(row.job.id) })
                   }
                   add(FluidContextAction(label = deleteLabel, destructive = true) { viewModel.delete(row.job.id) })
@@ -105,8 +118,9 @@ fun JobsRoute(
         }
       }
       // Anche per uno solo: «Riprova» stava solo nel menu che si apre tenendo premuto, e un lavoro
-      // fallito senza un tasto sotto sembra un lavoro da buttare.
-      val failed = state.finished.count { it.job.state == JobState.FAILED }
+      // fallito senza un tasto sotto sembra un lavoro da buttare. Si contano solo quelli che il tasto
+      // rimanderebbe: non i superati, non le registrazioni mute, non le sessioni cancellate.
+      val failed = state.retryable
       if (failed > 0) {
         item {
           FluidButton(

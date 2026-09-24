@@ -17,28 +17,45 @@ import javax.inject.Singleton
  */
 @Singleton
 class FilesInUse @Inject constructor() {
-  private val until = mutableMapOf<String, Long>()
+  /**
+   * Per ogni nome, chi lo tiene e fino a quando. Piu' di un padrone: la sessione aperta e un export
+   * della stessa nota tengono lo stesso file, e chi rilascia il suo non deve liberare quello
+   * dell'altro.
+   */
+  private val until = mutableMapOf<String, MutableMap<Any, Long>>()
 
-  /** Tiene [names] fino a [ttlMillis] da adesso, o piu' a lungo se qualcun altro li teneva gia'. */
+  /** Tiene [names] fino a [ttlMillis] da adesso, o piu' a lungo se [owner] li teneva gia'. */
   @Synchronized
-  fun hold(names: Collection<String>, ttlMillis: Long, now: Long = System.currentTimeMillis()) {
+  fun hold(names: Collection<String>, ttlMillis: Long, now: Long = System.currentTimeMillis(), owner: Any = DEFAULT_OWNER) {
     val expiry = now + ttlMillis
-    names.forEach { name -> until[name] = maxOf(until[name] ?: 0L, expiry) }
+    names.forEach { name ->
+      val holders = until.getOrPut(name) { mutableMapOf() }
+      holders[owner] = maxOf(holders[owner] ?: 0L, expiry)
+    }
   }
 
+  /** Lascia la presa di [owner]: se qualcun altro teneva lo stesso file, resta tenuto. */
   @Synchronized
-  fun release(names: Collection<String>) {
-    names.forEach { until.remove(it) }
+  fun release(names: Collection<String>, owner: Any = DEFAULT_OWNER) {
+    names.forEach { name ->
+      val holders = until[name] ?: return@forEach
+      holders.remove(owner)
+      if (holders.isEmpty()) until.remove(name)
+    }
   }
 
-  /** Quelli ancora tenuti adesso. */
+  /** Quelli ancora tenuti adesso, da chiunque. */
   @Synchronized
   fun current(now: Long = System.currentTimeMillis()): Set<String> {
-    until.entries.removeAll { it.value <= now }
+    until.values.forEach { holders -> holders.entries.removeAll { it.value <= now } }
+    until.entries.removeAll { it.value.isEmpty() }
     return until.keys.toSet()
   }
 
   companion object {
+    /** Il padrone di chi non ne dice uno: l'export, che tiene e rilascia sempre per conto suo. */
+    private val DEFAULT_OWNER = Any()
+
     fun audio(fileName: String): String = "audio/$fileName"
 
     fun source(storedFileName: String): String = "sources/$storedFileName"

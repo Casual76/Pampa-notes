@@ -28,6 +28,10 @@ import dev.pampa.pampanotes.core.repo.StatsRepository
 import dev.pampa.pampanotes.core.stats.TranscriptionStats
 import dev.pampa.pampanotes.core.stats.wordsPerMinute
 import dev.pampa.pampanotes.core.files.AppFiles
+import dev.pampa.pampanotes.core.files.FilesInUse
+import dev.pampa.pampanotes.core.repo.FailedJobs
+import dev.pampa.pampanotes.core.repo.FailureStanding
+import kotlinx.coroutines.flow.distinctUntilChanged
 import dev.antigravity.fluidengine.ai.keys.AiKeyStore
 import dev.antigravity.fluidengine.ai.provider.ProviderId
 import dev.pampa.pampanotes.core.repo.NoteRepository
@@ -168,17 +172,21 @@ class SessionViewModel @Inject constructor(
   private val files: AppFiles,
   private val fetcher: ArchiveFetcher,
   private val stats: StatsRepository,
+  private val inUse: FilesInUse,
 ) : ViewModel() {
 
   private val sessionId: String = savedStateHandle.get<String>("sessionId").orEmpty()
 
   private val savedState = savedStateHandle
 
-  /** Aperta da «Riprendi ad ascoltare»: si riparte dal punto salvato ([resumeIfAsked]). */
+  /** Aperta da «Riprendi ad ascoltare» o da «Ascolta»: il lettore parte da solo ([resumeIfAsked]). */
   private val resumeRequested: Boolean = savedStateHandle.get<String>("play") == "1"
 
   /** Si e' ascoltato qualcosa in questa pagina: solo allora l'uscita salva il punto. */
   @Volatile private var listened = false
+
+  /** Cosa e' in mano a questa pagina, in [FilesInUse] (vedi [holdFiles]). */
+  @Volatile private var heldFiles: Set<String> = emptySet()
 
   private val player = SessionPlayer(context, viewModelScope)
 
@@ -263,9 +271,11 @@ class SessionViewModel @Inject constructor(
         ?: transcripts.firstOrNull { it.kind == TranscriptKind.RAW },
       segments = values[3] as List<SegmentEntity>,
       job = (values[4] as List<JobEntity>).firstOrNull { it.state.isActive },
-      // Una grezza arrivata dopo il fallimento (dal sync, da un altro dispositivo) lo supera.
+      // Una grezza (o una raffinata) arrivata dopo il fallimento — dal sync, da un altro dispositivo,
+      // da un altro tentativo — lo supera: la stessa regola di «Riprova tutti» (FailedJobs).
       failedJob = (values[4] as List<JobEntity>).firstOrNull()?.takeIf { failed ->
-        failed.state == JobState.FAILED && transcripts.none { it.kind == TranscriptKind.RAW && it.createdAt > failed.createdAt }
+        failed.state == JobState.FAILED &&
+          FailedJobs.standing(failed, sessionExists = true, transcripts, values[4] as List<JobEntity>) != FailureStanding.SUPERSEDED
       },
       siblings = values[5] as List<SessionEntity>,
       missing = values[7] as List<AudioPartEntity>?,
@@ -283,7 +293,18 @@ class SessionViewModel @Inject constructor(
       // Si riguarda anche quando i lavori cambiano: la coda di trascrizione scarica da sola il file
       // che le manca, e la scheda «sta sul computer» deve sparire senza riaprire la pagina.
       combine(sessionFlow.map { it?.partsSorted.orEmpty() }, transcription.observeBySession(sessionId)) { parts, _ -> parts }
-        .collect { parts -> refreshMissing(parts) }
+        .collect { parts ->
+          holdFiles(parts)
+          refreshMissing(parts)
+        }
+    }
+    viewModelScope.launch {
+      // Il lettore non riesce ad aprire un file: di solito e' sparito da sotto (tolto per fare
+      // spazio mentre la pagina era aperta). Si riguarda su disco, e la pagina offre «Scarica» invece
+      // di un lettore rotto.
+      playback.map { it.error }.distinctUntilChanged().collect { error ->
+        if (error) refreshMissing(uiState.value.parts)
+      }
     }
     viewModelScope.launch {
       // La playlist segue le parti: riordinarle mentre si ascolta non ferma l'ascolto.
@@ -310,8 +331,9 @@ class SessionViewModel @Inject constructor(
   private suspend fun resumeIfAsked() {
     if (!resumeRequested || savedState.get<Boolean>(RESUME_CONSUMED) == true) return
     savedState[RESUME_CONSUMED] = true
-    val last = settingsStore.lastListened.first()?.takeIf { it.sessionId == sessionId && !it.finished } ?: return
-    player.seekTo(last.positionMs)
+    // Il punto salvato, se e' di questa sessione e non e' finita; altrimenti dall'inizio. «Ascolta»
+    // della scheda Registrazioni apre cosi' anche una sessione mai ascoltata qui.
+    settingsStore.lastListened.first()?.takeIf { it.sessionId == sessionId && !it.finished }?.let { player.seekTo(it.positionMs) }
     player.play()
   }
 
@@ -334,6 +356,20 @@ class SessionViewModel @Inject constructor(
       }
       wasPlaying = state.playing
     }
+  }
+
+  /**
+   * I file di questa sessione restano qui finche' la pagina e' aperta: «Libera spazio», «solo sul
+   * computer» e il giro d'archivio dopo una trascrizione li saltano ([FilesInUse]). Senza, una lezione
+   * finita di trascrivere mentre la si ascoltava se ne andava da sotto il lettore, e la pagina teneva
+   * in mano percorsi che non c'erano piu'. La presa e' di questa pagina (un export della stessa nota ha
+   * la sua), si rinnova a ogni cambio di parti e si lascia in [onCleared].
+   */
+  private fun holdFiles(parts: List<AudioPartEntity>) {
+    val names = parts.mapTo(HashSet()) { FilesInUse.audio(it.fileName) }
+    inUse.release(heldFiles - names, owner = this)
+    inUse.hold(names, HOLD_MS, owner = this)
+    heldFiles = names
   }
 
   private suspend fun refreshMissing(parts: List<AudioPartEntity>) {
@@ -458,10 +494,19 @@ class SessionViewModel @Inject constructor(
       }
     }
     player.release()
+    inUse.release(heldFiles, owner = this)
     super.onCleared()
   }
 
+  /** Cancella la riga di un lavoro fallito: «Nascondi» sulla scheda del fallimento. */
+  fun dismissJob(jobId: String) = viewModelScope.launch { transcription.delete(jobId) }
+
   private companion object {
+    /**
+     * Quanto dura la presa sui file della pagina aperta: lunga, perche' si lascia in [onCleared]; la
+     * scadenza serve solo se il processo non arriva a chiamarlo.
+     */
+    const val HOLD_MS = 12 * 60 * 60 * 1000L
     /** Ogni quanto si salva il punto mentre suona: abbastanza da non perdere piu' di una frase. */
     const val SAVE_EVERY_MS = 15_000L
     const val RESUME_CONSUMED = "resumeConsumed"

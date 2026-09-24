@@ -18,6 +18,7 @@ import dev.pampa.pampanotes.core.model.Dates
 import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.repo.NoteRepository
 import dev.pampa.pampanotes.core.repo.PersonalScope
+import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
 import dev.pampa.pampanotes.ui.common.FolderIcon
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,6 +38,8 @@ data class ImportUiState(
   val folderPaths: Map<String, String> = emptyMap(),
   /** Le cartelle della sezione Registrazioni: l'elenco le mostra a parte, sotto le materie. */
   val personalFolderIds: Set<String> = emptySet(),
+  /** Partiti dalla scheda Registrazioni ([ImportRequest.preferPersonal]): «Nuova cartella» e' di Registrazioni. */
+  val preferPersonal: Boolean = false,
   val notesInFolder: List<NoteEntity> = emptyList(),
   val selectedFolderId: String? = null,
   val selectedNoteId: String? = null,
@@ -170,7 +173,7 @@ class ImportViewModel @Inject constructor(
     if (request == null) {
       _uiState.value = ImportUiState(step = ImportStep.REVIEW)
     } else {
-      start(request.uris, request.text, request.intoNoteId, request.intoFolderId)
+      start(request.uris, request.text, request.intoNoteId, request.intoFolderId, request.preferPersonal)
     }
   }
 
@@ -181,10 +184,17 @@ class ImportViewModel @Inject constructor(
    *   wizard salta il passo che la chiede.
    * @param intoFolderId quando si importa da dentro una cartella di Registrazioni: la cartella e'
    *   gia' scelta, e resta da dire solo in quale nota.
+   * @param preferPersonal dalla scheda Registrazioni: di ripiego la prima cartella di Registrazioni.
    */
-  private fun start(uris: List<Uri>, sharedText: String?, intoNoteId: String? = null, intoFolderId: String? = null) {
+  private fun start(
+    uris: List<Uri>,
+    sharedText: String?,
+    intoNoteId: String? = null,
+    intoFolderId: String? = null,
+    preferPersonal: Boolean = false,
+  ) {
     viewModelScope.launch {
-      _uiState.value = ImportUiState(step = ImportStep.INSPECTING, selectedNoteId = intoNoteId)
+      _uiState.value = ImportUiState(step = ImportStep.INSPECTING, selectedNoteId = intoNoteId, preferPersonal = preferPersonal)
       val fromFiles = coordinator.inspect(uris)
       val fromText = sharedText?.takeIf { it.isNotBlank() }?.let {
         listOf(coordinator.inspectText(it, defaultTextName(it)))
@@ -208,7 +218,7 @@ class ImportViewModel @Inject constructor(
         ?: all.first().displayName.substringBeforeLast('.')
       // E dal titolo si indovina la materia: «Fichte» da solo non basta, ma «Storia» o «Filosofia»
       // nel titolo o nelle prime righe si'. Quando non si indovina resta la prima cartella.
-      val guessedFolder = samsung?.let { doc ->
+      val guessedFolder = samsung?.takeUnless { preferPersonal }?.let { doc ->
         val hint = FolderIcon.guessFrom(listOfNotNull(doc.title, doc.body.take(400)).joinToString(" "))
         // Solo fra le materie: una nota di scuola non si indovina dentro Registrazioni.
         if (hint == FolderIcon.Folder) null else allFolders.firstOrNull { it.id !in personal && FolderIcon.guessFrom(it.name) == hint }
@@ -227,18 +237,22 @@ class ImportViewModel @Inject constructor(
           folderPaths = paths,
           personalFolderIds = personal,
           // Di ripiego la prima materia, non la prima cartella qualsiasi: una lezione finita per
-          // caso in Registrazioni sparirebbe dalla home e dalle statistiche della scuola.
+          // caso in Registrazioni sparirebbe dalla home e dalle statistiche della scuola. Dalla
+          // scheda Registrazioni il contrario: la prima di Registrazioni, in ordine di elenco.
           selectedFolderId = when {
             intoNoteId != null -> null
             startFolder != null -> startFolder
+            preferPersonal -> (allFolders.filter { it.parentId == null && it.id in personal }.minByOrNull { it.sortOrder }
+              ?: allFolders.firstOrNull { it.id in personal } ?: allFolders.firstOrNull())?.id
             else -> (guessedFolder ?: allFolders.firstOrNull { it.id !in personal } ?: allFolders.firstOrNull())?.id
           },
           newNoteTitle = defaultTitle,
         )
       }
       if (intoNoteId != null) loadSessions(intoNoteId)
-      if (intoNoteId == null && startFolder != null) {
-        val inFolder = notes.byFolder(startFolder)
+      val chosen = _uiState.value.selectedFolderId
+      if (intoNoteId == null && chosen != null && (startFolder != null || preferPersonal)) {
+        val inFolder = notes.byFolder(chosen)
         _uiState.update { it.copy(notesInFolder = inFolder) }
       }
     }
@@ -287,9 +301,22 @@ class ImportViewModel @Inject constructor(
     state.copy(grouping = transform(state.grouping ?: AudioGrouping(state.audioInOrder.map { it.id })))
   }
 
+  /**
+   * «Nuova cartella» nel wizard: di Registrazioni se si e' partiti da li', o se la cartella scelta
+   * adesso e' di Registrazioni — chi sta mettendo un audio lungo fra le sue registrazioni e ne vuole
+   * un'altra non vuole una materia nuova.
+   */
   fun createFolder(name: String, tone: String?, icon: String?) {
+    val state = _uiState.value
+    val personal = state.preferPersonal || state.toPersonal
     viewModelScope.launch {
-      val folder = folders.create(name, tone = tone, icon = icon, untitled = context.getString(dev.pampa.pampanotes.R.string.import_folder))
+      val folder = folders.create(
+        name,
+        tone = tone,
+        icon = icon,
+        untitled = context.getString(dev.pampa.pampanotes.R.string.import_folder),
+        kind = if (personal) FolderEntity.KIND_PERSONAL else FolderEntity.KIND_SCHOOL,
+      )
       val allFolders = folders.all()
       val paths = allFolders.associate { it.id to folders.parentPathString(it.id) }
       _uiState.update {
@@ -497,10 +524,20 @@ class ImportViewModel @Inject constructor(
     if (settings.archiveEnabled) scheduler.archiveNow(settings.archiveOnlyUnmetered)
     if (settings.syncEnabled) scheduler.syncNow()
     if (!settings.autoTranscribeOnImport) return
+    // Una registrazione di Registrazioni parte da sola solo verso il computer di casa: diciannove ore
+    // di audio privato non devono finire nel cloud di Groq senza che nessuno l'abbia chiesto. Resta
+    // «Da trascrivere», e la si manda a mano (con la conferma di «Trascrivi tutte»).
+    if (settings.transcriptionProvider != TranscriptionProviderId.CUSTOM && isPersonalNote(noteId)) return
     val pending = sessions.byNote(noteId).filter { it.parts.isNotEmpty() && it.session.activeTranscriptId == null }
     if (pending.isEmpty()) return
     pending.forEach { transcription.enqueue(it.session.id, settings.transcriptionProvider) }
     scheduler.kick(settings.transcriptionProvider.id)
+  }
+
+  /** La nota sta in Registrazioni adesso: si guarda la sua cartella, non quella scelta nel wizard. */
+  private suspend fun isPersonalNote(noteId: String): Boolean {
+    val folderId = notes.get(noteId)?.folderId ?: return false
+    return PersonalScope.isPersonal(folderId, folders.all())
   }
 
   /**

@@ -343,7 +343,15 @@ private fun androidx.compose.foundation.lazy.LazyListScope.samsungStep(
     )
   }
 
-  if (!updating) item { FluidSectionHeader(title = stringResource(R.string.import_samsung_folder)) }
+  // «In quale materia», ma solo se sono tutte materie: con le cartelle di Registrazioni nell'elenco
+  // la domanda e' «in quale cartella».
+  if (!updating) {
+    item {
+      FluidSectionHeader(
+        title = stringResource(if (state.personalFolders.isEmpty()) R.string.import_samsung_folder else R.string.import_samsung_folder_any),
+      )
+    }
+  }
   if (updating) {
     // Niente da scegliere: la nota e la sua cartella ci sono gia'.
   } else if (state.folders.isEmpty()) {
@@ -706,13 +714,17 @@ private fun androidx.compose.foundation.lazy.LazyListScope.groupingSection(
     }
   }
 
+  // «Lezione 2» fra le materie, «Sessione 2» in Registrazioni.
+  val sessionLabel = if (state.toPersonal) R.string.import_group_session_n_personal else R.string.import_group_session_n
+
   // Note separate o lezioni della stessa nota: solo per una nota nuova, e solo se si e' diviso
   // qualcosa. Dentro una nota che c'e' gia' non si creano note, quindi non c'e' niente da scegliere.
   if (state.selectedNoteId == null && grouping.isSplit) {
     item {
       val labels = mapOf(
         true to stringResource(R.string.import_group_as_notes),
-        false to stringResource(R.string.import_group_as_sessions),
+        // In Registrazioni non ci sono lezioni: «piu' sessioni».
+        false to stringResource(if (state.toPersonal) R.string.import_group_as_sessions_personal else R.string.import_group_as_sessions),
       )
       FluidSegmentedControl(
         options = listOf(true, false),
@@ -732,7 +744,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.groupingSection(
         FluidListRow(
           title = candidate.displayName,
           subtitle = candidateSubtitle(candidate),
-          eyebrow = stringResource(if (asNotes) R.string.import_group_note_n else R.string.import_group_session_n, group),
+          eyebrow = stringResource(if (asNotes) R.string.import_group_note_n else sessionLabel, group),
           tone = if (index == 0 || startsNew) FluidTone.Primary else FluidTone.Neutral,
           badge = if (index == 0) null else {
             { FluidSwitch(checked = startsNew, onCheckedChange = { onToggleGroupStart(candidate.id) }) }
@@ -750,7 +762,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.groupingSection(
         FluidTextField(
           value = group.title,
           onValueChange = { onGroupTitle(group.firstId, it) },
-          label = stringResource(if (asNotes) R.string.import_group_note_n else R.string.import_group_session_n, group.index + 1),
+          label = stringResource(if (asNotes) R.string.import_group_note_n else sessionLabel, group.index + 1),
           placeholder = group.defaultTitle.ifBlank { null },
           modifier = Modifier.fillMaxWidth(),
         )

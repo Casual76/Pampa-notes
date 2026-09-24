@@ -153,6 +153,7 @@ fun MainApp(
                   linkApplied = viewModel.linkApplied,
                   onPickFiles = viewModel::onFilesPicked,
                   onPickIntoFolder = viewModel::onPickIntoFolder,
+                  onPickPersonal = viewModel::onPickPersonal,
                   onPickerCancelled = viewModel::onPickerCancelled,
                 )
                 // Il permesso delle notifiche si chiede la prima volta che c'e' un lavoro in coda:
@@ -265,6 +266,7 @@ private fun AppShell(
   linkApplied: Flow<IntentOutcome>,
   onPickFiles: (List<android.net.Uri>, String?) -> Unit,
   onPickIntoFolder: (String) -> Unit,
+  onPickPersonal: () -> Unit,
   onPickerCancelled: () -> Unit,
 ) {
   val listNav = rememberNavController()
@@ -308,6 +310,11 @@ private fun AppShell(
         pickFilesIntoFolder = { folderId ->
           pickingInto.value = false
           onPickIntoFolder(folderId)
+          launchPicker.value()
+        },
+        pickFilesPersonal = {
+          pickingInto.value = false
+          onPickPersonal()
           launchPicker.value()
         },
       )

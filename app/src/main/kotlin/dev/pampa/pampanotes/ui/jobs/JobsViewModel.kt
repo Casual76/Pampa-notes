@@ -6,6 +6,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.pampa.pampanotes.core.db.JobEntity
 import dev.pampa.pampanotes.core.db.NoteDao
 import dev.pampa.pampanotes.core.db.SessionDao
+import dev.pampa.pampanotes.core.repo.FailureStanding
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.work.WorkScheduler
 import javax.inject.Inject
@@ -23,7 +24,11 @@ data class JobRow(
   val sessionDate: String,
   /** La sessione c'e' ancora: la riga si apre su di lei. */
   val sessionExists: Boolean = false,
-)
+  /** Per un lavoro fallito, che cosa vale ancora: «superata», muta, orfana, o da riprovare. */
+  val standing: FailureStanding? = null,
+) {
+  val superseded: Boolean get() = standing == FailureStanding.SUPERSEDED
+}
 
 data class JobsUiState(
   val active: List<JobRow> = emptyList(),
@@ -31,6 +36,9 @@ data class JobsUiState(
   val loading: Boolean = true,
 ) {
   val isEmpty: Boolean get() = !loading && active.isEmpty() && finished.isEmpty()
+
+  /** Quelli che «Riprova tutti» rimanderebbe davvero (vedi `FailedJobs`). */
+  val retryable: Int get() = finished.count { it.standing == FailureStanding.RETRYABLE }
 }
 
 @HiltViewModel
@@ -52,9 +60,10 @@ class JobsViewModel @Inject constructor(
       val note = session?.let { notes.get(it.noteId) }
       Triple(note?.title.orEmpty(), session?.date.orEmpty(), session != null)
     }
+    val standings = repository.failureStandings(jobs)
     val rows = jobs.map { job ->
       val (title, date, exists) = lookup[job.sessionId] ?: Triple("", "", false)
-      JobRow(job, title, date, exists)
+      JobRow(job, title, date, exists, standings[job.id])
     }
     JobsUiState(
       active = rows.filter { it.job.state.isActive },

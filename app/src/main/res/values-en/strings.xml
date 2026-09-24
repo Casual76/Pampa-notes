@@ -190,6 +190,7 @@
   <string name="note_empty_detail">Write something, or import a file: the text lands here.</string>
   <string name="note_audio_empty_title">No recordings</string>
   <string name="note_audio_empty_detail">Add audio and we transcribe it. Parts of one lecture stay together.</string>
+  <string name="note_audio_empty_detail_personal">Add audio and we transcribe it. Parts of one recording stay together.</string>
   <string name="note_add_audio">Add audio</string>
   <string name="note_retranscribe_all">Transcribe everything again</string>
   <string name="note_choose_sessions">Choose what to transcribe again or delete</string>
@@ -347,6 +348,8 @@
   <string name="job_state_failed">Failed</string>
   <string name="job_state_cancelled">Cancelled</string>
   <string name="job_state_cancelling">Cancelling</string>
+  <string name="job_state_superseded">Superseded</string>
+  <string name="job_superseded_detail">A newer transcript took its place: there\'s nothing to retry.</string>
   <string name="job_phase_waiting">Waiting on the rate limit, %1$d s</string>
   <string name="job_phase_endpoint">Waiting for the home computer</string>
   <string name="job_phase_part">Recording %1$d of %2$d</string>
@@ -506,6 +509,7 @@
   <string name="job_no_speech_title">No words in this recording</string>
   <string name="job_no_speech_retry">Transcribe anyway</string>
   <string name="job_retry">Try again</string>
+  <string name="job_dismiss">Hide</string>
   <string name="part_delete">Delete the recording</string>
   <string name="part_delete_title">Delete this recording?</string>
   <string name="part_delete_message">“%1$s” (%2$s) goes away with its stretch of the transcript, on your other devices too. If it isn\'t archived on the home computer, this was the only copy.</string>
@@ -559,6 +563,12 @@
   <string name="player_pause">Pause</string>
   <string name="player_back">Back 15 seconds</string>
   <string name="player_forward">Forward 15 seconds</string>
+  <string name="player_back_long">Back 5 minutes</string>
+  <string name="player_forward_long">Forward 5 minutes</string>
+  <string name="player_remaining">−%1$s</string>
+  <string name="player_time_remaining">%1$s left</string>
+  <string name="player_time_total">%1$s long</string>
+  <string name="player_time_toggle">Show time left or total length</string>
   <string name="player_speed">%1$s×</string>
   <string name="player_scrubber">Position in the recording</string>
   <string name="note_open_session">Listen and read</string>
@@ -582,6 +592,7 @@
   <string name="export_label_note">note</string>
   <string name="export_label_notes_plural">notes</string>
   <string name="export_label_index_how_to">Each note has one file of notes and one file per recorded lesson; long lessons are split into parts. Choose by title and date, and open only the files the question needs.</string>
+  <string name="export_label_index_how_to_personal">Each note has one file of notes and one file per day of recording; long recordings are split into parts. Choose by title and date, and open only the files the question needs.</string>
   <string name="export_label_page_singular">handwritten page</string>
   <string name="export_label_pages">handwritten pages</string>
   <string name="export_label_page">Page</string>
@@ -663,6 +674,7 @@
   <string name="import_samsung_eyebrow">Samsung Notes</string>
   <string name="import_samsung_title">Note title</string>
   <string name="import_samsung_folder">Which subject</string>
+  <string name="import_samsung_folder_any">Which folder</string>
   <string name="import_samsung_empty">Ink only: no typed text and no recordings</string>
   <plurals name="import_samsung_paragraphs">
     <item quantity="one">%d paragraph</item>
@@ -679,8 +691,10 @@
   <string name="import_group_each">One each</string>
   <string name="import_group_as_notes">Separate notes</string>
   <string name="import_group_as_sessions">One note, several lessons</string>
+  <string name="import_group_as_sessions_personal">One note, several sessions</string>
   <string name="import_group_note_n">Note %1$d</string>
   <string name="import_group_session_n">Lesson %1$d</string>
+  <string name="import_group_session_n_personal">Session %1$d</string>
   <string name="import_group_switch_note">The switch detaches the recording from the one above: a new one starts there.</string>
   <string name="import_group_titles">Titles</string>
   <string name="import_done_notes">Notes created</string>
@@ -1245,14 +1259,43 @@
   <string name="recordings_move_out">Move to subjects</string>
   <string name="recordings_move_in_title">Move “%1$s” to Recordings?</string>
   <string name="recordings_move_out_title">Move “%1$s” to subjects?</string>
-  <string name="recordings_move_in_message">The folder, with everything in it, leaves the subjects: it no longer counts on Home or in “To do”, and once its files are on your home computer they don\'t stay on this device.</string>
+  <string name="recordings_move_in_message">The folder, with everything in it, leaves the subjects: it no longer counts on Home or in “To do”.</string>
   <string name="recordings_move_out_message">The folder goes back among the subject tiles, with everything in it, and counts again on Home and in the school stats.</string>
+  <string name="recordings_move_in_files_leave">Once its files are on your home computer, they leave this device and every other device that doesn\'t keep Recordings.</string>
+  <string name="recordings_move_in_files_kept_here">This device keeps Recordings here too, so the files stay; on other devices they leave once they\'re on your home computer.</string>
+  <string name="recordings_move_in_files_mirror">“Keep everything here too” is on, so this device keeps everything and the files stay; on other devices they may leave once they\'re on your home computer.</string>
+  <string name="recordings_move_in_files_no_computer">With no home computer connected, its files stay here.</string>
+  <string name="recordings_move_out_files">Files that live only on the computer stay there until needed: they download when you open them.</string>
+  <plurals name="notes_move_in_title">
+    <item quantity="one">Move %1$d note to “%2$s”?</item>
+    <item quantity="other">Move %1$d notes to “%2$s”?</item>
+  </plurals>
+  <plurals name="notes_move_out_title">
+    <item quantity="one">Move %1$d note to “%2$s”?</item>
+    <item quantity="other">Move %1$d notes to “%2$s”?</item>
+  </plurals>
+  <string name="notes_move_in_message">“%1$s” is a Recordings folder: the notes leave the subjects and no longer count on Home or in “To do”.</string>
+  <string name="notes_move_out_message">“%1$s” is a subject: the notes leave Recordings and count again on Home and in the school stats.</string>
   <string name="recordings_keep_here">Keep recordings here too</string>
   <string name="recordings_computer_only">Recordings on computer only</string>
   <string name="recordings_footnote_computer">Recordings files live only on your home computer: once they get there they leave this device, and download when you listen.</string>
+  <string name="recordings_footnote_no_archive">By default Recordings files live only on your home computer, but the computer archive is off: until you turn it on (Storage) they stay here.</string>
   <string name="recordings_footnote_no_computer">By default Recordings files live only on your home computer: until you connect one they stay here.</string>
-  <string name="recordings_footnote_here">This device keeps recordings here too.</string>
+  <string name="recordings_footnote_here">This device keeps recordings here too: the ones on your home computer download right away.</string>
+  <string name="recordings_footnote_mirror">“Keep everything here too” is on: this device downloads everything from your home computer, Recordings included.</string>
   <string name="recordings_computer_only_inherited">On the computer, like all Recordings</string>
+  <plurals name="recordings_session_count">
+    <item quantity="one">%d session</item>
+    <item quantity="other">%d sessions</item>
+  </plurals>
+  <plurals name="recordings_transcribe_all_title">
+    <item quantity="one">Transcribe %1$d recording?</item>
+    <item quantity="other">Transcribe %1$d recordings?</item>
+  </plurals>
+  <string name="recordings_transcribe_all_message_computer">%1$s of audio, transcribed by your home computer.</string>
+  <string name="recordings_transcribe_all_message_groq">%1$s of audio, transcribed by Groq.</string>
+  <string name="recordings_transcribe_all_cloud">With Groq the audio goes to the cloud: for long or private recordings the home computer is the better choice.</string>
+  <string name="recordings_transcribe_all_skipped">The ones without speech are left out.</string>
 
   <!-- installer -->
   <string name="install_title">Install on your computer</string>

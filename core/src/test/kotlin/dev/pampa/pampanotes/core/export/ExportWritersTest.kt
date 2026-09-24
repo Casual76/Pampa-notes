@@ -632,6 +632,21 @@ class ExportWritersTest {
     return result
   }
 
+  @Test
+  fun `un pacchetto di Registrazioni non parla di lezioni`() {
+    val personal = set(listOf(note(title = "Viaggio a Napoli"))).copy(scopeLabel = "Viaggi", personal = true)
+    val skill = SkillWriter()
+    assertFalse(skill.instructions(personal).contains("lezion", ignoreCase = true))
+    assertFalse(skill.instructionsForSingleFile(personal).contains("lezion", ignoreCase = true))
+    assertFalse(skill.skillDescription(personal).contains("lezion", ignoreCase = true))
+    val readme = ReadmeForAi.text(personal)
+    assertFalse(readme.contains("lezion", ignoreCase = true))
+    assertFalse(readme.contains("lesson", ignoreCase = true))
+    assertTrue(IndexWriter().index(BundleLayout(personal, options)).contains(ExportLabels().indexHowToPersonal))
+    // Fra le materie resta tutto com'era.
+    assertTrue(skill.instructions(set(listOf(note(title = "Viaggio a Napoli")))).contains("lezioni"))
+  }
+
   private fun layout(notes: List<ExportNote>) = BundleLayout(set(notes), options)
 
   private fun set(notes: List<ExportNote>) = ExportSet(

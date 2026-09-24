@@ -45,6 +45,11 @@ data class ImportRequest(
    * la trova scelta, e chiede solo la nota.
    */
   val intoFolderId: String? = null,
+  /**
+   * Partiti dalla scheda Registrazioni con piu' cartelle: il wizard sceglie di ripiego la prima di
+   * Registrazioni invece della prima materia, e «Nuova cartella» ne crea una di Registrazioni.
+   */
+  val preferPersonal: Boolean = false,
 ) {
   val isEmpty: Boolean get() = uris.isEmpty() && text.isNullOrBlank()
 

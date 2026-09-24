@@ -30,8 +30,9 @@ import dev.pampa.pampanotes.ui.folders.FoldersViewModel
  *
  * Le materie sono la ragione per cui esiste: su una pagina larga si passa da Storia a Filosofia
  * con un tocco, senza tornare all'indice. Ogni materia porta il suo colore sulla piastrella, e la
- * riga scelta e' quella della pagina che si sta guardando. Registrazioni sta sotto le materie, una
- * riga sola e senza colore: e' un'altra sezione, non un'altra materia (vedi `FoldersViewModel`).
+ * riga scelta e' quella della pagina che si sta guardando. Registrazioni ha una sezione sua sotto le
+ * materie, una riga sola e senza colore: e' un'altra sezione, non un'altra materia (vedi
+ * `FoldersViewModel`).
  */
 @Composable
 fun PampaSidebar(
@@ -99,10 +100,14 @@ fun PampaSidebar(
         onClick = onAllFolders,
       )
     }
+    // Una sezione sua, non una riga in coda alle materie: Registrazioni e' un'altra cosa, e sotto
+    // «Materie» sembrava la materia che non c'e'. Resta accesa anche dentro una sua cartella, come
+    // una materia resta accesa dentro se stessa.
+    item { FluidSidebarSection(title = stringResource(R.string.tab_recordings)) }
     item {
       FluidSidebarRow(
         label = stringResource(R.string.tab_recordings),
-        selected = selectedRoute == Routes.RECORDINGS,
+        selected = selectedRoute == Routes.RECORDINGS || (selectedFolderId != null && selectedFolderId in state.personalFolderIds),
         icon = Icons.Rounded.GraphicEq,
         onClick = onRecordings,
       )

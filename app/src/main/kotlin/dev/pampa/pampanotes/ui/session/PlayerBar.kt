@@ -30,10 +30,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.setProgress
@@ -78,11 +83,19 @@ fun PlayerBar(
     horizontalAlignment = Alignment.CenterHorizontally,
     verticalArrangement = Arrangement.spacedBy(6.dp),
   ) {
-    Scrubber(
-      fraction = state.fraction,
-      durationMs = state.durationMs,
-      onSeek = onSeek,
-    )
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Scrubber(
+        fraction = state.fraction,
+        durationMs = state.durationMs,
+        onSeek = onSeek,
+        modifier = Modifier.weight(1f),
+      )
+      EndTime(positionMs = state.positionMs, durationMs = state.durationMs)
+    }
 
     Row(
       modifier = Modifier
@@ -98,16 +111,22 @@ fun PlayerBar(
         color = MaterialTheme.colorScheme.onSurface,
         modifier = Modifier.padding(start = 8.dp, end = 6.dp),
       )
+      // Tenuti premuti saltano cinque minuti: in una registrazione di ore quindici secondi alla volta
+      // non portano da nessuna parte, e un altro tasto nella capsula non ci sta.
       PlayerButton(
         icon = Icons.Rounded.Replay10,
         label = stringResource(R.string.player_back),
+        longLabel = stringResource(R.string.player_back_long),
         onClick = { onSkip(-SessionPlayer.SKIP_MS) },
+        onLongClick = { onSkip(-LONG_SKIP_MS) },
       )
       PlayButton(playing = state.playing, onClick = onPlayPause)
       PlayerButton(
         icon = Icons.Rounded.Forward10,
         label = stringResource(R.string.player_forward),
+        longLabel = stringResource(R.string.player_forward_long),
         onClick = { onSkip(SessionPlayer.SKIP_MS) },
+        onLongClick = { onSkip(LONG_SKIP_MS) },
       )
       // La velocita' e' un tasto, non un menu: su una lezione la si cambia spesso e sempre nello
       // stesso verso, e un menu che si apre per quattro voci e' due tocchi invece di uno.
@@ -124,19 +143,58 @@ fun PlayerBar(
   }
 }
 
-/** Un comando piatto dentro la capsula: l'icona e il suo bersaglio, niente superficie sua. */
+/**
+ * Un comando piatto dentro la capsula: l'icona e il suo bersaglio, niente superficie sua. Il salto
+ * lungo ([onLongClick]) e' anche un'azione di TalkBack, con il suo nome: tenere premuto non si scopre
+ * con la voce.
+ */
 @Composable
-private fun PlayerButton(icon: ImageVector, label: String, onClick: () -> Unit) {
+private fun PlayerButton(icon: ImageVector, label: String, longLabel: String, onClick: () -> Unit, onLongClick: () -> Unit) {
   Box(
     modifier = Modifier
       .size(44.dp)
       .clip(FluidCapsuleShape)
-      .fluidPressable(onClick = onClick, pressedScale = 0.88f, role = Role.Button)
-      .semantics { contentDescription = label },
+      .fluidPressable(onClick = onClick, onLongClick = onLongClick, pressedScale = 0.88f, role = Role.Button)
+      .semantics {
+        contentDescription = label
+        customActions = listOf(CustomAccessibilityAction(longLabel) { onLongClick(); true })
+      },
     contentAlignment = Alignment.Center,
   ) {
     Icon(imageVector = icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
   }
+}
+
+/**
+ * In fondo allo scrubber, quanto manca («−48:10»), o — con un tocco — quanto dura tutta la
+ * registrazione. In una lezione da un'ora il punto in cui si e' arrivati dice poco senza la fine, e
+ * in una registrazione di diciannove ore dice ancora meno.
+ */
+@Composable
+private fun EndTime(positionMs: Long, durationMs: Long) {
+  var showTotal by rememberSaveable { mutableStateOf(false) }
+  val remaining = (durationMs - positionMs).coerceAtLeast(0L)
+  val text = if (showTotal) Formats.timestamp(durationMs) else stringResource(R.string.player_remaining, Formats.timestamp(remaining))
+  val description = if (showTotal) {
+    stringResource(R.string.player_time_total, Formats.duration(durationMs))
+  } else {
+    stringResource(R.string.player_time_remaining, Formats.duration(remaining))
+  }
+  val toggleLabel = stringResource(R.string.player_time_toggle)
+  Text(
+    text = text,
+    style = MaterialTheme.typography.labelMedium,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    maxLines = 1,
+    modifier = Modifier
+      .clip(FluidCapsuleShape)
+      .fluidPressable(onClick = { showTotal = !showTotal }, pressedScale = 0.94f, role = Role.Button)
+      .semantics {
+        contentDescription = description
+        onClick(label = toggleLabel) { showTotal = !showTotal; true }
+      }
+      .padding(horizontal = 6.dp, vertical = 4.dp),
+  )
 }
 
 /** Il play e' l'unico pieno: nel colore della materia, e' la cosa che il pollice cerca. */
@@ -189,8 +247,17 @@ private fun Scrubber(
 
   Box(
     modifier = modifier
+      // Il bersaglio e' alto un dito (48 dp) ma nella colonna del lettore ne occupa 24: la riga
+      // sottile resta dov'era, la capsula sotto non si sposta, e il pollice non deve centrare 3 dp.
+      // La parte che sborda sta sopra (sul testo, che il lettore copre gia') e sotto (sulla capsula,
+      // che disegnata dopo prende i suoi tocchi per prima).
+      .layout { measurable, constraints ->
+        val touch = ScrubberTouchHeight.roundToPx()
+        val shown = ScrubberHeight.roundToPx()
+        val placeable = measurable.measure(constraints.copy(minHeight = touch, maxHeight = touch))
+        layout(placeable.width, shown) { placeable.place(0, (shown - touch) / 2) }
+      }
       .fillMaxWidth()
-      .height(24.dp)
       // Per TalkBack e' una barra di avanzamento che si puo' spostare: prima era solo un nome, e
       // chi non vede non poteva saltare da nessuna parte.
       .semantics {
@@ -255,3 +322,10 @@ private fun formatSpeed(speed: Float): String {
 
 /** L'altezza che il lettore occupa: quanto spazio la lista deve lasciarsi sotto per non finirci dietro. */
 val PlayerBarHeight = 92.dp
+
+/** Lo spazio che lo scrubber occupa nella colonna, e quello in cui prende il dito. */
+private val ScrubberHeight = 24.dp
+private val ScrubberTouchHeight = 48.dp
+
+/** Il salto lungo, tenendo premuti i tasti dei secondi. */
+private const val LONG_SKIP_MS = 5 * 60_000L

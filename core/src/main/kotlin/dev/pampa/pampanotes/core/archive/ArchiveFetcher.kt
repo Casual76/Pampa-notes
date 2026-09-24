@@ -120,9 +120,11 @@ class ArchiveFetcher @Inject constructor(
    * Quanti file il computer ha e questo dispositivo no: zero vuol dire che un giro non serve.
    * Quello che una regola «solo sul computer» copre non conta: non e' che manca, e' che sta la'.
    */
-  suspend fun pendingCount(): Int = withContext(Dispatchers.IO) {
+  suspend fun pendingCount(onlyPersonal: Boolean = false): Int = withContext(Dispatchers.IO) {
     val scope = computerOnly.current()
-    missing(audioParts.archived()).count { !scope.covers(it) } + sources.archived().count { isMissing(it) && !scope.covers(it) }
+    val within = if (onlyPersonal) computerOnly.personal() else null
+    missing(audioParts.archived()).count { !scope.covers(it) && (within == null || within.covers(it)) } +
+      sources.archived().count { isMissing(it) && !scope.covers(it) && (within == null || within.covers(it)) }
   }
 
   /**
@@ -137,11 +139,15 @@ class ArchiveFetcher @Inject constructor(
    * vorrebbe dire toglierlo di nuovo al prossimo giro d'archivio. Chi lo chiede uno per uno —
    * lettore, export, trascrizione, fonti — passa da [fetchPart] e [fetchSource], che non guardano
    * la regola.
+   *
+   * [onlyPersonal]: solo la sezione Registrazioni — «Tieni le registrazioni anche qui» le riporta
+   * subito, senza scaricare con loro tutte le materie.
    */
-  suspend fun fetchAll(onProgress: (FetchProgress) -> Unit = {}): FetchOutcome = withContext(Dispatchers.IO) {
+  suspend fun fetchAll(onlyPersonal: Boolean = false, onProgress: (FetchProgress) -> Unit = {}): FetchOutcome = withContext(Dispatchers.IO) {
     val scope = computerOnly.current()
-    val parts = missing(audioParts.archived()).filterNot { scope.covers(it) }
-    val docs = sources.archived().filter { isMissing(it) && !scope.covers(it) }
+    val within = if (onlyPersonal) computerOnly.personal() else null
+    val parts = missing(audioParts.archived()).filter { !scope.covers(it) && (within == null || within.covers(it)) }
+    val docs = sources.archived().filter { isMissing(it) && !scope.covers(it) && (within == null || within.covers(it)) }
     val total = parts.size + docs.size
     if (total == 0) return@withContext FetchOutcome()
 

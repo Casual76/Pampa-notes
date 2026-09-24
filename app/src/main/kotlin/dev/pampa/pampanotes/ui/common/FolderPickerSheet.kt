@@ -9,6 +9,7 @@ import dev.antigravity.fluidengine.ui.fluid.FluidButton
 import dev.antigravity.fluidengine.ui.fluid.FluidButtonStyle
 import dev.antigravity.fluidengine.ui.fluid.FluidGlassModalPortal
 import dev.antigravity.fluidengine.ui.fluid.FluidGlassModalPresentation
+import dev.antigravity.fluidengine.ui.fluid.FluidSectionHeader
 import dev.antigravity.fluidengine.ui.theme.FluidEmptyState
 import dev.antigravity.fluidengine.ui.theme.FluidListDivider
 import dev.antigravity.fluidengine.ui.theme.FluidListGroup
@@ -20,6 +21,10 @@ import dev.pampa.pampanotes.core.db.FolderEntity
  * Dove mandare quello che si e' scelto: tutte le cartelle tranne quella in cui si e' gia', col
  * percorso intero sotto il nome, perche' «Novecento» da solo puo' stare sotto Storia o sotto
  * Italiano. Un tocco sceglie e chiude.
+ *
+ * Come nel wizard di import, prima le materie e poi — con un titolo loro — le cartelle di
+ * Registrazioni ([personalFolderIds]): una nota di Storia non deve finire in «Viaggio» perche' in
+ * ordine alfabetico stava li' accanto.
  */
 @Composable
 fun FolderPickerSheet(
@@ -28,6 +33,7 @@ fun FolderPickerSheet(
   excludeId: String?,
   onDismiss: () -> Unit,
   onPick: (String) -> Unit,
+  personalFolderIds: Set<String> = emptySet(),
 ) {
   val rows = remember(folders, excludeId) {
     val byId = folders.associateBy { it.id }
@@ -67,19 +73,29 @@ fun FolderPickerSheet(
       if (rows.isEmpty()) {
         FluidEmptyState(title = stringResource(R.string.folder_picker_empty), detail = "")
       } else {
-        FluidListGroup {
-          rows.forEachIndexed { index, (folder, path) ->
-            if (index > 0) FluidListDivider()
-            FluidListRow(
-              title = folder.name,
-              // Una cartella di primo livello ha il percorso uguale al nome: ripeterlo sotto non dice niente.
-              subtitle = if (path == folder.name) stringResource(R.string.import_folder_root) else path,
-              tone = toneFromName(folder.tone),
-              onClick = { onPick(folder.id) },
-            )
-          }
+        val (personal, school) = rows.partition { it.first.id in personalFolderIds }
+        if (school.isNotEmpty()) FolderPickerGroup(school, onPick)
+        if (personal.isNotEmpty()) {
+          FluidSectionHeader(title = stringResource(R.string.tab_recordings))
+          FolderPickerGroup(personal, onPick)
         }
       }
+    }
+  }
+}
+
+@Composable
+private fun FolderPickerGroup(rows: List<Pair<FolderEntity, String>>, onPick: (String) -> Unit) {
+  FluidListGroup {
+    rows.forEachIndexed { index, (folder, path) ->
+      if (index > 0) FluidListDivider()
+      FluidListRow(
+        title = folder.name,
+        // Una cartella di primo livello ha il percorso uguale al nome: ripeterlo sotto non dice niente.
+        subtitle = if (path == folder.name) stringResource(R.string.import_folder_root) else path,
+        tone = toneFromName(folder.tone),
+        onClick = { onPick(folder.id) },
+      )
     }
   }
 }

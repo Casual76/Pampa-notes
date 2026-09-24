@@ -139,17 +139,17 @@ class StorageRepository @Inject constructor(
       if (sources) {
         this@StorageRepository.sources.all().filter { it.archivedAt > 0 && it.storedFileName != null && it.derivedFromId == null }.forEach { source ->
           val stored = source.storedFileName!!
-          add(Evictable(source.sha256, files.sourceFile(stored), FilesInUse.source(stored)) { this@StorageRepository.sources.markArchived(source.id, 0L) })
+          add(Evictable(source.sha256, files.sourceFile(stored), FilesInUse.source(stored), sessionId = null) { this@StorageRepository.sources.markArchived(source.id, 0L) })
         }
       }
       if (audio) {
         val busySessions = busySessions()
         audioParts.all().filter { it.archivedAt > 0 && it.sessionId !in busySessions }.forEach { part ->
-          add(Evictable(part.sha256, files.audioFile(part.fileName), FilesInUse.audio(part.fileName)) { audioParts.markArchived(part.id, 0L) })
+          add(Evictable(part.sha256, files.audioFile(part.fileName), FilesInUse.audio(part.fileName), part.sessionId) { audioParts.markArchived(part.id, 0L) })
         }
       }
     }
-    drop(candidates.filter { it.key !in held })
+    drop(candidates.filter { it.key !in held }) { busySessions() }
   }
 
   /**
@@ -168,18 +168,21 @@ class StorageRepository @Inject constructor(
     val held = inUse.current()
     val candidates = buildList {
       scope.parts.filter { it.archivedAt > 0 && it.sessionId !in guarded }.forEach { part ->
-        add(Evictable(part.sha256, files.audioFile(part.fileName), FilesInUse.audio(part.fileName)) { audioParts.markArchived(part.id, 0L) })
+        add(Evictable(part.sha256, files.audioFile(part.fileName), FilesInUse.audio(part.fileName), part.sessionId) { audioParts.markArchived(part.id, 0L) })
       }
       scope.sources.filter { it.archivedAt > 0 }.forEach { source ->
         val stored = source.storedFileName ?: return@forEach
-        add(Evictable(source.sha256, files.sourceFile(stored), FilesInUse.source(stored)) { sources.markArchived(source.id, 0L) })
+        add(Evictable(source.sha256, files.sourceFile(stored), FilesInUse.source(stored), sessionId = null) { sources.markArchived(source.id, 0L) })
       }
     }
-    drop(candidates.filter { it.key !in held })
+    drop(candidates.filter { it.key !in held }) { busySessions() + runCatching { protectedSessionIds() }.getOrDefault(emptySet()) }
   }
 
-  /** Un file che si potrebbe togliere da qui, con l'impronta con cui lo si chiede al computer. */
-  private class Evictable(val sha256: String, val file: java.io.File, val key: String, val lost: suspend () -> Unit)
+  /**
+   * Un file che si potrebbe togliere da qui, con l'impronta con cui lo si chiede al computer e, per
+   * una registrazione, la sessione: [drop] la riguarda subito prima di cancellare.
+   */
+  private class Evictable(val sha256: String, val file: java.io.File, val key: String, val sessionId: String?, val lost: suspend () -> Unit)
 
   /**
    * Toglie i file che il computer di casa conferma di avere adesso (un `HEAD` per file).
@@ -187,8 +190,12 @@ class StorageRepository @Inject constructor(
    * Un 404 vuol dire che la riga mente — un PC nuovo, un archivio svuotato — e questa copia puo'
    * essere l'unica: il file resta, e la riga torna «da archiviare», cosi' il prossimo giro
    * dell'archivio lo rimanda. Un computer che non risponde non conferma niente: resta tutto.
+   *
+   * Le guardie si riguardano **subito prima di ogni cancellazione**, non solo all'inizio: un `HEAD`
+   * per file su cento registrazioni puo' durare minuti, e nel frattempo si puo' aprire la lezione
+   * (il lettore la tiene in [FilesInUse]), partire un export o una trascrizione ([guardedSessions]).
    */
-  private suspend fun drop(candidates: List<Evictable>): SizeTotal {
+  private suspend fun drop(candidates: List<Evictable>, guardedSessions: suspend () -> Set<String>): SizeTotal {
     val here = candidates.filter { it.file.exists() }
     if (here.isEmpty()) return SizeTotal(0, 0)
     val confirmed = archive.presence(here.map { it.sha256 })
@@ -197,6 +204,8 @@ class StorageRepository @Inject constructor(
     here.forEach { item ->
       when (confirmed[item.sha256]) {
         true -> {
+          if (item.key in inUse.current()) return@forEach
+          if (item.sessionId != null && item.sessionId in guardedSessions()) return@forEach
           val size = item.file.length()
           if (item.file.delete()) { count++; bytes += size }
         }

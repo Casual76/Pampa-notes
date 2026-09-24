@@ -217,20 +217,24 @@ Il piano per esteso: `C:\Users\casua\.claude\plans\praticamente-vorrei-un-applic
 
 L'audio che non e' una lezione — una registrazione di diciannove ore, un'intervista, un viaggio —
 ha una **quarta scheda**, fra Cartelle e Altro (`Routes.RECORDINGS`, `ui/recordings/`; sul tablet
-una riga sotto le materie nella barra laterale). Prima finiva in una materia, e da li' in testa a
+una sezione sua sotto le materie nella barra laterale, accesa anche dentro una sua cartella). Prima finiva in una materia, e da li' in testa a
 «Da fare» per settimane, nelle ore «di lezione» della home, nel pacchetto «Esporta tutto» e sul
 telefono, dove diciannove ore sono gigabyte.
 
 **La regola sta sulla radice.** `FolderEntity.kind` (database 9, `"school"` di serie, `"personal"`)
 conta solo su una cartella di primo livello: una sottocartella sta dove sta la sua radice, qualunque
-cosa dica la sua colonna, cosi' spostarla non chiede di ricordarsi di cambiarle il tipo.
-`FolderRepository.create` scrive lo stesso il tipo della radice (chi guarda la riga da sola non si
-confonde), `setKind` cambia solo una cartella di primo livello («Sposta in Registrazioni» dalle
-tessere e dal menu della cartella, «Sposta fra le materie» dalla scheda e dal menu). La stessa
+cosa dica la sua colonna, cosi' spostarla non chiede di ricordarsi di cambiarle il tipo. La colonna
+si tiene lo stesso allineata, perche' chi guarda la riga da sola (il sync, un'altra versione) non si
+confonda: `FolderRepository.create` scrive il tipo della radice, `setKind` — solo su una cartella di
+primo livello («Sposta in Registrazioni» dalle tessere e dal menu della cartella, «Sposta fra le
+materie» dalla scheda e dal menu) — riscrive anche le sottocartelle che dicevano altro, e `move`
+da' alla cartella spostata e a tutto quello che ha dentro la sezione in cui finisce
+(`kindAfterMove`: quella della nuova radice, o, portata al primo livello, quella da cui viene;
+`FolderKindTest`). La stessa
 regola sta in due posti che devono dire la stessa cosa: in SQL `PersonalSql.FOLDER_IDS`, una
 sottoselect ricorsiva da mettere dopo `IN`/`NOT IN` (Room la accetta dentro una sottoselect e tiene
-d'occhio `folders` per i `Flow`), e in Kotlin `PersonalScope` (`rootIds`, `folderIds`, `isPersonal`,
-e `current()` fino a note e sessioni). `PersonalSqlTest` le confronta.
+d'occhio `folders` per i `Flow`), e in Kotlin l'oggetto `PersonalScope` (`rootIds`, `folderIds`,
+`isPersonal`: solo funzioni pure sulle cartelle). `PersonalSqlTest` le confronta.
 
 **Cosa ne resta fuori**, e resta della scuola: «Da fare» e le ultime note della home
 (`NoteDao.observeTodo`/`observeRecent`), «Trascrivi tutte», i numeri della home (ore, parole,
@@ -243,27 +247,60 @@ e' una materia**: niente `ReportSubject` (la cartella lo salta, `NoteViewModel` 
 `SessionViewModel` le danno `folder = null`), e l'app resta del suo accento.
 
 **Di serie solo sul computer.** `ComputerOnlyScope.current()` tratta le cartelle di Registrazioni
-come se avessero la regola, a meno che questo dispositivo non chieda di tenerle
-(`keepPersonalHere` in DataStore, per dispositivo, dal menu della scheda); la conferma di una regola
-nuova (`resolve` senza `includePersonal`) le lascia fuori, perche' conta solo quello che quella
-regola toglierebbe. Mirror, «Libera spazio» e Archiviazione seguono da li'; nei menu la voce «Solo
-sul computer» di una cartella di Registrazioni dice che la regola e' della sezione. E non si aspetta
+come se avessero la regola quando vale `personalByDefault`: non se questo dispositivo chiede di
+tenerle (`keepPersonalHere` in DataStore, per dispositivo, dal menu della scheda), non senza un
+computer collegato (non avrebbe dove tenerle, e «· sul computer» su una nota che sta qui era una
+bugia), e **non con «tieni tutto anche qui» acceso**: una cartella spostata in Registrazioni sul
+telefono arriva col sync al tablet che scarica tutto, e la regola di serie la toglieva da li' senza
+nessuna conferma. `ComputerOnlyViewModel` (menu e segni «sul computer») usa la stessa funzione. La
+conferma di una regola nuova (`resolve` senza `includePersonal`) le lascia fuori, perche' conta solo
+quello che quella regola toglierebbe. Mirror, «Libera spazio» e Archiviazione seguono da li'; nei
+menu la voce «Solo sul computer» di una cartella di Registrazioni dice che la regola e' della
+sezione. Dalla scheda: «Registrazioni solo sul computer» chiede conferma col peso di quello che se ne
+andrebbe (`ComputerOnlyConfirmAlert`, la stessa di una cartella); «Tieni le registrazioni anche qui»
+fa partire subito un giro di scarico della sola sezione (`WorkScheduler.fetchPersonal`,
+`ArchiveFetcher.fetchAll(onlyPersonal)`), anche con il mirror spento; col mirror acceso le due voci
+non ci sono e la nota in fondo dice perche'. E non si aspetta
 il giro periodico: quando una trascrizione finisce su una sessione coperta da una regola,
 `TranscriptionQueueWorker` chiede un giro dell'archivio (`archiveIfComputerOnly`, solo con
-l'archivio acceso), che porta il file sul PC se non c'e' e alla fine chiama `evictComputerOnly` —
-con le sue guardie: il `HEAD` per file, la lezione ascoltata nelle ultime 24 ore, i lavori in corso.
-Un file mai archiviato non se ne va.
+l'archivio acceso, con `WorkScheduler.archiveSoon`: se un giro sta gia' girando ne accoda uno dopo,
+perche' quello ha letto l'elenco prima che la lezione finisse), che porta il file sul PC se non c'e'
+e alla fine chiama `evictComputerOnly` — con le sue guardie: il `HEAD` per file, la lezione
+ascoltata nelle ultime 24 ore, i lavori in corso, la sessione aperta a schermo. Le guardie si
+riguardano subito prima di ogni cancellazione, non solo all'inizio: cento `HEAD` possono durare
+minuti. Un file mai archiviato non se ne va.
+
+**Spostare fra le sezioni si conferma**, e la conferma dice il vero su questo dispositivo
+(`SectionMoveAlert`): dove vanno i file dipende da computer, mirror e «tieni anche qui», e la frase
+ricorda che sugli altri dispositivi la cartella arriva col sync. Vale per una cartella intera e per
+le note spostate con la selezione (`FolderPickerSheet` le raggruppa come il wizard, materie sopra e
+Registrazioni sotto, e chiede quando la cartella di arrivo e' dell'altra sezione).
 
 **La scheda** e' fatta per ascoltare: in cima i numeri della sola sezione (ore registrate, ore e
 parole trascritte, velocita', dagli stessi `TranscriptionStats.aggregate` della home), poi le
 cartelle, poi tutte le registrazioni di tutte le cartelle dalla piu' recente. Un tocco **ascolta**
-(la sessione con l'audio piu' recente), tenendo premuto c'e' «Apri la nota», «Trascrivi», esporta,
-elimina; il badge e' quello della home (lavoro, «Da trascrivere», «In trascrizione su …»). Vuota,
-spiega a cosa serve. **L'import**: «Importa» dentro una cartella di Registrazioni (o dalla scheda,
-con una cartella sola) apre il wizard con la cartella gia' scelta (`ImportRequest.intoFolderId`,
-`MainViewModel.onPickIntoFolder`); da qualunque altra parte il wizard mostra le cartelle di
-Registrazioni in un gruppo loro sotto le materie, e di ripiego sceglie la prima materia, mai una
-cartella di Registrazioni. Il `.sdocx` indovina la materia solo fra le materie.
+e il lettore parte da solo: riprende la sessione dell'ultimo ascolto se e' di quella nota e non e'
+finita (`LastListened`), altrimenti la sessione piu' recente dall'inizio; si apre con la strada di
+«Riprendi» della home (`resumeSession`, `play=1`), che sul tablet prende il posto di quello che era
+aperto invece di impilarsi. Una nota senza audio ha un'icona sua e si apre come nota. Tenendo
+premuto c'e' «Apri la nota», «Trascrivi», esporta, elimina; il badge e' quello della home (lavoro,
+«Da trascrivere», «In trascrizione su …», «Senza parole»). «Trascrivi tutte» chiede prima,
+con le ore e chi trascrive (con Groq, che l'audio va nel cloud), lascia fuori le sessioni il cui
+ultimo tentativo ha risposto `no_speech`, e sparisce se restano solo quelle. Vuota, spiega a cosa
+serve. Le parole sono le sue: «3 sessioni», non «3 lezioni»; la nota vuota, il wizard («In quale
+cartella», «Sessione 2») e il pacchetto esportato (`ExportSet.personal`: regole, README e indice
+parlano di registrazioni, `LessonWords` e `indexHowToPersonal`) non parlano di scuola.
+
+**L'import**: «Importa» dentro una cartella di Registrazioni (o dalla scheda, con una cartella sola)
+apre il wizard con la cartella gia' scelta (`ImportRequest.intoFolderId`,
+`MainViewModel.onPickIntoFolder`); dalla scheda con piu' cartelle il wizard sceglie la prima di
+Registrazioni (`ImportRequest.preferPersonal`, `onPickPersonal`), e «Nuova cartella» nel wizard ne
+crea una di Registrazioni quando si e' partiti da li' o la cartella scelta lo e'. Da qualunque altra
+parte il wizard mostra le cartelle di Registrazioni in un gruppo loro sotto le materie, e di ripiego
+sceglie la prima materia, mai una cartella di Registrazioni. Il `.sdocx` indovina la materia solo fra
+le materie. **«Trascrivi appena importi»** su una nota di Registrazioni parte da solo solo verso il
+computer di casa: con Groq la registrazione resta «Da trascrivere» (diciannove ore di audio privato
+non vanno nel cloud senza che nessuno l'abbia chiesto).
 
 Nel sync `kind` viaggia dentro il payload della cartella, e il Worker non lo guarda. L'impronta salta
 `kind = "school"` come salta un `derivedFromId` vuoto: le cartelle di prima hanno l'impronta di
@@ -412,7 +449,8 @@ meta' non prende mai il nome di quello buono, e `sweepOrphans` non guarda `tmp`.
 ancora qui si puo' togliere dal dispositivo — originali e registrazioni con due tasti separati,
 perche' un PDF si riapre in un secondo e una lezione da un'ora senza il PC non si ascolta
 (`StorageRepository.evictArchived`; non tocca una registrazione con un lavoro in corso, ne' quello
-che un export tiene in `FilesInUse`). `archivedAt > 0` non basta: prima di togliere un file si chiede
+che un export o una sessione aperta a schermo tengono in `FilesInUse` — una presa per padrone, cosi'
+chi rilascia la sua non libera quella dell'altro). `archivedAt > 0` non basta: prima di togliere un file si chiede
 al computer di adesso (`ArchiveRepository.presence`, un `HEAD`), e un 404 rimette la riga «da
 archiviare» invece di togliere l'unica copia; lo stesso fa `ArchiveFetcher` quando scarica. Le righe
 restano: e' lo stesso stato «il file non c'e'» di una riga arrivata dal sync, e tutto quello che
@@ -437,7 +475,9 @@ porta solo le righe: e' per questo che un tablet appena sincronizzato con 42 not
 
 Chi lo chiede: il **lettore** (`SessionViewModel` guarda su disco a ogni cambio di parti e non
 carica ExoPlayer finche' non ha guardato; se manca qualcosa la pagina mostra peso e tasto «Scarica»,
-o «registrate su un altro dispositivo» se il PC non le ha ancora); la **coda di trascrizione**
+o «registrate su un altro dispositivo» se il PC non le ha ancora; finche' la pagina e' aperta tiene i
+suoi file in `FilesInUse`, e se il lettore da' errore riguarda su disco — e dopo un errore
+`SessionPlayer.load` ricarica anche la stessa playlist); la **coda di trascrizione**
 (`TranscriptionRunner` scarica da solo prima di decodificare, cosi' una lezione registrata sul
 tablet si trascrive dal telefono); l'**export**, per quello che si e' chiesto di metterci dentro
 (vedi Export); le **fonti** della nota (tocco → scarica → apre). Archiviazione conta i file che ci sono
@@ -520,7 +560,11 @@ salvare, e si chiude in silenzio.
 
 Il lettore (`SessionPlayer`) parla solo in tempo di sessione: dentro ci sono N file e un indice di
 playlist, ma chi tocca la frase del minuto quaranta sente il minuto quaranta della lezione, non
-della terza registrazione. La traduzione la fa `SessionAssembler.locate`.
+della terza registrazione. La traduzione la fa `SessionAssembler.locate`. La barra (`PlayerBar`) e'
+pensata anche per le registrazioni di ore: in fondo allo scrubber quanto manca (un tocco: quanto
+dura), i tasti dei secondi tenuti premuti saltano cinque minuti (anche come azioni di TalkBack), e
+lo scrubber prende il dito su 48 dp ma nella colonna ne occupa 24, cosi' la capsula non si sposta.
+Le pause di un minuto o piu' («— 16 min di silenzio —») sono righe alte almeno 48 dp.
 
 **I paragrafi e i silenzi hanno una regola sola**, `TranscriptParagraphs.split` in `:core`: a capo
 dopo due secondi di pausa, al confine fra registrazioni e oltre un tetto di frasi (10 a schermo, 8
@@ -872,7 +916,9 @@ nell'archivio di un altro) e un companion vecchio sulla strada di prima. Il «Vo
 arriva a WhisperX come `initial_prompt` per quella sola richiesta: prima il companion lo ignorava.
 
 **I pezzi, in automatico.** Impostazioni → Trascrizione ha «Automatico» (di serie, tranne per chi
-aveva gia' scelto un tetto) e uno `FluidSlider` da 10 a 120 minuti e «intera». Acceso, l'app manda
+aveva gia' scelto un tetto) e uno slider da 10 a 120 minuti e «intera» (`LiquidSlider`, il vetro di
+Kyant portato nell'app: tocco e trascinamento su tutta la riga da 48 dp, la maniglia che si fa lente
+da qualunque punto la si prenda, il titolo come `stateDescription` per TalkBack). Acceso, l'app manda
 `max_minutes=auto`: il companion sceglie dopo aver decodificato, dalla velocita' misurata sulle
 ultime lezioni senza il caricamento del modello (`auto_piece_minutes`: circa quattro minuti di lavoro
 per pezzo, fra 15 e 120 minuti di audio — sulla scheda le lezioni vanno intere, sul processore a
@@ -972,7 +1018,13 @@ sostituisce la grezza e porta via le raffinate. **Selezione multipla** («Selezi
 barra): nella nota, le sessioni (ritrascrivi, elimina); nella cartella, le note (trascrivi quelle
 da fare, sposta con `FolderPickerSheet`, esporta con `ExportScope.Notes`, elimina). La barra in alto
 diventa quella della selezione — titolo «N selezionate», indietro la chiude — invece di una barra
-in basso che non esiste nell'engine. In Lavori, «Riprova tutti i falliti».
+in basso che non esiste nell'engine. In Lavori, «Riprova tutti i falliti», che conta e rimanda solo
+quelli che vale la pena (`FailedJobs.standing`, puro): non quelli superati da una trascrizione (o
+una raffinata) piu' recente o da un lavoro dello stesso tipo partito dopo — la riga dice
+«Superata», in grigio —, non le registrazioni mute (`no_speech`), non i lavori di una sessione che
+non c'e' piu'. La stessa regola decide se la sessione mostra ancora il fallimento; la scheda del
+fallimento ha «Nascondi» (cancella la riga del lavoro), e una ripulitura non riuscita con la grezza
+li' sotto e' una scheda quieta, non l'allarme in cima alla pagina.
 
 ## Il companion per tutti
 

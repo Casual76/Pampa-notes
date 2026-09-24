@@ -163,9 +163,28 @@ class TranscriptionRepository @Inject constructor(
 
   suspend fun queuedCount(providerId: String): Int = jobs.queuedCount(providerId)
 
-  /** Tutti i falliti tornano in fila, e si dice quali code svegliare. */
-  suspend fun retryAllFailed(): Set<String> =
-    jobs.failed().mapNotNullTo(mutableSetOf()) { retry(it.id)?.provider }
+  /**
+   * I falliti che vale la pena riprovare tornano in fila, e si dice quali code svegliare. Non quelli
+   * superati da una trascrizione piu' recente, non le registrazioni mute, non i lavori di una
+   * sessione che non c'e' piu' ([FailedJobs]).
+   */
+  suspend fun retryAllFailed(): Set<String> {
+    val standings = failureStandings(jobs.all())
+    return standings.filterValues { it == FailureStanding.RETRYABLE }.keys
+      .mapNotNullTo(mutableSetOf()) { retry(it)?.provider }
+  }
+
+  /** Per ogni lavoro fallito fra [all], che cosa vale ancora (vedi [FailedJobs.standing]). */
+  suspend fun failureStandings(all: List<JobEntity>): Map<String, FailureStanding> {
+    val failed = all.filter { it.state == JobState.FAILED }
+    if (failed.isEmpty()) return emptyMap()
+    val bySession = all.groupBy { it.sessionId }
+    return failed.groupBy { it.sessionId }.flatMap { (sessionId, sessionFailed) ->
+      val exists = sessions.get(sessionId) != null
+      val sessionTranscripts = if (exists) transcripts.bySession(sessionId) else emptyList()
+      sessionFailed.map { job -> job.id to FailedJobs.standing(job, exists, sessionTranscripts, bySession[sessionId].orEmpty()) }
+    }.toMap()
+  }
 
   /**
    * I lavori in fila del computer di casa dicono che lo stanno aspettando, o smettono di dirlo.

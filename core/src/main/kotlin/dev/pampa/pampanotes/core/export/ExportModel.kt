@@ -243,6 +243,12 @@ data class ExportSet(
   /** Versione dell'app che ha scritto il bundle, per il front-matter e il manifest. */
   val generator: String,
   val exportedAtMillis: Long,
+  /**
+   * Tutto quello che c'e' dentro sta in Registrazioni: le regole e l'indice parlano di
+   * «registrazioni», non di «lezioni». Un'intervista presentata a un assistente come la lezione di
+   * un professore e' letta come una lezione.
+   */
+  val personal: Boolean = false,
 ) {
   val folderCount: Int get() = notes.map { it.folderPath.joinToString("/") }.distinct().size
   val audioDurationMs: Long get() = notes.sumOf { it.audioDurationMs }

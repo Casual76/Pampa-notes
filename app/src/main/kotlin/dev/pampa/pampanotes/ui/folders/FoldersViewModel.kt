@@ -9,12 +9,17 @@ import dev.pampa.pampanotes.core.repo.FolderRepository
 import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 data class FoldersUiState(
   val folders: List<FolderRow> = emptyList(),
+  /**
+   * Le cartelle di Registrazioni, sottocartelle comprese: la barra laterale accende la riga
+   * Registrazioni quando e' aperta una di loro.
+   */
+  val personalFolderIds: Set<String> = emptySet(),
   val loading: Boolean = true,
 ) {
   val isEmpty: Boolean get() = !loading && folders.isEmpty()
@@ -32,9 +37,13 @@ class FoldersViewModel @Inject constructor(
   private val folders: FolderRepository,
 ) : ViewModel() {
 
-  val uiState: StateFlow<FoldersUiState> = folders.observeChildren(null)
-    .map { rows -> FoldersUiState(folders = rows.filterNot { it.folder.isPersonal }, loading = false) }
-    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FoldersUiState())
+  val uiState: StateFlow<FoldersUiState> = combine(folders.observeChildren(null), folders.observeAll()) { rows, all ->
+    FoldersUiState(
+      folders = rows.filterNot { it.folder.isPersonal },
+      personalFolderIds = dev.pampa.pampanotes.core.repo.PersonalScope.folderIds(all),
+      loading = false,
+    )
+  }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FoldersUiState())
 
   fun create(name: String, tone: String?, icon: String?) {
     viewModelScope.launch { folders.create(name = name, parentId = null, tone = tone, icon = icon) }

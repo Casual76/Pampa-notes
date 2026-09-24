@@ -11,6 +11,8 @@ import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DriveFileMove
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Upload
+import dev.pampa.pampanotes.ui.common.ComputerOnlyViewModel
+import dev.pampa.pampanotes.core.repo.PersonalScope
 import dev.pampa.pampanotes.ui.common.FolderPickerSheet
 import dev.pampa.pampanotes.ui.common.SelectionMark
 import dev.pampa.pampanotes.ui.common.rememberComputerOnly
@@ -126,6 +128,8 @@ private fun FolderScreen(
   var selected by remember { mutableStateOf(emptySet<String>()) }
   var confirmingDeleteMany by remember { mutableStateOf(false) }
   var movingMany by remember { mutableStateOf(false) }
+  // La cartella di arrivo, quando e' dell'altra sezione: si conferma prima di spostare.
+  var movingAcross by remember { mutableStateOf<String?>(null) }
   var exportingMany by remember { mutableStateOf(false) }
   val exitSelection = {
     selecting = false
@@ -389,16 +393,38 @@ private fun FolderScreen(
   }
 
   if (movingMany) {
+    val personalIds = remember(state.allFolders) { PersonalScope.folderIds(state.allFolders) }
     FolderPickerSheet(
       title = moveLabel,
       folders = state.allFolders,
       excludeId = state.folder?.id,
+      personalFolderIds = personalIds,
       onDismiss = { movingMany = false },
       onPick = { target ->
         movingMany = false
+        // Da una sezione all'altra si chiede, come per una cartella: le note escono dalla home (o ci
+        // tornano) e i loro file cambiano posto.
+        if ((target in personalIds) != state.personal) {
+          movingAcross = target
+        } else {
+          onMoveNotes(selected, target)
+          exitSelection()
+        }
+      },
+    )
+  }
+
+  movingAcross?.let { target ->
+    SectionMoveAlert(
+      name = state.allFolders.firstOrNull { it.id == target }?.name.orEmpty(),
+      toPersonal = !state.personal,
+      noteCount = selected.size,
+      onConfirm = {
+        movingAcross = null
         onMoveNotes(selected, target)
         exitSelection()
       },
+      onDismiss = { movingAcross = null },
     )
   }
 
@@ -480,16 +506,49 @@ private fun FolderScreen(
 /**
  * La conferma di un cambio di sezione: dice dove va la cartella e cosa cambia per i suoi file, che
  * in Registrazioni stanno di serie solo sul computer. Anche da `FoldersScreen` e dalla scheda.
+ *
+ * Quello che dice dei file dev'essere vero su questo dispositivo: la regola di serie non vale se le
+ * Registrazioni si tengono qui, con «tieni tutto anche qui», o senza un computer (vedi
+ * `ComputerOnlyScope.personalByDefault`). E vale anche sugli altri dispositivi, che la cartella
+ * spostata raggiunge col sync: la frase lo dice, perche' lo spostamento li' non chiede niente.
  */
 @Composable
-internal fun SectionMoveAlert(name: String, toPersonal: Boolean, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+internal fun SectionMoveAlert(
+  name: String,
+  toPersonal: Boolean,
+  onConfirm: () -> Unit,
+  onDismiss: () -> Unit,
+  /** Note spostate in una cartella dell'altra sezione, invece di una cartella intera: [name] e' quella di arrivo. */
+  noteCount: Int = 0,
+) {
+  val where by hiltViewModel<ComputerOnlyViewModel>().state.collectAsStateWithLifecycle()
+  val files = when {
+    toPersonal && !where.available -> stringResource(R.string.recordings_move_in_files_no_computer)
+    toPersonal && where.mirror -> stringResource(R.string.recordings_move_in_files_mirror)
+    toPersonal && where.keepPersonal -> stringResource(R.string.recordings_move_in_files_kept_here)
+    toPersonal -> stringResource(R.string.recordings_move_in_files_leave)
+    where.personalOnComputer -> stringResource(R.string.recordings_move_out_files)
+    else -> null
+  }
+  val notes = noteCount > 0
+  val base = when {
+    notes -> stringResource(if (toPersonal) R.string.notes_move_in_message else R.string.notes_move_out_message, name)
+    else -> stringResource(if (toPersonal) R.string.recordings_move_in_message else R.string.recordings_move_out_message)
+  }
+  val title = when {
+    notes -> pluralStringResource(if (toPersonal) R.plurals.notes_move_in_title else R.plurals.notes_move_out_title, noteCount, noteCount, name)
+    else -> stringResource(if (toPersonal) R.string.recordings_move_in_title else R.string.recordings_move_out_title, name)
+  }
   FluidAlert(
     onDismissRequest = onDismiss,
-    title = stringResource(if (toPersonal) R.string.recordings_move_in_title else R.string.recordings_move_out_title, name),
-    message = stringResource(if (toPersonal) R.string.recordings_move_in_message else R.string.recordings_move_out_message),
+    title = title,
+    message = listOfNotNull(base, files).joinToString(" "),
     actions = listOf(
       FluidAlertAction(
-        label = stringResource(if (toPersonal) R.string.recordings_move_in else R.string.recordings_move_out),
+        label = when {
+          notes -> stringResource(R.string.selection_move)
+          else -> stringResource(if (toPersonal) R.string.recordings_move_in else R.string.recordings_move_out)
+        },
         emphasis = FluidAlertAction.Emphasis.Preferred,
         onClick = onConfirm,
       ),

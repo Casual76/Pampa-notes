@@ -167,9 +167,12 @@ class MainViewModel @Inject constructor(
       pendingNoteId = intoNoteId
       return
     }
-    importRequests.offer(ImportRequest(uris = uris, intoNoteId = intoNoteId ?: pendingNoteId, intoFolderId = pendingFolderId))
+    importRequests.offer(
+      ImportRequest(uris = uris, intoNoteId = intoNoteId ?: pendingNoteId, intoFolderId = pendingFolderId, preferPersonal = pendingPersonal),
+    )
     pendingNoteId = null
     pendingFolderId = null
+    pendingPersonal = false
   }
 
   /**
@@ -179,6 +182,17 @@ class MainViewModel @Inject constructor(
   fun onPickIntoFolder(folderId: String) {
     pendingNoteId = null
     pendingFolderId = folderId
+    pendingPersonal = false
+  }
+
+  /**
+   * «Importa» dalla scheda Registrazioni quando le cartelle sono piu' d'una: il wizard le mostra
+   * tutte, ma parte da una di Registrazioni invece che dalla prima materia.
+   */
+  fun onPickPersonal() {
+    pendingNoteId = null
+    pendingFolderId = null
+    pendingPersonal = true
   }
 
   /**
@@ -189,10 +203,12 @@ class MainViewModel @Inject constructor(
   fun onPickerCancelled() {
     pendingNoteId = null
     pendingFolderId = null
+    pendingPersonal = false
   }
 
   private var pendingNoteId: String? = null
   private var pendingFolderId: String? = null
+  private var pendingPersonal: Boolean = false
 
   private companion object {
     const val BIND_TIMEOUT_MS = 30_000L

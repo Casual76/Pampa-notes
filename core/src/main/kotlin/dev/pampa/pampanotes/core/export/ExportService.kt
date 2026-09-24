@@ -179,12 +179,14 @@ class ExportService @Inject constructor(
       .sortedWith(compareBy({ pathOf(it.folderId).joinToString("/") }, { -it.updatedAt }))
       .map { note -> gatherNote(note, pathOf(note.folderId), options) }
 
+    val personalFolders = PersonalScope.folderIds(all.values.toList())
     ExportSet(
       scopeLabel = label,
       scopeSlug = label.slugify(40),
       notes = gathered,
       generator = generator,
       exportedAtMillis = System.currentTimeMillis(),
+      personal = selected.isNotEmpty() && selected.all { it.folderId in personalFolders },
     )
   }
 

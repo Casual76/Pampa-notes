@@ -3,9 +3,12 @@ package dev.pampa.pampanotes.ui.session
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -65,6 +68,7 @@ import dev.pampa.pampanotes.ui.common.OverflowMenuButton
 import dev.pampa.pampanotes.core.db.SegmentEntity
 import dev.pampa.pampanotes.core.db.JobEntity
 import dev.pampa.pampanotes.core.db.JobType
+import dev.pampa.pampanotes.core.repo.FailedJobs
 import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.db.TranscriptKind
 import dev.pampa.pampanotes.core.db.TranscriptStatus
@@ -116,6 +120,7 @@ fun SessionRoute(
     onUserScrolled = viewModel::stopFollowing,
     onTranscribe = viewModel::transcribe,
     onCancelJob = viewModel::cancelJob,
+    onDismissJob = { viewModel.dismissJob(it) },
     onFetchMissing = viewModel::fetchMissing,
     onRename = viewModel::rename,
     onShowTranscript = viewModel::showTranscript,
@@ -144,6 +149,7 @@ private fun SessionScreen(
   onUserScrolled: () -> Unit,
   onTranscribe: () -> Unit,
   onCancelJob: (String) -> Unit,
+  onDismissJob: (String) -> Unit,
   onFetchMissing: () -> Unit,
   onRename: (String, String) -> Unit,
   onShowTranscript: (String) -> Unit,
@@ -258,7 +264,7 @@ private fun SessionScreen(
       }
     },
   ) {
-    jobItem(state, onCancelJob, onRetryJob = { if (it.type == JobType.REFINE) refining = true else onTranscribe() })
+    jobItem(state, onCancelJob, onRetryJob = { if (it.type == JobType.REFINE) refining = true else onTranscribe() }, onDismissJob = onDismissJob)
     remoteAudioItem(state, onFetchMissing)
     partsSection(state, onSeek, onMovePart, onMovePartTo, onSplitAt) { confirmingPartDelete = it }
     transcriptSection(state, onTranscribe, onShowTranscript) {
@@ -362,15 +368,23 @@ private fun SessionScreen(
 // Le sezioni
 // -------------------------------------------------------------------------------------------------
 
-private fun LazyListScope.jobItem(state: SessionUiState, onCancelJob: (String) -> Unit, onRetryJob: (JobEntity) -> Unit) {
+private fun LazyListScope.jobItem(
+  state: SessionUiState,
+  onCancelJob: (String) -> Unit,
+  onRetryJob: (JobEntity) -> Unit,
+  onDismissJob: (String) -> Unit,
+) {
   val job = state.job
   val failed = state.failedJob
   if (job == null && failed != null && state.elsewhere == null) {
     item(key = "job-failed") {
       // Una registrazione muta non e' un guasto: e' la risposta. Niente rosso, e il tasto dice che
       // rifarla da' con ogni probabilita' lo stesso risultato.
-      val silent = failed.errorCode == "no_speech"
-      FluidCard(highlighted = true) {
+      val silent = failed.errorCode == FailedJobs.NO_SPEECH
+      // Una ripulitura non riuscita, con la grezza li' sotto, non ha perso niente: la lezione si
+      // legge lo stesso. Una scheda quieta, non l'allarme in cima alla pagina.
+      val minor = failed.type == JobType.REFINE && state.raw != null
+      FluidCard(highlighted = !minor) {
         Text(
           text = stringResource(
             when {
@@ -380,20 +394,31 @@ private fun LazyListScope.jobItem(state: SessionUiState, onCancelJob: (String) -
             },
           ),
           style = MaterialTheme.typography.titleSmall,
-          color = if (silent) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error,
+          color = if (silent || minor) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error,
         )
         Text(
           text = jobErrorText(failed.errorCode ?: "unknown", failed.errorMessage, failed.provider),
           style = MaterialTheme.typography.bodyMedium,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        FluidButton(
-          text = stringResource(if (silent) R.string.job_no_speech_retry else R.string.job_retry),
-          onClick = { onRetryJob(failed) },
-          style = FluidButtonStyle.Plain,
-          fillWidth = true,
-          modifier = Modifier.fillMaxWidth(),
-        )
+        // «Nascondi» toglie la riga del lavoro: senza, un fallimento restava in cima alla sessione
+        // per sempre, anche deciso di lasciar perdere.
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+          FluidButton(
+            text = stringResource(R.string.job_dismiss),
+            onClick = { onDismissJob(failed.id) },
+            style = FluidButtonStyle.Plain,
+            fillWidth = true,
+            modifier = Modifier.weight(1f),
+          )
+          FluidButton(
+            text = stringResource(if (silent) R.string.job_no_speech_retry else R.string.job_retry),
+            onClick = { onRetryJob(failed) },
+            style = FluidButtonStyle.Plain,
+            fillWidth = true,
+            modifier = Modifier.weight(1f),
+          )
+        }
       }
     }
     return
@@ -704,11 +729,14 @@ private fun SilenceRow(silenceMs: Long, resumeMs: Long, onSeek: (Long) -> Unit) 
     style = MaterialTheme.typography.labelMedium,
     color = MaterialTheme.colorScheme.onSurfaceVariant,
     textAlign = TextAlign.Center,
+    // Alta come un dito anche se il testo e' piccolo: il bersaglio e' la riga, il testo sta al centro.
     modifier = Modifier
       .fillMaxWidth()
+      .heightIn(min = 48.dp)
       .fluidRowPressable(onClick = { onSeek(resumeMs) })
-      .padding(vertical = 6.dp)
-      .semantics { contentDescription = description },
+      .semantics { contentDescription = description }
+      .wrapContentHeight(Alignment.CenterVertically)
+      .padding(vertical = 6.dp),
   )
 }
 

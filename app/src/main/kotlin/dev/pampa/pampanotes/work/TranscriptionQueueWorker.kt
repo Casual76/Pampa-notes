@@ -444,7 +444,8 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       val settings = settingsStore.current()
       if (!settings.archiveEnabled) return
       if (sessionId !in computerOnly.current().sessionIds) return
-      scheduler.archiveNow(settings.archiveOnlyUnmetered)
+      // Non `archiveNow`: un giro gia' in corso ha letto l'elenco prima che la lezione finisse.
+      scheduler.archiveSoon(settings.archiveOnlyUnmetered)
     }
   }
 

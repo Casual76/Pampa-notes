@@ -58,6 +58,8 @@ class ComputerOnlyTest {
   private var folderRules = emptySet<String>()
   private var noteRules = emptySet<String>()
   private var keepPersonalHere = false
+  // Di serie un computer c'e' e il mirror e' spento: e' il caso in cui le Registrazioni stanno sul computer.
+  private var appSettings = PampaSettings(endpointUrl = "http://pc.local:8765")
   private val jobs = mutableListOf<JobEntity>()
 
   // Quello che il computer di casa risponde al `HEAD` di ogni file: di serie ce li ha tutti.
@@ -81,7 +83,7 @@ class ComputerOnlyTest {
     every { settings.computerOnlyFolders } answers { flowOf(folderRules) }
     every { settings.computerOnlyNotes } answers { flowOf(noteRules) }
     every { settings.keepPersonalHere } answers { flowOf(keepPersonalHere) }
-    coEvery { settings.current() } returns PampaSettings()
+    coEvery { settings.current() } answers { appSettings }
 
     val folderDao = mockk<FolderDao>()
     coEvery { folderDao.all() } answers { folders }
@@ -172,6 +174,30 @@ class ComputerOnlyTest {
     // Le regole scritte a mano valgono lo stesso.
     noteRules = setOf("n4")
     assertEquals(setOf("n4"), scope.current().noteIds)
+  }
+
+  @Test
+  fun `senza computer, o con tieni tutto anche qui, le Registrazioni restano qui`() = runBlocking {
+    folders = folders.map { if (it.id == "f4") it.copy(kind = FolderEntity.KIND_PERSONAL) else it }
+    appSettings = PampaSettings()
+    assertTrue(scope.current().isEmpty)
+    // Il tablet che scarica tutto: una cartella spostata in Registrazioni altrove non se ne va da qui.
+    appSettings = PampaSettings(endpointUrl = "http://pc.local:8765", mirrorEnabled = true)
+    assertTrue(scope.current().isEmpty)
+    allHere()
+    storage().evictComputerOnly()
+    assertTrue(audioHere("p4"))
+    // Una regola scritta a mano vale anche col mirror.
+    folderRules = setOf("f4")
+    assertEquals(setOf("n4", "n5"), scope.current().noteIds)
+  }
+
+  @Test
+  fun `la regola di serie delle Registrazioni`() {
+    assertTrue(ComputerOnlyScope.personalByDefault(keepPersonalHere = false, hasComputer = true, mirrorEnabled = false))
+    assertFalse(ComputerOnlyScope.personalByDefault(keepPersonalHere = true, hasComputer = true, mirrorEnabled = false))
+    assertFalse(ComputerOnlyScope.personalByDefault(keepPersonalHere = false, hasComputer = false, mirrorEnabled = false))
+    assertFalse(ComputerOnlyScope.personalByDefault(keepPersonalHere = false, hasComputer = true, mirrorEnabled = true))
   }
 
   @Test

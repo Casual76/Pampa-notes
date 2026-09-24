@@ -414,7 +414,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
     item {
       FluidEmptyState(
         title = stringResource(R.string.note_audio_empty_title),
-        detail = stringResource(R.string.note_audio_empty_detail),
+        detail = stringResource(if (state.personal) R.string.note_audio_empty_detail_personal else R.string.note_audio_empty_detail),
       )
     }
     item {

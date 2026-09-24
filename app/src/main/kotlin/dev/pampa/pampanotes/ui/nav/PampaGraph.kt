@@ -61,6 +61,8 @@ class PampaNavActions(
   val pickFilesInto: (String) -> Unit,
   /** Lo stesso, con la cartella gia' scelta: «Importa» dentro Registrazioni. */
   val pickFilesIntoFolder: (String) -> Unit,
+  /** Lo stesso, dalla scheda Registrazioni con piu' cartelle: il wizard sceglie la prima di loro, non una materia. */
+  val pickFilesPersonal: () -> Unit,
 ) {
   fun openNote(id: String, tab: String? = null) = openDetail(Routes.note(id, tab), fresh = true)
   fun openSession(id: String) = openDetail(Routes.session(id))
@@ -272,9 +274,11 @@ fun NavGraphBuilder.listDestinations(actions: PampaNavActions, host: NavHostCont
       RecordingsRoute(
         onOpenFolder = actions::openFolder,
         onOpenNote = actions::openNote,
-        onOpenSession = actions::openSession,
+        // Come «Riprendi» della home: al posto di quello che era aperto, e il lettore parte. Con
+        // `openSession` sul tablet le registrazioni si impilavano una sull'altra nel dettaglio.
+        onListenSession = actions::resumeSession,
         onImportInto = actions.pickFilesIntoFolder,
-        onImport = actions.pickFiles,
+        onImportPersonal = actions.pickFilesPersonal,
       )
     }
   }

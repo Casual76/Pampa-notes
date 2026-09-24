@@ -37,6 +37,8 @@ data class ExportLabels(
   val pages: String = "pagine a mano",
   val pageSingular: String = "pagina a mano",
   val indexHowTo: String = "Ogni nota ha un file di appunti e un file per ogni lezione registrata; le lezioni lunghe sono divise in parti. Scegli per titolo e per data, e apri solo i file che servono alla domanda.",
+  /** Lo stesso per un pacchetto di Registrazioni ([ExportSet.personal]): niente lezioni. */
+  val indexHowToPersonal: String = "Ogni nota ha un file di appunti e un file per ogni giorno di registrazione; le registrazioni lunghe sono divise in parti. Scegli per titolo e per data, e apri solo i file che servono alla domanda.",
   val sources: String = "Fonti",
   val index: String = "Indice",
   val recording: String = "registrazione",

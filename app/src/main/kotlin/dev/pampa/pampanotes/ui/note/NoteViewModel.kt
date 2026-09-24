@@ -49,6 +49,8 @@ data class NoteUiState(
   val note: NoteEntity? = null,
   /** La materia: e' quella che colora la schermata. */
   val folder: FolderEntity? = null,
+  /** La nota sta in Registrazioni: le parole della scuola («lezione») qui non valgono. */
+  val personal: Boolean = false,
   val folderPath: String = "",
   val tags: List<String> = emptyList(),
   val sessions: List<SessionWithParts> = emptyList(),
@@ -100,15 +102,17 @@ class NoteViewModel @Inject constructor(
   private val missingSources = MutableStateFlow<Set<String>>(emptySet())
   private val missingParts = MutableStateFlow<Set<String>>(emptySet())
 
+  /** La materia della nota, e se la nota sta in Registrazioni. */
   @OptIn(ExperimentalCoroutinesApi::class)
-  private val folderFlow: Flow<FolderEntity?> = notes.observe(noteId).flatMapLatest { note ->
+  private val folderFlow: Flow<Pair<FolderEntity?, Boolean>> = notes.observe(noteId).flatMapLatest { note ->
     // Una nota di Registrazioni non ha una materia: la schermata resta dell'accento dell'app, come
     // la sezione da cui si arriva (vedi `PersonalScope`).
     note?.let { n ->
       folders.observeAll().map { all ->
-        all.firstOrNull { it.id == n.folderId }?.takeUnless { dev.pampa.pampanotes.core.repo.PersonalScope.isPersonal(it.id, all) }
+        val personal = dev.pampa.pampanotes.core.repo.PersonalScope.isPersonal(n.folderId, all)
+        all.firstOrNull { it.id == n.folderId }?.takeUnless { personal } to personal
       }
-    } ?: flowOf(null)
+    } ?: flowOf(null to false)
   }
 
   /**
@@ -143,7 +147,8 @@ class NoteViewModel @Inject constructor(
     @Suppress("UNCHECKED_CAST")
     NoteUiState(
       note = values[0] as NoteEntity?,
-      folder = values[7] as FolderEntity?,
+      folder = (values[7] as Pair<FolderEntity?, Boolean>).first,
+      personal = (values[7] as Pair<FolderEntity?, Boolean>).second,
       tags = values[1] as List<String>,
       sessions = values[2] as List<SessionWithParts>,
       sources = (values[3] as List<SourceEntity>).filter { it.derivedFromId == null },

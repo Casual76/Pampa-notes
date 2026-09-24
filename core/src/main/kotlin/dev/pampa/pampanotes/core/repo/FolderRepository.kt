@@ -53,13 +53,18 @@ class FolderRepository @Inject constructor(
 
   /**
    * «Sposta in Registrazioni» / «Sposta fra le materie»: solo una cartella di primo livello, che e'
-   * quella che decide per tutto quello che ha dentro. Le sottocartelle non si riscrivono: la loro
-   * colonna non conta, e riscriverle sporcherebbe per niente mezzo archivio nel sync.
+   * quella che decide per tutto quello che ha dentro. Le sottocartelle prendono lo stesso tipo: la
+   * loro colonna non conta (decide la radice), ma chi guarda una riga da sola — il sync, un'altra
+   * versione dell'app, chi legge il database — non deve trovarci una sezione che non e' la sua. Sono
+   * poche righe, e cambiano solo quelle che dicevano altro.
    */
   suspend fun setKind(id: String, kind: String): Boolean {
     val folder = folders.get(id) ?: return false
     if (folder.parentId != null || folder.kind == kind) return false
-    folders.upsert(folder.copy(kind = kind, updatedAt = System.currentTimeMillis()))
+    val now = System.currentTimeMillis()
+    folders.upsert(folder.copy(kind = kind, updatedAt = now))
+    val stale = kindRewrites(id, kind, folders.all()).filter { it.id != id }
+    if (stale.isNotEmpty()) folders.upsertAll(stale.map { it.copy(kind = kind, updatedAt = now) })
     return true
   }
 
@@ -85,11 +90,23 @@ class FolderRepository @Inject constructor(
     )
   }
 
-  /** Sposta una cartella sotto un'altra (o alla radice con null). Rifiuta di metterla dentro se stessa. */
+  /**
+   * Sposta una cartella sotto un'altra (o alla radice con null). Rifiuta di metterla dentro se stessa.
+   *
+   * Il tipo segue la sezione in cui la cartella finisce ([kindAfterMove]): sotto una radice di
+   * Registrazioni diventa personale con tutto quello che ha dentro, e portata al primo livello resta
+   * nella sezione da cui viene — una sottocartella di Registrazioni tirata fuori non diventa una
+   * materia solo perche' la sua colonna, scritta chissa' quando, diceva «school».
+   */
   suspend fun move(id: String, newParentId: String?): Boolean {
     val folder = folders.get(id) ?: return false
     if (newParentId != null && (newParentId == id || pathTo(newParentId).any { it.id == id })) return false
-    folders.upsert(folder.copy(parentId = newParentId, updatedAt = System.currentTimeMillis()))
+    val all = folders.all()
+    val kind = kindAfterMove(id, newParentId, all)
+    val now = System.currentTimeMillis()
+    folders.upsert(folder.copy(parentId = newParentId, kind = kind, updatedAt = now))
+    val stale = kindRewrites(id, kind, all).filter { it.id != id }
+    if (stale.isNotEmpty()) folders.upsertAll(stale.map { it.copy(kind = kind, updatedAt = now) })
     return true
   }
 
@@ -130,6 +147,35 @@ class FolderRepository @Inject constructor(
   suspend fun descendantIds(rootId: String): Set<String> = descendants(rootId, folders.all())
 
   companion object {
+    /**
+     * Il tipo che la radice di [folderId] dice, cioe' la sezione in cui la cartella sta adesso.
+     * Null se la cartella non c'e', o se i genitori girano in tondo: come per
+     * [PersonalScope.isPersonal], una radice che non si trova non e' di nessuna sezione.
+     */
+    fun rootKind(folderId: String, all: List<FolderEntity>): String? {
+      val byId = all.associateBy { it.id }
+      var current = byId[folderId] ?: return null
+      val seen = HashSet<String>()
+      while (seen.add(current.id)) {
+        val parentId = current.parentId ?: return current.kind
+        current = byId[parentId] ?: return null
+      }
+      return null
+    }
+
+    /**
+     * La sezione in cui [id] finisce spostandolo sotto [newParentId]: quella della nuova radice, o —
+     * portato al primo livello — quella in cui stava, che da quel momento e' la sua.
+     */
+    fun kindAfterMove(id: String, newParentId: String?, all: List<FolderEntity>): String =
+      (if (newParentId == null) rootKind(id, all) else rootKind(newParentId, all)) ?: FolderEntity.KIND_SCHOOL
+
+    /** Le cartelle sotto [rootId] (lei compresa) la cui colonna non dice gia' [kind]. */
+    fun kindRewrites(rootId: String, kind: String, all: List<FolderEntity>): List<FolderEntity> {
+      val ids = descendants(rootId, all)
+      return all.filter { it.id in ids && it.kind != kind }
+    }
+
     /**
      * La cartella e tutte quelle dentro, a qualunque profondita': la cartella per prima, poi un
      * livello alla volta. Le cartelle sono poche, e chi chiama le ha gia' lette tutte. Un ciclo
