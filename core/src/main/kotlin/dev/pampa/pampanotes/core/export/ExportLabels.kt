@@ -52,6 +52,16 @@ data class ExportLabels(
   val silence: String = "— %1\$s di silenzio —",
   /** «Chi parla»: la voce di un paragrafo, con `%1$d` al posto del numero («Voce 2»). */
   val voice: String = "Voce %1\$d",
+  /** «Capitoli»: i tratti di parlato fra i silenzi lunghi (vedi `Chapters`). */
+  val chapters: String = "Capitoli",
+  /** Il capitolo numero N, nella riga di `INDEX.md`. */
+  val chapter: String = "Capitolo",
+  /** Cosa sono, e soprattutto cosa non sono: un assistente li prenderebbe per riassunti. */
+  val chaptersDetail: String = "Dove si parla, fra un silenzio lungo e l'altro: per ogni tratto l'inizio, la fine, quanto si parla e le prime parole così come sono state dette. Sono confini, non riassunti: per sapere cosa si dice, leggi il testo.",
+  /** «42 min di parlato», con `%1$s` al posto della durata. */
+  val speech: String = "%1\$s di parlato",
+  /** Una citazione, con `%1$s` al posto delle parole: le virgolette dicono che non le ha scritte l'app. */
+  val quote: String = "“%1\$s”",
   val words: String = "parole",
   val note: String = "nota",
   val notesPlural: String = "note",

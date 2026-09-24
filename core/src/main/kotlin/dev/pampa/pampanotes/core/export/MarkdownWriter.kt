@@ -26,6 +26,8 @@ import java.util.Locale
  */
 class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
 
+  private val chapterLines = ChapterLines(labels)
+
   /**
    * Il file degli appunti di una nota, dentro un pacchetto.
    *
@@ -111,6 +113,12 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
       if (it.model.isNotBlank()) append("model: ").append(yaml(it.model)).append(NL)
     }
     append("words: ").append(piece.words).append(NL)
+    // Quanti capitoli ha la sessione intera, e quali cominciano in questo pezzo (sotto, per esteso).
+    val chapters = chapterLines.inPiece(session, piece)
+    if (chapters.isNotEmpty()) {
+      append("chapters: ").append(chapterLines.of(session).size).append(NL)
+      append("chapters_here: ").append(yaml("${chapters.first().number}–${chapters.last().number}")).append(NL)
+    }
     append("notes_file: ").append(yaml(layout.link(piece.path, files.notes))).append(NL)
     append("generator: ").append(yaml(generator)).append(NL)
     append("---").append(NL).append(NL)
@@ -131,6 +139,9 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
     if (transcript?.kind == TranscriptKind.REFINED && !session.hasTimings) {
       append("> ").append(labels.refinedHasNoTimings).append(NL).append(NL)
     }
+
+    // I capitoli che cominciano in questo pezzo, prima del testo: e' la mappa di quello che segue.
+    if (chapters.isNotEmpty()) append(chapterLines.section(chapters)).append(NL)
 
     append(blocksText(session, piece.blocks, announceFirst = piece.index > 1)).append(NL)
 
@@ -168,6 +179,10 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
       }
       append("### ").append(labels.transcript).append(" (").append(kindOf(session, withLabel = false)).append(')').append(NL).append(NL)
       if (options.timestamps && !session.hasTimings) append("> ").append(labels.refinedHasNoTimings).append(NL).append(NL)
+      // I capitoli, solo dove i tempi si stampano: senza, non si potrebbero seguire nel testo.
+      if (options.timestamps) {
+        chapterLines.of(session).takeIf { it.isNotEmpty() }?.let { append(chapterLines.section(it, level = 4)).append(NL) }
+      }
       append(blocksText(session, TranscriptPieces.blocks(session, options), announceFirst = false)).append(NL)
     }
 

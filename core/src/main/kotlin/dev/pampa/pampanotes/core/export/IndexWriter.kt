@@ -17,6 +17,8 @@ import dev.pampa.pampanotes.core.model.wordCount
  */
 class IndexWriter(private val labels: ExportLabels = ExportLabels()) {
 
+  private val chapterLines = ChapterLines(labels)
+
   fun index(layout: BundleLayout): String = buildString {
     val set = layout.set
     append("# ").append(labels.index).append(": ").append(set.scopeLabel).append(NL).append(NL)
@@ -74,8 +76,28 @@ class IndexWriter(private val labels: ExportLabels = ExportLabels()) {
         }
       }
       append(NL)
+      pieces?.let { append(chaptersOf(session, it, layout)) }
     }
     append(NL)
+  }
+
+  /**
+   * Una riga per capitolo sotto la sessione, col file in cui comincia quando i file sono piu' d'uno:
+   * in una registrazione di diciannove ore e' il modo di aprire il pezzo giusto senza aprirli tutti.
+   * Confini e prime parole, mai un riassunto (vedi [ChapterLines]).
+   */
+  private fun chaptersOf(session: ExportSession, pieces: List<TranscriptFile>, layout: BundleLayout): String = buildString {
+    // Solo se i tempi si stampano: un indice di tempi su un testo senza tempi non si segue.
+    if (pieces.none { it.startMs != null }) return@buildString
+    chapterLines.of(session).forEach { chapter ->
+      append("  - ").append(labels.chapter).append(' ').append(chapter.number).append(" · ").append(chapterLines.line(chapter))
+      if (pieces.size > 1) {
+        pieces.lastOrNull { piece -> piece.startMs?.let { it <= chapter.startMs } == true }?.let { piece ->
+          append(" · ").append(mdLink("${piece.index} ${labels.of} ${piece.count}", layout.link(INDEX, piece.path)))
+        }
+      }
+      append(NL)
+    }
   }
 
   private fun summary(set: ExportSet): String {

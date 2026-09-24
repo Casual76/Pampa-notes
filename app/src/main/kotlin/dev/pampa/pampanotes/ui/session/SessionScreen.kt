@@ -109,6 +109,8 @@ import dev.antigravity.fluidengine.ui.fluid.FluidSectionFootnote
 import dev.antigravity.fluidengine.ui.fluid.FluidSpokenText
 import dev.antigravity.fluidengine.ui.fluid.FluidSpokenWord
 import dev.pampa.pampanotes.core.transcription.TranscriptParagraphs
+import dev.pampa.pampanotes.core.transcription.Chapters
+import androidx.compose.material.icons.automirrored.rounded.Toc
 import dev.pampa.pampanotes.core.transcription.WordSource
 import dev.pampa.pampanotes.core.transcription.WordTimings
 import dev.antigravity.fluidengine.ui.fluid.fluidRowPressable
@@ -292,6 +294,38 @@ private fun SessionScreen(
   // Indietro chiude la ricerca prima della pagina, e chiuderla la cancella.
   BackHandler(enabled = search.open) { search.close() }
 
+  // --- Capitoli -----------------------------------------------------------------------------------
+  //
+  // I tratti di parlato fra i silenzi lunghi (vedi `Chapters`): confini e prime parole, mai
+  // riassunti. Si calcolano fuori dal thread della UI — diciannove ore sono ventimila segmenti — e
+  // solo sulla grezza a schermo, l'unica in cui un capitolo si puo' ritrovare nel testo.
+  val chapters by produceState(emptyList<Chapters.Chapter>(), state.segments, state.durationMs, searchOnRaw) {
+    value = if (searchOnRaw) {
+      withContext(Dispatchers.Default) { Chapters.index(state.segments, state.durationMs.takeIf { it > 0 }) }
+    } else {
+      emptyList()
+    }
+  }
+  // Il capitolo in ascolto, derivato come il paragrafo attivo: la pagina si ricompone quando cambia
+  // capitolo, non a ogni battito. -1 finche' il lettore non e' partito: «adesso» sul primo capitolo
+  // di una registrazione mai ascoltata sarebbe falso.
+  val currentChapter by remember(chapters) {
+    derivedStateOf {
+      val now = playback.value
+      if (chapters.isEmpty() || (!now.playing && now.positionMs <= 0L)) -1 else Chapters.currentIndex(chapters, now.positionMs)
+    }
+  }
+  var showingChapters by remember { mutableStateOf(false) }
+
+  fun openChapter(chapter: Chapters.Chapter) {
+    showingChapters = false
+    // Il lettore all'inizio del capitolo, e il testo con lui: l'inizio di un capitolo e' sempre
+    // l'inizio di un paragrafo, perche' un silenzio di un minuto va sempre a capo.
+    onSeek(chapter.startMs)
+    val paragraph = paragraphs.indexOfFirst { it.startMs >= chapter.startMs }.takeIf { it >= 0 } ?: return
+    scope.launch { scrollToKeyed(listState, PARAGRAPH_KEY, paragraph) }
+  }
+
   val renameLabel = stringResource(R.string.session_rename)
   val refineLabel = stringResource(R.string.refine_action)
   val retranscribeLabel = stringResource(R.string.session_retranscribe)
@@ -322,6 +356,14 @@ private fun SessionScreen(
     // spazio l'ultimo paragrafo di una lezione non si riesce a leggere.
     extraBottomPadding = (if (state.playable) PlayerBarHeight else 0.dp) + (if (search.open) SearchBarHeight else 0.dp),
     actions = {
+      // I capitoli, dalla barra: in mezzo a diciannove ore la riga sopra il testo e' lontana.
+      if (chapters.isNotEmpty()) {
+        FluidBarAction(
+          icon = Icons.AutoMirrored.Rounded.Toc,
+          contentDescription = stringResource(R.string.session_chapters),
+          onClick = { showingChapters = true },
+        )
+      }
       // La lente apre e chiude la ricerca dentro la registrazione: c'e' solo quando c'e' un testo.
       if (active != null && active.text.isNotBlank()) {
         FluidBarAction(
@@ -414,6 +456,18 @@ private fun SessionScreen(
       state, paragraphs, activeParagraph, { playback.value.positionMs }, onSeek, runSummary,
       search = search,
       refinedBlocks = refinedBlocks.takeIf { search.open },
+      chapters = chapters,
+      currentChapter = currentChapter,
+      onOpenChapters = { showingChapters = true },
+    )
+  }
+
+  if (showingChapters && chapters.isNotEmpty()) {
+    ChaptersSheet(
+      chapters = chapters,
+      current = currentChapter,
+      onPick = { openChapter(it) },
+      onDismiss = { showingChapters = false },
     )
   }
 
@@ -819,6 +873,10 @@ private fun LazyListScope.transcriptBody(
   search: TranscriptSearchState,
   /** La raffinata a blocchi di testo semplice, mentre si cerca; null quando la ricerca e' chiusa. */
   refinedBlocks: List<String>?,
+  /** I capitoli della grezza (vuota sotto tre): una riga sopra il testo apre l'elenco. */
+  chapters: List<Chapters.Chapter> = emptyList(),
+  currentChapter: Int = -1,
+  onOpenChapters: () -> Unit = {},
 ) {
   val active = state.activeTranscript ?: return
 
@@ -857,6 +915,11 @@ private fun LazyListScope.transcriptBody(
     item(key = "words-estimated") {
       FluidSectionFootnote(text = stringResource(R.string.session_words_estimated))
     }
+  }
+
+  // «12 capitoli»: una riga sola sopra il testo, che apre l'elenco (vedi `ChaptersSheet`).
+  if (chapters.isNotEmpty()) {
+    item(key = "chapters") { ChaptersEntry(chapters = chapters, current = currentChapter, onOpen = onOpenChapters) }
   }
 
   itemsIndexed(items = paragraphs, key = { index, _ -> "$PARAGRAPH_KEY$index" }) { index, paragraph ->

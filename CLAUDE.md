@@ -622,6 +622,28 @@ restavano evidenziate sulla scheda nuova finche' la ricerca non ripartiva.
 I tasti piccoli del lettore e della ricerca (44 e 40 dp) prendono il dito su 48 dp senza cambiare la
 capsula (`touchTarget`, in `PlayerBar.kt`: i modificatori dopo vedono 48, il layout intorno la misura
 disegnata), e cosi' il tempo rimanente/totale in fondo allo scrubber (`touchHeight`).
+
+**Capitoli** (`Chapters`, puro, in `core/transcription/`): in una registrazione lunga, l'indice dei
+tratti in cui si parla. **Solo confini e citazioni, mai riassunti**: di ogni capitolo si dicono inizio
+e fine, minuti di parlato, parole, voci (se separate) e le prime parole cosi' come sono state dette,
+fra virgolette (`quoteOf`: la prima frase se sta in otto parole e ne ha almeno tre, altrimenti otto
+parole e «…»; si tocca solo il contorno). Nessun titolo inventato, nessun modello: i confini vengono
+dai tempi della grezza. La regola: un silenzio di almeno `thresholdFor` — un trentesimo della
+sessione, fra 60 s e 5 min (un'ora di lezione taglia a 2 min, cioe' all'intervallo; da due ore e
+mezza in su a 5 min, che in una registrazione lasciata accesa separa una conversazione dall'altra) —
+apre un capitolo, misurato in tempo di sessione anche a cavallo fra due parti (il confine fra file da
+solo non taglia); un tratto con meno di un minuto di parlato si attacca al vicino dal lato del
+silenzio piu' corto (niente si butta); oltre 40 si tolgono i confini dei silenzi piu' corti. Si
+mostrano da 3 in su (`index`), quindi una lezione normale non ne ha. Si calcolano al volo (niente
+colonne, niente sync, un riordino li rifa'). Nella sessione, solo sulla grezza: il tasto dell'indice nella barra
+e una riga «12 capitoli» sopra il testo aprono `ChaptersSheet` (tutta pagina, 48 dp a riga, il
+capitolo in ascolto con «adesso» nell'occhiello e come stato per TalkBack); un tocco porta lettore e
+testo all'inizio del capitolo, che e' sempre l'inizio di un paragrafo. Nell'export coi tempi il file
+della trascrizione ha `chapters:` nel front-matter e una sezione «Capitoli» con i capitoli che
+cominciano in quel pezzo (`ChapterLines`: `[13:58:00]–14:40:12 · 42 min di parlato · … · “…”`, lo
+stesso `[hh:mm:ss]` del paragrafo, cosi' un `grep` porta al testo), e `INDEX.md` una riga per
+capitolo sotto la sessione, col pezzo in cui comincia; le righe non contano nelle parole. La scheda
+Registrazioni non li conta: servirebbe leggere tutti i segmenti di ogni registrazione lunga.
 ## Raffinamento
 
 L'unico posto in cui l'app manda del testo a un modello di chat, e fa una cosa sola: riscrivere
@@ -673,7 +695,8 @@ cartella di chi lo apre. Dentro, in ordine d'importanza:
   ricorda che e' testo di una macchina e dove stanno gli appunti, i collegamenti al pezzo prima e dopo.
   Un silenzio di un minuto o piu' e' una riga sua, `*[— 16 min di silenzio —]*`, prima del paragrafo
   in cui si riprende (vedi «Sessioni, parti, segmenti»): senza, la frase dopo sembrava la risposta a
-  quella prima. Non conta nelle parole.
+  quella prima. Non conta nelle parole. Da tre capitoli in su (vedi «Capitoli»), in cima l'elenco dei
+  capitoli di quel pezzo: confini e prime parole, non riassunti.
   Appunti e trascrizione in **file diversi** e' la distinzione da cui dipende tutto: un modello che
   non sa quale dei due sta leggendo tratta un errore di Whisper come una cosa che l'autore ha scritto.
 - `images/<nota>/pagina-N.png` — le pagine scritte a mano. Entrano sempre, anche con gli originali
