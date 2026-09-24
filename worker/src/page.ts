@@ -122,6 +122,9 @@ export function pageHtml(): string {
   // in cui le voci compaiono, parte per parte (ogni registrazione si separa per conto suo). Se
   // nessuna registrazione ha almeno due voci non si dice niente: un monologo in due parti sono due
   // chiavi, ma una persona sola.
+  // La chiave e' quella di VoiceNames.key nell'app, parte ed etichetta: e' anche quella dei nomi
+  // dati alle voci (session.voiceNames).
+  function voiceKey(seg) { return seg.partId + '|' + seg.speaker; }
   function voices(segments) {
     var map = {}, count = 0, byPart = {}, conversation = false;
     for (var i = 0; i < segments.length; i++) {
@@ -133,7 +136,7 @@ export function pageHtml(): string {
     if (!conversation) return {};
     for (var j = 0; j < segments.length; j++) {
       var t = segments[j]; if (!t.speaker) continue;
-      var key = t.partId + '\\u0000' + t.speaker;
+      var key = voiceKey(t);
       if (!(key in map)) map[key] = ++count;
     }
     return map;
@@ -144,11 +147,12 @@ export function pageHtml(): string {
     for (var i = 0; i < segments.length; i++) {
       var seg = segments[i];
       var gap = cur ? seg.sessionStartMs - cur.end : 0;
-      var voice = seg.speaker ? (numbers[seg.partId + '\\u0000' + seg.speaker] || 0) : 0;
+      var key = seg.speaker ? voiceKey(seg) : null;
+      var voice = key ? (numbers[key] || 0) : 0;
       if (!cur || gap > 2000 || chars > 600 || (seg.speaker || null) !== cur.speaker) {
         // Un minuto o piu' senza parlato si dice, come nell'app: sedici minuti di silenzio non sono
         // la pausa fra due frasi.
-        cur = { start: seg.sessionStartMs, end: seg.sessionEndMs, segs: [], silence: gap >= 60000 ? gap : 0, speaker: seg.speaker || null, voice: voice };
+        cur = { start: seg.sessionStartMs, end: seg.sessionEndMs, segs: [], silence: gap >= 60000 ? gap : 0, speaker: seg.speaker || null, voice: voice, key: voice ? key : null };
         out.push(cur); chars = 0;
       }
       cur.segs.push(seg); cur.end = seg.sessionEndMs; chars += seg.text.length;
@@ -241,7 +245,7 @@ export function pageHtml(): string {
     if (refined) views.refined = el('div', 'card notes', md(refined.text));
     if (raw) {
       var rawView = el('div', playable ? 'card' : 'card static');
-      var paras = paragraphs(raw.segments);
+      var paras = paragraphs(raw.segments), names = session.voiceNames || {};
       for (var p = 0; p < paras.length; p++) {
         var para = paras[p], row = el('div', 'para'), t = el('span', 't', fmt(para.start)), x = el('span', 'x');
         if (para.silence) {
@@ -251,7 +255,8 @@ export function pageHtml(): string {
         }
         (function (start) { t.addEventListener('click', function () { seek(start); }); })(para.start);
         // La voce, piccola sotto il tempo, solo dove cambia.
-        if (para.voice && (p === 0 || paras[p - 1].voice !== para.voice)) t.appendChild(el('span', 'v', 'Voce ' + para.voice));
+        // Il nome dato nell'app («Rinomina le voci»), o «Voce N»; scritto da un utente, passa da esc.
+        if (para.voice && (p === 0 || paras[p - 1].voice !== para.voice)) t.appendChild(el('span', 'v', esc(names[para.key] || ('Voce ' + para.voice))));
         for (var s = 0; s < para.segs.length; s++) {
           var ws = wordsOf(para.segs[s]);
           for (var k = 0; k < ws.length; k++) {

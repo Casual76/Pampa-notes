@@ -580,6 +580,14 @@
   <string name="session_silence">— %1$s di silenzio —</string>
   <string name="session_silence_hours">h</string>
   <string name="session_voice">Voce %1$d</string>
+  <!-- «Rinomina le voci»: il pop-up che nasce toccando «Voce 2» sopra un paragrafo. -->
+  <string name="session_voice_rename_title">Chi è %1$s?</string>
+  <string name="session_voice_rename_action">Dai un nome alla voce</string>
+  <string name="session_voice_name_label">Nome</string>
+  <string name="session_voice_name_placeholder">Marco, la prof, io…</string>
+  <string name="session_voice_reset">Torna a %1$s</string>
+  <string name="session_voice_suggestions">Già usati in questa nota</string>
+  <string name="session_voice_rename_footnote">Vale per questa sessione: nel testo, nell\'export e nella pagina condivisa.</string>
   <string name="session_silence_resume">%1$s. Tocca per riprendere dal minuto %2$s</string>
 
   <!-- Le parti di una sessione -->

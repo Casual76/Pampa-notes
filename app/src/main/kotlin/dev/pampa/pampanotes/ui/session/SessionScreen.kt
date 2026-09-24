@@ -111,6 +111,7 @@ import dev.antigravity.fluidengine.ui.fluid.FluidSpokenWord
 import dev.pampa.pampanotes.core.transcription.TranscriptParagraphs
 import dev.pampa.pampanotes.core.transcription.WordSource
 import dev.pampa.pampanotes.core.transcription.WordTimings
+import dev.pampa.pampanotes.core.transcription.VoiceNames
 import dev.antigravity.fluidengine.ui.fluid.fluidRowPressable
 import androidx.compose.ui.text.style.TextAlign
 
@@ -144,6 +145,7 @@ fun SessionRoute(
     onDismissJob = { viewModel.dismissJob(it) },
     onFetchMissing = viewModel::fetchMissing,
     onRename = viewModel::rename,
+    onRenameVoice = viewModel::renameVoice,
     onShowTranscript = viewModel::showTranscript,
     onMovePart = viewModel::movePart,
     onMovePartTo = viewModel::movePartTo,
@@ -176,6 +178,7 @@ private fun SessionScreen(
   onDismissJob: (String) -> Unit,
   onFetchMissing: () -> Unit,
   onRename: (String, String) -> Unit,
+  onRenameVoice: (key: String, name: String?) -> Unit,
   onShowTranscript: (String) -> Unit,
   onMovePart: (String, Int) -> Unit,
   onMovePartTo: (String, String) -> Unit,
@@ -199,8 +202,12 @@ private fun SessionScreen(
   var refining by remember { mutableStateOf(false) }
   // Dove sta il tasto «altro»: i pop-up di rinomina e ripulitura nascono da li'.
   var moreOrigin by remember { mutableStateOf<Rect?>(null) }
+  // «Rinomina le voci»: la voce toccata, e dove sta la sua etichetta (il pop-up nasce da li').
+  var editingVoice by remember { mutableStateOf<VoiceLabel?>(null) }
+  var voiceOrigin by remember { mutableStateOf<Rect?>(null) }
 
   val paragraphs = remember(state.segments) { paragraphsOf(state.segments) }
+  val voiceNames = remember(state.session?.voiceNames) { VoiceNames.decode(state.session?.voiceNames) }
   val resources = LocalContext.current.resources
   val runSummary = remember(resources, state.runOfRaw, state.raw, state.segments, state.parts) {
     RunText.sessionLine(resources, state.runOfRaw, state.pace)
@@ -414,6 +421,30 @@ private fun SessionScreen(
       state, paragraphs, activeParagraph, { playback.value.positionMs }, onSeek, runSummary,
       search = search,
       refinedBlocks = refinedBlocks.takeIf { search.open },
+      voiceNames = voiceNames,
+      onVoiceClick = { voice, origin ->
+        voiceOrigin = origin
+        editingVoice = voice
+      },
+    )
+  }
+
+  editingVoice?.let { voice ->
+    val session = state.session
+    // I nomi gia' dati in questa nota: di solito sono le stesse persone di sessione in sessione.
+    val suggestions = remember(voice, session?.voiceNames, state.siblings) {
+      val columns = (listOfNotNull(session) + state.siblings).distinctBy { it.id }.map { it.voiceNames }
+      VoiceNames.suggestions(columns, exclude = voice.name)
+    }
+    VoiceRenameSheet(
+      voice = voice,
+      suggestions = suggestions,
+      origin = { voiceOrigin },
+      onDismiss = { editingVoice = null },
+      onConfirm = { name ->
+        editingVoice = null
+        onRenameVoice(voice.key, name)
+      },
     )
   }
 
@@ -819,6 +850,10 @@ private fun LazyListScope.transcriptBody(
   search: TranscriptSearchState,
   /** La raffinata a blocchi di testo semplice, mentre si cerca; null quando la ricerca e' chiusa. */
   refinedBlocks: List<String>?,
+  /** «Rinomina le voci»: i nomi dati alle voci di questa sessione (vedi `VoiceNames`). */
+  voiceNames: Map<String, String> = emptyMap(),
+  /** Un tocco sull'etichetta di una voce, con dove sta: apre «Chi e' Voce 2?». */
+  onVoiceClick: ((VoiceLabel, Rect?) -> Unit)? = null,
 ) {
   val active = state.activeTranscript ?: return
 
@@ -869,8 +904,11 @@ private fun LazyListScope.transcriptBody(
       }
       ParagraphCard(
         paragraph = paragraph,
-        // «Chi parla»: la voce si dice dove cambia, non su ogni card.
-        voice = paragraph.voice?.takeIf { it != paragraphs.getOrNull(index - 1)?.voice },
+        // «Chi parla»: la voce si dice dove cambia, non su ogni card; col nome, se gliel'hanno dato.
+        voice = paragraph.voice?.takeIf { it != paragraphs.getOrNull(index - 1)?.voice }?.let { number ->
+          paragraph.voiceKey?.let { key -> VoiceLabel(key, number, voiceNames[key]) }
+        },
+        onVoiceClick = onVoiceClick,
         isActive = isActive,
         // Una lambda e non un valore: la posizione cambia cinque volte al secondo, e passandola come
         // parametro ogni battito rimisurerebbe il paragrafo. Cosi' cambia solo il disegno.
@@ -930,29 +968,35 @@ private fun SilenceRow(silenceMs: Long, resumeMs: Long, onSeek: (Long) -> Unit) 
 @Composable
 private fun ParagraphCard(
   paragraph: Paragraph,
-  voice: Int?,
+  /** La voce da dire sopra il paragrafo (solo dove cambia), o null. */
+  voice: VoiceLabel?,
   isActive: Boolean,
   positionMs: () -> Long,
   onSeek: (Long) -> Unit,
   /** Le occorrenze della ricerca in questo paragrafo, e quella corrente se e' qui. */
   highlights: List<IntRange> = emptyList(),
   currentHighlight: IntRange? = null,
+  /** Un tocco sulla voce: «Chi e' Voce 2?». */
+  onVoiceClick: ((VoiceLabel, Rect?) -> Unit)? = null,
 ) {
   var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
   val scheme = MaterialTheme.colorScheme
 
   FluidCard(highlighted = isActive, onClick = null, animateContent = false) {
     val time = Formats.timestamp(paragraph.startMs)
-    // «0:42 · Voce 2»: la voce sta nella stessa riga piccola del tempo, e TalkBack la legge con lui.
-    val spoken = voice?.let { "$time · ${stringResource(R.string.session_voice, it)}" } ?: time
-    val atLabel = stringResource(R.string.session_at, spoken)
-    Text(
-      text = spoken,
-      style = MaterialTheme.typography.labelMedium,
-      color = if (isActive) scheme.primary else scheme.onSurfaceVariant,
-      fontWeight = FontWeight.SemiBold,
-      modifier = Modifier.semantics { contentDescription = atLabel },
-    )
+    val labelColor = if (isActive) scheme.primary else scheme.onSurfaceVariant
+    if (voice == null) {
+      val atLabel = stringResource(R.string.session_at, time)
+      Text(
+        text = time,
+        style = MaterialTheme.typography.labelMedium,
+        color = labelColor,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.semantics { contentDescription = atLabel },
+      )
+    } else {
+      VoiceTimeLabel(time = time, voice = voice, color = labelColor, onVoiceClick = onVoiceClick)
+    }
     // Il paragrafo che si sta ascoltando si accende parola per parola; gli altri stanno nel colore
     // pieno, perche' un testo velato che nessuno sta ascoltando e' solo un testo sbiadito.
     FluidSpokenText(
@@ -1000,6 +1044,9 @@ private class Paragraph(val base: TranscriptParagraphs.Paragraph) {
 
   /** «Chi parla»: il numero della voce, o null senza voci separate. */
   val voice: Int? get() = base.voice
+
+  /** La chiave della voce, a cui si attacca il nome dato dall'utente (`VoiceNames`). */
+  val voiceKey: String? get() = base.voiceKey
 
   /**
    * Le parole con i loro tempi, nel tempo della sessione.

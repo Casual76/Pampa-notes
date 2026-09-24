@@ -13,6 +13,7 @@ import dev.pampa.pampanotes.core.db.TranscriptKind
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.transcription.SessionSegment
 import dev.pampa.pampanotes.core.transcription.SessionTranscript
+import dev.pampa.pampanotes.core.transcription.VoiceNames
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -105,6 +106,32 @@ class SessionRepositoryTest {
     assertEquals(1, moved.size)
     assertEquals(1_000L, moved[0].sessionStartMs)
     assertEquals("groq", split.provider)
+  }
+
+  @Test
+  fun il_nome_di_una_voce_e_una_modifica_e_segue_la_parte_separata() = runTest {
+    val session = seedSession("sessione", parts = listOf("prima" to 30L, "seconda" to 20L))
+    val before = db.sessions().get(session)!!.updatedAt
+
+    repository.renameVoice(session, VoiceNames.key("prima", "SPEAKER_00"), "  Marco ")
+    repository.renameVoice(session, VoiceNames.key("seconda", "SPEAKER_01"), "Giulia")
+
+    val named = db.sessions().get(session)!!
+    // Come il titolo: alza il tempo, cosi' sale col sync e vince per ultimo-che-scrive.
+    assertTrue(named.updatedAt >= before)
+    assertEquals(
+      mapOf(VoiceNames.key("prima", "SPEAKER_00") to "Marco", VoiceNames.key("seconda", "SPEAKER_01") to "Giulia"),
+      VoiceNames.decode(named.voiceNames),
+    )
+
+    // Separata la seconda parte, il suo nome va con lei; quello della prima resta dov'e'.
+    val created = repository.splitAt("seconda")!!
+    assertEquals(mapOf(VoiceNames.key("prima", "SPEAKER_00") to "Marco"), VoiceNames.decode(db.sessions().get(session)!!.voiceNames))
+    assertEquals(mapOf(VoiceNames.key("seconda", "SPEAKER_01") to "Giulia"), VoiceNames.decode(db.sessions().get(created.id)!!.voiceNames))
+
+    // Un nome vuoto lo toglie, e senza nomi la colonna torna null (l'impronta di prima).
+    repository.renameVoice(session, VoiceNames.key("prima", "SPEAKER_00"), "")
+    assertNull(db.sessions().get(session)!!.voiceNames)
   }
 
   @Test

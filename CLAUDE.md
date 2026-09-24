@@ -1036,8 +1036,32 @@ metteva una voce davanti a ogni paragrafo. La pagina condivisa (`worker/src/page
 regola. `split` va a capo
 anche dove cambia la voce. A schermo la voce sta nella riga del tempo della card, solo dove cambia
 («0:42 · Voce 2»); nell'export coi tempi ogni paragrafo comincia con `**Voce 1:**` (non conta nelle
-parole); la pagina di una condivisione la scrive piccola sotto il tempo. Rinominare le voci («Voce 1»
-→ «Marco») non c'e': vorrebbe una mappa per sessione da sincronizzare.
+parole); la pagina di una condivisione la scrive piccola sotto il tempo.
+
+**Rinomina le voci.** Un tocco su «Voce 2» nella riga del tempo apre «Chi è Voce 2?» (`VoiceRenameSheet`
+in `ui/session/SessionVoices.kt`, un pop-up che nasce dall'etichetta): un campo, i nomi gia' usati
+nelle sessioni della stessa nota come scorciatoie (`VoiceNames.suggestions`: i piu' usati prima,
+senza doppioni di maiuscole), «Salva» e, se la voce ha gia' un nome, «Torna a Voce 2». Per TalkBack
+il tempo e la voce sono due nodi: «Al minuto 0:42», poi la voce come tasto con l'azione «Dai un nome
+alla voce»; il tocco e' alto un dito (`touchHeight`) senza far crescere la card. Il nome vale **per
+sessione**, perche' l'etichetta vale solo dentro la separazione che l'ha data: `SessionEntity.voiceNames`
+(database 11, nullable) e' un oggetto JSON dalla chiave della voce — `VoiceNames.key`, «`<partId>|SPEAKER_00`»,
+la stessa di `TranscriptParagraphs.voices` e di `Paragraph.voiceKey`, che non cambia riordinando le
+parti — al nome. Lo legge e lo scrive solo `VoiceNames` (puro, `VoiceNamesTest`): nomi ripuliti
+(spazi e caratteri di controllo ridotti a uno, al massimo 40 caratteri veri, vuoto = nessun nome),
+chiavi in ordine (due dispositivi con gli stessi nomi scrivono lo stesso testo), null quando non
+resta nessun nome. Una voce senza nome resta «Voce N», col numero di sempre. Rinominare e' una
+modifica vera: `SessionRepository.renameVoice` alza `updatedAt` come il titolo, sale col sync e vince
+per ultimo-che-scrive; **vuoto non entra nell'impronta** della sessione (`SyncCodec.strip`, come il
+segno «in trascrizione su»: `SessionPayloadTest`), quindi l'aggiornamento non sporca nessuna
+sessione. I nomi seguono la parte quando cambia sessione (sposta, separa, unisci: `VoiceNames.carry`)
+e si dimenticano quando la parte si ritrascrive (`VoiceNames.forget` in `saveTranscription`): la
+separazione nuova ridà le etichette da capo, e «Marco» finirebbe sulle frasi di un altro. I nomi
+vanno dappertutto dove va «Voce N»: a schermo, nell'export (`ExportSession.voiceNames` →
+`TranscriptBlock.voiceName`, `**Marco:**`, coi segni del Markdown resi letterali) e nella pagina
+condivisa, che legge `voiceNames` dalla riga della sessione nell'indice (`voiceNamesOf` in
+`worker/src/shares.ts`, le stesse regole, e il nome passa da `esc` prima del DOM). Un'app di prima
+ignora il campo e, se riscrive la sessione, lo perde: si aggiornano tutti.
 
 **Annullare, perdersi, ripetersi.** Ogni trascrizione sul companion e' un lavoro condiviso
 (`SharedWork`) con chi lo aspetta: due richieste uguali (stessa impronta, lingua, vocabolario,

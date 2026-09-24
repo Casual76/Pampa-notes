@@ -88,6 +88,8 @@ class TranscriptParagraphsTest {
     )
     assertEquals(listOf(2, 1, 1), paragraphs.map { it.segments.size })
     assertEquals("la prima voce che parla e' la Voce 1, qualunque etichetta abbia", listOf(1, 2, 1), paragraphs.map { it.voice })
+    // La chiave a cui si attacca un nome («Rinomina le voci») e' la parte con l'etichetta.
+    assertEquals(listOf("p1|SPEAKER_01", "p1|SPEAKER_00", "p1|SPEAKER_01"), paragraphs.map { it.voiceKey })
   }
 
   @Test
@@ -95,6 +97,7 @@ class TranscriptParagraphsTest {
     val alone = TranscriptParagraphs.split(listOf(spoken(0, "SPEAKER_00"), spoken(1_000, "SPEAKER_00")))
     assertEquals(1, alone.size)
     assertNull(alone.single().voice)
+    assertNull("senza numero non c'e' niente da rinominare", alone.single().voiceKey)
     val plain = TranscriptParagraphs.split(listOf(spoken(0, null), spoken(1_000, null)))
     assertEquals(1, plain.size)
     assertNull(plain.single().voice)

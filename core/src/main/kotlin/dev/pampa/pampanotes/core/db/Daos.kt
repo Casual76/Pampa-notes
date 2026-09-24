@@ -303,6 +303,10 @@ interface SessionDao {
   @Query("UPDATE sessions SET title = :title, date = :date, updatedAt = :updatedAt WHERE id = :id")
   suspend fun rename(id: String, title: String, date: String, updatedAt: Long)
 
+  /** «Rinomina le voci»: una modifica vera, e alza `updatedAt` come il titolo (vedi `VoiceNames`). */
+  @Query("UPDATE sessions SET voiceNames = :voiceNames, updatedAt = :updatedAt WHERE id = :id")
+  suspend fun setVoiceNames(id: String, voiceNames: String?, updatedAt: Long)
+
   @Query("UPDATE sessions SET position = :position, updatedAt = :updatedAt WHERE id = :id")
   suspend fun setPosition(id: String, position: Int, updatedAt: Long)
 

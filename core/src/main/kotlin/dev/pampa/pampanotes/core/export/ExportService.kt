@@ -24,6 +24,7 @@ import dev.pampa.pampanotes.core.files.FilesInUse
 import dev.pampa.pampanotes.core.model.slugify
 import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.repo.PersonalScope
+import dev.pampa.pampanotes.core.transcription.VoiceNames
 import java.io.File
 import java.io.IOException
 import java.time.Instant
@@ -496,6 +497,7 @@ class ExportService @Inject constructor(
         transcript = chosen,
         raw = raw,
         segments = raw?.let { segments.byTranscript(it.id) }.orEmpty(),
+        voiceNames = VoiceNames.decode(row.session.voiceNames),
       )
     }
 

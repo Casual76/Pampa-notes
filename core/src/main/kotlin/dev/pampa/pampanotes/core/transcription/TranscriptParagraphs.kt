@@ -57,6 +57,12 @@ object TranscriptParagraphs {
      * n'e' una sola — «Voce 1» su ogni paragrafo di una lezione non direbbe niente. Vedi [voices].
      */
     val voice: Int? = null,
+    /**
+     * La chiave della voce ([VoiceNames.key]: parte ed etichetta), quando [voice] c'e'. E' quella a
+     * cui si attacca un nome dato dall'utente («Rinomina le voci»): il numero cambia se si
+     * riordinano le parti, la chiave no.
+     */
+    val voiceKey: String? = null,
   ) {
     val startMs: Long get() = segments.first().sessionStartMs
     val endMs: Long get() = segments.last().sessionEndMs
@@ -90,7 +96,9 @@ object TranscriptParagraphs {
     var silence: Long? = null
 
     fun close() {
-      result += Paragraph(current.toList(), silence, voiceKey(current.first())?.let { voices[it] })
+      val key = voiceKey(current.first())
+      val number = key?.let { voices[it] }
+      result += Paragraph(current.toList(), silence, number, key.takeIf { number != null })
     }
 
     segments.forEachIndexed { index, segment ->
@@ -141,7 +149,8 @@ object TranscriptParagraphs {
     return numbers
   }
 
-  private fun voiceKey(segment: SegmentEntity): String? = segment.speaker?.let { "${segment.partId}\u0000$it" }
+  /** La chiave di una voce, la stessa a cui si attaccano i nomi ([VoiceNames.key]). */
+  fun voiceKey(segment: SegmentEntity): String? = segment.speaker?.let { VoiceNames.key(segment.partId, it) }
 
   /**
    * «16 min», «1 h 20 min», «2 h»: quanto e' durato un silenzio, arrotondato al minuto.
