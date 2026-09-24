@@ -59,6 +59,13 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import dev.pampa.pampanotes.core.db.FolderEntity
 import dev.pampa.pampanotes.core.repo.FolderRepository
+import dev.pampa.pampanotes.core.playback.SilenceSkipper
+import dev.pampa.pampanotes.core.transcription.SessionAssembler
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+
+/** Un salto di silenzio appena fatto, da dire per un attimo nel lettore: quanto, e quale (per ripeterlo). */
+data class SkipNotice(val skippedMs: Long, val id: Long)
 
 /** Cosa mostrare nel pannello di raffinamento quando si apre. */
 data class RefineDefaults(
@@ -200,6 +207,21 @@ class SessionViewModel @Inject constructor(
   private val _refineDefaults = MutableStateFlow(RefineDefaults())
   val refineDefaults: StateFlow<RefineDefaults> = _refineDefaults
 
+  /** «Salta i silenzi», di questo dispositivo (vedi [SilenceSkipper]). */
+  val skipSilence: StateFlow<Boolean> =
+    settingsStore.skipSilence.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+  /** L'ultimo salto, per il «saltati 16 min» nel lettore; torna null da solo dopo un paio di secondi. */
+  private val _skipNotice = MutableStateFlow<SkipNotice?>(null)
+  val skipNotice: StateFlow<SkipNotice?> = _skipNotice
+  private var noticeJob: Job? = null
+
+  /**
+   * I silenzi della sessione, rifatti quando cambiano segmenti o parti. Un riordino li sposta tutti,
+   * e con loro il ricordo del silenzio rispettato: si ricomincia da un [SilenceSkipper] nuovo.
+   */
+  @Volatile private var skipper = SilenceSkipper(emptyList())
+
   /** Le parti senza file qui; null finche' il disco non e' stato guardato. */
   private val _missing = MutableStateFlow<List<AudioPartEntity>?>(null)
   private val _fetch = MutableStateFlow<FetchState?>(null)
@@ -317,7 +339,47 @@ class SessionViewModel @Inject constructor(
       }
     }
     viewModelScope.launch { rememberListening() }
+    viewModelScope.launch {
+      uiState
+        .map { state -> SilenceSkipper.gapsOf(state.segments, state.parts.map { SessionAssembler.Part(it.id, it.durationMs) }) }
+        .distinctUntilChanged()
+        .collect { gaps -> skipper = SilenceSkipper(gaps) }
+    }
+    viewModelScope.launch { skipSilences() }
   }
+
+  // ---------------------------------------------------------------------------------------------
+  // Salta i silenzi
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * A ogni battito del lettore, se l'interruttore e' acceso, si chiede a [SilenceSkipper] se si e'
+   * entrati in un silenzio lungo, e in quel caso si salta dove si ricomincia a parlare.
+   *
+   * Il salto passa da [SessionPlayer.seekTo] e non da [seekTo]: non e' una scelta dell'utente, e il
+   * silenzio dopo va saltato come questo. Le scelte dell'utente (scrubber, frecce, tocchi sul testo)
+   * passano invece da [seekTo] e [skip], che lo dicono al saltatore: un silenzio in cui si va apposta
+   * si ascolta. Funziona attraverso i confini fra parti perche' tutto e' in tempo di sessione.
+   */
+  private suspend fun skipSilences() {
+    playback.collect { state ->
+      if (!skipSilence.value || !state.ready) return@collect
+      val jump = skipper.onTick(state.positionMs, state.playing) ?: return@collect
+      player.seekTo(jump.toMs)
+      showNotice(jump.skippedMs)
+    }
+  }
+
+  private fun showNotice(skippedMs: Long) {
+    _skipNotice.value = SkipNotice(skippedMs, System.nanoTime())
+    noticeJob?.cancel()
+    noticeJob = viewModelScope.launch {
+      delay(NOTICE_MS)
+      _skipNotice.value = null
+    }
+  }
+
+  fun setSkipSilence(on: Boolean) = viewModelScope.launch { settingsStore.setSkipSilence(on) }
 
   // ---------------------------------------------------------------------------------------------
   // Riprendi ad ascoltare
@@ -399,9 +461,14 @@ class SessionViewModel @Inject constructor(
 
   fun playPause() = player.playPause()
 
-  fun skip(deltaMs: Long) = player.skip(deltaMs)
+  fun skip(deltaMs: Long) {
+    val state = playback.value
+    skipper.onUserSeek((state.positionMs + deltaMs).coerceIn(0L, state.durationMs))
+    player.skip(deltaMs)
+  }
 
   fun seekTo(sessionMs: Long) {
+    skipper.onUserSeek(sessionMs)
     player.seekTo(sessionMs)
     _followPlayback.value = true
   }
@@ -510,5 +577,7 @@ class SessionViewModel @Inject constructor(
     /** Ogni quanto si salva il punto mentre suona: abbastanza da non perdere piu' di una frase. */
     const val SAVE_EVERY_MS = 15_000L
     const val RESUME_CONSUMED = "resumeConsumed"
+    /** Quanto resta a schermo «saltati 16 min»: il tempo di leggerlo, non di aspettarlo. */
+    const val NOTICE_MS = 2_500L
   }
 }

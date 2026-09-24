@@ -44,6 +44,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberCoroutineScope
+import dev.antigravity.fluidengine.ui.fluid.FluidBarAction
+import dev.pampa.pampanotes.core.transcription.TranscriptSearch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.antigravity.fluidengine.ui.fluid.FluidAlert
 import dev.antigravity.fluidengine.ui.fluid.FluidAlertAction
@@ -107,6 +124,8 @@ fun SessionRoute(
   val playback = viewModel.playback.collectAsStateWithLifecycle()
   val following by viewModel.followPlayback.collectAsStateWithLifecycle()
   val refineDefaults by viewModel.refineDefaults.collectAsStateWithLifecycle()
+  val skipSilence by viewModel.skipSilence.collectAsStateWithLifecycle()
+  val skipNotice by viewModel.skipNotice.collectAsStateWithLifecycle()
 
   SessionScreen(
     state = state,
@@ -133,6 +152,9 @@ fun SessionRoute(
     refineDefaults = refineDefaults,
     onPrepareRefinement = viewModel::prepareRefinement,
     onRefine = viewModel::refine,
+    skipSilence = skipSilence,
+    onSkipSilence = { viewModel.setSkipSilence(it) },
+    skipNotice = skipNotice,
   )
 }
 
@@ -162,6 +184,9 @@ private fun SessionScreen(
   refineDefaults: RefineDefaults,
   onPrepareRefinement: () -> Unit,
   onRefine: (RefinementPreset, String) -> Unit,
+  skipSilence: Boolean,
+  onSkipSilence: (Boolean) -> Unit,
+  skipNotice: SkipNotice?,
 ) {
   val listState = rememberLazyListState()
   var renaming by remember { mutableStateOf(false) }
@@ -197,12 +222,70 @@ private fun SessionScreen(
     onUserScrolled = onUserScrolled,
   )
 
+  // --- Cerca dentro la registrazione -------------------------------------------------------------
+  //
+  // Sulla grezza si cerca nei paragrafi che si vedono, e un'occorrenza e' anche un momento: «dopo» e
+  // «prima» portano il lettore alla parola. Sulla raffinata si cerca nel testo e basta — non ha tempi —
+  // e mentre la ricerca e' aperta la si mostra a blocchi di testo semplice, gli unici in cui si puo'
+  // evidenziare (vedi `TranscriptSearch.plainBlocks`).
+  val search = rememberTranscriptSearchState()
+  val scope = rememberCoroutineScope()
+  val active = state.activeTranscript
+  val searchOnRaw = active?.kind == TranscriptKind.RAW && paragraphs.isNotEmpty()
+  val refinedBlocks = remember(active?.id, active?.text, searchOnRaw) {
+    if (active != null && !searchOnRaw) TranscriptSearch.plainBlocks(active.text) else emptyList()
+  }
+  val searchBlocks = remember(paragraphs, refinedBlocks, searchOnRaw) {
+    if (searchOnRaw) paragraphs.map { it.text } else refinedBlocks
+  }
+  // L'indice si prepara fuori dal thread della UI: diciannove ore sono un milione di caratteri.
+  val searchIndex by produceState<TranscriptSearch.Index?>(null, searchBlocks, search.open) {
+    value = if (search.open) withContext(Dispatchers.Default) { TranscriptSearch.Index(searchBlocks) } else null
+  }
+
+  fun revealMatch(match: TranscriptSearch.Match, seek: Boolean) {
+    scope.launch { scrollToKeyed(listState, if (searchOnRaw) PARAGRAPH_KEY else REFINED_BLOCK_KEY, match.block) }
+    val paragraph = paragraphs.getOrNull(match.block)
+    if (seek && searchOnRaw && paragraph != null) {
+      // Il lettore va alla parola; la lista la segue da se' (seekTo riaccende l'inseguimento).
+      onSeek(TranscriptSearch.timeOf(paragraph.base, match.start))
+    } else {
+      // Mentre si scrive si guarda, non si ascolta: la lista si ferma sull'occorrenza e non torna
+      // al paragrafo che suona finche' non si tocca una frase.
+      onUserScrolled()
+    }
+  }
+
+  fun stepSearch(delta: Int) {
+    val total = search.matches.size
+    if (total == 0) return
+    search.current = (search.current + delta).mod(total)
+    search.currentMatch?.let { revealMatch(it, seek = true) }
+  }
+
+  LaunchedEffect(searchIndex, search.query) {
+    val index = searchIndex ?: return@LaunchedEffect
+    val query = search.query
+    // Un attimo di respiro fra una lettera e l'altra: cercare «k», «ka», «kan» e «kant» e' tre ricerche
+    // buttate su una lezione intera.
+    delay(SEARCH_DEBOUNCE_MS)
+    val found = withContext(Dispatchers.Default) { TranscriptSearch.find(index, query) }
+    val before = search.currentMatch
+    search.onResults(query, found)
+    search.currentMatch?.takeIf { it != before }?.let { revealMatch(it, seek = false) }
+  }
+
+  // Indietro chiude la ricerca prima della pagina, e chiuderla la cancella.
+  BackHandler(enabled = search.open) { search.close() }
+
   val renameLabel = stringResource(R.string.session_rename)
   val refineLabel = stringResource(R.string.refine_action)
   val retranscribeLabel = stringResource(R.string.session_retranscribe)
   val mergeLabel = stringResource(R.string.session_merge)
   val deleteLabel = stringResource(R.string.session_delete)
   val moreLabel = stringResource(R.string.action_more)
+  val skipSilenceLabel = stringResource(if (skipSilence) R.string.session_skip_silence_off else R.string.session_skip_silence_on)
+  val noticeText = skipNotice?.let { skippedLabel(it.skippedMs) }
   CloseWhenGone(gone = !state.loading && state.session == null, onBack = onBack)
   // La lezione e' della sua materia: l'app prende quel colore.
   ReportSubject(state.folder?.asSubject())
@@ -219,8 +302,16 @@ private fun SessionScreen(
     },
     // Il lettore galleggia sopra la lista, quindi la lista deve finire prima di lui: senza questo
     // spazio l'ultimo paragrafo di una lezione non si riesce a leggere.
-    extraBottomPadding = if (state.playable) PlayerBarHeight else 0.dp,
+    extraBottomPadding = (if (state.playable) PlayerBarHeight else 0.dp) + (if (search.open) SearchBarHeight else 0.dp),
     actions = {
+      // La lente apre e chiude la ricerca dentro la registrazione: c'e' solo quando c'e' un testo.
+      if (active != null && active.text.isNotBlank()) {
+        FluidBarAction(
+          icon = Icons.Rounded.Search,
+          contentDescription = stringResource(R.string.session_search),
+          onClick = { if (search.open) search.close() else search.show() },
+        )
+      }
       // Un tocco apre il menu: prima apriva «Rinomina», e «Ritrascrivi» si trovava solo tenendo premuto.
       OverflowMenuButton(
         contentDescription = moreLabel,
@@ -241,6 +332,12 @@ private fun SessionScreen(
             if (state.raw != null && state.job == null && state.elsewhere == null && state.parts.isNotEmpty() && state.transcribableHere) {
               add(FluidContextAction(label = retranscribeLabel) { confirmingRetranscribe = true })
             }
+            // «Salta i silenzi» sta qui e non nella capsula del lettore, che su un telefono e' gia'
+            // piena: si accende una volta per le registrazioni lunghe e resta acceso (per dispositivo).
+            // Solo dove ha senso: serve la grezza coi suoi tempi, ed e' da lei che si sa dove si tace.
+            if (state.playable && state.segments.isNotEmpty()) {
+              add(FluidContextAction(label = skipSilenceLabel) { onSkipSilence(!skipSilence) })
+            }
             if (state.canMerge) add(FluidContextAction(label = mergeLabel) { onMerge() })
             add(FluidContextAction(label = deleteLabel, destructive = true) { confirmingDelete = true })
           }
@@ -256,10 +353,29 @@ private fun SessionScreen(
           onSkip = onSkip,
           onSeek = onSeek,
           onCycleSpeed = onCycleSpeed,
+          notice = noticeText?.takeIf { skipSilence },
           modifier = Modifier
             .align(Alignment.BottomCenter)
             .navigationBarsPadding()
             .padding(horizontal = 16.dp, vertical = 12.dp),
+        )
+      }
+      if (search.open) {
+        // Sopra il lettore, o sopra la tastiera quando c'e': il lettore resta sotto la tastiera, e
+        // lasciargli lo spazio vorrebbe dire una barra sospesa a mezz'aria.
+        @OptIn(ExperimentalLayoutApi::class)
+        val keyboard = WindowInsets.isImeVisible
+        TranscriptSearchBar(
+          state = search,
+          backdrop = backdrop,
+          onPrevious = { stepSearch(-1) },
+          onNext = { stepSearch(1) },
+          onClose = { search.close() },
+          modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
+            .padding(horizontal = 16.dp)
+            .padding(bottom = if (state.playable && !keyboard) PlayerBarHeight + 16.dp else 12.dp),
         )
       }
     },
@@ -271,7 +387,11 @@ private fun SessionScreen(
       onPrepareRefinement()
       refining = true
     }
-    transcriptBody(state, paragraphs, activeParagraph, { playback.value.positionMs }, onSeek, runSummary)
+    transcriptBody(
+      state, paragraphs, activeParagraph, { playback.value.positionMs }, onSeek, runSummary,
+      search = search,
+      refinedBlocks = refinedBlocks.takeIf { search.open },
+    )
   }
 
   if (renaming && state.session != null) {
@@ -659,10 +779,25 @@ private fun LazyListScope.transcriptBody(
   positionMs: () -> Long,
   onSeek: (Long) -> Unit,
   runSummary: String?,
+  search: TranscriptSearchState,
+  /** La raffinata a blocchi di testo semplice, mentre si cerca; null quando la ricerca e' chiusa. */
+  refinedBlocks: List<String>?,
 ) {
   val active = state.activeTranscript ?: return
 
   if (active.kind != TranscriptKind.RAW || paragraphs.isEmpty()) {
+    if (refinedBlocks != null) {
+      itemsIndexed(items = refinedBlocks, key = { index, _ -> "$REFINED_BLOCK_KEY$index" }) { index, block ->
+        FluidCard {
+          SearchableText(
+            text = block,
+            highlights = search.byBlock[index].orEmpty(),
+            current = search.currentMatch?.takeIf { it.block == index }?.let { it.start until it.end },
+          )
+        }
+      }
+      return
+    }
     if (active.text.isNotBlank()) {
       item(key = "refined-${active.id}") {
         FluidCard {
@@ -702,6 +837,8 @@ private fun LazyListScope.transcriptBody(
         // parametro ogni battito rimisurerebbe il paragrafo. Cosi' cambia solo il disegno.
         positionMs = { if (isActive) positionMs() else 0L },
         onSeek = onSeek,
+        highlights = search.byBlock[index].orEmpty(),
+        currentHighlight = search.currentMatch?.takeIf { it.block == index }?.let { it.start until it.end },
       )
     }
   }
@@ -757,6 +894,9 @@ private fun ParagraphCard(
   isActive: Boolean,
   positionMs: () -> Long,
   onSeek: (Long) -> Unit,
+  /** Le occorrenze della ricerca in questo paragrafo, e quella corrente se e' qui. */
+  highlights: List<IntRange> = emptyList(),
+  currentHighlight: IntRange? = null,
 ) {
   var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
   val scheme = MaterialTheme.colorScheme
@@ -783,6 +923,13 @@ private fun ParagraphCard(
       onTextLayout = { layout = it },
       modifier = Modifier
         .fillMaxWidth()
+        .searchHighlights(
+          layout = { layout },
+          ranges = highlights,
+          current = currentHighlight,
+          color = scheme.primary.copy(alpha = HIGHLIGHT_ALPHA),
+          currentColor = scheme.primary.copy(alpha = CURRENT_HIGHLIGHT_ALPHA),
+        )
         .pointerInput(paragraph) {
           detectTapGestures { position ->
             val result = layout ?: return@detectTapGestures
@@ -799,7 +946,7 @@ private fun ParagraphCard(
  * accendere e il segmento sotto un tocco. La divisione e' quella del core, la stessa dell'export:
  * prima la pagina ne aveva una copia sua, e una regola in due copie e' due regole.
  */
-private class Paragraph(private val base: TranscriptParagraphs.Paragraph) {
+private class Paragraph(val base: TranscriptParagraphs.Paragraph) {
   val segments: List<SegmentEntity> get() = base.segments
   val text: String get() = base.text
   private val ranges: List<IntRange> get() = base.ranges
@@ -872,30 +1019,84 @@ private fun ScrollFollower(
   // spostati tutti; se non se ne vede nessuno, ci si avvicina e si corregge.
   LaunchedEffect(targetIndex, following, playing) {
     if (!following || !playing) return@LaunchedEffect
-    runCatching {
-      val offset = paragraphOffset(listState)
-      if (offset != null) {
-        listState.animateScrollToItem(targetIndex + offset)
-      } else {
-        // Nessun paragrafo a schermo: stanno in fondo alla lista, dopo tutto il resto. Un salto
-        // all'ultimo elemento ne mette qualcuno a schermo, e al fotogramma dopo si misura.
-        listState.scrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
-        withFrameNanos { }
-        val measured = paragraphOffset(listState) ?: return@runCatching
-        listState.animateScrollToItem(targetIndex + measured)
-      }
+    scrollToKeyed(listState, PARAGRAPH_KEY, targetIndex)
+  }
+}
+
+/**
+ * Porta a schermo il blocco numero [index] fra quelli la cui chiave comincia con [prefix]: i
+ * paragrafi della grezza per il lettore e per la ricerca, i blocchi della raffinata per la ricerca.
+ */
+private suspend fun scrollToKeyed(listState: LazyListState, prefix: String, index: Int) {
+  runCatching {
+    val offset = keyedOffset(listState, prefix)
+    if (offset != null) {
+      listState.animateScrollToItem(index + offset)
+    } else {
+      // Nessun paragrafo a schermo: stanno in fondo alla lista, dopo tutto il resto. Un salto
+      // all'ultimo elemento ne mette qualcuno a schermo, e al fotogramma dopo si misura.
+      listState.scrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
+      withFrameNanos { }
+      val measured = keyedOffset(listState, prefix) ?: return@runCatching
+      listState.animateScrollToItem(index + measured)
     }
   }
 }
 
-/** Di quanto l'indice nella lista e' spostato rispetto al numero del paragrafo, se se ne vede uno. */
-private fun paragraphOffset(listState: LazyListState): Int? =
+/** Di quanto l'indice nella lista e' spostato rispetto al numero del blocco, se se ne vede uno. */
+private fun keyedOffset(listState: LazyListState, prefix: String): Int? =
   listState.layoutInfo.visibleItemsInfo.firstNotNullOfOrNull { info ->
-    val number = (info.key as? String)?.takeIf { it.startsWith(PARAGRAPH_KEY) }?.removePrefix(PARAGRAPH_KEY)?.toIntOrNull()
+    val number = (info.key as? String)?.takeIf { it.startsWith(prefix) }?.removePrefix(prefix)?.toIntOrNull()
     number?.let { info.index - it }
   }
 
 private const val PARAGRAPH_KEY = "paragraph-"
+private const val REFINED_BLOCK_KEY = "refined-block-"
+
+/** Quanto aspetta la ricerca dopo l'ultima lettera prima di cercare. */
+private const val SEARCH_DEBOUNCE_MS = 150L
+
+/** Il velo delle occorrenze, e quello piu' pieno della corrente: nel colore della materia. */
+private const val HIGHLIGHT_ALPHA = 0.20f
+private const val CURRENT_HIGHLIGHT_ALPHA = 0.45f
+
+/** Un blocco della raffinata mentre si cerca: testo semplice, con le occorrenze dietro. */
+@Composable
+private fun SearchableText(text: String, highlights: List<IntRange>, current: IntRange?) {
+  var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+  val scheme = MaterialTheme.colorScheme
+  Text(
+    text = text,
+    style = MaterialTheme.typography.bodyLarge,
+    color = scheme.onSurface,
+    onTextLayout = { layout = it },
+    modifier = Modifier
+      .fillMaxWidth()
+      .searchHighlights(
+        layout = { layout },
+        ranges = highlights,
+        current = current,
+        color = scheme.primary.copy(alpha = HIGHLIGHT_ALPHA),
+        currentColor = scheme.primary.copy(alpha = CURRENT_HIGHLIGHT_ALPHA),
+      ),
+  )
+}
+
+/** «Saltati 14 s», «Saltati 16 min», «Saltati 1 h 20 min». */
+@Composable
+private fun skippedLabel(skippedMs: Long): String =
+  if (skippedMs < 60_000L) {
+    stringResource(R.string.player_skipped_seconds, (skippedMs / 1_000L).toInt().coerceAtLeast(1))
+  } else {
+    stringResource(
+      R.string.player_skipped,
+      TranscriptParagraphs.silenceDuration(
+        skippedMs,
+        hours = stringResource(R.string.session_silence_hours),
+        minutes = stringResource(R.string.export_label_minutes),
+      ),
+    )
+  }
 
 // -------------------------------------------------------------------------------------------------
 // Etichette

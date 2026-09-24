@@ -522,6 +522,17 @@ class PampaSettingsStore(
     if (keep) prefs[KeepPersonalHere] = true else prefs.remove(KeepPersonalHere)
   }
 
+  /**
+   * «Salta i silenzi» nel lettore (vedi `SilenceSkipper`). Di questo dispositivo e spento di serie:
+   * un lettore che salta da solo sorprende chi non l'ha chiesto, e chi l'ha chiesto lo ritrova acceso
+   * in ogni sessione — si accende per le registrazioni di ore, ma resta una preferenza di chi ascolta.
+   */
+  val skipSilence: Flow<Boolean> = store.data.map { it[SkipSilence] ?: false }
+
+  suspend fun setSkipSilence(skip: Boolean) = edit { prefs ->
+    if (skip) prefs[SkipSilence] = true else prefs.remove(SkipSilence)
+  }
+
   private fun MutablePreferences.toggle(key: Preferences.Key<Set<String>>, id: String, on: Boolean) {
     val next = (this[key] ?: emptySet()).let { if (on) it + id else it - id }
     if (next.isEmpty()) remove(key) else this[key] = next
@@ -642,6 +653,7 @@ class PampaSettingsStore(
     val KeepPersonalHere = booleanPreferencesKey("keep_personal_here")
     // Date vere e «Riprendi ad ascoltare».
     val LastListenedKey = stringPreferencesKey("last_listened")
+    val SkipSilence = booleanPreferencesKey("skip_silence")
     val RealDatesPending = stringSetPreferencesKey("real_dates_pending")
     // Aggiornamenti dell'app.
     val UpdateLastCheck = longPreferencesKey("update_last_check")
