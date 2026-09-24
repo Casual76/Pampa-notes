@@ -114,6 +114,11 @@ data class SessionUiState(
   val fetch: FetchState? = null,
   /** L'ultima trascrizione fatta da questo dispositivo per questa sessione, coi suoi numeri. */
   val lastRun: TranscriptionRunEntity? = null,
+  /**
+   * «Il testo che arriva a pezzi»: quello che il computer di casa ha gia' trascritto mentre fa il
+   * resto. Solo in memoria, mai salvato; null quando non c'e' (vedi `PartialTranscripts`).
+   */
+  val partial: dev.pampa.pampanotes.core.transcription.SessionPartial? = null,
   val loading: Boolean = true,
 ) {
   val durationMs: Long get() = parts.sumOf { it.durationMs }
@@ -192,6 +197,7 @@ class SessionViewModel @Inject constructor(
   private val fetcher: ArchiveFetcher,
   private val stats: StatsRepository,
   private val inUse: FilesInUse,
+  private val partials: dev.pampa.pampanotes.core.transcription.PartialTranscripts,
 ) : ViewModel() {
 
   private val sessionId: String = savedStateHandle.get<String>("sessionId").orEmpty()
@@ -323,6 +329,7 @@ class SessionViewModel @Inject constructor(
     _fetch,
     stats.observeLatest(sessionId),
     transcription.observeElsewhere().map { it[sessionId] },
+    partials.bySession.map { it[sessionId] }.distinctUntilChanged(),
   ) { values ->
     @Suppress("UNCHECKED_CAST")
     val withParts = values[0] as SessionWithParts?
@@ -349,6 +356,7 @@ class SessionViewModel @Inject constructor(
       fetch = values[8] as FetchState?,
       lastRun = values[9] as TranscriptionRunEntity?,
       elsewhere = values[10] as RemoteTranscribing?,
+      partial = values[11] as dev.pampa.pampanotes.core.transcription.SessionPartial?,
       loading = false,
     )
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SessionUiState())

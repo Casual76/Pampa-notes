@@ -304,6 +304,58 @@ class JobProgressTest(unittest.TestCase):
         self.assertEqual((snap["processing_s"], snap["elapsed_s"]), (20.0, 30.0))
 
 
+class PartialPiecesTest(unittest.TestCase):
+    """«Il testo che arriva a pezzi»: i pezzi finiti si leggono da `from` in poi, e se ne vanno alla fine."""
+
+    @staticmethod
+    def segment(start: float, text: str) -> dict:
+        return {"id": 0, "start": start, "end": start + 1.0, "text": text, "words": []}
+
+    def test_pieces_are_read_from_where_the_app_stopped(self) -> None:
+        progress = server.JobProgress("abcdefgh")
+        progress.piece(1, 3)
+        self.assertEqual(progress.partial()["pieces_done"], 0)
+        progress.add_partial([self.segment(1.0, "uno"), self.segment(2.0, "due")])
+        progress.piece(2, 3)
+        progress.add_partial([self.segment(1300.0, "tre")])
+        first = progress.partial(0)
+        self.assertEqual((first["pieces_done"], first["pieces_total"], first["from"]), (2, 3, 0))
+        self.assertEqual([s["text"] for s in first["segments"]], ["uno", "due", "tre"])
+        later = progress.partial(2)
+        self.assertEqual(later["segments"], [], "gia' ricevuti: niente due volte")
+        self.assertEqual([s["text"] for s in progress.partial(1)["segments"]], ["tre"])
+
+    def test_the_end_drops_them(self) -> None:
+        progress = server.JobProgress("abcdefgh")
+        progress.piece(1, 2)
+        progress.add_partial([self.segment(1.0, "uno")])
+        progress.set("done", 1.0)
+        self.assertEqual((progress.partial()["pieces_done"], progress.partial()["segments"]), (0, []))
+        progress.add_partial([self.segment(2.0, "tardi")])
+        self.assertEqual(progress.partial()["segments"], [], "un pezzo arrivato dopo la fine non resta")
+
+    def test_memory_is_bounded(self) -> None:
+        progress = server.JobProgress("abcdefgh")
+        progress.piece(1, 3)
+        with mock.patch.object(server, "PARTIAL_MAX_SEGMENTS", 3):
+            progress.add_partial([self.segment(float(i), f"s{i}") for i in range(2)])
+            progress.add_partial([self.segment(float(i), f"t{i}") for i in range(2)])
+        data = progress.partial()
+        self.assertEqual(data["pieces_done"], 2, "il pezzo si conta lo stesso")
+        self.assertEqual(len(data["segments"]), 2)
+        self.assertTrue(data["truncated"])
+
+    def test_a_follower_reads_the_shared_work(self) -> None:
+        leader = server.JobProgress("w1234567")
+        follower = server.JobProgress("abcdefgh")
+        follower.follow(leader)
+        leader.piece(1, 2)
+        leader.add_partial([self.segment(1.0, "uno")])
+        data = follower.partial()
+        self.assertEqual((data["id"], data["pieces_done"], data["pieces_total"]), ("abcdefgh", 1, 2))
+        self.assertEqual(data["segments"][0]["text"], "uno")
+
+
 class AutoPiecesTest(StateMixin, unittest.TestCase):
     """«Automatico»: pezzi da circa quattro minuti di lavoro, dalla velocita' misurata."""
 
@@ -753,6 +805,43 @@ class PiecesTest(StateMixin, unittest.TestCase):
         self.assertEqual(result["device_used"], "cpu", "un pezzo sul processore vale per la lezione")
         snap = progress.snapshot()
         self.assertEqual((snap["chunk"], snap["chunks"]), (2, 2))
+
+    def test_finished_pieces_are_readable_while_the_next_one_runs(self) -> None:
+        # «Il testo che arriva a pezzi»: mentre il computer fa il secondo pezzo, il primo si legge gia'.
+        cut = 22 * 60 + 40.0
+        audio = lecture(45, quiet_at_s=cut)
+        during: list[dict] = []
+
+        def fake_run_job(piece, language, engine, batch_size, device, progress=None, prompt=None):
+            during.append(progress.partial(0))
+            return {
+                "segments": [
+                    {"start": 1.0, "end": 2.5, "text": f"pezzo {len(during)}",
+                     "words": [{"word": "pezzo", "start": 1.0, "end": 1.4, "score": 0.9}]},
+                    # Un'eco del vocabolario, corta: il filtro vale anche per il provvisorio.
+                    {"start": 5.0, "end": 5.1, "text": "Fichte Fichte"},
+                ],
+                "language": "it", "device_used": "cuda", "batch_size": 16, "alignment": "ok",
+            }
+
+        server.STATE.update(device="cuda", batch_size=16)
+        progress = RecordingProgress()
+        with mock.patch.object(server, "run_job", fake_run_job):
+            result = server.transcribe_audio(audio, RATE, "it", progress, FakeEngine(None), max_minutes=30, prompt="Fichte")
+        self.assertEqual(during[0]["pieces_done"], 0)
+        second = during[1]
+        self.assertEqual((second["pieces_done"], second["pieces_total"]), (1, 2))
+        self.assertEqual([s["text"] for s in second["segments"]], ["pezzo 1"])
+        self.assertEqual(second["segments"][0]["words"][0]["word"], "pezzo")
+        # Dopo il secondo pezzo ci sono tutti e due, coi tempi del file intero come nella risposta.
+        both = progress.partial(0)
+        self.assertEqual(both["pieces_done"], 2)
+        self.assertEqual([s["start"] for s in both["segments"]], [s["start"] for s in result["segments"]])
+        self.assertEqual([s["text"] for s in progress.partial(1)["segments"]], ["pezzo 2"])
+
+    def test_a_whole_file_keeps_nothing_on_the_side(self) -> None:
+        _, _, progress = self.run_pieces(lecture(40), 30)
+        self.assertEqual(progress.partial()["pieces_done"], 0, "un pezzo solo: il testo arriva con la risposta")
 
     def test_settings_changed_mid_lesson_do_not_reach_the_next_piece(self) -> None:
         audio = lecture(45, quiet_at_s=22 * 60 + 40.0)
@@ -1722,6 +1811,54 @@ class ServerTest(StateMixin, unittest.TestCase):
         data = json.loads(self.call("GET", f"/v1/jobs/{job_id}", bearer="pg_friend")[2])
         self.assertEqual((data["state"], data["fraction"]), ("done", 1.0))
 
+    def test_partial_pieces_follow_the_rules_of_the_job(self) -> None:
+        # I pezzi finiti si leggono mentre il resto si trascrive, con le stesse regole dello stato.
+        server.JOBS.clear()
+        release = threading.Event()
+        inside = threading.Event()
+
+        def fake(path: str, language: str | None, progress: server.JobProgress, **_: object) -> dict:
+            progress.set("transcribing")
+            progress.piece(1, 3)
+            progress.add_partial([{"id": 0, "start": 1.0, "end": 2.0, "text": "primo pezzo", "words": []}])
+            progress.piece(2, 3)
+            inside.set()
+            release.wait(10)
+            return {
+                "task": "transcribe", "language": "it", "duration": 2.0, "text": "primo pezzo",
+                "segments": [{"start": 1.0, "end": 2.0, "text": "primo pezzo"}], "device_used": "cuda", "audio_s": 60.0,
+            }
+
+        job_id = "7a2b8c1e-5a6d-4e7f-8a9b-0c1d2e3f4a5b"
+        body, headers = self.multipart()
+        headers["X-Pampa-Job"] = job_id
+        answer: dict = {}
+        with mock.patch.object(server, "_transcribe", fake):
+            post = threading.Thread(
+                target=lambda: answer.update(r=self.call("POST", "/v1/audio/transcriptions", bearer="pg_friend", body=body, headers=headers))
+            )
+            post.start()
+            try:
+                self.assertTrue(inside.wait(10))
+                status, _, got = self.call("GET", f"/v1/jobs/{job_id}/partial?from=0", bearer="pg_friend")
+                self.assertEqual(status, 200, got)
+                data = json.loads(got)
+                self.assertEqual((data["pieces_done"], data["pieces_total"], data["state"]), (1, 3, "transcribing"))
+                self.assertEqual([s["text"] for s in data["segments"]], ["primo pezzo"])
+                self.assertEqual(json.loads(self.call("GET", f"/v1/jobs/{job_id}/partial?from=1", bearer="pg_friend")[2])["segments"], [])
+                # Il proprietario si', senza credenziali no, un altro ospite o un id inventato 404.
+                self.assertEqual(self.call("GET", f"/v1/jobs/{job_id}/partial", bearer="pt_good")[0], 200)
+                self.assertEqual(self.call("GET", f"/v1/jobs/{job_id}/partial")[0], 401)
+                self.assertEqual(self.call("GET", "/v1/jobs/nessuno-lo-conosce/partial", bearer="pg_friend")[0], 404)
+                server.JOBS.open("job-del-proprietario", as_caller("owner", "pt_good"))
+                self.assertEqual(self.call("GET", "/v1/jobs/job-del-proprietario/partial", bearer="pg_friend")[0], 404)
+            finally:
+                release.set()
+                post.join(10)
+        self.assertEqual(answer["r"][0], 200)
+        data = json.loads(self.call("GET", f"/v1/jobs/{job_id}/partial", bearer="pg_friend")[2])
+        self.assertEqual((data["state"], data["segments"]), ("done", []), "finito: vale la risposta")
+
     def test_delete_cancels_a_running_job(self) -> None:
         # «Annulla» dal telefono ferma il computer al lotto dopo, non solo la connessione del telefono.
         server.JOBS.clear()
@@ -2075,7 +2212,7 @@ class ServerTest(StateMixin, unittest.TestCase):
 
     def test_health_lists_the_features(self) -> None:
         data = json.loads(self.call("GET", "/health")[2])
-        self.assertEqual(set(data["features"]), {"by_ref", "archive_upload", "server_chunks", "file_meta", "prompt", "auto_chunks"})
+        self.assertEqual(set(data["features"]), {"by_ref", "archive_upload", "server_chunks", "file_meta", "prompt", "auto_chunks", "partial"})
 
     def test_diarize_is_a_feature_only_with_a_token_and_the_token_never_shows(self) -> None:
         server.STATE["hf_token"] = None

@@ -69,6 +69,8 @@ class TranscriptionQueueWorker @AssistedInject constructor(
   private val settingsStore: PampaSettingsStore,
   private val scheduler: WorkScheduler,
   private val computerOnly: dev.pampa.pampanotes.core.archive.ComputerOnlyScope,
+  /** «Il testo che arriva a pezzi»: il provvisorio che la sessione mostra mentre il computer lavora. */
+  private val partials: dev.pampa.pampanotes.core.transcription.PartialTranscripts,
 ) : CoroutineWorker(context, params) {
 
   /** Cosa fare dopo un lavoro: il prossimo, aspettare il computer di casa, o riprendere a un'ora. */
@@ -373,6 +375,8 @@ class TranscriptionQueueWorker @AssistedInject constructor(
             // archivio (se l'archivio e' acceso): una lezione non viaggia due volte.
             archiveUploads = settings.archiveEnabled,
             onArchived = repository::markPartArchived,
+            // «Il testo che arriva a pezzi»: la sessione lo mostra «in arrivo» finche' il lavoro va.
+            onPartial = { partial -> partials.publish(job.sessionId, partial) },
           ) { progress ->
             touch()
             latest.update { it.applyProgress(progress) }
@@ -428,6 +432,10 @@ class TranscriptionQueueWorker @AssistedInject constructor(
         fail(job, translated)
         Step.Next
       }
+    } finally {
+      // Il testo provvisorio vale finche' il lavoro e' questo: salvato, fallito, annullato o
+      // rimesso in fila, se ne va — il testo vero, se c'e', e' gia' nel database.
+      partials.clear(job.sessionId)
     }
     return Step.Next
   }

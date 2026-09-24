@@ -76,6 +76,20 @@ object VerboseJson {
     return report.takeIf { it.processingMs != null || it.audioMs != null || it.device != null }
   }
 
+  /**
+   * `GET /v1/jobs/<id>/partial` del companion: i segmenti dei pezzi finiti, nella stessa forma della
+   * risposta finale. Null se la risposta non e' quella (un server che a quell'indirizzo dice altro):
+   * il testo provvisorio e' un di piu', e una risposta strana vale «niente di nuovo».
+   */
+  fun parsePartial(body: JsonElement?): RemotePartial? {
+    val root = body as? JsonObject ?: return null
+    val done = root["pieces_done"].asDouble()?.toInt()?.takeIf { it >= 0 } ?: return null
+    val total = root["pieces_total"].asDouble()?.toInt()?.coerceAtLeast(done) ?: done
+    val from = root["from"].asDouble()?.toInt()?.coerceAtLeast(0) ?: 0
+    val segments = (root["segments"] as? JsonArray)?.mapNotNull { parseSegment(it) }.orEmpty()
+    return RemotePartial(from = from, piecesDone = done, piecesTotal = total, segments = segments)
+  }
+
   private fun parseSegment(element: JsonElement): RawSegment? {
     val obj = element as? JsonObject ?: return null
     val text = obj["text"].asString()?.trim().orEmpty()

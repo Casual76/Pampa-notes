@@ -995,6 +995,26 @@ il companion unisce le richieste identiche per impronta, e una `DELETE` stacca s
 nella nota e nella sessione, con due barre: tutta la lezione (le parti pesate per durata) e il
 passo di adesso, che si anima quando non c'e' niente da misurare.
 
+**Il testo che arriva a pezzi.** Una lezione che il computer divide da se' (`max_minutes`) finisce
+un pezzo ogni tanto, ma la risposta arriva tutta alla fine. Il companion tiene i segmenti di ogni
+pezzo finito — spostati nel tempo del file, passati da `drop_hallucinations` sul pezzo solo, nella
+forma della risposta (`share_piece`, `response_segment`) — e li da' a `GET /v1/jobs/<id>/partial?from=<n>`
+(`pieces_done`, `pieces_total`, i segmenti dei pezzi da `n` in poi), con le regole dello stato:
+proprietario tutto, ospite i suoi, gli altri 404, e chi e' agganciato a un lavoro condiviso legge
+quelli del lavoro. Al massimo `PARTIAL_MAX_SEGMENTS` per lavoro (oltre, il pezzo si conta vuoto e la
+risposta dice `truncated`), buttati quando il lavoro finisce; `/health` lo dichiara con `partial`.
+Nell'app, solo con quella caratteristica: `OpenAiCompatProvider.followPieces` chiede quando lo stato
+dice che un pezzo nuovo e' pronto (`PartialPieces.ready`: «pezzo 3 di 5» vuol dire due pronti) e non
+piu' di una volta ogni cinque secondi, mai lanciando; `PartialCollector` mette i pezzi nel tempo della
+sessione (`SessionAssembler.offsets`, `from = 0` ricomincia da capo) e, in una sessione di piu' parti,
+tiene visibile il testo finale delle parti gia' fatte; il worker lo pubblica in `PartialTranscripts`
+(in memoria, per sessione) e lo toglie in ogni uscita del lavoro. La sessione lo mostra sotto la
+scheda del lavoro, «In arrivo dal computer · 2 pezzi di 5», con le card della grezza senza parole
+accese (un tocco porta il lettore li'), sopra la trascrizione vecchia se si sta ritrascrivendo.
+**E' provvisorio e non si salva ne' sincronizza**: la risposta passa ancora dal filtro sulla lezione
+intera e dalla separazione delle voci, e vince lei. Un companion vecchio non riceve nessuna domanda
+in piu'.
+
 **Le statistiche.** `transcription_runs` (schema 6) tiene una riga per trascrizione finita: durata
 dell'audio, tempo sul telefono dal primo passo alla fine (la coda esclusa), parole, dispositivo
 (`cuda`, `cpu`, `groq`) e i `processing_s`/`audio_s` che il companion rimanda. Dallo schema 7 **si

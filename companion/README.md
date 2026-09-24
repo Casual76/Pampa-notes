@@ -256,6 +256,14 @@ se ne tengono al massimo 256. Il lavoro si registra appena arrivano gli header, 
 l'audio: chi chiede durante il caricamento legge `received`, non un 404 che l'app scambierebbe per
 un companion vecchio — e con un companion vecchio l'app smette di chiedere dopo due 404.
 
+**I pezzi già finiti** (`partial` fra le `features`): quando la lezione si divide qui, ogni pezzo
+finito resta da parte e `GET /v1/jobs/<id>/partial?from=<n>` lo dà prima della fine — `pieces_done`,
+`pieces_total` e i `segments` dei pezzi da `n` (da zero) in poi, nella forma della risposta finale,
+coi tempi del file intero. Stesse credenziali e stessi 404 dello stato. Sono **provvisori**: la
+risposta passa ancora dal filtro sulla lezione intera e dalla separazione delle voci, e vince lei. Se
+ne tengono al massimo 12 000 segmenti per lavoro (oltre, `truncated`), e se ne vanno quando il lavoro
+finisce.
+
 La risposta della trascrizione porta anche `processing_s` (quanto ha lavorato il computer, senza la
 fila) e `audio_s` (la durata vera del file).
 

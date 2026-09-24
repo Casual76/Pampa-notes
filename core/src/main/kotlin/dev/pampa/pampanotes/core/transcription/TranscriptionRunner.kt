@@ -260,6 +260,8 @@ class TranscriptionRunner @Inject constructor(
    *   trascriverla resta anche nel suo archivio (l'archivio acceso nelle impostazioni). Cosi' non
    *   sale due volte, una per la trascrizione e una per l'archivio.
    * @param onArchived il computer ha tenuto la parte: chi chiama la segna archiviata.
+   * @param onPartial «il testo che arriva a pezzi»: quello che il computer di casa ha gia' finito,
+   *   nel tempo della sessione ([PartialCollector]). Provvisorio, non si salva: vedi [PartialTranscripts].
    * @param onProgress chiamato spesso: la UI ci disegna sopra una barra.
    */
   suspend fun transcribeSession(
@@ -270,6 +272,7 @@ class TranscriptionRunner @Inject constructor(
     chunkMinutes: Int,
     archiveUploads: Boolean = false,
     onArchived: suspend (partId: String, at: Long) -> Unit = { _, _ -> },
+    onPartial: (SessionPartial) -> Unit = {},
     onProgress: (TranscriptionProgress) -> Unit = {},
   ): SessionTranscript {
     require(parts.isNotEmpty()) { "una sessione senza parti non si trascrive" }
@@ -288,12 +291,14 @@ class TranscriptionRunner @Inject constructor(
     // non parte, e i pezzi tagliati qui avrebbero comunque voci che non si riconoscono fra loro.
     val plain = request.copy(diarize = false)
     val onComputer = request.copy(diarize = request.diarize && computer?.diarize == true)
+    // Il testo provvisorio della sessione, parte per parte, nel tempo della sessione.
+    val partials = PartialCollector(sorted.map { SessionAssembler.Part(it.id, it.durationMs) })
 
     sorted.forEachIndexed { index, part ->
       currentCoroutineContext().ensureActive()
       val partDir = File(workDir, "part-${part.id}").apply { mkdirs() }
       computer?.let { mode ->
-        transcribeOnComputer(part, index, parts.size, partDir, mode, onComputer, scale, onArchived, onProgress)
+        transcribeOnComputer(part, index, parts.size, partDir, mode, onComputer, scale, onArchived, onProgress, partials, onPartial)
           ?.let {
             transcripts += it
             return@forEachIndexed
@@ -378,6 +383,8 @@ class TranscriptionRunner @Inject constructor(
     scale: ProgressScale,
     onArchived: suspend (partId: String, at: Long) -> Unit,
     onProgress: (TranscriptionProgress) -> Unit,
+    partials: PartialCollector,
+    onPartial: (SessionPartial) -> Unit,
   ): PartTranscript? {
     if (mode.ownerOnly) return null
     val spec = ChunkSpec(0, 0, part.durationMs)
@@ -394,10 +401,28 @@ class TranscriptionRunner @Inject constructor(
       return PartTranscript(part, stitched.text, stitched.segments, language)
     }
 
+    /**
+     * La parte e' finita: il suo testo resta «in arrivo» finche' la sessione non si salva, se la
+     * sessione ha ancora parti da fare o se di questa si vedevano gia' i pezzi. L'ultima parte di una
+     * sessione che non aveva mostrato niente no: il salvataggio e' questione di un attimo, e il
+     * blocco comparirebbe per sparire subito.
+     */
+    fun shown(transcript: PartTranscript): PartTranscript {
+      if (partIndex < partCount - 1 || !partials.isEmpty) {
+        runCatching { onPartial(partials.complete(part.id, partIndex, transcript.segments)) }
+      }
+      return transcript
+    }
+
+    // Il testo dei pezzi gia' finiti, se il computer lo sa dare: nel tempo della sessione.
+    val pieces: (RemotePartial) -> Unit = { partial ->
+      runCatching { onPartial(partials.offer(part.id, partIndex, partial)) }
+    }
+
     // Gia' fatta in un giro precedente: si rilegge e si va avanti.
     readStored(stored)?.let {
       finished(1)
-      return transcript(it, request.language)
+      return shown(transcript(it, request.language))
     }
 
     // Il computer racconta i suoi pezzi da se': sono quelli che la frase deve dire.
@@ -429,7 +454,7 @@ class TranscriptionRunner @Inject constructor(
         )
         answer = try {
           withRetry(waitingReporter(onProgress)) {
-            mode.companion.transcribeByRef(sha, request, mode.maxMinutes, remote(byRef = true))
+            mode.companion.transcribeByRef(sha, request, mode.maxMinutes, onPartial = pieces, onRemote = remote(byRef = true))
           }
         } catch (missing: TranscriptionError.BlobMissing) {
           // La riga dice archiviata, il computer dice di no (un archivio rifatto, un altro PC): se il
@@ -450,6 +475,7 @@ class TranscriptionRunner @Inject constructor(
             upload = CompanionUpload(sha, part.originalName, mode.archive && sha != null, mode.maxMinutes),
             onProgress = uploading,
             onRemote = remote(byRef = false),
+            onPartial = pieces,
           )
         }
       }
@@ -482,9 +508,11 @@ class TranscriptionRunner @Inject constructor(
     // Un server che risponde col solo testo, senza segmenti: mezzo risultato vale piu' di niente.
     // Solo senza segmenti, pero': se c'erano e le difese li hanno tolti tutti, il testo del server
     // e' quello stesso «Grazie.» inventato, e rimetterlo vorrebbe dire rimettere l'allucinazione.
-    return transcript(chunk, result.language).let {
-      if (it.text.isBlank() && result.segments.isEmpty()) it.copy(text = result.text.trim()) else it
-    }
+    return shown(
+      transcript(chunk, result.language).let {
+        if (it.text.isBlank() && result.segments.isEmpty()) it.copy(text = result.text.trim()) else it
+      },
+    )
   }
 
   private suspend fun transcribePart(

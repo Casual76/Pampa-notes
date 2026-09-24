@@ -491,6 +491,8 @@ private fun SessionScreen(
     },
   ) {
     jobItem(state, onCancelJob, onRetryJob = { if (it.type == JobType.REFINE) refining = true else onTranscribe() }, onDismissJob = onDismissJob)
+    // «Il testo che arriva a pezzi», sotto la scheda del lavoro finche' il lavoro va (PartialTranscriptBlock.kt).
+    if (state.job != null) partialTranscriptItems(state.partial, onSeek)
     remoteAudioItem(state, onFetchMissing)
     partsSection(state, onSeek, onMovePart, onMovePartTo, onSplitAt, onRetranscribe = { confirmingRetranscribe = true }) { confirmingPartDelete = it }
     transcriptSection(state, onTranscribe, onShowTranscript) {
@@ -1072,7 +1074,7 @@ private fun SilenceRow(silenceMs: Long, resumeMs: Long, onSeek: (Long) -> Unit) 
  * tocco si traduce in un carattere, e dal carattere nel segmento che lo contiene.
  */
 @Composable
-private fun ParagraphCard(
+internal fun ParagraphCard(
   paragraph: Paragraph,
   /** La voce da dire sopra il paragrafo (solo dove cambia), o null. */
   voice: VoiceLabel?,
@@ -1138,7 +1140,7 @@ private fun ParagraphCard(
  * accendere e il segmento sotto un tocco. La divisione e' quella del core, la stessa dell'export:
  * prima la pagina ne aveva una copia sua, e una regola in due copie e' due regole.
  */
-private class Paragraph(val base: TranscriptParagraphs.Paragraph) {
+internal class Paragraph(val base: TranscriptParagraphs.Paragraph) {
   val segments: List<SegmentEntity> get() = base.segments
   val text: String get() = base.text
   private val ranges: List<IntRange> get() = base.ranges
@@ -1184,7 +1186,7 @@ private class Paragraph(val base: TranscriptParagraphs.Paragraph) {
  * registrazioni, e dopo [TranscriptParagraphs.MAX_SEGMENTS_ON_SCREEN] frasi, perche' una card alta
  * dieci schermi non si scorre: si subisce.
  */
-private fun paragraphsOf(segments: List<SegmentEntity>): List<Paragraph> =
+internal fun paragraphsOf(segments: List<SegmentEntity>): List<Paragraph> =
   TranscriptParagraphs.split(segments, TranscriptParagraphs.MAX_SEGMENTS_ON_SCREEN).map(::Paragraph)
 
 // -------------------------------------------------------------------------------------------------
