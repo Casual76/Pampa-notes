@@ -137,6 +137,12 @@ data class SessionUiState(
   val canMerge: Boolean get() = session != null && siblings.any { it.position < session.position }
 
   /**
+   * «Ritrascrivi» si puo' offrire: c'e' una grezza da rifare, nessun lavoro qui o altrove, e i file si
+   * possono avere. Una regola sola per il menu e per il tasto nell'avviso «Manca un pezzo».
+   */
+  val canRetranscribe: Boolean get() = raw != null && job == null && elsewhere == null && parts.isNotEmpty() && transcribableHere
+
+  /**
    * I numeri della grezza che si vede, se e' nata qui. Una grezza arrivata dopo — ritrascritta da un
    * altro dispositivo e scesa col sync — e' piu' recente dell'ultima corsa, e quei numeri non sono
    * suoi.

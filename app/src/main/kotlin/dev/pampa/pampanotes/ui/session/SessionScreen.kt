@@ -53,6 +53,8 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.FastForward
+import dev.pampa.pampanotes.core.playback.SilenceSkipper
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
 import dev.antigravity.fluidengine.ui.fluid.FluidBarAction
@@ -232,16 +234,28 @@ private fun SessionScreen(
   val scope = rememberCoroutineScope()
   val active = state.activeTranscript
   val searchOnRaw = active?.kind == TranscriptKind.RAW && paragraphs.isNotEmpty()
-  val refinedBlocks = remember(active?.id, active?.text, searchOnRaw) {
-    if (active != null && !searchOnRaw) TranscriptSearch.plainBlocks(active.text) else emptyList()
+  // I blocchi della raffinata si preparano fuori dal thread della UI e solo a ricerca aperta: servono
+  // solo a lei, e spezzare il testo di una registrazione di ore costava un fotogramma a ogni apertura
+  // della pagina.
+  val refinedBlocks by produceState(emptyList<String>(), active?.id, active?.text, searchOnRaw, search.open) {
+    value = if (search.open && active != null && !searchOnRaw) {
+      withContext(Dispatchers.Default) { TranscriptSearch.plainBlocks(active.text) }
+    } else {
+      emptyList()
+    }
   }
   val searchBlocks = remember(paragraphs, refinedBlocks, searchOnRaw) {
     if (searchOnRaw) paragraphs.map { it.text } else refinedBlocks
   }
   // L'indice si prepara fuori dal thread della UI: diciannove ore sono un milione di caratteri.
+  // Prima si butta quello vecchio: fino al nuovo non c'e' niente in cui cercare.
   val searchIndex by produceState<TranscriptSearch.Index?>(null, searchBlocks, search.open) {
+    value = null
     value = if (search.open) withContext(Dispatchers.Default) { TranscriptSearch.Index(searchBlocks) } else null
   }
+  // Cambiati i blocchi (un'altra scheda, un testo arrivato), le occorrenze di prima indicano posti
+  // che non ci sono piu': restavano evidenziate sulla scheda nuova finche' la ricerca non ripartiva.
+  LaunchedEffect(searchBlocks) { search.clearMatches() }
 
   fun revealMatch(match: TranscriptSearch.Match, seek: Boolean) {
     scope.launch { scrollToKeyed(listState, if (searchOnRaw) PARAGRAPH_KEY else REFINED_BLOCK_KEY, match.block) }
@@ -284,7 +298,11 @@ private fun SessionScreen(
   val mergeLabel = stringResource(R.string.session_merge)
   val deleteLabel = stringResource(R.string.session_delete)
   val moreLabel = stringResource(R.string.action_more)
-  val skipSilenceLabel = stringResource(if (skipSilence) R.string.session_skip_silence_off else R.string.session_skip_silence_on)
+  // Lo stato nel nome, perche' il menu dell'engine non ha una spunta; e la soglia, perche' le righe
+  // della trascrizione dicono solo i silenzi di un minuto e piu', e un salto di 14 secondi senza
+  // la soglia sembrerebbe un errore.
+  val skipSeconds = (SilenceSkipper.MIN_GAP_MS / 1_000L).toInt()
+  val skipSilenceLabel = stringResource(if (skipSilence) R.string.session_skip_silence_active else R.string.session_skip_silence_inactive, skipSeconds)
   val noticeText = skipNotice?.let { skippedLabel(it.skippedMs) }
   CloseWhenGone(gone = !state.loading && state.session == null, onBack = onBack)
   // La lezione e' della sua materia: l'app prende quel colore.
@@ -318,7 +336,16 @@ private fun SessionScreen(
         modifier = Modifier.fluidExpandOrigin(open = { renaming || refining }, onMeasured = { moreOrigin = it }),
         actions = {
           buildList {
-            add(FluidContextAction(label = renameLabel) { renaming = true })
+            // In cima, perche' e' quello che si tocca mentre si ascolta; poi il testo (ripulirlo,
+            // rifarlo), poi la sessione (titolo, unione), e in fondo l'unica voce distruttiva.
+            //
+            // «Salta i silenzi» sta qui e non nella capsula del lettore, che su un telefono e' gia'
+            // piena: si accende una volta per le registrazioni lunghe e resta acceso (per dispositivo),
+            // e acceso la capsula lo dice con un segno accanto al tempo. Solo dove ha senso: serve la
+            // grezza coi suoi tempi, ed e' da lei che si sa dove si tace.
+            if (state.playable && state.segments.isNotEmpty()) {
+              add(FluidContextAction(label = skipSilenceLabel, icon = Icons.Rounded.FastForward) { onSkipSilence(!skipSilence) })
+            }
             if (state.raw != null && state.job == null) {
               add(
                 FluidContextAction(label = refineLabel) {
@@ -329,15 +356,10 @@ private fun SessionScreen(
             }
             // Rifare da capo: una grezza venuta male da Groq si rifa' col computer di casa, o con un
             // vocabolario migliore. La conferma c'e' perche' si porta via anche le versioni ripulite.
-            if (state.raw != null && state.job == null && state.elsewhere == null && state.parts.isNotEmpty() && state.transcribableHere) {
+            if (state.canRetranscribe) {
               add(FluidContextAction(label = retranscribeLabel) { confirmingRetranscribe = true })
             }
-            // «Salta i silenzi» sta qui e non nella capsula del lettore, che su un telefono e' gia'
-            // piena: si accende una volta per le registrazioni lunghe e resta acceso (per dispositivo).
-            // Solo dove ha senso: serve la grezza coi suoi tempi, ed e' da lei che si sa dove si tace.
-            if (state.playable && state.segments.isNotEmpty()) {
-              add(FluidContextAction(label = skipSilenceLabel) { onSkipSilence(!skipSilence) })
-            }
+            add(FluidContextAction(label = renameLabel) { renaming = true })
             if (state.canMerge) add(FluidContextAction(label = mergeLabel) { onMerge() })
             add(FluidContextAction(label = deleteLabel, destructive = true) { confirmingDelete = true })
           }
@@ -354,6 +376,7 @@ private fun SessionScreen(
           onSeek = onSeek,
           onCycleSpeed = onCycleSpeed,
           notice = noticeText?.takeIf { skipSilence },
+          skippingSilence = skipSilence && state.segments.isNotEmpty(),
           modifier = Modifier
             .align(Alignment.BottomCenter)
             .navigationBarsPadding()
@@ -382,7 +405,7 @@ private fun SessionScreen(
   ) {
     jobItem(state, onCancelJob, onRetryJob = { if (it.type == JobType.REFINE) refining = true else onTranscribe() }, onDismissJob = onDismissJob)
     remoteAudioItem(state, onFetchMissing)
-    partsSection(state, onSeek, onMovePart, onMovePartTo, onSplitAt) { confirmingPartDelete = it }
+    partsSection(state, onSeek, onMovePart, onMovePartTo, onSplitAt, onRetranscribe = { confirmingRetranscribe = true }) { confirmingPartDelete = it }
     transcriptSection(state, onTranscribe, onShowTranscript) {
       onPrepareRefinement()
       refining = true
@@ -622,6 +645,7 @@ private fun LazyListScope.partsSection(
   onMovePart: (String, Int) -> Unit,
   onMovePartTo: (String, String) -> Unit,
   onSplitAt: (String) -> Unit,
+  onRetranscribe: () -> Unit,
   onDeletePart: (String) -> Unit,
 ) {
   if (state.parts.isEmpty()) return
@@ -674,15 +698,28 @@ private fun LazyListScope.partsSection(
 
   if (state.untranscribed.isNotEmpty()) {
     item(key = "untranscribed") {
-      FluidInlineMessage(
-        title = stringResource(R.string.session_partial_title),
-        message = pluralStringResource(
-          R.plurals.session_partial_message,
-          state.untranscribed.size,
-          state.untranscribed.size,
-        ),
-        tone = FluidTone.Warning,
-      )
+      // L'avviso dice «ritrascrivi la sessione», e il tasto sta qui sotto: prima stava solo nel menu
+      // in alto, e chi leggeva l'avviso doveva andarlo a cercare. Stessa conferma del menu.
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        FluidInlineMessage(
+          title = stringResource(R.string.session_partial_title),
+          message = pluralStringResource(
+            R.plurals.session_partial_message,
+            state.untranscribed.size,
+            state.untranscribed.size,
+          ),
+          tone = FluidTone.Warning,
+        )
+        if (state.canRetranscribe) {
+          FluidButton(
+            text = stringResource(R.string.session_retranscribe),
+            onClick = onRetranscribe,
+            style = FluidButtonStyle.Tinted,
+            fillWidth = true,
+            modifier = Modifier.fillMaxWidth(),
+          )
+        }
+      }
     }
   }
 }

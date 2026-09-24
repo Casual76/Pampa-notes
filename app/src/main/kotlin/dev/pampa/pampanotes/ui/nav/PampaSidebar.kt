@@ -14,6 +14,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import dev.antigravity.fluidengine.ui.fluid.FluidHairline
 import dev.antigravity.fluidengine.ui.fluid.FluidSidebar
 import dev.antigravity.fluidengine.ui.fluid.FluidSidebarRow
 import dev.antigravity.fluidengine.ui.fluid.FluidSidebarSection
@@ -100,10 +104,11 @@ fun PampaSidebar(
         onClick = onAllFolders,
       )
     }
-    // Una sezione sua, non una riga in coda alle materie: Registrazioni e' un'altra cosa, e sotto
-    // «Materie» sembrava la materia che non c'e'. Resta accesa anche dentro una sua cartella, come
-    // una materia resta accesa dentro se stessa.
-    item { FluidSidebarSection(title = stringResource(R.string.tab_recordings)) }
+    // Staccata dalle materie, non una riga in coda: Registrazioni e' un'altra cosa, e sotto «Materie»
+    // sembrava la materia che non c'e'. Un filo e non un titolo: un titolo «Registrazioni» sopra una
+    // riga sola «Registrazioni» diceva la stessa parola due volte. Resta accesa anche dentro una sua
+    // cartella, come una materia resta accesa dentro se stessa.
+    item { FluidHairline(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) }
     item {
       FluidSidebarRow(
         label = stringResource(R.string.tab_recordings),

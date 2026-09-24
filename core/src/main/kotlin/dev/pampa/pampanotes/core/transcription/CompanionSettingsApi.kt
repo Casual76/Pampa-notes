@@ -83,6 +83,11 @@ sealed interface CompanionStatus {
     val canEdit: Boolean,
     /** «Chi parla»: il computer sa separare le voci ([CompanionFeatures.DIARIZE], cioe' ha il token). */
     val diarize: Boolean = false,
+    /**
+     * Il companion sa che cos'e' «Chi parla» (`/health` ha `diarization`), anche senza token. Falso
+     * per uno di prima: allora non serve un token, serve aggiornarlo, e la pagina lo dice.
+     */
+    val speakersKnown: Boolean = true,
   ) : CompanionStatus
 }
 
@@ -138,6 +143,7 @@ class CompanionSettingsApi @Inject constructor(
     return CompanionStatus.Ready(
       gpu = parsed.gpu, vram = parsed.vram, settings = settings, canEdit = settings != null,
       diarize = CompanionFeatures.DIARIZE in OpenAiCompatProvider.parseFeatures(health),
+      speakersKnown = (health as? JsonObject)?.containsKey("diarization") == true,
     )
   }
 

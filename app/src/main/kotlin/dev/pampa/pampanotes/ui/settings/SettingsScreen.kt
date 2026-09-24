@@ -71,6 +71,10 @@ import dev.pampa.pampanotes.ui.common.jobErrorText
 import dev.pampa.pampanotes.ui.export.ExportChoices
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.InstallDesktop
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.saveable.rememberSaveable
 import dev.pampa.pampanotes.ui.nav.SettingsSection
 
 /**
@@ -206,6 +210,8 @@ private fun PreferencesSectionRoute(
   var endpointToken by remember { mutableStateOf("") }
 
   val companion by viewModel.companionState.collectAsStateWithLifecycle()
+  // «Computer di casa, avanzate» aperto o chiuso: resta com'era tornando indietro da un'altra pagina.
+  var advancedOpen by rememberSaveable { mutableStateOf(false) }
 
   if (section == SettingsSection.REFINEMENT) {
     LaunchedEffect(Unit) { viewModel.loadRefinementModels() }
@@ -245,7 +251,15 @@ private fun PreferencesSectionRoute(
         onInstall = { onOpenSection(SettingsSection.INSTALL) },
       )
 
-      SettingsSection.TRANSCRIPTION -> transcriptionSection(settings = settings, companion = companion, viewModel = viewModel)
+      SettingsSection.TRANSCRIPTION -> transcriptionSection(
+        settings = settings,
+        companion = companion,
+        services = services,
+        advancedOpen = advancedOpen,
+        onToggleAdvanced = { advancedOpen = !advancedOpen },
+        onOpenServices = { onOpenSection(SettingsSection.SERVICES) },
+        viewModel = viewModel,
+      )
       SettingsSection.REFINEMENT -> refinementSection(settings = settings, services = services, viewModel = viewModel)
       SettingsSection.APPEARANCE -> appearanceSection(engine = engine, viewModel = viewModel)
       SettingsSection.ABOUT -> aboutSection(update, updates)
@@ -421,11 +435,29 @@ private fun LazyListScope.servicesSection(
 // Trascrizione
 // -------------------------------------------------------------------------------------------------
 
-private fun LazyListScope.transcriptionSection(settings: PampaSettings, companion: CompanionUiState, viewModel: SettingsViewModel) {
+/**
+ * La pagina Trascrizione, in cinque gruppi e nell'ordine in cui ci si pensa: chi trascrive, cosa
+ * deve sentire, se deve dire chi parla, e solo dopo le regolazioni fini — quelle del computer di casa
+ * chiuse dietro una riga, quelle di Groq solo se Groq si puo' usare.
+ *
+ * Era una fila unica di undici voci, con i pezzi di Groq prima della lingua e la memoria video in
+ * mezzo a «Chi parla»: chi entrava per cambiare la lingua passava davanti a due slider e una scheda
+ * video. Il comportamento e' lo stesso; cambia solo dove sta ogni cosa.
+ */
+private fun LazyListScope.transcriptionSection(
+  settings: PampaSettings,
+  companion: CompanionUiState,
+  services: ServicesUiState,
+  advancedOpen: Boolean,
+  onToggleAdvanced: () -> Unit,
+  onOpenServices: () -> Unit,
+  viewModel: SettingsViewModel,
+) {
+  // --- 1. Chi trascrive ------------------------------------------------------------------------
+  item { FluidSectionHeader(title = stringResource(R.string.settings_provider_header), detail = stringResource(R.string.settings_provider_header_detail)) }
   // Con «solo il computer di casa» la scelta non esiste piu': il selettore sparisce invece di
   // restare li' a proporre Groq come se contasse.
   if (!settings.customOnly) {
-    item { FluidSectionHeader(title = stringResource(R.string.settings_provider_header), detail = stringResource(R.string.settings_provider_header_detail)) }
     item {
       val providerLabels = mapOf(
         TranscriptionProviderId.GROQ to stringResource(R.string.provider_groq),
@@ -439,7 +471,6 @@ private fun LazyListScope.transcriptionSection(settings: PampaSettings, companio
       )
     }
   }
-
   item {
     FluidListGroup {
       FluidListRow(
@@ -460,82 +491,17 @@ private fun LazyListScope.transcriptionSection(settings: PampaSettings, companio
     }
   }
 
-  // I pezzi, un servizio per volta: Groq li vuole per forza (il tetto per richiesta), il computer di
-  // casa solo se glieli si chiede. Con «solo il computer di casa» Groq non si usa mai, e le sue
-  // scelte spariscono invece di restare li' a sembrare importanti.
-  if (!settings.customOnly) {
-    item { FluidSectionHeader(title = stringResource(R.string.provider_groq)) }
-    item {
-      FluidListGroup {
-        FluidListRow(
-          title = stringResource(R.string.settings_chunk_minutes),
-          subtitle = stringResource(R.string.settings_chunk_minutes_detail),
-          meta = "${settings.chunkMinutes} min",
-        )
-        FluidListDivider()
-        FluidListRow(
-          title = stringResource(R.string.settings_groq_limit),
-          subtitle = stringResource(R.string.settings_groq_limit_detail),
-          meta = "${settings.groqMaxUploadMb} MB",
-        )
-      }
-    }
-
-    item {
-      FluidSegmentedControl(
-        options = listOf(5, 10, 15),
-        selected = settings.chunkMinutes,
-        onSelect = viewModel::setChunkMinutes,
-        label = { "$it min" },
+  // --- 2. Cosa si sente ------------------------------------------------------------------------
+  item { FluidSectionHeader(title = stringResource(R.string.settings_hearing_header)) }
+  item {
+    FluidListGroup {
+      FluidListRow(
+        title = stringResource(R.string.settings_language_header),
+        subtitle = stringResource(R.string.settings_language_detail),
       )
     }
-
-    item {
-      FluidSegmentedControl(
-        options = listOf(25, 100),
-        selected = settings.groqMaxUploadMb,
-        onSelect = viewModel::setGroqMaxUploadMb,
-        label = { "$it MB" },
-      )
-    }
-    item { FluidSectionFootnote(text = stringResource(R.string.settings_groq_chunk_rule)) }
   }
-
-  item { FluidSectionHeader(title = stringResource(R.string.provider_custom), detail = stringResource(R.string.settings_custom_chunk_detail)) }
-  item { CustomChunkPicker(settings = settings, viewModel = viewModel) }
-  item { FluidSectionFootnote(text = stringResource(R.string.settings_custom_chunk_on_computer)) }
-
-  // «Chi parla»: quando chiedere al computer di separare le voci. Di serie solo le Registrazioni —
-  // una lezione ha una voce sola — e sempre e solo col computer di casa: Groq non lo fa.
-  item { FluidSectionHeader(title = stringResource(R.string.settings_speakers_header), detail = stringResource(R.string.settings_speakers_detail)) }
-  item {
-    val labels = mapOf(
-      SpeakerSeparation.PERSONAL to stringResource(R.string.settings_speakers_personal),
-      SpeakerSeparation.ALWAYS to stringResource(R.string.settings_speakers_always),
-      SpeakerSeparation.NEVER to stringResource(R.string.settings_speakers_never),
-    )
-    FluidSegmentedControl(
-      options = SpeakerSeparation.entries.toList(),
-      selected = settings.speakerSeparation,
-      onSelect = viewModel::setSpeakerSeparation,
-      label = { labels.getValue(it) },
-    )
-  }
-  item {
-    // Se il computer ha risposto si sa se puo' farlo (il token di Hugging Face c'e'); se no si dice
-    // cosa serve, senza promettere niente.
-    val ready = companion.status as? CompanionStatus.Ready
-    val note = when {
-      ready?.diarize == true -> R.string.settings_speakers_ready
-      ready != null -> R.string.settings_speakers_needs_token
-      else -> R.string.settings_speakers_unknown
-    }
-    FluidSectionFootnote(text = stringResource(note))
-  }
-
-  if (settings.hasEndpoint) vramSection(companion, viewModel)
-
-  item { FluidSectionHeader(title = stringResource(R.string.settings_language_header), detail = stringResource(R.string.settings_language_detail)) }
+  // Il selettore subito sotto la sua riga: staccato, non si capiva di che cosa fosse la scelta.
   item {
     val autoLabel = stringResource(R.string.language_auto)
     FluidSegmentedControl(
@@ -545,7 +511,6 @@ private fun LazyListScope.transcriptionSection(settings: PampaSettings, companio
       label = { if (it == "auto") autoLabel else it.uppercase() },
     )
   }
-
   item {
     var vocabulary by rememberDraft(settings.vocabulary, viewModel::setVocabulary)
     FluidTextField(
@@ -560,6 +525,141 @@ private fun LazyListScope.transcriptionSection(settings: PampaSettings, companio
     )
   }
   item { FluidSectionFootnote(text = stringResource(R.string.settings_vocabulary_detail)) }
+
+  // --- 3. Chi parla ----------------------------------------------------------------------------
+  speakersSection(settings = settings, companion = companion, onOpenServices = onOpenServices, viewModel = viewModel)
+
+  // --- 4. Computer di casa, avanzate -----------------------------------------------------------
+  // Pezzi, memoria video e modello interessano a chi ha un computer, e a lui non tutti i giorni: una
+  // riga che si apre, invece di tre schermate di regolazioni fra la lingua e la fine della pagina.
+  if (settings.hasEndpoint) {
+    item {
+      FluidListGroup {
+        FluidListRow(
+          title = stringResource(R.string.settings_custom_advanced),
+          subtitle = stringResource(R.string.settings_custom_advanced_detail),
+          badge = {
+            Icon(
+              imageVector = if (advancedOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+              contentDescription = null,
+              tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+          },
+          // Il tocco sulla riga, non `onClick`: l'engine ci metterebbe la freccia «›», che promette
+          // una pagina dietro, e questa si apre qui.
+          modifier = Modifier.fluidRowPressable(onClick = onToggleAdvanced),
+        )
+      }
+    }
+    if (advancedOpen) {
+      item { FluidSectionHeader(title = stringResource(R.string.settings_custom_pieces_header), detail = stringResource(R.string.settings_custom_chunk_detail)) }
+      item { CustomChunkPicker(settings = settings, viewModel = viewModel) }
+      item { FluidSectionFootnote(text = stringResource(R.string.settings_custom_chunk_on_computer)) }
+      vramSection(companion, viewModel)
+    }
+  }
+
+  // --- 5. Groq, avanzate -----------------------------------------------------------------------
+  // Solo se Groq si puo' usare: con «solo il computer di casa», o senza una chiave, i pezzi di Groq
+  // non contano, e restare li' li farebbe sembrare importanti.
+  if (!settings.customOnly && services.groqKeyPresent) {
+    item { FluidSectionHeader(title = stringResource(R.string.settings_groq_advanced)) }
+    // Ogni scelta subito sotto la sua riga: prima le due righe stavano insieme e i due selettori
+    // sotto, e «25 · 100» sembrava la risposta a «Durata di un pezzo».
+    item {
+      FluidListGroup {
+        FluidListRow(
+          title = stringResource(R.string.settings_chunk_minutes),
+          subtitle = stringResource(R.string.settings_chunk_minutes_detail),
+          meta = "${settings.chunkMinutes} min",
+        )
+      }
+    }
+    item {
+      FluidSegmentedControl(
+        options = listOf(5, 10, 15),
+        selected = settings.chunkMinutes,
+        onSelect = viewModel::setChunkMinutes,
+        label = { "$it min" },
+      )
+    }
+    item {
+      FluidListGroup {
+        FluidListRow(
+          title = stringResource(R.string.settings_groq_limit),
+          subtitle = stringResource(R.string.settings_groq_limit_detail),
+          meta = "${settings.groqMaxUploadMb} MB",
+        )
+      }
+    }
+    item {
+      FluidSegmentedControl(
+        options = listOf(25, 100),
+        selected = settings.groqMaxUploadMb,
+        onSelect = viewModel::setGroqMaxUploadMb,
+        label = { "$it MB" },
+      )
+    }
+    item { FluidSectionFootnote(text = stringResource(R.string.settings_groq_chunk_rule)) }
+  }
+}
+
+/**
+ * «Chi parla»: quando chiedere al computer di separare le voci. Di serie solo le Registrazioni — una
+ * lezione ha una voce sola — e sempre e solo col computer di casa: Groq non lo fa.
+ *
+ * La riga sotto la scelta dice lo stato vero, uno per volta: senza computer la scelta non vale niente
+ * e si dice dove collegarlo (e il selettore si spegne); poi «sto chiedendo», «non risponde», «il
+ * programma sul computer e' vecchio», «lo decide il proprietario» per chi usa il computer di un
+ * altro, e il token che manca. Prima una frase sola copriva tutti i casi e non aiutava in nessuno.
+ */
+private fun LazyListScope.speakersSection(
+  settings: PampaSettings,
+  companion: CompanionUiState,
+  onOpenServices: () -> Unit,
+  viewModel: SettingsViewModel,
+) {
+  item { FluidSectionHeader(title = stringResource(R.string.settings_speakers_header), detail = stringResource(R.string.settings_speakers_detail)) }
+  val status = companion.status
+  val noComputer = !settings.hasEndpoint || status == CompanionStatus.Unconfigured
+  item {
+    val labels = mapOf(
+      SpeakerSeparation.PERSONAL to stringResource(R.string.settings_speakers_personal),
+      SpeakerSeparation.ALWAYS to stringResource(R.string.settings_speakers_always),
+      SpeakerSeparation.NEVER to stringResource(R.string.settings_speakers_never),
+    )
+    FluidSegmentedControl(
+      options = SpeakerSeparation.entries.toList(),
+      selected = settings.speakerSeparation,
+      onSelect = viewModel::setSpeakerSeparation,
+      enabled = !noComputer,
+      label = { labels.getValue(it) },
+    )
+  }
+  if (noComputer) {
+    item {
+      FluidListGroup {
+        FluidListRow(
+          title = stringResource(R.string.settings_speakers_no_computer),
+          subtitle = stringResource(R.string.settings_speakers_no_computer_detail),
+          onClick = onOpenServices,
+        )
+      }
+    }
+    return
+  }
+  item {
+    val ready = status as? CompanionStatus.Ready
+    val note = when {
+      companion.loading || status == null -> R.string.settings_speakers_loading
+      status == CompanionStatus.Unreachable -> R.string.settings_speakers_unreachable
+      status == CompanionStatus.Unsupported || ready?.speakersKnown == false -> R.string.settings_speakers_outdated
+      ready?.diarize == true -> R.string.settings_speakers_ready
+      ready?.canEdit == false -> R.string.settings_speakers_guest
+      else -> R.string.settings_speakers_needs_token
+    }
+    FluidSectionFootnote(text = stringResource(note))
+  }
 }
 
 /**

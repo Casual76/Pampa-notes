@@ -3,6 +3,7 @@ package dev.pampa.pampanotes.core.transcription
 import dev.pampa.pampanotes.core.db.SegmentEntity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TranscriptParagraphsTest {
@@ -103,6 +104,27 @@ class TranscriptParagraphsTest {
   fun `la stessa etichetta in due registrazioni sono due voci`() {
     val voices = TranscriptParagraphs.voices(
       listOf(spoken(0, "SPEAKER_00"), spoken(1_000, "SPEAKER_01"), spoken(5_000, "SPEAKER_00", partId = "p2")),
+    )
+    assertEquals(listOf(1, 2, 3), voices.values.toList())
+  }
+
+  @Test
+  fun `un monologo in due registrazioni non diventa due voci`() {
+    // SPEAKER_00 nella prima parte e SPEAKER_00 nella seconda: due chiavi, una persona sola.
+    val segments = listOf(
+      spoken(0, "SPEAKER_00"),
+      spoken(1_000, "SPEAKER_00"),
+      spoken(5_000, "SPEAKER_00", partId = "p2"),
+      spoken(6_000, "SPEAKER_00", partId = "p2"),
+    )
+    assertTrue(TranscriptParagraphs.voices(segments).isEmpty())
+    assertTrue(TranscriptParagraphs.split(segments).all { it.voice == null })
+  }
+
+  @Test
+  fun `basta una registrazione con due voci perche' si dicano tutte`() {
+    val voices = TranscriptParagraphs.voices(
+      listOf(spoken(0, "SPEAKER_00"), spoken(5_000, "SPEAKER_00", partId = "p2"), spoken(6_000, "SPEAKER_01", partId = "p2")),
     )
     assertEquals(listOf(1, 2, 3), voices.values.toList())
   }

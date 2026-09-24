@@ -65,8 +65,18 @@ data class ComputerOnlyUi(
 /** Una cartella o una nota con la regola accesa, per l'elenco di Archiviazione. */
 data class ComputerOnlyRule(val id: String, val name: String, val isFolder: Boolean)
 
-/** L'elenco delle regole e quanto pesa quello che tengono sul computer. */
-data class ComputerOnlySummary(val rules: List<ComputerOnlyRule> = emptyList(), val bytes: Long = 0L) {
+/**
+ * L'elenco delle regole e quanto pesa quello che tengono sul computer.
+ *
+ * [personalByDefault]: le Registrazioni stanno solo sul computer per la regola di serie, senza che
+ * nessuno l'abbia scritta. Non e' fra le [rules] — non c'e' una cartella con la regola accesa — ma
+ * Archiviazione deve dirlo lo stesso: prima diceva «Nessuna» mentre le Registrazioni se ne andavano.
+ */
+data class ComputerOnlySummary(
+  val rules: List<ComputerOnlyRule> = emptyList(),
+  val bytes: Long = 0L,
+  val personalByDefault: Boolean = false,
+) {
   val folderCount: Int get() = rules.count { it.isFolder }
   val noteCount: Int get() = rules.count { !it.isFolder }
 }
@@ -127,17 +137,41 @@ class ComputerOnlyViewModel @Inject constructor(
     settingsStore.computerOnlyFolders,
     settingsStore.computerOnlyNotes,
     folders.observeAll(),
-  ) { folderRules, noteRules, all -> Triple(folderRules, noteRules, all) }
-    .mapLatest { (folderRules, noteRules, all) ->
+    settingsStore.settings.map { it.hasEndpoint to it.mirrorEnabled }.distinctUntilChanged(),
+    settingsStore.keepPersonalHere,
+  ) { folderRules, noteRules, all, (available, mirror), keepPersonal ->
+    SummaryInputs(folderRules, noteRules, all, ComputerOnlyScope.personalByDefault(keepPersonal, available, mirror))
+  }
+    .mapLatest { (folderRules, noteRules, all, personalByDefault) ->
       val folderRows = all.filter { it.id in folderRules }.sortedBy { it.name.lowercase() }
         .map { ComputerOnlyRule(it.id, it.name, isFolder = true) }
       val noteRows = runCatching { notes.getAll(noteRules.toList()) }.getOrDefault(emptyList())
         .sortedBy { it.title.lowercase() }
         .map { ComputerOnlyRule(it.id, it.title, isFolder = false) }
       val bytes = runCatching { storage.computerOnlyTotal().bytes }.getOrDefault(0L)
-      ComputerOnlySummary(folderRows + noteRows, bytes)
+      ComputerOnlySummary(folderRows + noteRows, bytes, personalByDefault)
     }
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ComputerOnlySummary())
+
+  private data class SummaryInputs(
+    val folderRules: Set<String>,
+    val noteRules: Set<String>,
+    val all: List<dev.pampa.pampanotes.core.db.FolderEntity>,
+    val personalByDefault: Boolean,
+  )
+
+  /**
+   * «Tieni qui le Registrazioni», da Archiviazione: la stessa scelta del menu della pagina
+   * Registrazioni. La regola di serie non vale piu' su questo dispositivo, e quello che sta solo sul
+   * computer torna subito.
+   */
+  fun keepPersonalHere() {
+    viewModelScope.launch {
+      settingsStore.setKeepPersonalHere(true)
+      val settings = settingsStore.current()
+      if (settings.hasEndpoint) scheduler.fetchPersonal(settings.archiveOnlyUnmetered)
+    }
+  }
 
   private val _asking = MutableStateFlow<ComputerOnlyAsk?>(null)
   val asking: StateFlow<ComputerOnlyAsk?> = _asking.asStateFlow()

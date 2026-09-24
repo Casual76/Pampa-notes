@@ -75,6 +75,7 @@ fun StorageSectionRoute(
   val computerOnlySummary by computerOnly.summary.collectAsStateWithLifecycle()
   var computerOnlyOpen by remember { mutableStateOf(false) }
   var keepingHere by remember { mutableStateOf<ComputerOnlyRule?>(null) }
+  var keepingPersonal by remember { mutableStateOf(false) }
 
   FluidScreen(
     title = SettingsSection.STORAGE.label(),
@@ -90,6 +91,7 @@ fun StorageSectionRoute(
         open = computerOnlyOpen,
         onToggle = { computerOnlyOpen = !computerOnlyOpen },
         onKeep = { keepingHere = it },
+        onKeepPersonal = { keepingPersonal = true },
       )
     }
     spaceSection(state, viewModel, onAskEvict = { confirmEvict = it })
@@ -138,6 +140,25 @@ fun StorageSectionRoute(
           },
         ),
         FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = { keepingHere = null }),
+      ),
+    )
+  }
+
+  if (keepingPersonal) {
+    FluidAlert(
+      onDismissRequest = { keepingPersonal = false },
+      title = stringResource(R.string.computer_only_personal_keep_title),
+      message = stringResource(R.string.computer_only_personal_keep_message),
+      actions = listOf(
+        FluidAlertAction(
+          label = stringResource(R.string.recordings_keep_here),
+          emphasis = FluidAlertAction.Emphasis.Preferred,
+          onClick = {
+            keepingPersonal = false
+            computerOnly.keepPersonalHere()
+          },
+        ),
+        FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = { keepingPersonal = false }),
       ),
     )
   }
@@ -522,6 +543,7 @@ private fun LazyListScope.computerOnlySection(
   open: Boolean,
   onToggle: () -> Unit,
   onKeep: (ComputerOnlyRule) -> Unit,
+  onKeepPersonal: () -> Unit,
 ) {
   item {
     FluidSectionHeader(
@@ -532,9 +554,19 @@ private fun LazyListScope.computerOnlySection(
   item {
     val empty = summary.rules.isEmpty()
     FluidListGroup {
+      // Le Registrazioni stanno sul computer di serie, senza una regola scritta: la prima riga lo
+      // dice, e toccarla offre di tenerle qui — la stessa scelta del menu della pagina Registrazioni.
+      if (summary.personalByDefault) {
+        FluidListRow(
+          title = stringResource(R.string.computer_only_personal_row),
+          subtitle = stringResource(R.string.computer_only_personal_row_detail),
+          onClick = onKeepPersonal,
+        )
+        FluidListDivider()
+      }
       FluidListRow(
         title = if (empty) {
-          stringResource(R.string.computer_only_row_none)
+          stringResource(if (summary.personalByDefault) R.string.computer_only_row_none_other else R.string.computer_only_row_none)
         } else {
           buildList {
             if (summary.folderCount > 0) add(pluralStringResource(R.plurals.computer_only_folders, summary.folderCount, summary.folderCount))

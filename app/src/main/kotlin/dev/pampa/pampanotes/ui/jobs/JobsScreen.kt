@@ -26,6 +26,7 @@ import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.db.JobState
 import dev.pampa.pampanotes.core.model.Dates
+import dev.pampa.pampanotes.core.repo.FailureStanding
 import dev.pampa.pampanotes.ui.common.Formats
 import dev.pampa.pampanotes.ui.common.JobProgressBars
 import dev.pampa.pampanotes.ui.common.jobErrorText
@@ -80,34 +81,41 @@ fun JobsRoute(
           state.finished.forEachIndexed { index, row ->
             if (index > 0) FluidListDivider()
             // Un fallimento che una trascrizione piu' recente ha gia' rimediato non e' un guasto da
-            // guardare: «Superata», nel grigio, e niente «Riprova».
+            // guardare: «Superato», nel grigio, e niente «Riprova».
             val superseded = row.superseded
+            // Una registrazione muta nemmeno: e' la risposta, non un errore. Stesse parole e stesso
+            // grigio della scheda della sessione e della pagina Registrazioni, cosi' la stessa
+            // registrazione non si presenta in tre modi diversi.
+            val silent = row.silent
             FluidListRow(
               title = row.noteTitle.ifBlank { stringResource(R.string.jobs_unknown_note) },
-              subtitle = if (superseded) {
-                stringResource(R.string.job_superseded_detail)
-              } else {
-                row.job.errorCode?.let { jobErrorText(it, row.job.errorMessage, row.job.provider) } ?: jobStateLabel(row.job.state)
+              subtitle = when {
+                superseded -> stringResource(R.string.job_superseded_detail)
+                silent -> stringResource(R.string.job_no_speech_title)
+                else -> row.job.errorCode?.let { jobErrorText(it, row.job.errorMessage, row.job.provider) } ?: jobStateLabel(row.job.state)
               },
               eyebrow = sessionDateLabel(row.sessionDate),
               tone = when {
-                superseded -> FluidTone.Neutral
+                superseded || silent -> FluidTone.Neutral
                 row.job.state == JobState.DONE -> FluidTone.Success
                 row.job.state == JobState.FAILED -> FluidTone.Danger
                 else -> FluidTone.Neutral
               },
               badge = {
-                if (superseded) {
-                  FluidStatusBadge(label = stringResource(R.string.job_state_superseded), tone = FluidTone.Neutral)
-                } else {
-                  FluidStatusBadge(label = jobStateLabel(row.job.state), tone = toneOf(row.job.state))
+                when {
+                  superseded -> FluidStatusBadge(label = stringResource(R.string.job_state_superseded), tone = FluidTone.Neutral)
+                  silent -> FluidStatusBadge(label = stringResource(R.string.recordings_silent), tone = FluidTone.Neutral)
+                  else -> FluidStatusBadge(label = jobStateLabel(row.job.state), tone = toneOf(row.job.state))
                 }
               },
               // Un lavoro fallito si apre sulla sua lezione: e' li' che si capisce quale fosse.
               onClick = { onOpenSession(row.job.sessionId) }.takeIf { row.sessionExists },
               contextActions = {
                 buildList {
-                  if (row.job.state == JobState.FAILED && !superseded && row.sessionExists) {
+                  // «Riprova» solo dove serve davvero, con la stessa regola di «Riprova tutti»: una
+                  // registrazione muta si ritrascrive dalla sua sessione («Trascrivi lo stesso»),
+                  // dove si vede anche cosa c'e' dentro.
+                  if (row.standing == FailureStanding.RETRYABLE) {
                     add(FluidContextAction(label = retryLabel) { viewModel.retry(row.job.id) })
                   }
                   add(FluidContextAction(label = deleteLabel, destructive = true) { viewModel.delete(row.job.id) })

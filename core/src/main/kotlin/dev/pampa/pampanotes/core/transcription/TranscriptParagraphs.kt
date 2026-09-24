@@ -121,16 +121,24 @@ object TranscriptParagraphs {
    *
    * La chiave e' la parte **e** l'etichetta: ogni registrazione si separa per conto suo, e
    * SPEAKER_00 della seconda non e' per forza SPEAKER_00 della prima. Meglio una «Voce 3» che e' la
-   * stessa persona della «Voce 1» che un numero solo dato a due persone. Vuota quando le voci
-   * diverse sono meno di due: una voce sola non si dice.
+   * stessa persona della «Voce 1» che un numero solo dato a due persone.
+   *
+   * Vuota se nessuna registrazione ha almeno due voci: un monologo in due parti ha SPEAKER_00 nella
+   * prima e SPEAKER_00 nella seconda, cioe' due chiavi, e diventava «Voce 1» e «Voce 2» — e l'export
+   * metteva una voce davanti a ogni paragrafo di una lezione detta da una persona sola. Le voci si
+   * dicono solo quando dentro una stessa registrazione qualcuno ha davvero risposto.
    */
   fun voices(segments: List<SegmentEntity>): Map<String, Int> {
+    val conversation = segments.filter { it.speaker != null }
+      .groupBy { it.partId }
+      .values.any { part -> part.mapTo(HashSet()) { it.speaker }.size >= 2 }
+    if (!conversation) return emptyMap()
     val numbers = LinkedHashMap<String, Int>()
     segments.forEach { segment ->
       val key = voiceKey(segment) ?: return@forEach
       if (key !in numbers) numbers[key] = numbers.size + 1
     }
-    return if (numbers.size < 2) emptyMap() else numbers
+    return numbers
   }
 
   private fun voiceKey(segment: SegmentEntity): String? = segment.speaker?.let { "${segment.partId}\u0000$it" }

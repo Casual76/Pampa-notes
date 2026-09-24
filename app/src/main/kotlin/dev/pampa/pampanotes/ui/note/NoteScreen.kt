@@ -55,6 +55,7 @@ import dev.pampa.pampanotes.ui.export.ExportSheet
 import dev.pampa.pampanotes.core.db.SourceEntity
 import dev.pampa.pampanotes.core.db.SourceKind
 import dev.pampa.pampanotes.core.db.SourceStatus
+import dev.pampa.pampanotes.core.repo.FailedJobs
 import dev.pampa.pampanotes.ui.common.Formats
 import dev.pampa.pampanotes.ui.common.CloseWhenGone
 import dev.pampa.pampanotes.ui.common.JobProgressBars
@@ -96,6 +97,7 @@ fun NoteRoute(
     onRetranscribe = viewModel::retranscribe,
     onDeleteSessions = viewModel::deleteSessions,
     onCancelJob = viewModel::cancelJob,
+    onDismissJob = viewModel::dismissJob,
     onOpenSession = onOpenSession,
     onOpenSource = { source ->
       viewModel.openSource(
@@ -140,6 +142,7 @@ private fun NoteScreen(
   onRetranscribe: (Collection<String>) -> Unit,
   onDeleteSessions: (Collection<String>) -> Unit,
   onCancelJob: (String) -> Unit,
+  onDismissJob: (String) -> Unit,
   onOpenSession: (String) -> Unit,
   onOpenSource: (SourceEntity) -> Unit,
   onRederiveHandwriting: () -> Unit,
@@ -281,7 +284,7 @@ private fun NoteScreen(
 
     when (tab) {
       NoteTab.TEXT -> textTab(state, onEdit, onOpenSource)
-      NoteTab.AUDIO -> audioTab(state, onImport, onTranscribe, onCancelJob, onOpenSession) { sessionId ->
+      NoteTab.AUDIO -> audioTab(state, onImport, onTranscribe, onCancelJob, onDismissJob, onOpenSession) { sessionId ->
         selected = setOf(sessionId)
         confirmingRetranscribe = true
       }
@@ -407,6 +410,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
   onImport: () -> Unit,
   onTranscribe: (String) -> Unit,
   onCancelJob: (String) -> Unit,
+  onDismissJob: (String) -> Unit,
   onOpenSession: (String) -> Unit,
   onRetranscribe: (String) -> Unit,
 ) {
@@ -533,21 +537,43 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
 
           else -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             // L'ultimo tentativo e' fallito: il perche', e lo stesso tasto che diventa «Riprova».
+            // Una registrazione muta non e' un guasto — e' la risposta — e si dice come nella
+            // sessione e in Lavori: niente rosso, «Nessuna parola», «Trascrivi lo stesso».
+            // «Nascondi» toglie la riga del lavoro, come nella scheda della sessione: senza, il
+            // messaggio restava sotto la sessione per sempre anche deciso di lasciar perdere.
             val failed = state.failedJobs[sessionId]
+            val silent = failed?.errorCode == FailedJobs.NO_SPEECH
             if (failed != null) {
               FluidInlineMessage(
-                title = stringResource(R.string.job_failed_transcribe),
+                title = stringResource(if (silent) R.string.job_no_speech_title else R.string.job_failed_transcribe),
                 message = jobErrorText(failed.errorCode ?: "unknown", failed.errorMessage, failed.provider),
-                tone = FluidTone.Danger,
+                tone = if (silent) FluidTone.Neutral else FluidTone.Danger,
               )
             }
-            FluidButton(
-              text = stringResource(if (failed != null) R.string.job_retry else R.string.note_transcribe),
-              onClick = { onTranscribe(sessionId) },
-              style = FluidButtonStyle.Tinted,
-              fillWidth = true,
-              modifier = Modifier.fillMaxWidth(),
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              if (failed != null) {
+                FluidButton(
+                  text = stringResource(R.string.job_dismiss),
+                  onClick = { onDismissJob(failed.id) },
+                  style = FluidButtonStyle.Plain,
+                  fillWidth = true,
+                  modifier = Modifier.weight(1f),
+                )
+              }
+              FluidButton(
+                text = stringResource(
+                  when {
+                    failed == null -> R.string.note_transcribe
+                    silent -> R.string.job_no_speech_retry
+                    else -> R.string.job_retry
+                  },
+                ),
+                onClick = { onTranscribe(sessionId) },
+                style = if (silent) FluidButtonStyle.Plain else FluidButtonStyle.Tinted,
+                fillWidth = true,
+                modifier = Modifier.weight(1f),
+              )
+            }
           }
         }
       }

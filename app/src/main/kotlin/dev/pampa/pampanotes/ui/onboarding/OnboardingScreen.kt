@@ -328,6 +328,9 @@ private fun LazyListScope.welcomeStep() {
       )
     }
   }
+  // Una riga sola per l'audio che non e' scuola: senza, chi registra un'intervista la metteva fra le
+  // materie, e finiva nelle lezioni da trascrivere e nelle statistiche.
+  item { FluidSectionFootnote(text = stringResource(R.string.onboarding_welcome_recordings)) }
   item { FluidSectionFootnote(text = stringResource(R.string.onboarding_not_assistant)) }
 }
 

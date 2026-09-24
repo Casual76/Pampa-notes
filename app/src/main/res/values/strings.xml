@@ -292,7 +292,7 @@
   </plurals>
   <!-- Schede -->
   <string name="tab_home">Home</string>
-  <string name="tab_folders">Cartelle</string>
+  <string name="tab_folders">Materie</string>
   <string name="tab_more">Altro</string>
 
   <!-- Home -->
@@ -319,7 +319,7 @@
   <string name="home_fun_days">Hai registrato %1$d giorni di lezione.</string>
 
   <!-- Cartelle -->
-  <string name="folders_title">Cartelle</string>
+  <string name="folders_title">Materie</string>
   <string name="folders_subtitle">Una per materia, una per argomento</string>
   <string name="folder_icon_label">Icona</string>
   <string name="action_edit">Modifica</string>
@@ -372,7 +372,7 @@
   <string name="job_state_failed">Fallito</string>
   <string name="job_state_cancelled">Annullato</string>
   <string name="job_state_cancelling">Sto annullando</string>
-  <string name="job_state_superseded">Superata</string>
+  <string name="job_state_superseded">Superato</string>
   <string name="job_superseded_detail">Una trascrizione più recente ha preso il suo posto: non c\'è niente da riprovare.</string>
   <string name="job_phase_waiting">In attesa del limite, %1$d s</string>
   <string name="job_phase_endpoint">In attesa del computer di casa</string>
@@ -513,7 +513,7 @@
   <string name="import_date_pick">Oppure scegli tu il giorno, uno solo per tutte le registrazioni:</string>
   <!-- Trascrizione e coda: pezzi del computer di casa, attesa del limite di Groq -->
   <string name="settings_custom_chunk_whole">Intero</string>
-  <string name="settings_custom_chunk_detail">Quanto audio il computer di casa trascrive in una volta, per ogni registrazione. La memoria video non dipende dalla lunghezza: un tetto serve a un PC lento, o che si spegne a metà.</string>
+  <string name="settings_custom_chunk_detail">Quanto audio il computer di casa trascrive in una volta, per ogni registrazione: un tetto serve a un PC lento, o che si spegne a metà.</string>
   <string name="job_phase_until">In attesa del limite di Groq, fino alle %1$s</string>
   <string name="settings_vocabulary">Vocabolario</string>
   <string name="settings_vocabulary_hint">Termidoro, Monti, Feuerbach…</string>
@@ -521,6 +521,11 @@
   <string name="language_auto">Auto</string>
   <string name="settings_provider_header">Chi trascrive</string>
   <string name="settings_provider_header_detail">Quello che importi va a questo servizio, se non scegli altro sul momento.</string>
+  <string name="settings_hearing_header">Cosa si sente</string>
+  <string name="settings_custom_advanced">Computer di casa, avanzate</string>
+  <string name="settings_custom_advanced_detail">Pezzi, memoria video, modello</string>
+  <string name="settings_custom_pieces_header">Pezzi</string>
+  <string name="settings_groq_advanced">Groq, avanzate</string>
   <string name="settings_language_header">Lingua delle lezioni</string>
   <string name="settings_language_detail">Auto la riconosce da sola. Sceglierla aiuta quando la lezione inizia con una citazione in un\'altra lingua.</string>
   <string name="note_transcript_meta">%1$d parole · %2$s</string>
@@ -603,8 +608,9 @@
   <string name="player_time_toggle">Mostra quanto manca o quanto dura</string>
   <string name="player_skipped">Saltati %1$s</string>
   <string name="player_skipped_seconds">Saltati %1$d s</string>
-  <string name="session_skip_silence_on">Salta i silenzi</string>
-  <string name="session_skip_silence_off">Non saltare i silenzi</string>
+  <string name="session_skip_silence_inactive">Salta i silenzi oltre %1$d s: spento</string>
+  <string name="session_skip_silence_active">Salta i silenzi oltre %1$d s: acceso</string>
+  <string name="player_skipping_silence">Salta i silenzi è acceso</string>
   <string name="session_search">Cerca nella trascrizione</string>
   <string name="session_search_placeholder">Cerca una parola</string>
   <string name="session_search_count">%1$d di %2$d</string>
@@ -749,11 +755,11 @@
   <string name="import_samsung_new_detail">Una seconda nota con lo stesso titolo; quella che c\u2019è non si tocca.</string>
   <string name="action_update">Aggiorna</string>
   <string name="sidebar_subjects">Materie</string>
-  <string name="sidebar_all_folders">Tutte le cartelle</string>
+  <string name="sidebar_all_folders">Tutte le materie</string>
   <string name="detail_empty_title">Niente di aperto</string>
   <string name="detail_empty_detail">Scegli una nota dalla lista, o importane una.</string>
   <string name="settings_section_services_detail">Chiave Groq e computer di casa</string>
-  <string name="settings_section_transcription_detail">Servizio, lingua, vocabolario</string>
+  <string name="settings_section_transcription_detail">Servizio, lingua, voci, computer</string>
   <string name="settings_section_refinement_detail">Quanto ripulire, e con quale modello</string>
   <string name="settings_section_appearance_detail">Tema, colori, aptica</string>
   <string name="settings_section_about_detail">Versione dell\'app e dell\'engine</string>
@@ -940,6 +946,7 @@
   <string name="onboarding_step_transcribe_detail">Whisper, su Groq o sul tuo computer</string>
   <string name="onboarding_step_export">Esporta</string>
   <string name="onboarding_step_export_detail">Un pacchetto Markdown con le regole per Claude, ChatGPT o Gemini</string>
+  <string name="onboarding_welcome_recordings">Un\'intervista, una riunione, un viaggio: l\'audio che non è scuola va in Registrazioni, fuori dalle materie.</string>
   <string name="onboarding_not_assistant">Quello che non fa: non riassume, non risponde a domande, non ha un assistente dentro.</string>
   <string name="onboarding_import_title">Da dove arrivano gli appunti</string>
   <string name="onboarding_import_detail">Non si scrive qui: si porta qui quello che hai già scritto altrove.</string>
@@ -948,7 +955,7 @@
   <string name="onboarding_import_share">Da qualsiasi app</string>
   <string name="onboarding_import_share_detail">Condividi, oppure «Apri con» da un gestore file</string>
   <string name="onboarding_import_picker">Dal tasto importa</string>
-  <string name="onboarding_import_picker_detail">In Altro, o dalla schermata di una cartella</string>
+  <string name="onboarding_import_picker_detail">In Altro, dalla schermata di una materia, o da Registrazioni</string>
   <string name="onboarding_provider_title">Chi trascrive</string>
   <string name="onboarding_provider_detail">Groq è nel cloud e vuole una chiave gratuita. Il computer di casa trascrive sul tuo PC e dà anche i tempi di ogni parola.</string>
   <string name="onboarding_server_detail">L\'indirizzo del computer di casa, con la porta.</string>
@@ -1033,7 +1040,7 @@
   <!-- Archiviazione: dove stanno i file, e cosa fa adesso ogni impostazione -->
   <string name="storage_where_header">Dove stanno i tuoi file</string>
   <string name="storage_where_detail">Le note viaggiano con la sincronizzazione. Registrazioni e originali no: stanno sul dispositivo che li ha presi e, se l\'archivio è acceso, sul computer di casa.</string>
-  <string name="storage_kind_recordings_detail">Le lezioni registrate o importate</string>
+  <string name="storage_kind_recordings_detail">Lezioni e Registrazioni, importate o registrate</string>
   <string name="storage_kind_originals">Originali</string>
   <string name="storage_kind_originals_detail">PDF, Word, Samsung Notes, pagine scritte a mano</string>
   <string name="storage_kind_empty">Nessuno, per ora</string>
@@ -1211,15 +1218,20 @@
   <string name="home_stats_speed_detail_elsewhere">il tempo reale, in media · record %1$s (%2$s)</string>
   <string name="home_stats_speed_detail_single_elsewhere">il tempo reale, da %1$s</string>
   <!-- apptx -->
-  <string name="settings_custom_chunk_on_computer">Con il companion aggiornato i pezzi li taglia il computer, e una registrazione che ha già nel suo archivio non passa dal telefono: qui non si decodifica niente.</string>
+  <string name="settings_custom_chunk_on_computer">Con il programma sul computer aggiornato i pezzi li taglia il computer, e una registrazione che ha già nel suo archivio non passa dal telefono: qui non si decodifica niente.</string>
   <string name="settings_speakers_header">Chi parla</string>
   <string name="settings_speakers_detail">Separa le voci: «Voce 1», «Voce 2»</string>
-  <string name="settings_speakers_personal">Registrazioni</string>
+  <string name="settings_speakers_personal">Solo in Registrazioni</string>
   <string name="settings_speakers_always">Sempre</string>
   <string name="settings_speakers_never">Mai</string>
   <string name="settings_speakers_ready">Il computer di casa separa le voci dopo aver trascritto, e ogni paragrafo dice di chi è. Solo il computer: con Groq le registrazioni tornano senza voci.</string>
   <string name="settings_speakers_needs_token">Il computer di casa non sa ancora farlo: sul PC, nel menu dell\'icona, «Separazione delle voci…» chiede un token gratuito di Hugging Face.</string>
-  <string name="settings_speakers_unknown">Lo fa solo il computer di casa, con un token gratuito di Hugging Face (sul PC: menu dell\'icona, «Separazione delle voci…»). Con Groq le registrazioni tornano senza voci.</string>
+  <string name="settings_speakers_loading">Chiedo al computer…</string>
+  <string name="settings_speakers_unreachable">Il computer di casa non risponde: la scelta resta, e vale quando torna.</string>
+  <string name="settings_speakers_outdated">Il programma sul computer è di una versione che non separa le voci: aggiornalo per averle.</string>
+  <string name="settings_speakers_guest">Lo decide il proprietario del computer: sul suo PC la separazione delle voci non è ancora attiva.</string>
+  <string name="settings_speakers_no_computer">Serve il computer di casa</string>
+  <string name="settings_speakers_no_computer_detail">Groq non separa le voci. Collega il computer in Servizi.</string>
 
   <!-- compOnly -->
   <string name="computer_only_on">Solo sul computer</string>
@@ -1259,6 +1271,11 @@
     <item quantity="other">%d note</item>
   </plurals>
   <string name="computer_only_row_none">Nessuna cartella e nessuna nota</string>
+  <string name="computer_only_row_none_other">Nessun\'altra cartella e nessuna nota</string>
+  <string name="computer_only_personal_row">Registrazioni (di serie)</string>
+  <string name="computer_only_personal_row_detail">Stanno solo sul computer finché non scegli di tenerle anche qui. Tocca per tenerle qui.</string>
+  <string name="computer_only_personal_keep_title">Tieni qui le Registrazioni?</string>
+  <string name="computer_only_personal_keep_message">Quello che sta solo sul computer torna subito su questo dispositivo, e le Registrazioni nuove restano qui. Si torna indietro dal menu della pagina Registrazioni.</string>
   <string name="computer_only_row_open">Tocca per vederle, e per tenerne una anche qui</string>
   <string name="computer_only_rule_folder">Cartella, con le sottocartelle</string>
   <string name="computer_only_rule_note">Nota</string>
@@ -1327,7 +1344,7 @@
   </plurals>
   <string name="notes_move_in_message">«%1$s» è una cartella di Registrazioni: le note escono dalle materie, e non contano più nella home né in «Da fare».</string>
   <string name="notes_move_out_message">«%1$s» è una materia: le note escono da Registrazioni, e contano di nuovo nella home e nelle statistiche della scuola.</string>
-  <string name="recordings_keep_here">Tieni le registrazioni anche qui</string>
+  <string name="recordings_keep_here">Tieni qui le Registrazioni</string>
   <string name="recordings_computer_only">Registrazioni solo sul computer</string>
   <string name="recordings_footnote_computer">I file di Registrazioni stanno solo sul computer di casa: quando ci sono arrivati se ne vanno da qui, e si scaricano quando le ascolti.</string>
   <string name="recordings_footnote_no_archive">Di serie i file di Registrazioni stanno solo sul computer di casa, ma l\'archivio sul computer è spento: finché non lo accendi (Archiviazione) restano qui.</string>

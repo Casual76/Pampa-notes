@@ -216,8 +216,12 @@ Il piano per esteso: `C:\Users\casua\.claude\plans\praticamente-vorrei-un-applic
 ## Registrazioni
 
 L'audio che non e' una lezione — una registrazione di diciannove ore, un'intervista, un viaggio —
-ha una **quarta scheda**, fra Cartelle e Altro (`Routes.RECORDINGS`, `ui/recordings/`; sul tablet
-una sezione sua sotto le materie nella barra laterale, accesa anche dentro una sua cartella). Prima finiva in una materia, e da li' in testa a
+ha una **quarta scheda**, fra Materie e Altro (`Routes.RECORDINGS`, `ui/recordings/`; sul tablet
+una riga sua sotto le materie nella barra laterale, staccata da un filo e senza un titolo che
+ripeta «Registrazioni», accesa anche dentro una sua cartella). La scheda delle tessere si chiama
+«Materie» (era «Cartelle»: accanto a «Registrazioni», che sono cartelle anche loro, non diceva la
+differenza), e cosi' «Tutte le materie» nella barra laterale. Il primo avvio lo dice in una riga, e
+«Dal tasto importa» nomina anche Registrazioni. Prima finiva in una materia, e da li' in testa a
 «Da fare» per settimane, nelle ore «di lezione» della home, nel pacchetto «Esporta tutto» e sul
 telefono, dove diciannove ore sono gigabyte.
 
@@ -240,7 +244,7 @@ d'occhio `folders` per i `Flow`), e in Kotlin l'oggetto `PersonalScope` (`rootId
 (`NoteDao.observeTodo`/`observeRecent`), «Trascrivi tutte», i numeri della home (ore, parole,
 giorni di lezione, materia piu' ascoltata, note e cartelle, e le statistiche delle trascrizioni:
 `StatsRepository.observe(personal)`, con le corse lette dalla sessione che hanno adesso — quella di
-una sessione cancellata resta fra le materie), le tessere di Cartelle e la barra laterale
+una sessione cancellata resta fra le materie), le tessere di Materie e la barra laterale
 (`FoldersViewModel`), `ExportScope.Everything`. «Riprendi ad ascoltare» e la ricerca le mostrano:
 sono di chi ascolta, non della scuola. Una cartella, una nota o una sessione di Registrazioni **non
 e' una materia**: niente `ReportSubject` (la cartella lo salta, `NoteViewModel` e
@@ -257,7 +261,7 @@ conferma di una regola nuova (`resolve` senza `includePersonal`) le lascia fuori
 quello che quella regola toglierebbe. Mirror, «Libera spazio» e Archiviazione seguono da li'; nei
 menu la voce «Solo sul computer» di una cartella di Registrazioni dice che la regola e' della
 sezione. Dalla scheda: «Registrazioni solo sul computer» chiede conferma col peso di quello che se ne
-andrebbe (`ComputerOnlyConfirmAlert`, la stessa di una cartella); «Tieni le registrazioni anche qui»
+andrebbe (`ComputerOnlyConfirmAlert`, la stessa di una cartella); «Tieni qui le Registrazioni»
 fa partire subito un giro di scarico della sola sezione (`WorkScheduler.fetchPersonal`,
 `ArchiveFetcher.fetchAll(onlyPersonal)`), anche con il mirror spento; col mirror acceso le due voci
 non ci sono e la nota in fondo dice perche'. E non si aspetta
@@ -464,7 +468,10 @@ parti e fonti. Il mirror le salta, e `StorageRepository.evictComputerOnly` le to
 quando il computer le ha: dopo ogni archiviazione riuscita e alla conferma della regola. Non tocca
 una sessione con un lavoro in corso, le pagine a mano, ne' la lezione ascoltata nelle ultime 24 ore
 (`protectedSessionIds`, collegato a «Riprendi ad ascoltare» in `PampaNotesApp`). Aprirle le scarica
-come sempre.
+come sempre. In Archiviazione l'elenco comincia con «Registrazioni (di serie)» quando la regola di
+serie vale qui (`ComputerOnlySummary.personalByDefault`): non e' una regola scritta, ma i file se ne
+vanno lo stesso, e prima la pagina diceva «Nessuna». Toccarla offre «Tieni qui le Registrazioni»,
+la stessa scelta del menu della pagina Registrazioni.
 
 **Tieni tutto anche qui** (Archiviazione, `mirrorEnabled`) e' il verso opposto per chi vuole
 consultare offline: `FetchWorker` — in primo piano, come l'archivio — scarica tutto quello che il
@@ -579,8 +586,12 @@ nel sync, nel raffinamento e nell'export senza tempi, dove una frase scritta dal
 detta dal professore, nella lingua del telefono che ha trascritto. Durate con
 `TranscriptParagraphs.silenceDuration` («16 min», «1 h 20 min»).
 
-**Salta i silenzi** (menu della sessione, per dispositivo: `PampaSettingsStore.skipSilence`, spento
-di serie; c'e' solo con la grezza coi segmenti e l'audio qui). I silenzi vengono dalla trascrizione,
+**Salta i silenzi** (in cima al menu della sessione, con l'icona e lo stato nel nome — «Salta i
+silenzi oltre 12 s: acceso» — perche' il menu dell'engine non ha la spunta, e la soglia perche' le
+righe della trascrizione dicono solo i silenzi di un minuto e piu'; per dispositivo:
+`PampaSettingsStore.skipSilence`, spento di serie; c'e' solo con la grezza coi segmenti e l'audio
+qui). Acceso, la capsula del lettore ha un segno piccolo accanto al tempo. Il resto del menu va per
+famiglie: ripulisci e ritrascrivi, poi titolo e unione, in fondo elimina. I silenzi vengono dalla trascrizione,
 non dall'audio (`SilenceSkipper.gapsOf`, puro, in `core/playback/`): dentro le parti che hanno
 segmenti, tutto quello che nessun segmento copre e dura almeno 12 s (`MIN_GAP_MS`), compreso
 l'inizio muto e la fine muta, anche a cavallo fra due parti; una parte senza segmenti e' sconosciuta,
@@ -603,7 +614,14 @@ il testo (`searchHighlights`, dal `TextLayoutResult` di `FluidSpokenText`, che r
 accende le parole); scrivere porta la lista alla prima senza toccare il lettore, precedente e
 successiva portano anche il lettore alla parola (`TranscriptSearch.timeOf`: il tempo della parola, o
 l'inizio del segmento). Sulla raffinata, che e' Markdown reso da una libreria, mentre la ricerca e'
-aperta il testo si mostra a blocchi di testo semplice (`plainBlocks`) e non si salta da nessuna parte.
+aperta il testo si mostra a blocchi di testo semplice (`plainBlocks`, preparati anche loro fuori dal
+thread della UI e solo a ricerca aperta) e non si salta da nessuna parte. Quando i blocchi cambiano
+(un'altra scheda, un testo arrivato) le occorrenze di prima si buttano subito (`clearMatches`): prima
+restavano evidenziate sulla scheda nuova finche' la ricerca non ripartiva.
+
+I tasti piccoli del lettore e della ricerca (44 e 40 dp) prendono il dito su 48 dp senza cambiare la
+capsula (`touchTarget`, in `PlayerBar.kt`: i modificatori dopo vedono 48, il layout intorno la misura
+disegnata), e cosi' il tempo rimanente/totale in fondo allo scrubber (`touchHeight`).
 ## Raffinamento
 
 L'unico posto in cui l'app manda del testo a un modello di chat, e fa una cosa sola: riscrivere
@@ -958,7 +976,13 @@ silenzio calcolati sull'array gia' in memoria; `GET /v1/jobs` dice `chunk`/`chun
 nell'archivio di un altro) e un companion vecchio sulla strada di prima. Il «Vocabolario» (`prompt`)
 arriva a WhisperX come `initial_prompt` per quella sola richiesta: prima il companion lo ignorava.
 
-**I pezzi, in automatico.** Impostazioni → Trascrizione ha «Automatico» (di serie, tranne per chi
+**La pagina Trascrizione** va in cinque gruppi, nell'ordine in cui ci si pensa: «Chi trascrive»
+(servizio, solo il computer, trascrivi appena importi), «Cosa si sente» (lingua, vocabolario), «Chi
+parla», poi «Computer di casa, avanzate» — solo con un computer, chiusa dietro una riga che si apre:
+pezzi, memoria video, modello — e «Groq, avanzate» solo se Groq si puo' usare (una chiave, e non
+«solo il computer»), con ogni selettore subito sotto la sua riga.
+
+**I pezzi, in automatico.** Impostazioni → Trascrizione → «Computer di casa, avanzate» ha «Automatico» (di serie, tranne per chi
 aveva gia' scelto un tetto) e uno slider da 10 a 120 minuti e «intera» (`LiquidSlider`, il vetro di
 Kyant portato nell'app: tocco e trascinamento su tutta la riga da 48 dp, la maniglia che si fa lente
 da qualunque punto la si prenda, il titolo come `stateDescription` per TalkBack). Acceso, l'app manda
@@ -991,8 +1015,12 @@ dell'allineamento. `assign_speakers` e' la regola di `whisperx.assign_word_speak
 piu' a lungo nell'intervallo) senza pandas: un segmento che non tocca nessun turno prende il turno
 piu' vicino, una parola resta senza.
 
-Nell'app: **Impostazioni → Trascrizione → «Chi parla»** (`SpeakerSeparation`: Registrazioni, di
-serie — una lezione ha una voce sola —, Sempre, Mai; la nota sotto dice se il computer lo sa fare).
+Nell'app: **Impostazioni → Trascrizione → «Chi parla»** (`SpeakerSeparation`: «Solo in
+Registrazioni», di serie — una lezione ha una voce sola —, Sempre, Mai). Senza un computer collegato
+la scelta e' spenta e una riga porta a Servizi; con il computer la nota sotto dice lo stato vero, uno
+per volta: sto chiedendo, non risponde, il programma sul computer e' vecchio (`/health` senza
+`diarization`: `CompanionStatus.Ready.speakersKnown`), pronto, lo decide il proprietario (chi non
+legge le impostazioni del computer, cioe' un ospite), manca il token.
 `TranscriptionRepository.requestFor` lo mette nella richiesta, e `TranscriptionRunner` lo manda solo
 sulla strada del computer che lavora da se' e solo se `/health` dichiara `diarize`: mai a Groq, mai
 a un companion vecchio, mai a pezzi tagliati sul telefono. `SegmentEntity.speaker` (database 10,
@@ -1002,7 +1030,10 @@ nullable) viaggia coi segmenti dentro la trascrizione, e **vuoto non entra nell'
 una trascrizione con le voci le perde e, se la riscrive, la rimanda senza: si aggiornano tutti.
 L'etichetta e' una chiave, non un nome: `TranscriptParagraphs.voices` la traduce in «Voce 1», «Voce 2»
 nell'ordine in cui compaiono, **parte per parte** (ogni registrazione si separa per conto suo: la
-stessa persona in due parti e' due voci), e con meno di due voci non dice niente. `split` va a capo
+stessa persona in due parti e' due voci), e **solo se almeno una parte ha due voci**: un monologo in
+due parti ha SPEAKER_00 e SPEAKER_00, due chiavi, e diventava «Voce 1» e «Voce 2» con l'export che
+metteva una voce davanti a ogni paragrafo. La pagina condivisa (`worker/src/page.ts`) ha la stessa
+regola. `split` va a capo
 anche dove cambia la voce. A schermo la voce sta nella riga del tempo della card, solo dove cambia
 («0:42 · Voce 2»); nell'export coi tempi ogni paragrafo comincia con `**Voce 1:**` (non conta nelle
 parole); la pagina di una condivisione la scrive piccola sotto il tempo. Rinominare le voci («Voce 1»
@@ -1113,8 +1144,11 @@ diventa quella della selezione — titolo «N selezionate», indietro la chiude 
 in basso che non esiste nell'engine. In Lavori, «Riprova tutti i falliti», che conta e rimanda solo
 quelli che vale la pena (`FailedJobs.standing`, puro): non quelli superati da una trascrizione (o
 una raffinata) piu' recente o da un lavoro dello stesso tipo partito dopo — la riga dice
-«Superata», in grigio —, non le registrazioni mute (`no_speech`), non i lavori di una sessione che
-non c'e' piu'. La stessa regola decide se la sessione mostra ancora il fallimento; la scheda del
+«Superato», in grigio —, non le registrazioni mute (`no_speech`), non i lavori di una sessione che
+non c'e' piu'. Una registrazione muta si presenta allo stesso modo dappertutto — sessione, nota,
+Lavori, Registrazioni —: niente rosso, «Nessuna parola in questa registrazione», il segno «Senza
+parole», «Trascrivi lo stesso»; in Lavori il «Riprova» della riga c'e' solo per i falliti
+`RETRYABLE`, e la nota ha «Nascondi» come la sessione e salta i fallimenti superati. La stessa regola decide se la sessione mostra ancora il fallimento; la scheda del
 fallimento ha «Nascondi» (cancella la riga del lavoro), e una ripulitura non riuscita con la grezza
 li' sotto e' una scheda quieta, non l'allarme in cima alla pagina. Una trascrizione finita
 `no_speech` lascia nella cartella del lavoro i suoi pezzi vuoti (`computer.json`), e «Riprova» usa lo

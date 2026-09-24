@@ -274,7 +274,7 @@
     <item quantity="other">%d in transcripts</item>
   </plurals>
   <string name="tab_home">Home</string>
-  <string name="tab_folders">Folders</string>
+  <string name="tab_folders">Subjects</string>
   <string name="tab_more">More</string>
 
   <string name="home_hero_eyebrow">Your archive</string>
@@ -299,7 +299,7 @@
   <string name="home_fun_subject">%1$s is the subject with the most recorded lessons: %2$s.</string>
   <string name="home_fun_days">You recorded %1$d days of lessons.</string>
 
-  <string name="folders_title">Folders</string>
+  <string name="folders_title">Subjects</string>
   <string name="folders_subtitle">One per subject, one per topic</string>
   <string name="folder_icon_label">Icon</string>
   <string name="action_edit">Edit</string>
@@ -348,7 +348,7 @@
   <string name="job_state_failed">Failed</string>
   <string name="job_state_cancelled">Cancelled</string>
   <string name="job_state_cancelling">Cancelling</string>
-  <string name="job_state_superseded">Superseded</string>
+  <string name="job_state_superseded">Replaced</string>
   <string name="job_superseded_detail">A newer transcript took its place: there\'s nothing to retry.</string>
   <string name="job_phase_waiting">Waiting on the rate limit, %1$d s</string>
   <string name="job_phase_endpoint">Waiting for the home computer</string>
@@ -483,7 +483,7 @@
   <string name="import_date_pick">Or pick the day yourself, one for all the recordings:</string>
   <!-- Transcription and queue: home computer chunks, waiting on Groq's limit -->
   <string name="settings_custom_chunk_whole">Whole</string>
-  <string name="settings_custom_chunk_detail">How much audio the home computer transcribes at once, for each recording. Video memory does not depend on length: a cap helps a slow PC, or one that shuts down halfway.</string>
+  <string name="settings_custom_chunk_detail">How much audio the home computer transcribes at once, for each recording: a cap helps a slow PC, or one that shuts down halfway.</string>
   <string name="job_phase_until">Waiting on Groq\'s limit until %1$s</string>
   <string name="settings_vocabulary">Vocabulary</string>
   <string name="settings_vocabulary_hint">Thermidor, Feuerbach, Termidoro…</string>
@@ -491,6 +491,11 @@
   <string name="language_auto">Auto</string>
   <string name="settings_provider_header">Who transcribes</string>
   <string name="settings_provider_header_detail">What you import goes to this service, unless you pick another one at the time.</string>
+  <string name="settings_hearing_header">What it hears</string>
+  <string name="settings_custom_advanced">Home computer, advanced</string>
+  <string name="settings_custom_advanced_detail">Pieces, video memory, model</string>
+  <string name="settings_custom_pieces_header">Pieces</string>
+  <string name="settings_groq_advanced">Groq, advanced</string>
   <string name="settings_language_header">Lecture language</string>
   <string name="settings_language_detail">Auto detects it. Picking one helps when a lecture opens with a quote in another language.</string>
   <string name="note_transcript_meta">%1$d words · %2$s</string>
@@ -573,8 +578,9 @@
   <string name="player_time_toggle">Show time left or total length</string>
   <string name="player_skipped">Skipped %1$s</string>
   <string name="player_skipped_seconds">Skipped %1$d s</string>
-  <string name="session_skip_silence_on">Skip silences</string>
-  <string name="session_skip_silence_off">Stop skipping silences</string>
+  <string name="session_skip_silence_inactive">Skip silences over %1$d s: off</string>
+  <string name="session_skip_silence_active">Skip silences over %1$d s: on</string>
+  <string name="player_skipping_silence">Skipping silences is on</string>
   <string name="session_search">Search the transcript</string>
   <string name="session_search_placeholder">Find a word</string>
   <string name="session_search_count">%1$d of %2$d</string>
@@ -719,11 +725,11 @@
   <string name="import_samsung_new_detail">A second note with the same title; the existing one is left alone.</string>
   <string name="action_update">Update</string>
   <string name="sidebar_subjects">Subjects</string>
-  <string name="sidebar_all_folders">All folders</string>
+  <string name="sidebar_all_folders">All subjects</string>
   <string name="detail_empty_title">Nothing open</string>
   <string name="detail_empty_detail">Pick a note from the list, or import one.</string>
   <string name="settings_section_services_detail">Groq key and home computer</string>
-  <string name="settings_section_transcription_detail">Service, language, vocabulary</string>
+  <string name="settings_section_transcription_detail">Service, language, voices, computer</string>
   <string name="settings_section_refinement_detail">How much to clean up, and with which model</string>
   <string name="settings_section_appearance_detail">Theme, colours, haptics</string>
   <string name="settings_section_about_detail">App and engine version</string>
@@ -910,6 +916,7 @@
   <string name="onboarding_step_transcribe_detail">Whisper, on Groq or on your own computer</string>
   <string name="onboarding_step_export">Export</string>
   <string name="onboarding_step_export_detail">A Markdown bundle with the rules for Claude, ChatGPT or Gemini</string>
+  <string name="onboarding_welcome_recordings">An interview, a meeting, a trip: audio that is not school goes in Recordings, outside your subjects.</string>
   <string name="onboarding_not_assistant">What it does not do: no summaries, no answers, no assistant inside.</string>
   <string name="onboarding_import_title">Where the notes come from</string>
   <string name="onboarding_import_detail">You do not write here: you bring in what you have already written elsewhere.</string>
@@ -918,7 +925,7 @@
   <string name="onboarding_import_share">From any app</string>
   <string name="onboarding_import_share_detail">Share, or «Open with» from a file manager</string>
   <string name="onboarding_import_picker">From the import button</string>
-  <string name="onboarding_import_picker_detail">Under More, or from a folder screen</string>
+  <string name="onboarding_import_picker_detail">Under More, from a subject screen, or from Recordings</string>
   <string name="onboarding_provider_title">Who transcribes</string>
   <string name="onboarding_provider_detail">Groq is in the cloud and wants a free key. The home computer transcribes on your PC and also gives per-word timings.</string>
   <string name="onboarding_server_detail">The address of the computer at home, with its port.</string>
@@ -1003,7 +1010,7 @@
   <!-- Storage: where files are, and what each setting does right now -->
   <string name="storage_where_header">Where your files are</string>
   <string name="storage_where_detail">Notes travel with sync. Recordings and originals don\'t: they stay on the device that captured them and, if archiving is on, on your home computer.</string>
-  <string name="storage_kind_recordings_detail">Lectures recorded or imported</string>
+  <string name="storage_kind_recordings_detail">Lectures and Recordings, imported or recorded</string>
   <string name="storage_kind_originals">Originals</string>
   <string name="storage_kind_originals_detail">PDF, Word, Samsung Notes, handwritten pages</string>
   <string name="storage_kind_empty">None yet</string>
@@ -1181,15 +1188,20 @@
   <string name="home_stats_speed_detail_elsewhere">real time on average · record %1$s (%2$s)</string>
   <string name="home_stats_speed_detail_single_elsewhere">real time, on %1$s</string>
   <!-- apptx -->
-  <string name="settings_custom_chunk_on_computer">With an up-to-date companion the computer cuts the pieces itself, and a recording already in its archive does not go through the phone: nothing is decoded here.</string>
+  <string name="settings_custom_chunk_on_computer">With the program on the computer up to date, the computer cuts the pieces itself, and a recording already in its archive does not go through the phone: nothing is decoded here.</string>
   <string name="settings_speakers_header">Who is speaking</string>
-  <string name="settings_speakers_detail">Tell the voices apart: «Voice 1», «Voice 2»</string>
-  <string name="settings_speakers_personal">Recordings</string>
+  <string name="settings_speakers_detail">Tell the voices apart: “Voice 1”, “Voice 2”</string>
+  <string name="settings_speakers_personal">Recordings only</string>
   <string name="settings_speakers_always">Always</string>
   <string name="settings_speakers_never">Never</string>
-  <string name="settings_speakers_ready">The home computer tells the voices apart after transcribing, and each paragraph says whose it is. Only the computer: with Groq recordings come back without voices.</string>
-  <string name="settings_speakers_needs_token">The home computer cannot do it yet: on the PC, in the tray icon menu, «Separazione delle voci…» asks for a free Hugging Face token.</string>
-  <string name="settings_speakers_unknown">Only the home computer does it, with a free Hugging Face token (on the PC: tray icon menu, «Separazione delle voci…»). With Groq recordings come back without voices.</string>
+  <string name="settings_speakers_ready">The home computer tells the voices apart after transcribing, and each paragraph says whose it is. Only the computer: with Groq, recordings come back without voices.</string>
+  <string name="settings_speakers_needs_token">The home computer cannot do it yet: on the PC, in the tray icon menu, the “Separazione delle voci…” item (speaker separation) asks for a free Hugging Face token.</string>
+  <string name="settings_speakers_loading">Asking the computer…</string>
+  <string name="settings_speakers_unreachable">The home computer is not answering: the choice stays, and applies when it is back.</string>
+  <string name="settings_speakers_outdated">The program on the computer is a version that cannot tell voices apart: update it to get them.</string>
+  <string name="settings_speakers_guest">The computer\'s owner decides: speaker separation is not set up on their PC yet.</string>
+  <string name="settings_speakers_no_computer">Needs the home computer</string>
+  <string name="settings_speakers_no_computer_detail">Groq cannot tell voices apart. Connect the computer in Services.</string>
 
   <!-- compOnly -->
   <string name="computer_only_on">Computer only</string>
@@ -1229,6 +1241,11 @@
     <item quantity="other">%d notes</item>
   </plurals>
   <string name="computer_only_row_none">No folders and no notes</string>
+  <string name="computer_only_row_none_other">No other folders or notes</string>
+  <string name="computer_only_personal_row">Recordings (by default)</string>
+  <string name="computer_only_personal_row_detail">They stay on the computer only until you choose to keep them here too. Tap to keep them here.</string>
+  <string name="computer_only_personal_keep_title">Keep Recordings here?</string>
+  <string name="computer_only_personal_keep_message">What is only on the computer comes back to this device now, and new Recordings stay here. You can undo it from the Recordings page menu.</string>
   <string name="computer_only_row_open">Tap to see them, and to keep one here too</string>
   <string name="computer_only_rule_folder">Folder, with its subfolders</string>
   <string name="computer_only_rule_note">Note</string>
@@ -1297,7 +1314,7 @@
   </plurals>
   <string name="notes_move_in_message">“%1$s” is a Recordings folder: the notes leave the subjects and no longer count on Home or in “To do”.</string>
   <string name="notes_move_out_message">“%1$s” is a subject: the notes leave Recordings and count again on Home and in the school stats.</string>
-  <string name="recordings_keep_here">Keep recordings here too</string>
+  <string name="recordings_keep_here">Keep Recordings here</string>
   <string name="recordings_computer_only">Recordings on computer only</string>
   <string name="recordings_footnote_computer">Recordings files live only on your home computer: once they get there they leave this device, and download when you listen.</string>
   <string name="recordings_footnote_no_archive">By default Recordings files live only on your home computer, but the computer archive is off: until you turn it on (Storage) they stay here.</string>

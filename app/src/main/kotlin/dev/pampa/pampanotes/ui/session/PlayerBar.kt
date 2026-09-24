@@ -12,7 +12,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -80,6 +84,8 @@ fun PlayerBar(
   modifier: Modifier = Modifier,
   /** «Saltati 16 min», per un attimo al posto del cronometro: vedi [TimeOrNotice]. */
   notice: String? = null,
+  /** «Salta i silenzi» e' acceso: un segno piccolo accanto al tempo, finche' resta acceso. */
+  skippingSilence: Boolean = false,
 ) {
   Column(
     // L'overlay non passa dalla lista, quindi la misura di lettura se la da' da solo: lo scrubber
@@ -110,7 +116,7 @@ fun PlayerBar(
       horizontalArrangement = Arrangement.spacedBy(2.dp),
       verticalAlignment = Alignment.CenterVertically,
     ) {
-      TimeOrNotice(positionMs = state.positionMs, notice = notice)
+      TimeOrNotice(positionMs = state.positionMs, notice = notice, skippingSilence = skippingSilence)
       // Tenuti premuti saltano cinque minuti: in una registrazione di ore quindici secondi alla volta
       // non portano da nessuna parte, e un altro tasto nella capsula non ci sta.
       PlayerButton(
@@ -152,17 +158,30 @@ fun PlayerBar(
  * scambia per un orario. TalkBack lo legge da se' (regione viva).
  */
 @Composable
-private fun TimeOrNotice(positionMs: Long, notice: String?) {
-  Crossfade(targetState = notice, label = "skip-notice") { shown ->
-    Text(
-      text = shown ?: Formats.timestamp(positionMs),
-      style = MaterialTheme.typography.labelLarge,
-      color = if (shown != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-      maxLines = 1,
-      modifier = Modifier
-        .padding(start = 8.dp, end = 6.dp)
-        .then(if (shown != null) Modifier.semantics { liveRegion = LiveRegionMode.Polite } else Modifier),
-    )
+private fun TimeOrNotice(positionMs: Long, notice: String?, skippingSilence: Boolean) {
+  Row(verticalAlignment = Alignment.CenterVertically) {
+    // «Salta i silenzi» acceso si vede anche quando non sta saltando: l'interruttore sta nel menu, e
+    // senza un segno qui chi l'aveva acceso ieri non capiva perche' il minuto saltava avanti. Piccolo
+    // e nel colore della materia, come l'avviso del salto che prende il posto del tempo.
+    if (skippingSilence) {
+      Icon(
+        imageVector = Icons.Rounded.FastForward,
+        contentDescription = stringResource(R.string.player_skipping_silence),
+        tint = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 8.dp).size(16.dp),
+      )
+    }
+    Crossfade(targetState = notice, label = "skip-notice") { shown ->
+      Text(
+        text = shown ?: Formats.timestamp(positionMs),
+        style = MaterialTheme.typography.labelLarge,
+        color = if (shown != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+        maxLines = 1,
+        modifier = Modifier
+          .padding(start = if (skippingSilence) 4.dp else 8.dp, end = 6.dp)
+          .then(if (shown != null) Modifier.semantics { liveRegion = LiveRegionMode.Polite } else Modifier),
+      )
+    }
   }
 }
 
@@ -175,13 +194,14 @@ private fun TimeOrNotice(positionMs: Long, notice: String?) {
 private fun PlayerButton(icon: ImageVector, label: String, longLabel: String, onClick: () -> Unit, onLongClick: () -> Unit) {
   Box(
     modifier = Modifier
-      .size(44.dp)
-      .clip(FluidCapsuleShape)
+      .touchTarget(PlayerButtonSize)
       .fluidPressable(onClick = onClick, onLongClick = onLongClick, pressedScale = 0.88f, role = Role.Button)
       .semantics {
         contentDescription = label
         customActions = listOf(CustomAccessibilityAction(longLabel) { onLongClick(); true })
-      },
+      }
+      .padding((MinTouchTarget - PlayerButtonSize) / 2)
+      .clip(FluidCapsuleShape),
     contentAlignment = Alignment.Center,
   ) {
     Icon(imageVector = icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
@@ -209,13 +229,17 @@ private fun EndTime(positionMs: Long, durationMs: Long) {
     style = MaterialTheme.typography.labelMedium,
     color = MaterialTheme.colorScheme.onSurfaceVariant,
     maxLines = 1,
+    // Alto un dito per il tocco, ma nella riga dello scrubber occupa quanto il testo: vedi
+    // [touchHeight].
     modifier = Modifier
-      .clip(FluidCapsuleShape)
+      .touchHeight()
       .fluidPressable(onClick = { showTotal = !showTotal }, pressedScale = 0.94f, role = Role.Button)
       .semantics {
         contentDescription = description
         onClick(label = toggleLabel) { showTotal = !showTotal; true }
       }
+      .wrapContentHeight()
+      .clip(FluidCapsuleShape)
       .padding(horizontal = 6.dp, vertical = 4.dp),
   )
 }
@@ -226,11 +250,12 @@ private fun PlayButton(playing: Boolean, onClick: () -> Unit) {
   val label = stringResource(if (playing) R.string.player_pause else R.string.player_play)
   Box(
     modifier = Modifier
-      .size(44.dp)
-      .clip(FluidCapsuleShape)
-      .background(MaterialTheme.colorScheme.primary)
+      .touchTarget(PlayerButtonSize)
       .fluidPressable(onClick = onClick, pressedScale = 0.9f, role = Role.Button)
-      .semantics { contentDescription = label },
+      .semantics { contentDescription = label }
+      .padding((MinTouchTarget - PlayerButtonSize) / 2)
+      .clip(FluidCapsuleShape)
+      .background(MaterialTheme.colorScheme.primary),
     contentAlignment = Alignment.Center,
   ) {
     Icon(
@@ -345,6 +370,37 @@ private fun formatSpeed(speed: Float): String {
 
 /** L'altezza che il lettore occupa: quanto spazio la lista deve lasciarsi sotto per non finirci dietro. */
 val PlayerBarHeight = 92.dp
+
+/** Quanto si vede di un tasto della capsula; il dito ne prende [MinTouchTarget]. */
+private val PlayerButtonSize = 44.dp
+
+/** Il bersaglio minimo di un tocco, come chiede Android: 48 dp per lato. */
+internal val MinTouchTarget = 48.dp
+
+/**
+ * Un tasto che occupa [visual] per lato ma prende il dito su [MinTouchTarget]: i modificatori che
+ * seguono vedono 48 dp, il layout intorno ne vede [visual]. Cosi' la capsula resta della sua misura
+ * e il pollice non deve centrare un bersaglio di 40: il bordo in piu' sborda di qualche dp tutto
+ * intorno, sulla capsula stessa. Chi lo usa rimette il disegno a [visual] con un `padding` dopo il
+ * tocco, come fa lo scrubber con la sua riga sottile.
+ */
+internal fun Modifier.touchTarget(visual: Dp): Modifier = layout { measurable, _ ->
+  val touch = MinTouchTarget.roundToPx()
+  val shown = visual.roundToPx()
+  val placeable = measurable.measure(Constraints.fixed(touch, touch))
+  layout(shown, shown) { placeable.place((shown - touch) / 2, (shown - touch) / 2) }
+}
+
+/**
+ * Lo stesso per un testo toccabile: alto [MinTouchTarget] per il dito, e nel layout alto quanto il
+ * testo. Chi lo usa mette `wrapContentHeight()` dopo il tocco, cosi' il testo resta centrato.
+ */
+internal fun Modifier.touchHeight(): Modifier = layout { measurable, constraints ->
+  val touch = MinTouchTarget.roundToPx()
+  val placeable = measurable.measure(constraints.copy(minHeight = touch, maxHeight = maxOf(touch, constraints.maxHeight)))
+  val shown = measurable.minIntrinsicHeight(placeable.width).coerceIn(0, placeable.height)
+  layout(placeable.width, shown) { placeable.place(0, (shown - placeable.height) / 2) }
+}
 
 /** Lo spazio che lo scrubber occupa nella colonna, e quello in cui prende il dito. */
 private val ScrubberHeight = 24.dp

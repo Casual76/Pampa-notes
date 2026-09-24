@@ -91,6 +91,15 @@ class TranscriptSearchState(open: Boolean = false, query: String = "", current: 
     matchedQuery = null
   }
 
+  /**
+   * I blocchi in cui si cerca sono cambiati: le occorrenze di prima indicano posti che non ci sono
+   * piu'. La parola e l'occorrenza corrente restano, e la ricerca riparte da sola sul testo nuovo.
+   */
+  fun clearMatches() {
+    matches = emptyList()
+    byBlock = emptyMap()
+  }
+
   /** Arrivano le occorrenze di [forQuery]: se la parola e' nuova si riparte dalla prima. */
   fun onResults(forQuery: String, found: List<TranscriptSearch.Match>) {
     val sameQuery = matchedQuery == null || matchedQuery == forQuery
@@ -183,16 +192,21 @@ fun TranscriptSearchBar(
 /** Lo spazio che la barra della ricerca occupa sopra il lettore: la lista se lo lascia sotto. */
 val SearchBarHeight = 72.dp
 
-/** Un comando piatto nella capsula, come quelli del lettore; spento, resta al suo posto ma velato. */
+/**
+ * Un comando piatto nella capsula, come quelli del lettore; spento, resta al suo posto ma velato.
+ * Occupa 40 dp ma il dito ne prende 48 ([touchTarget]): la capsula resta com'era.
+ */
 @Composable
 private fun SearchButton(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
   val tint = MaterialTheme.colorScheme.onSurface
+  val visual = 40.dp
   Box(
     modifier = Modifier
-      .size(40.dp)
-      .clip(FluidCapsuleShape)
+      .touchTarget(visual)
       .fluidPressable(onClick = onClick, enabled = enabled, pressedScale = 0.88f, role = Role.Button)
-      .semantics { contentDescription = label },
+      .semantics { contentDescription = label }
+      .padding((MinTouchTarget - visual) / 2)
+      .clip(FluidCapsuleShape),
     contentAlignment = Alignment.Center,
   ) {
     Icon(imageVector = icon, contentDescription = null, tint = if (enabled) tint else tint.copy(alpha = 0.38f))

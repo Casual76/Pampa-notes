@@ -28,6 +28,9 @@ data class JobRow(
   val standing: FailureStanding? = null,
 ) {
   val superseded: Boolean get() = standing == FailureStanding.SUPERSEDED
+
+  /** Una registrazione senza parole: non un guasto, e niente rosso (vedi `FailedJobs.NO_SPEECH`). */
+  val silent: Boolean get() = standing == FailureStanding.NO_SPEECH
 }
 
 data class JobsUiState(

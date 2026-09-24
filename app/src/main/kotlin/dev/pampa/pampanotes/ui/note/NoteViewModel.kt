@@ -20,6 +20,8 @@ import dev.pampa.pampanotes.core.db.JobDao
 import dev.pampa.pampanotes.core.db.JobEntity
 import dev.pampa.pampanotes.core.db.TranscriptDao
 import dev.pampa.pampanotes.core.db.TranscriptEntity
+import dev.pampa.pampanotes.core.repo.FailedJobs
+import dev.pampa.pampanotes.core.repo.FailureStanding
 import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.repo.SessionRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
@@ -159,7 +161,12 @@ class NoteViewModel @Inject constructor(
       missingSources = values[8] as Set<String>,
       missingParts = values[9] as Set<String>,
       elsewhere = values[10] as Map<String, RemoteTranscribing>,
-      failedJobs = (values[11] as List<JobEntity>).associateBy { it.sessionId },
+      // Un fallimento che una trascrizione arrivata dopo ha gia' rimediato (dal sync, da un altro
+      // tentativo) non si mostra: la stessa regola della sessione e di «Riprova tutti» (FailedJobs).
+      failedJobs = (values[11] as List<JobEntity>).filter { failed ->
+        val transcript = (values[6] as Map<String, TranscriptEntity>)[failed.sessionId]
+        FailedJobs.standing(failed, sessionExists = true, listOfNotNull(transcript), emptyList()) != FailureStanding.SUPERSEDED
+      }.associateBy { it.sessionId },
       loading = false,
     )
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NoteUiState())
@@ -211,6 +218,9 @@ class NoteViewModel @Inject constructor(
   }
 
   fun cancelJob(jobId: String) = viewModelScope.launch { transcription.requestCancel(jobId) }
+
+  /** «Nascondi»: toglie la riga del lavoro fallito, come nella scheda della sessione. */
+  fun dismissJob(jobId: String) = viewModelScope.launch { transcription.delete(jobId) }
 
   /**
    * Rifa' da capo le trascrizioni di piu' sessioni. Ognuna sostituira' la sua grezza e le raffinate

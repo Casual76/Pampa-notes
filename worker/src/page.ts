@@ -119,16 +119,24 @@ export function pageHtml(): string {
     return out;
   }
   // «Chi parla», come TranscriptParagraphs.voices nell'app: SPEAKER_00 diventa «Voce 1» nell'ordine
-  // in cui le voci compaiono, parte per parte (ogni registrazione si separa per conto suo). Con meno
-  // di due voci non si dice niente.
+  // in cui le voci compaiono, parte per parte (ogni registrazione si separa per conto suo). Se
+  // nessuna registrazione ha almeno due voci non si dice niente: un monologo in due parti sono due
+  // chiavi, ma una persona sola.
   function voices(segments) {
-    var map = {}, count = 0;
+    var map = {}, count = 0, byPart = {}, conversation = false;
     for (var i = 0; i < segments.length; i++) {
       var s = segments[i]; if (!s.speaker) continue;
-      var key = s.partId + '\\u0000' + s.speaker;
+      var seen = byPart[s.partId] || (byPart[s.partId] = {});
+      seen[s.speaker] = true;
+      if (Object.keys(seen).length >= 2) conversation = true;
+    }
+    if (!conversation) return {};
+    for (var j = 0; j < segments.length; j++) {
+      var t = segments[j]; if (!t.speaker) continue;
+      var key = t.partId + '\\u0000' + t.speaker;
       if (!(key in map)) map[key] = ++count;
     }
-    return count < 2 ? {} : map;
+    return map;
   }
   // Paragrafi: si spezza su una pausa lunga, quando il testo si fa lungo o cambia la voce, come nell'app.
   function paragraphs(segments) {
