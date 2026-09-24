@@ -1,7 +1,18 @@
 # torch qui non c'e' di proposito. WhisperX se lo porta dietro nella versione per CPU, e setup.ps1
 # lo sostituisce subito dopo con quella per la scheda (--force-reinstall --no-deps): metterlo qui
 # non servirebbe, pip prenderebbe comunque l'ultimo torch dell'indice normale, che CUDA non ce l'ha.
-whisperx>=3.3.0
+#
+# WhisperX fissato alla versione provata: un «>=» prendeva quella uscita il giorno dell'installazione,
+# e il companion chiama pezzi interni (l'allineamento, il VAD, `whisperx.audio`) che cambiano fra
+# una versione e l'altra. Si alza a mano, dopo averla provata.
+whisperx==3.8.6
+# «Chi parla» (vedi `diarize_segments` nel server) e' scritto per pyannote 4: `token=` al posto di
+# `use_auth_token=`, e il modello community-1, che il 3 non carica. WhisperX 3.8.6 lo porta gia';
+# scritto qui, un'installazione che ne avesse uno vecchio lo aggiorna, e un 5 non arriva da solo.
+pyannote.audio>=4.0,<5
+# `auth_check` e gli errori con la risposta HTTP dentro (`check_diarization_access`); l'1.0 cambia
+# le eccezioni, e si prova prima di lasciarla entrare.
+huggingface_hub>=0.24,<1.0
 fastapi>=0.115.0
 uvicorn>=0.32.0
 python-multipart>=0.0.12

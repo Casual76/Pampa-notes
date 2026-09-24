@@ -27,6 +27,10 @@ import sys
 import threading
 from pathlib import Path
 
+# Come in whisperx_server.py: niente statistiche d'uso ai server di pyannote, neanche dall'installer
+# (qui pyannote non si importa, ma l'allineamento passa da WhisperX, che se lo porta dietro).
+os.environ.setdefault("PYANNOTE_METRICS_ENABLED", "false")
+
 # Quello che faster-whisper scarica di un modello: il resto del repository non serve.
 PATTERNS = ["config.json", "preprocessor_config.json", "model.bin", "tokenizer.json", "vocabulary.*"]
 

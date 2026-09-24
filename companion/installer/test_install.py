@@ -12,6 +12,7 @@ niente installazioni: nessuna prova tocca il `config.json` vero o la porta 8765.
 from __future__ import annotations
 
 import json
+import re
 import sys
 import tempfile
 import threading
@@ -21,6 +22,7 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 COMPANION = HERE.parent
@@ -480,6 +482,242 @@ class BindServerTest(unittest.TestCase):
         status, body = self.call("GET", "/health")
         self.assertEqual(status, 200)
         self.assertTrue(json.loads(body)["version"])
+
+
+# --- la release: quello che il setup si porta dietro -------------------------------------------------
+
+
+class ReleaseContentsTest(unittest.TestCase):
+    """Quello che un'installazione nuova riceve deve essere quello provato."""
+
+    def requirements(self) -> dict[str, str]:
+        lines = (COMPANION / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        found: dict[str, str] = {}
+        for line in lines:
+            line = line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            name = re.split(r"[<>=!~ ]", line, maxsplit=1)[0]
+            found[name.lower().replace("_", "-")] = line[len(name):].strip()
+        return found
+
+    def test_requirements_are_pinned_where_the_code_depends_on_them(self) -> None:
+        wanted = self.requirements()
+        # WhisperX esatto: il companion chiama pezzi interni che cambiano fra le versioni.
+        self.assertEqual(wanted["whisperx"], "==3.8.6")
+        # «Chi parla» vuole pyannote 4 (`token=`, community-1) e gli errori di huggingface_hub 0.x.
+        self.assertEqual(wanted["pyannote.audio"], ">=4.0,<5")
+        self.assertEqual(wanted["huggingface-hub"], ">=0.24,<1.0")
+
+    @unittest.skipIf(server is None, "i pacchetti del companion non ci sono")
+    def test_server_wants_the_pyannote_the_requirements_install(self) -> None:
+        self.assertTrue(server.pyannote_version_ok("4.0.7"))
+        self.assertFalse(server.pyannote_version_ok("3.3.2"))
+        self.assertFalse(server.pyannote_version_ok(""))
+
+    def test_version_is_the_release(self) -> None:
+        self.assertEqual((COMPANION / "VERSION").read_text(encoding="utf-8").strip(), "1.0.2")
+
+    @staticmethod
+    def local_imports(path: Path) -> set[str]:
+        """I moduli del companion che un file importa, direttamente."""
+        import ast
+
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                names.add(node.module.split(".")[0])
+        return {name for name in names if (COMPANION / f"{name}.py").is_file()}
+
+    @staticmethod
+    def iss_sources() -> list[tuple[str, list[str]]]:
+        """I `Source: "..\\x"` del setup che finiscono in {app}, coi loro Excludes."""
+        text = (HERE / "PampaCompanion.iss").read_text(encoding="utf-8")
+        section = text.split("[Files]", 1)[1].split("\n[", 1)[0]
+        sources: list[tuple[str, list[str]]] = []
+        for line in section.splitlines():
+            if line.lstrip().startswith(";"):
+                continue
+            match = re.search(r'Source:\s*"\.\.\\([^"]+)"', line)
+            if not match or 'DestDir: "{app}"' not in line:
+                continue
+            excludes = re.search(r'Excludes:\s*"([^"]+)"', line)
+            sources.append((match.group(1), excludes.group(1).split(",") if excludes else []))
+        return sources
+
+    def test_every_module_the_companion_imports_goes_into_the_setup(self) -> None:
+        import fnmatch
+
+        # Da quello che parte (avvio.pyw, tray.py, il server) a tutto quello che si tira dietro.
+        todo = [COMPANION / "avvio.pyw", COMPANION / "tray.py", COMPANION / "whisperx_server.py"]
+        needed: set[str] = {path.name for path in todo}
+        while todo:
+            for name in self.local_imports(todo.pop()):
+                file = f"{name}.py"
+                if file not in needed:
+                    needed.add(file)
+                    todo.append(COMPANION / file)
+        self.assertTrue({"fuori.py", "config.py", "archive.py", "updater.py", "binding.py"} <= needed, needed)
+        sources = self.iss_sources()
+        for file in sorted(needed):
+            covered = any(
+                fnmatch.fnmatch(file, pattern) and not any(fnmatch.fnmatch(file, skip.strip()) for skip in excludes)
+                for pattern, excludes in sources
+            )
+            self.assertTrue(covered, f"{file} non entra nel setup: il companion installato non partirebbe")
+
+
+class MergeConfigTokenTest(unittest.TestCase):
+    def test_upgrade_keeps_the_voices_token_and_its_switch(self) -> None:
+        existing = {"model": "large-v3", "compute_type": "", "device": "auto", "port": 8765,
+                    "hf_token": "hf_segreto", "hf_token_disabled": True}
+        merged, added = install.merge_config(existing, ConfigMergeTest.GPU, 8765, lambda: "mai")
+        self.assertEqual(merged["hf_token"], "hf_segreto")
+        self.assertTrue(merged["hf_token_disabled"])
+        self.assertEqual(added, [])
+
+
+# --- l'aggiornamento non si uccide da solo ---------------------------------------------------------
+
+
+class AncestorsTest(unittest.TestCase):
+    def test_chain_goes_up_to_the_first_unknown_parent(self) -> None:
+        # install.py (50) <- lanciatore della venv (40) <- setup.tmp (30) <- setup.exe (20) <- icona (10)
+        parents = {50: 40, 40: 30, 30: 20, 20: 10, 10: 4, 99: 10}
+        self.assertEqual(install.ancestor_chain(50, parents, lambda pid: pid), [40, 30, 20, 10])
+
+    def test_a_recycled_number_is_not_a_parent(self) -> None:
+        # Il padre vero di 30 e' morto, e il suo numero (20) ora e' di un processo nato dopo.
+        parents = {50: 40, 40: 30, 30: 20, 20: 10, 10: 4}
+        born = {50: 500, 40: 400, 30: 300, 20: 900, 10: 100}
+        self.assertEqual(install.ancestor_chain(50, parents, born.get), [40, 30])
+
+    def test_unknown_birth_keeps_the_link_and_loops_stop(self) -> None:
+        self.assertEqual(install.ancestor_chain(3, {3: 2, 2: 3}, lambda pid: None), [2])
+        self.assertEqual(install.ancestor_chain(3, {3: 2, 2: 1}, lambda pid: None), [2], "1 non c'e' nella fotografia")
+
+    @unittest.skipUnless(sys.platform == "win32", "la fotografia dei processi e' di Windows")
+    def test_real_snapshot_sees_our_parent(self) -> None:
+        import os
+
+        self.assertIn(os.getppid(), install.process_ancestors())
+        self.assertNotIn(os.getpid(), install.process_ancestors())
+
+
+class StopRunningTest(unittest.TestCase):
+    IDLE = {"busy": False, "queue": 0, "inflight": 0}
+
+    def run_stop(self, ancestors: set[int], health: list) -> tuple[str, list[list[str]]]:
+        with tempfile.TemporaryDirectory() as folder:
+            app = Path(folder)
+            options = install.parse_args(["--app", str(app), "--console", "--port", "8799"])
+            ctx = install.Context(app=app, port=8799, upgrade=True, uv=None, options=options,
+                                  reporter=install.Reporter(), log_path=app / "logs" / "install.log")
+            commands: list[list[str]] = []
+            ctx.run = lambda command, **kwargs: commands.append(command) or (0, [])  # type: ignore[method-assign]
+            listener = (1234, f'"{app}\\.venv\\Scripts\\pythonw.exe" "{app}\\tray.py"')
+            with mock.patch.object(install, "health", side_effect=health), \
+                    mock.patch.object(install, "listener_command_line", return_value=listener), \
+                    mock.patch.object(install.os, "name", "nt"), mock.patch.object(install.time, "sleep"):
+                outcome = install.stop_running(ctx, ancestors=lambda: ancestors)
+        return outcome, commands
+
+    def test_the_tray_that_launched_us_is_never_killed(self) -> None:
+        outcome, commands = self.run_stop({1234, 777}, [self.IDLE, self.IDLE])
+        self.assertEqual(outcome, install.ANCESTOR)
+        self.assertEqual(commands, [], "niente taskkill su un antenato")
+
+    def test_a_stranger_tray_is_killed_alone_without_its_tree(self) -> None:
+        outcome, commands = self.run_stop({777}, [self.IDLE, self.IDLE, None])
+        self.assertEqual(outcome, install.STOPPED)
+        self.assertEqual(commands, [["taskkill", "/PID", "1234", "/F"]])
+        self.assertNotIn("/T", commands[0])
+
+
+class LaunchSetupTest(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "win32", "WMI e' di Windows")
+    def test_the_setup_starts_outside_the_tray_through_wmi(self) -> None:
+        asked: list[list[str]] = []
+        setup = Path(r"C:\Temp\pampa-companion-x\PampaCompanionSetup-1.0.2.exe")
+        with mock.patch.object(updater.subprocess, "Popen") as popen:
+            how = updater.launch_setup(setup, outside=lambda args, cwd: asked.append(args) or True)
+        self.assertEqual(how, "wmi")
+        self.assertEqual(asked, [[str(setup), *updater.SETUP_ARGS]])
+        popen.assert_not_called()
+
+    @unittest.skipUnless(sys.platform == "win32", "WMI e' di Windows")
+    def test_without_wmi_it_still_starts_detached(self) -> None:
+        with mock.patch.object(updater.subprocess, "Popen") as popen:
+            how = updater.launch_setup(Path(r"C:\Temp\s.exe"), outside=lambda args, cwd: False)
+        self.assertEqual(how, "figlio")
+        popen.assert_called_once()
+
+
+# --- dentro il contenitore di un'altra app -------------------------------------------------------------
+
+
+class ContainerTest(unittest.TestCase):
+    def test_an_install_under_localappdata_in_a_container_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as local:
+            app = Path(local) / "Programs" / "PampaCompanion"
+            with mock.patch.dict(install.os.environ, {"LOCALAPPDATA": local}):
+                self.assertEqual(install.installer_container(app, lambda: "Claude_pzs8sxrjxfjjc"), "Claude_pzs8sxrjxfjjc")
+                self.assertIsNone(install.installer_container(app, lambda: None))
+                # Una prova a mano fuori da %LOCALAPPDATA%: il contenitore non la sposta.
+                with tempfile.TemporaryDirectory() as elsewhere:
+                    self.assertIsNone(install.installer_container(Path(elsewhere), lambda: "Claude_x"))
+            with mock.patch.dict(install.os.environ, {"LOCALAPPDATA": ""}):
+                self.assertIsNone(install.installer_container(app, lambda: "Claude_x"))
+
+    def test_main_stops_before_doing_anything(self) -> None:
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.object(install, "installer_container", return_value="Claude_x"), \
+                mock.patch.object(install, "run_steps", side_effect=AssertionError("nessun passo")), \
+                mock.patch("builtins.print"):
+            self.assertEqual(install.main(["--app", folder, "--console"]), install.EXIT_CONTAINER)
+        self.assertIn("Claude_x", install.container_message("Claude_x"))
+
+
+# --- la disinstallazione ---------------------------------------------------------------------------------
+
+
+@unittest.skipUnless(sys.platform == "win32", "l'aiutante della disinstallazione e' PowerShell")
+class UninstallModelsTest(unittest.TestCase):
+    def test_only_the_companion_models_leave_the_cache(self) -> None:
+        import os
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as hub, tempfile.TemporaryDirectory() as app:
+            ours = ["models--Systran--faster-whisper-large-v3", "models--pyannote--speaker-diarization-community-1",
+                    "models--jonatasgrosman--wav2vec2-large-xlsr-53-italian"]
+            theirs = ["models--openai--whisper-large-v3", "models--meta-llama--Llama-3.1-8B", "datasets--x--y"]
+            for name in ours + theirs:
+                (Path(hub) / name / "blobs").mkdir(parents=True)
+                (Path(hub) / name / "blobs" / "a").write_text("x", encoding="utf-8")
+            (Path(hub) / ".locks" / ours[0]).mkdir(parents=True)
+            env = dict(os.environ, HF_HUB_CACHE=hub)
+            done = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(HERE / "uninstall-helper.ps1"),
+                 "-App", app, "-Action", "purge-models"],
+                env=env, capture_output=True, timeout=120,
+            )
+            self.assertEqual(done.returncode, 0, done.stderr)
+            left = sorted(entry.name for entry in Path(hub).iterdir() if entry.name != ".locks")
+            self.assertEqual(left, sorted(theirs))
+            self.assertEqual(list((Path(hub) / ".locks").iterdir()), [])
+
+    def test_the_uninstaller_asks_and_removes_an_empty_data_folder(self) -> None:
+        text = (HERE / "PampaCompanion.iss").read_text(encoding="utf-8")
+        self.assertIn("RunHelper('purge-models')", text)
+        # Di serie No: i modelli li usa anche un'altra copia del companion.
+        self.assertIn("MB_DEFBUTTON2) = IDYES then\n        RunHelper('purge-models')", text)
+        self.assertIn("RemoveDir(ExpandConstant('{localappdata}\\PampaNotes'))", text)
+        self.assertNotIn("DelTree(ExpandConstant('{localappdata}\\PampaNotes'", text)
+        # Il setup resta ASCII (vedi la sua intestazione).
+        self.assertTrue(text.isascii())
 
 
 if __name__ == "__main__":

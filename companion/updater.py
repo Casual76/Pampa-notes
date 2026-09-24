@@ -172,13 +172,33 @@ def download(release: Release, version: str, target_dir: Path | None = None, chu
     return final
 
 
-def launch_setup(setup: Path) -> None:
-    """Il setup parte per conto suo: l'icona verra' fermata da lui, quando e' il momento."""
+def launch_setup(setup: Path, outside: Callable[[list[str], Path], bool] | None = None) -> str:
+    """
+    Il setup parte per conto suo: l'icona verra' fermata da lui, quando e' il momento. Torna come e'
+    partito: `wmi` o `figlio`.
+
+    **Fuori dall'albero dell'icona**, attraverso WMI (`fuori.relaunch_outside`): il processo lo crea
+    il servizio di Windows, e non e' figlio di nessuno di noi. Lanciato come figlio, il setup si
+    uccideva da solo: `install.py` fermava l'icona con `taskkill /T`, che porta via tutto l'albero —
+    e nell'albero dell'icona c'erano il setup e `install.py` stesso, a meta' aggiornamento. Adesso
+    `install.py` non usa piu' `/T` e non ferma mai un suo antenato; da qui, poi, l'antenato non c'e'.
+
+    Se WMI rifiuta si lancia come prima, staccato: l'aggiornamento del codice va lo stesso, ma
+    `install.py` lascia accesa l'icona di prima e dice di riaprirla.
+    """
+    if os.name == "nt":
+        if outside is None:
+            import fuori
+
+            outside = fuori.relaunch_outside
+        if outside([str(setup), *SETUP_ARGS], setup.parent):
+            return "wmi"
     flags = 0
     if os.name == "nt":
         # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, come avvio.pyw con tray.py.
         flags = 0x00000008 | 0x00000200
     subprocess.Popen([str(setup), *SETUP_ARGS], close_fds=True, creationflags=flags)  # noqa: S603
+    return "figlio"
 
 
 class UpdateWatcher:

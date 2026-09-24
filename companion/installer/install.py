@@ -995,10 +995,130 @@ def ours(command_line: str, app: Path) -> bool:
     return str(app).lower() in command_line.lower()
 
 
-def stop_running(ctx: Context) -> bool:
-    """Ferma l'icona di questa cartella, se c'e'. Falso se sulla porta c'e' qualcun altro."""
+# --- chi ci ha lanciato ---------------------------------------------------------------------------
+#
+# L'aggiornamento dall'icona si uccideva da solo. L'icona lanciava il setup come processo figlio, il
+# setup lanciava questo file, e [stop_running] fermava l'icona con `taskkill /T`: /T porta via tutto
+# l'albero, cioe' anche il setup e questo stesso processo, a meta' aggiornamento. Adesso l'icona
+# lancia il setup attraverso WMI (fuori dal suo albero, vedi `updater.launch_setup`), `/T` non c'e'
+# piu' — l'attesa di [restart_allowed] garantisce che non ci sia un ffmpeg figlio da portar via — e
+# in ogni caso qui non si ferma mai un processo da cui discendiamo.
+
+
+def ancestor_chain(pid: int, parents: dict[int, int], created: Callable[[int], int | None]) -> list[int]:
+    """
+    I processi da cui discende `pid`, dal padre in su. Logica pura, per le prove.
+
+    Windows ricicla i numeri dei processi: il «padre» scritto in un processo puo' essere morto da ore
+    e il suo numero appartenere adesso a un altro. Un padre vero e' nato prima del figlio, quindi un
+    «padre» piu' giovane del figlio chiude la catena. Quando l'ora di nascita non si sa (un processo
+    di un altro utente) si tiene l'anello: scambiare un estraneo per un antenato costa un riavvio
+    mancato, scambiare un antenato per un estraneo costa l'aggiornamento.
+    """
+    chain: list[int] = []
+    seen = {pid}
+    child = pid
+    while True:
+        parent = parents.get(child)
+        if not parent or parent in seen or parent not in parents:
+            return chain
+        born_child, born_parent = created(child), created(parent)
+        if born_child is not None and born_parent is not None and born_parent > born_child:
+            return chain
+        chain.append(parent)
+        seen.add(parent)
+        child = parent
+
+
+def _process_snapshot() -> dict[int, int]:
+    """Numero -> numero del padre, per ogni processo, dalla fotografia di toolhelp (solo ctypes)."""
+    import ctypes
+    from ctypes import wintypes
+
+    class ProcessEntry(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(ProcessEntry)]
+    kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(ProcessEntry)]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)  # TH32CS_SNAPPROCESS
+    if not snapshot or snapshot == wintypes.HANDLE(-1).value:
+        raise OSError(ctypes.get_last_error(), "CreateToolhelp32Snapshot")
+    parents: dict[int, int] = {}
+    try:
+        entry = ProcessEntry()
+        entry.dwSize = ctypes.sizeof(ProcessEntry)
+        more = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while more:
+            parents[int(entry.th32ProcessID)] = int(entry.th32ParentProcessID)
+            more = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return parents
+
+
+def _process_created(pid: int) -> int | None:
+    """L'ora di nascita di un processo (unita' da 100 ns), o None se non si lascia aprire."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return None
+    try:
+        times = [wintypes.FILETIME() for _ in range(4)]
+        if not kernel32.GetProcessTimes(handle, *(ctypes.byref(value) for value in times)):
+            return None
+        return (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def process_ancestors(pid: int | None = None) -> set[int]:
+    """
+    I processi da cui discende questo (o `pid`): l'icona che ha lanciato il setup, il setup, il suo
+    `.tmp`, il lanciatore della venv. Fuori da Windows, o se la fotografia non riesce, il padre
+    diretto: meglio di niente, e non si sbaglia mai nel verso pericoloso.
+    """
+    me = os.getpid() if pid is None else pid
+    fallback = {os.getppid()} if pid is None else set()
+    if os.name != "nt":
+        return fallback
+    try:
+        return set(ancestor_chain(me, _process_snapshot(), _process_created)) | fallback
+    except (OSError, AttributeError, ValueError):
+        return fallback
+
+
+# Come e' andata [stop_running].
+STOPPED = "fermo"        # non c'era, o si e' fermato
+FOREIGN = "altro"        # sulla porta c'e' il companion di un'altra cartella, o non si e' fermato
+ANCESTOR = "antenato"    # e' il processo da cui discende questa installazione: non si tocca
+
+
+def stop_running(ctx: Context, ancestors: Callable[[], set[int]] = process_ancestors) -> str:
+    """
+    Ferma l'icona di questa cartella, se c'e', e dice come e' andata ([STOPPED], [FOREIGN], [ANCESTOR]).
+
+    Si ferma solo quel processo (`taskkill /PID` senza `/T`), e mai uno da cui discendiamo: se
+    l'icona che ha lanciato l'aggiornamento fosse ancora nostra antenata — WMI rifiutato, e il setup
+    lanciato alla vecchia maniera — fermarla col suo albero porterebbe via anche noi.
+    """
     if health(ctx.port) is None:
-        return True
+        return STOPPED
     started = time.monotonic()
     while True:
         state = health(ctx.port)
@@ -1009,19 +1129,28 @@ def stop_running(ctx: Context) -> bool:
         ctx.say("il companion sta trascrivendo: aspetto che finisca prima di riavviarlo...")
         time.sleep(10)
     if os.name != "nt":
-        return False
+        return FOREIGN
     pid, command = listener_command_line(ctx)
     if pid is None:
-        return True
+        return STOPPED
     if not ours(command, ctx.app):
-        return False
+        return FOREIGN
+    if pid in ancestors():
+        ctx.write_log(f"il companion sulla porta (processo {pid}) e' fra quelli da cui discende l'installazione: non lo fermo")
+        return ANCESTOR
     ctx.say("fermo il companion di prima...")
-    ctx.run(["taskkill", "/PID", str(pid), "/T", "/F"])
+    ctx.run(["taskkill", "/PID", str(pid), "/F"])
     for _ in range(20):
         if health(ctx.port) is None:
-            return True
+            return STOPPED
         time.sleep(0.5)
-    return health(ctx.port) is None
+    return STOPPED if health(ctx.port) is None else FOREIGN
+
+
+ANCESTOR_NOTE = (
+    "Il companion che ha lanciato l'aggiornamento e' rimasto acceso con il codice di prima: dal menu "
+    "dell'icona scegli «Esci», poi riaprilo dal menu Start («Pampa Notes companion»)."
+)
 
 
 def step_stop(ctx: Context) -> None:
@@ -1045,10 +1174,13 @@ def step_stop(ctx: Context) -> None:
         if command and not ours(command, ctx.app):
             ctx.say(f"sulla porta {ctx.port} c'e' un companion di un'altra cartella: non lo tocco")
             return
-    if stop_running(ctx):
+    outcome = stop_running(ctx)
+    if outcome == STOPPED:
         ctx.say("companion fermato: lo riavvio alla fine")
         if ctx.options.no_start:
             ctx.note("Il companion e' fermo e non verra' riavviato (--no-start).", warn=True)
+    elif outcome == ANCESTOR:
+        ctx.say("il companion che ha lanciato l'aggiornamento resta acceso: e' lui ad averci avviato")
 
 
 def step_start(ctx: Context) -> None:
@@ -1062,7 +1194,11 @@ def step_start(ctx: Context) -> None:
             ctx.note(f"Sulla porta {ctx.port} risponde gia' un altro companion: non avvio questo.", warn=True)
             return
     if running is not None:
-        if not stop_running(ctx):
+        outcome = stop_running(ctx)
+        if outcome == ANCESTOR:
+            ctx.note(ANCESTOR_NOTE, warn=True)
+            return
+        if outcome != STOPPED:
             ctx.note(f"Sulla porta {ctx.port} c'e' un companion di un'altra cartella: non lo tocco.", warn=True)
             return
     ctx.say("avvio il companion accanto all'orologio...")
@@ -1207,10 +1343,74 @@ def relaunch_in_console(argv: list[str]) -> int:
     return subprocess.call([str(console), str(Path(__file__).resolve()), *argv, "--console"], creationflags=flags)  # noqa: S603
 
 
+# Il codice d'uscita di un'installazione rifiutata perche' dentro un contenitore: diverso da 1, cosi'
+# il setup non aggiunge il suo messaggio («non e' finita, guarda il registro») a quello che spiega.
+EXIT_CONTAINER = 4
+
+
+def installer_container(app: Path, redirected: Callable[[], str | None] | None = None) -> str | None:
+    """
+    Il contenitore di un'altra app in cui finirebbe questa installazione, o None (vedi `fuori.py`).
+
+    Lanciato da dentro un'app che virtualizza `%LOCALAPPDATA%` (l'app di Claude sul PC), tutto quello
+    che si scrive in `%LOCALAPPDATA%\\Programs\\PampaCompanion` — il Python, la venv, config.json —
+    finisce nella copia privata di quell'app: il companion avviato da Windows non lo vedrebbe, e il
+    setup dopo troverebbe una cartella vuota. Rilanciare solo questo file non basterebbe, perche' i
+    file del setup sono gia' nella copia: lo fa il setup, prima di copiare (`InitializeSetup` in
+    PampaCompanion.iss), e qui si rifiuta se si arriva lo stesso. Una cartella fuori da
+    `%LOCALAPPDATA%` (una prova a mano) non viene spostata, e va bene.
+    """
+    if redirected is None:
+        if str(DEFAULT_APP) not in sys.path:
+            sys.path.insert(0, str(DEFAULT_APP))
+        try:
+            import fuori
+        except ImportError:
+            return None
+        redirected = fuori.redirected_to
+    local = os.environ.get("LOCALAPPDATA") or ""
+    if not local.strip():
+        return None
+    try:
+        app.resolve().relative_to(Path(local).resolve())
+    except ValueError:
+        return None
+    return redirected()
+
+
+def container_message(boxed: str) -> str:
+    return (
+        f"L'installazione e' partita dentro un'altra app ({boxed}): Windows metterebbe il companion "
+        "nella sua copia privata delle cartelle, dove il computer, al prossimo avvio, non lo trova.\n\n"
+        "Chiudi e lancia il setup con un doppio clic da Esplora file."
+    )
+
+
+def refuse(message: str, console: bool) -> None:
+    """Dice perche' ci si ferma: una finestra se si puo', altrimenti la console."""
+    print(message, flush=True)
+    if console:
+        return
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror("Pampa Notes", message)
+        root.destroy()
+    except Exception:  # noqa: BLE001 — senza tkinter resta la riga stampata
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     options = parse_args(argv)
     app = Path(options.app).resolve()
+    boxed = installer_container(app)
+    if boxed:
+        refuse(container_message(boxed), options.console or options.silent)
+        return EXIT_CONTAINER
     if options.pair_only:
         return pair_only(options, app)
     upgrade = options.upgrade

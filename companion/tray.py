@@ -29,7 +29,34 @@ import webbrowser
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageDraw
+
+def ensure_std_streams(log_dir: Path) -> None:
+    """
+    Con `pythonw.exe` lanciato senza niente attaccato — il collegamento «Pampa Notes companion» del
+    menu Start, «Collega il telefono» dell'installer — `sys.stdout` e `sys.stderr` sono None, e
+    uvicorn, configurando il suo registro, chiede `sys.stdout.isatty()`: l'icona moriva in un attimo,
+    senza una riga da nessuna parte. `avvio.pyw` e `install.py` passano un file, e da li' funzionava.
+    Qui si fa lo stesso da dentro: quello che finirebbe nel nulla va in `logs/tray-stderr.log`.
+
+    Prima degli import qui sotto: il registro del server si aggancia a `sys.stderr` quando il modulo
+    si carica, e agganciato a None scriveva un «Logging error» a ogni riga.
+    """
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stream = open(log_dir / "tray-stderr.log", "a", encoding="utf-8", buffering=1)  # noqa: SIM115
+    except OSError:
+        stream = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
+    if sys.stdout is None:
+        sys.stdout = stream
+    if sys.stderr is None:
+        sys.stderr = stream
+
+
+ensure_std_streams(Path(__file__).resolve().parent / "logs")
+
+from PIL import Image, ImageDraw  # noqa: E402 — dopo ensure_std_streams, vedi sopra
 import pystray
 import qrcode
 import uvicorn
@@ -319,10 +346,46 @@ def on_voices(icon: pystray.Icon, _: Any) -> None:
 
 
 def save_hf_token(token: str) -> None:
-    """Il token in `config.json` (tutto o niente, sotto il lucchetto di config.py) e nel server, subito."""
-    config.set_value("hf_token", token)
+    """
+    Il token in `config.json` (tutto o niente, sotto il lucchetto di config.py) e nel server, subito.
+
+    Vuoto e' «Togli il token», e vale anche dopo il riavvio: `hf_token_disabled` spegne pure la
+    variabile HF_TOKEN dell'ambiente (vedi `server.resolve_hf_token`), che prima tornava a valere al
+    primo riavvio. Un token nuovo toglie il segno, e anche il rifiuto di Hugging Face di prima: vale
+    per il token vecchio, e il controllo che segue lo rifa' per questo.
+    """
+    config.set_values({"hf_token": token, "hf_token_disabled": not token})
     server.STATE["hf_token"] = token or None
+    server.STATE["diarization_denied"] = False
     SETTINGS["hf_token"] = token
+    SETTINGS["hf_token_disabled"] = not token
+
+
+# Quanto aspetta la finestra la risposta di Hugging Face prima di dire «non risponde». Il controllo
+# gira su un thread suo e la finestra resta viva comunque; questo e' solo il momento in cui smettere
+# di dire «controllo...».
+HF_CHECK_WAIT_S = 20.0
+
+
+def check_in_background(token: str, check: Any = None) -> dict[str, Any]:
+    """
+    Fa partire [server.check_diarization_access] su un thread suo e torna subito una scatola che il
+    thread riempie (`done`, `message`). La finestra la guarda col suo `after`: Tk si tocca solo dal
+    thread della finestra, e la domanda a Hugging Face — che senza rete puo' durare decine di secondi
+    — non blocca piu' la finestra (prima restava bianca e «non risponde» finche' non tornava).
+    """
+    check = check or server.check_diarization_access
+    box: dict[str, Any] = {"done": False, "message": ""}
+
+    def run() -> None:
+        try:
+            _, box["message"] = check(token)
+        except Exception as error:  # noqa: BLE001 — un controllo che si rompe e' un controllo non fatto
+            box["message"] = f"Non riesco a controllare adesso ({type(error).__name__})."
+        box["done"] = True
+
+    threading.Thread(target=run, daemon=True, name="controllo-hf").start()
+    return box
 
 
 def voices_dialog(icon: pystray.Icon) -> None:
@@ -362,6 +425,27 @@ def voices_dialog(icon: pystray.Icon) -> None:
     configured = bool(server.STATE.get("hf_token"))
     status = tk.StringVar(value="Un token e' gia' salvato: incollane un altro per sostituirlo." if configured else "")
     ttk.Label(frame, textvariable=status, wraplength=440, justify="left").grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
+    # Il controllo in corso: un numero che cresce, cosi' la risposta di un controllo vecchio (un token
+    # sostituito mentre si aspettava) non scrive sopra quella di adesso.
+    pending = {"round": 0}
+
+    def follow(box: dict[str, Any], round_: int, started: float) -> None:
+        """Guarda la scatola del thread ogni 200 ms, dal thread della finestra."""
+        if round_ != pending["round"]:
+            return
+        if box["done"]:
+            status.set(box["message"])
+            refresh(icon)
+            return
+        if time.monotonic() - started > HF_CHECK_WAIT_S:
+            status.set("Hugging Face non risponde: il token e' salvato, si provera' alla prima registrazione.")
+            return
+        root.after(200, follow, box, round_, started)
+
+    def check(token: str, saying: str) -> None:
+        pending["round"] += 1
+        status.set(saying)
+        root.after(200, follow, check_in_background(token), pending["round"], time.monotonic())
 
     def save() -> None:
         token = value.get().strip()
@@ -375,20 +459,19 @@ def voices_dialog(icon: pystray.Icon) -> None:
             status.set("config.json non si scrive: il token vale solo fino al riavvio.")
             return
         server.log.info("separazione delle voci: token salvato dal menu")
-        status.set("Salvato. Controllo con Hugging Face...")
-        root.update_idletasks()
-        _, message = server.check_diarization_access(token)
-        status.set(message)
         value.set("")
         refresh(icon)
+        check(token, "Salvato. Controllo con Hugging Face...")
 
     def remove() -> None:
+        # Un controllo ancora in corso non deve scrivere «Tutto pronto» dopo «Tolto».
+        pending["round"] += 1
         try:
             save_hf_token("")
         except OSError as error:
             server.log.warning("config.json non si scrive: %s", error)
         server.log.info("separazione delle voci: token tolto dal menu")
-        status.set("Tolto: le registrazioni torneranno senza voci.")
+        status.set("Tolto: le registrazioni torneranno senza voci, anche dopo un riavvio.")
         refresh(icon)
 
     buttons = ttk.Frame(frame)
@@ -397,6 +480,10 @@ def voices_dialog(icon: pystray.Icon) -> None:
     ttk.Button(buttons, text="Salva", command=save).grid(row=0, column=1, padx=(0, 8))
     ttk.Button(buttons, text="Chiudi", command=root.destroy).grid(row=0, column=2)
     entry.focus_set()
+    if configured:
+        # Il token salvato si ricontrolla aprendo la finestra: chi ha appena accettato le condizioni
+        # del modello riaccende le voci cosi', senza incollare niente (un rifiuto le aveva spente).
+        check(str(server.STATE.get("hf_token")), "Un token e' gia' salvato: controllo con Hugging Face...")
     root.bind("<Return>", lambda _event: save())
     root.bind("<Escape>", lambda _event: root.destroy())
     root.attributes("-topmost", True)
@@ -475,6 +562,26 @@ def shortcut_command(shortcut: Path, runner: Path, script: Path) -> str:
         f"$s.WorkingDirectory = {ps_quote(script.parent)}; $s.Description = 'Pampa Notes: il server di trascrizione'; "
         "$s.Save()"
     )
+
+
+def shortcut_mentions(link: Path, folder: Path) -> bool:
+    """
+    Il collegamento `.lnk` parla di questa cartella (nel bersaglio, negli argomenti o nella cartella
+    di lavoro)? Senza COM e senza PowerShell: i percorsi dentro un `.lnk` sono scritti in chiaro, in
+    UTF-16 o nella codepage di Windows, e basta cercarli. Un collegamento che non si legge non e' nostro.
+    """
+    try:
+        data = link.read_bytes()
+    except OSError:
+        return False
+    # Con la barra in fondo: `...\companion` non deve riconoscersi in `...\companion-prova\avvio.pyw`.
+    wanted = str(folder).rstrip("\\/").lower() + "\\"
+    # UTF-16 da un byte pari o da uno dispari: le stringhe non promettono di cominciare allineate.
+    texts = [data.decode("utf-16-le", errors="ignore"), data[1:].decode("utf-16-le", errors="ignore"),
+             data.decode("latin-1", errors="ignore")]
+    if os.name == "nt":
+        texts.append(data.decode("mbcs", errors="ignore"))
+    return any(wanted in text.lower() for text in texts)
 
 
 def autostart_disable() -> bool:
@@ -608,7 +715,10 @@ def main() -> None:
     start_update_watch(icon)
     # Un collegamento scritto da una versione precedente puntava a questo file, senza lanciatore:
     # si riscrive, cosi' chi aveva gia' acceso l'avvio automatico non deve spegnerlo e riaccenderlo.
-    if autostart_enabled():
+    # Solo se e' di questa cartella: con due companion sullo stesso computer (quello installato e una
+    # copia di sviluppo, o una copia per le prove) il secondo che partiva si prendeva il collegamento
+    # dell'altro, e la disinstallazione del secondo lo cancellava.
+    if autostart_enabled() and shortcut_mentions(SHORTCUT, Path(__file__).resolve().parent):
         threading.Thread(target=autostart_enable, daemon=True).start()
     server.log.info("icona avviata, registro in %s", log_path)
     icon.run()
