@@ -551,6 +551,21 @@
   <string name="session_silence_hours">h</string>
   <string name="session_voice">Voice %1$d</string>
   <string name="session_silence_resume">%1$s. Tap to resume at %2$s</string>
+  <!-- Chapters: stretches of speech between long silences. Boundaries and first words, never summaries. -->
+  <string name="session_chapters">Chapters</string>
+  <plurals name="session_chapters_count">
+    <item quantity="one">%d chapter</item>
+    <item quantity="other">%d chapters</item>
+  </plurals>
+  <string name="session_chapters_detail">Where people speak, between one long silence and the next: for each stretch its start, its end and its first words exactly as they were said. They are boundaries, not summaries.</string>
+  <string name="session_chapters_entry">Tap to choose where to listen from</string>
+  <string name="session_chapters_entry_now">Now in %1$d: %2$s</string>
+  <string name="session_chapter_number">Chapter %1$d</string>
+  <string name="session_chapter_now">Chapter %1$d · now</string>
+  <string name="session_chapter_now_state">Playing</string>
+  <string name="session_chapter_range">%1$s – %2$s · %3$s of speech</string>
+  <string name="session_chapter_quote">“%1$s”</string>
+  <string name="session_chapter_no_quote">No words at the start</string>
 
   <!-- The parts of a session -->
   <string name="part_starts_at">Starts at %1$s</string>
@@ -624,6 +639,10 @@
   <string name="export_label_of">of</string>
   <string name="export_label_sessions">Sessions</string>
   <string name="export_label_starts_at">starts at</string>
+  <string name="export_label_chapters">Chapters</string>
+  <string name="export_label_chapter">Chapter</string>
+  <string name="export_label_chapters_detail">Where people speak, between one long silence and the next: for each stretch its start, its end, how long people speak and its first words exactly as they were said. They are boundaries, not summaries: to know what is said, read the text.</string>
+  <string name="export_label_speech">%1$s of speech</string>
 
   <!-- Export: the panel -->
   <string name="export_scope_everything">Everything</string>

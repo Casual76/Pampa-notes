@@ -190,6 +190,44 @@ class ExportWritersTest {
   }
 
   @Test
+  fun `i capitoli stanno in cima alla trascrizione e nell'indice, senza contare come parole`() {
+    // Tre tratti da due minuti separati da mezz'ora di niente: tre capitoli.
+    fun talk(fromMs: Long, first: String) = (0 until 12).map { i ->
+      val start = fromMs + i * 10_000L
+      segment("p1", start, start + 9_000, if (i == 0) first else "e poi si continua a parlare")
+    }
+    val segments = talk(0, "No, certo che no. Poi vediamo.") +
+      talk(40 * 60_000L, "Allora oggi parliamo della rivoluzione francese e dei suoi antefatti.") +
+      talk(90 * 60_000L, "Buonanotte a tutti quanti voi.")
+    val session = session(
+      parts = listOf(part("p1", "giornata.m4a", 2 * 3_600_000L, 0)),
+      transcript = transcript(TranscriptKind.RAW, segments.joinToString(" ") { it.text }),
+      segments = segments,
+    )
+    val note = note(sessions = listOf(session))
+    val layout = layout(listOf(note))
+    val piece = layout.of(note).transcripts.values.single().single()
+    val text = writer.transcriptFile(note, piece, layout)
+
+    assertTrue(text, text.contains("chapters: 3\n"))
+    assertTrue(text, text.contains("## Capitoli\n"))
+    assertTrue(text, text.contains("Sono confini, non riassunti"))
+    assertTrue(text, text.contains("1. [00:00]–01:59 · 2 min di parlato · 72 parole · “No, certo che no.”"))
+    assertTrue(text, text.contains("2. [40:00]–41:59 · 2 min di parlato · 76 parole · “Allora oggi parliamo della rivoluzione francese e dei…”"))
+    // Il capitolo porta allo stesso tempo del paragrafo, e il testo resta tutto dopo l'elenco.
+    assertTrue(text, text.indexOf("3. [1:30:00]") < text.indexOf("[1:30:00] Buonanotte"))
+    assertEquals("l'elenco non conta come parole", segments.sumOf { it.text.split(" ").size }, piece.words)
+
+    val index = IndexWriter().index(layout)
+    assertTrue(index, index.contains("  - Capitolo 3 · [1:30:00]–1:31:59 · 2 min di parlato"))
+
+    // Una lezione senza silenzi lunghi resta com'era.
+    val plain = writer.transcriptFile(note(), layout(listOf(note())).of(note()).transcripts.values.single().single(), layout(listOf(note())))
+    assertFalse(plain.contains("Capitoli"))
+    assertFalse(plain.contains("chapters:"))
+  }
+
+  @Test
   fun `una versione raffinata non ha i tempi e lo dice`() {
     val raw = transcript(TranscriptKind.RAW, "Testo grezzo.")
     val refined = transcript(TranscriptKind.REFINED, "Testo ripulito.", model = "gpt-oss-120b", parentId = raw.id)

@@ -48,6 +48,12 @@ fun exportLabels(): ExportLabels = ExportLabels(
   silence = stringResource(R.string.session_silence),
   // «Voce %1$d»: anche questo lo riempie il writer, col numero della voce.
   voice = stringResource(R.string.session_voice),
+  // I capitoli: confini e prime parole (vedi `Chapters`). Le virgolette sono quelle della schermata.
+  chapters = stringResource(R.string.export_label_chapters),
+  chapter = stringResource(R.string.export_label_chapter),
+  chaptersDetail = stringResource(R.string.export_label_chapters_detail),
+  speech = stringResource(R.string.export_label_speech),
+  quote = stringResource(R.string.session_chapter_quote),
   words = stringResource(R.string.export_label_words),
   note = stringResource(R.string.export_label_note),
   notesPlural = stringResource(R.string.export_label_notes_plural),

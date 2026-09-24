@@ -141,7 +141,7 @@ object TranscriptParagraphs {
     return numbers
   }
 
-  private fun voiceKey(segment: SegmentEntity): String? = segment.speaker?.let { "${segment.partId}\u0000$it" }
+  internal fun voiceKey(segment: SegmentEntity): String? = segment.speaker?.let { "${segment.partId}\u0000$it" }
 
   /**
    * «16 min», «1 h 20 min», «2 h»: quanto e' durato un silenzio, arrotondato al minuto.

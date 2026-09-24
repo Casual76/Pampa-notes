@@ -581,6 +581,21 @@
   <string name="session_silence_hours">h</string>
   <string name="session_voice">Voce %1$d</string>
   <string name="session_silence_resume">%1$s. Tocca per riprendere dal minuto %2$s</string>
+  <!-- I capitoli: tratti di parlato fra i silenzi lunghi. Confini e prime parole, mai riassunti. -->
+  <string name="session_chapters">Capitoli</string>
+  <plurals name="session_chapters_count">
+    <item quantity="one">%d capitolo</item>
+    <item quantity="other">%d capitoli</item>
+  </plurals>
+  <string name="session_chapters_detail">Dove si parla, fra un silenzio lungo e l\'altro: per ogni tratto l\'inizio, la fine e le prime parole così come sono state dette. Sono confini, non riassunti.</string>
+  <string name="session_chapters_entry">Tocca per scegliere da dove ascoltare</string>
+  <string name="session_chapters_entry_now">Adesso il %1$d: %2$s</string>
+  <string name="session_chapter_number">Capitolo %1$d</string>
+  <string name="session_chapter_now">Capitolo %1$d · adesso</string>
+  <string name="session_chapter_now_state">In ascolto</string>
+  <string name="session_chapter_range">%1$s – %2$s · %3$s di parlato</string>
+  <string name="session_chapter_quote">“%1$s”</string>
+  <string name="session_chapter_no_quote">Senza parole all\'inizio</string>
 
   <!-- Le parti di una sessione -->
   <string name="part_starts_at">Comincia al minuto %1$s</string>
@@ -654,6 +669,10 @@
   <string name="export_label_of">di</string>
   <string name="export_label_sessions">Sessioni</string>
   <string name="export_label_starts_at">comincia a</string>
+  <string name="export_label_chapters">Capitoli</string>
+  <string name="export_label_chapter">Capitolo</string>
+  <string name="export_label_chapters_detail">Dove si parla, fra un silenzio lungo e l\'altro: per ogni tratto l\'inizio, la fine, quanto si parla e le prime parole così come sono state dette. Sono confini, non riassunti: per sapere cosa si dice, leggi il testo.</string>
+  <string name="export_label_speech">%1$s di parlato</string>
 
   <!-- Export: il pannello -->
   <string name="export_scope_everything">Tutto l\'archivio</string>
