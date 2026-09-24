@@ -69,6 +69,14 @@ class PampaNavActions(
 
   /** La sessione da «Riprendi ad ascoltare»: si apre e riparte dal punto in cui ci si era fermati. */
   fun resumeSession(id: String) = openDetail(Routes.session(id, play = true), fresh = true)
+
+  /**
+   * La sessione dalla ricerca: il lettore pronto nel momento trovato e la ricerca dentro la sessione
+   * gia' scritta. Come una nota aperta da un elenco, sul tablet prende il posto di quello che era
+   * aperto invece di impilarsi; sul telefono va sopra la ricerca, e indietro ci riporta.
+   */
+  fun openSessionAt(id: String, atMs: Long?, query: String) =
+    openDetail(Routes.session(id, atMs = atMs, query = query), fresh = true)
   fun openEditor(noteId: String) = openDetail(Routes.editor(noteId))
   fun openImport(fresh: Boolean = true) = openDetail(Routes.IMPORT, fresh = fresh)
 
@@ -190,12 +198,27 @@ fun syncPanes(listNav: NavHostController, detailNav: NavHostController, twoPane:
   }
 }
 
+/**
+ * Il segno, sulla voce dello stack, che la sessione ha gia' usato il momento e la parola della
+ * ricerca: [syncPanes] la ricostruisce senza, e la pagina nel pannello nuovo non salta di nuovo.
+ */
+private const val SESSION_JUMP_USED = "sessionJumpUsed"
+
 /** La rotta di dettaglio di una voce dello stack, ricostruita dai suoi argomenti. */
 private fun detailRouteOf(entry: NavBackStackEntry): String? {
   val args = entry.arguments
   return when (entry.destination.route) {
     Routes.NOTE -> Routes.note(args?.getString("noteId") ?: return null, args.getString("tab"))
-    Routes.SESSION -> Routes.session(args?.getString("sessionId") ?: return null)
+    Routes.SESSION -> {
+      val id = args?.getString("sessionId") ?: return null
+      // Il momento e la parola della ricerca viaggiano solo finche' la pagina non li ha usati: dopo,
+      // la pagina nuova ripartirebbe da li' e porterebbe via chi nel frattempo si e' spostato.
+      if (runCatching { entry.savedStateHandle.get<Boolean>(SESSION_JUMP_USED) }.getOrNull() == true) {
+        Routes.session(id)
+      } else {
+        Routes.session(id, atMs = args.getString("at")?.toLongOrNull(), query = args.getString("q"))
+      }
+    }
     Routes.EDITOR -> Routes.editor(args?.getString("noteId") ?: return null)
     Routes.SETTINGS_SECTION -> Routes.settingsSection(args?.getString("section") ?: return null)
     Routes.IMPORT -> Routes.IMPORT
@@ -298,6 +321,7 @@ fun NavGraphBuilder.listDestinations(actions: PampaNavActions, host: NavHostCont
       SearchRoute(
         onBack = { host.popBackStack() },
         onOpenNote = actions::openNote,
+        onOpenMoment = actions::openSessionAt,
       )
     }
   }
@@ -356,11 +380,14 @@ fun NavGraphBuilder.detailDestinations(actions: PampaNavActions, host: NavHostCo
     arguments = listOf(
       navArgument("sessionId") { type = NavType.StringType },
       navArgument("play") { nullable = true; defaultValue = null },
+      navArgument("at") { nullable = true; defaultValue = null },
+      navArgument("q") { nullable = true; defaultValue = null },
     ),
-  ) {
+  ) { entry ->
     FluidRouteMotionHost(this@composable) {
       SessionRoute(
         onBack = { host.popBackStack() },
+        onJumpUsed = { entry.savedStateHandle[SESSION_JUMP_USED] = true },
         // Separare una sessione apre quella nuova al posto di questa: e' li' che si finisce il
         // lavoro, ed e' li' che si torna indietro da.
         onOpenSession = { id -> actions.replaceWith(host, Routes.session(id)) },

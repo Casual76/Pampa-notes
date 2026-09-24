@@ -269,6 +269,8 @@
 
   <string name="search_no_results_detail">Try fewer words, or part of a word.</string>
   <string name="search_match_in_title">Found in the title</string>
+  <string name="search_moment_somewhere">In the recording</string>
+  <string name="search_moment_session">Recording</string>
   <plurals name="search_in_transcripts">
     <item quantity="one">%d in the transcript</item>
     <item quantity="other">%d in transcripts</item>

@@ -276,6 +276,9 @@ interface SessionDao {
   @Query("SELECT * FROM sessions WHERE id = :id")
   suspend fun get(id: String): SessionEntity?
 
+  @Query("SELECT * FROM sessions WHERE id IN (:ids)")
+  suspend fun getAll(ids: List<String>): List<SessionEntity>
+
   @Query("SELECT * FROM sessions ORDER BY noteId, position")
   suspend fun all(): List<SessionEntity>
 
@@ -463,6 +466,21 @@ interface SegmentDao {
 
   @Query("SELECT * FROM segments WHERE transcriptId = :transcriptId ORDER BY sessionStartMs, id")
   suspend fun byTranscript(transcriptId: String): List<SegmentEntity>
+
+  /**
+   * I segmenti senza le parole coi tempi, per la ricerca che salta al minuto: di una registrazione
+   * di diciannove ore le parole sono decine di megabyte, e per trovare *dove* si dice una cosa basta
+   * il testo. Le parole servono solo del segmento trovato ([wordsOf]).
+   */
+  @Query(
+    "SELECT id, transcriptId, partId, indexInPart, partStartMs, partEndMs, sessionStartMs, sessionEndMs, text, " +
+      "noSpeechProb, avgLogProb, NULL AS wordsJson, wordsEstimated, speaker " +
+      "FROM segments WHERE transcriptId = :transcriptId ORDER BY sessionStartMs, id",
+  )
+  suspend fun byTranscriptWithoutWords(transcriptId: String): List<SegmentEntity>
+
+  @Query("SELECT wordsJson FROM segments WHERE id = :id")
+  suspend fun wordsOf(id: Long): String?
 
   @Query("SELECT * FROM segments")
   suspend fun all(): List<SegmentEntity>

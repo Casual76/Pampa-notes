@@ -619,6 +619,27 @@ thread della UI e solo a ricerca aperta) e non si salta da nessuna parte. Quando
 (un'altra scheda, un testo arrivato) le occorrenze di prima si buttano subito (`clearMatches`): prima
 restavano evidenziate sulla scheda nuova finche' la ricerca non ripartiva.
 
+**La ricerca che salta al minuto.** Nella ricerca di tutte le note (FTS4) un risultato trovato in una
+trascrizione e' una riga sua sotto la nota — titolo e giorno della sessione, frammento, «Al minuto
+1:04:12» — e il tocco apre la registrazione in quel momento: lettore pronto li' (fermo), lista sul
+paragrafo, ricerca della sessione gia' scritta e senza tastiera, con la corrente nell'occorrenza di
+quel momento («3 di 12» parte da li'). Il minuto si cerca **solo per le righe che la lista compone**
+(`SearchViewModel.lookUp`, due alla volta, un gruppo per nota = un elemento della lista) e legge il
+meno possibile: i segmenti senza le parole coi tempi (`SegmentDao.byTranscriptWithoutWords`), poi le
+parole del solo segmento trovato (`SearchRepository.momentOf`). Il confronto e i paragrafi sono quelli
+della sessione (`TranscriptSearch.firstHit`, `matchAt`, puri): prima la ricerca come frase, altrimenti
+la prima parola detta, perche' FTS4 trova «kant critica» anche con le parole lontane, e quella parola
+diventa quella evidenziata. Una sessione compare una volta anche se la trovano grezza e raffinata; se
+la grezza non contiene la parola (il risultato veniva da una raffinata) la riga dice «Nella
+registrazione» e il tocco apre con la ricerca scritta e basta. Con una raffinata attiva la sessione
+non cambia scheda (sarebbe una modifica sincronizzata): il lettore va al minuto, la ricerca evidenzia
+sulla raffinata. La rotta porta `at` e `q` (`Routes.session`, `openSessionAt`: sul tablet prende il
+posto di quello che era aperto); il salto vale **una volta**: `SessionViewModel` segna in
+`SavedStateHandle` il salto del lettore (`seekIfAsked`, a playlist caricata, anche dopo «Scarica») e
+l'apertura della ricerca, e quando e' tutto fatto la voce dello stack prende il segno
+`sessionJumpUsed`, con cui `syncPanes` ricostruisce la rotta senza `at` e `q` — altrimenti cambiare
+regime riporterebbe al minuto chi nel frattempo si e' spostato.
+
 I tasti piccoli del lettore e della ricerca (44 e 40 dp) prendono il dito su 48 dp senza cambiare la
 capsula (`touchTarget`, in `PlayerBar.kt`: i modificatori dopo vedono 48, il layout intorno la misura
 disegnata), e cosi' il tempo rimanente/totale in fondo allo scrubber (`touchHeight`).

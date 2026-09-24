@@ -24,6 +24,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -121,6 +122,8 @@ import androidx.compose.ui.text.style.TextAlign
 fun SessionRoute(
   onBack: () -> Unit,
   onOpenSession: (String) -> Unit,
+  /** Il salto della ricerca (`at`, `q`) e' stato fatto tutto: la rotta ricostruita non lo porta piu'. */
+  onJumpUsed: () -> Unit = {},
   viewModel: SessionViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -131,6 +134,9 @@ fun SessionRoute(
   val refineDefaults by viewModel.refineDefaults.collectAsStateWithLifecycle()
   val skipSilence by viewModel.skipSilence.collectAsStateWithLifecycle()
   val skipNotice by viewModel.skipNotice.collectAsStateWithLifecycle()
+  val searchJump by viewModel.searchJump.collectAsStateWithLifecycle()
+  val jumpPending by viewModel.jumpPending.collectAsStateWithLifecycle()
+  LaunchedEffect(jumpPending) { if (!jumpPending && viewModel.openedWithJump) onJumpUsed() }
 
   SessionScreen(
     state = state,
@@ -161,6 +167,8 @@ fun SessionRoute(
     skipSilence = skipSilence,
     onSkipSilence = { viewModel.setSkipSilence(it) },
     skipNotice = skipNotice,
+    searchJump = searchJump,
+    onSearchJumpApplied = viewModel::searchJumpApplied,
   )
 }
 
@@ -194,6 +202,8 @@ private fun SessionScreen(
   skipSilence: Boolean,
   onSkipSilence: (Boolean) -> Unit,
   skipNotice: SkipNotice?,
+  searchJump: SearchJump?,
+  onSearchJumpApplied: () -> Unit,
 ) {
   val listState = rememberLazyListState()
   var renaming by remember { mutableStateOf(false) }
@@ -286,6 +296,22 @@ private fun SessionScreen(
     search.currentMatch?.let { revealMatch(it, seek = true) }
   }
 
+  // --- Arrivati dalla ricerca di tutte le note ---------------------------------------------------
+  //
+  // La ricerca dell'app ha aperto la sessione nel momento in cui si dice quello che si cercava
+  // (`Routes.SESSION`, `at` e `q`). Il lettore ci va da se' (`SessionViewModel.seekIfAsked`); qui si
+  // apre la ricerca con la parola gia' scritta e senza tastiera, e alle prime occorrenze la corrente
+  // diventa quella di quel momento e la lista va al suo paragrafo. Una volta sola: il ViewModel segna
+  // il salto come fatto, e la ricerca aperta e il momento in attesa sopravvivono alla rotazione.
+  var jumpAtMs by rememberSaveable { mutableStateOf<Long?>(null) }
+  LaunchedEffect(searchJump, state.loading, active?.id) {
+    val jump = searchJump ?: return@LaunchedEffect
+    if (state.loading || active == null) return@LaunchedEffect
+    search.showWith(jump.query)
+    jumpAtMs = jump.atMs
+    onSearchJumpApplied()
+  }
+
   LaunchedEffect(searchIndex, search.query) {
     val index = searchIndex ?: return@LaunchedEffect
     val query = search.query
@@ -295,6 +321,19 @@ private fun SessionScreen(
     val found = withContext(Dispatchers.Default) { TranscriptSearch.find(index, query) }
     val before = search.currentMatch
     search.onResults(query, found)
+    val jumpAt = jumpAtMs
+    if (jumpAt != null) {
+      jumpAtMs = null
+      if (searchOnRaw) {
+        // Il lettore e' gia' li' e la lista ci va senza toccarlo, e senza smettere di seguirlo: premuto
+        // play, il testo va avanti con la voce da questo paragrafo.
+        val bases = paragraphs.map { it.base }
+        if (found.isNotEmpty()) search.current = withContext(Dispatchers.Default) { TranscriptSearch.matchAt(bases, found, jumpAt) }
+        val block = search.currentMatch?.block ?: paragraphs.indexOfLast { it.startMs <= jumpAt }.coerceAtLeast(0)
+        scrollToKeyed(listState, PARAGRAPH_KEY, block)
+        return@LaunchedEffect
+      }
+    }
     search.currentMatch?.takeIf { it != before }?.let { revealMatch(it, seek = false) }
   }
 

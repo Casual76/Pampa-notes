@@ -16,8 +16,13 @@ object Routes {
   const val FOLDER = "folder/{folderId}"
   const val NOTE = "note/{noteId}?tab={tab}"
   const val EDITOR = "editor/{noteId}"
-  /** `play=1`: aperta da «Riprendi ad ascoltare», riparte dal punto salvato. */
-  const val SESSION = "session/{sessionId}?play={play}"
+  /**
+   * `play=1`: aperta da «Riprendi ad ascoltare», riparte dal punto salvato. `at` (millisecondi di
+   * sessione) e `q`: aperta dalla ricerca, il lettore pronto nel momento in cui si dice quello che si
+   * e' cercato, e la ricerca dentro la sessione gia' scritta. Valgono una volta sola (vedi
+   * `SessionViewModel` e [dev.pampa.pampanotes.ui.nav.syncPanes]).
+   */
+  const val SESSION = "session/{sessionId}?play={play}&at={at}&q={q}"
   const val SETTINGS_SECTION = "settings/{section}"
 
   /**
@@ -50,7 +55,14 @@ object Routes {
   fun folder(id: String) = "folder/${Uri.encode(id)}"
   fun note(id: String, tab: String? = null) = "note/${Uri.encode(id)}" + (tab?.let { "?tab=${Uri.encode(it)}" } ?: "")
   fun editor(noteId: String) = "editor/${Uri.encode(noteId)}"
-  fun session(id: String, play: Boolean = false) = "session/${Uri.encode(id)}" + if (play) "?play=1" else ""
+  fun session(id: String, play: Boolean = false, atMs: Long? = null, query: String? = null): String {
+    val args = buildList {
+      if (play) add("play=1")
+      atMs?.let { add("at=$it") }
+      query?.takeIf { it.isNotBlank() }?.let { add("q=${Uri.encode(it)}") }
+    }
+    return "session/${Uri.encode(id)}" + if (args.isEmpty()) "" else args.joinToString("&", prefix = "?")
+  }
   fun settingsSection(section: String) = "settings/${Uri.encode(section)}"
 
   /**

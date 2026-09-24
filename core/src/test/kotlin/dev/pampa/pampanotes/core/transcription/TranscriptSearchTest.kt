@@ -102,4 +102,87 @@ class TranscriptSearchTest {
     assertEquals(15_000, matches.size)
     assertTrue("ci ha messo $elapsedMs ms", elapsedMs < 5_000)
   }
+
+  // --- La ricerca che salta al minuto -----------------------------------------------------------
+
+  private fun segment(startMs: Long, endMs: Long, text: String, words: List<RawWord>? = null, partId: String = "p") = SegmentEntity(
+    transcriptId = "t", partId = partId, indexInPart = 0,
+    partStartMs = startMs, partEndMs = endMs, sessionStartMs = startMs, sessionEndMs = endMs,
+    text = text,
+    wordsJson = words?.let { WordTimings.encode(it, originMs = startMs) },
+  )
+
+  @Test
+  fun `il primo momento e' quello della parola, con lo stesso confronto della sessione`() {
+    val segments = listOf(
+      segment(0, 4_000, "Buongiorno a tutti."),
+      // Dieci secondi di pausa: un altro paragrafo.
+      segment(14_000, 18_000, "Oggi parliamo della Città di Dio", listOf(
+        RawWord(14_000, 14_400, "Oggi"),
+        RawWord(14_400, 15_000, "parliamo"),
+        RawWord(15_000, 15_300, "della"),
+        RawWord(15_300, 16_100, "Città"),
+        RawWord(16_100, 16_300, "di"),
+        RawWord(16_300, 16_900, "Dio"),
+      )),
+      segment(20_000, 22_000, "e poi ancora della citta", null),
+    )
+    val moment = TranscriptSearch.firstMoment(segments, "CITTA")
+    assertEquals(TranscriptSearch.Moment(15_300L, "CITTA"), moment)
+  }
+
+  @Test
+  fun `se la frase non c'e' vale la prima parola detta, che diventa quella da evidenziare`() {
+    // FTS4 trova «kant critica» anche con le due parole lontane: qui la frase non c'e'.
+    val segments = listOf(
+      segment(0, 3_000, "La critica della ragion pura"),
+      segment(10_000, 13_000, "fu scritta da Kant"),
+    )
+    val paragraphs = TranscriptParagraphs.split(segments, TranscriptParagraphs.MAX_SEGMENTS_ON_SCREEN)
+    val hit = TranscriptSearch.firstHit(paragraphs, "kant critica")
+    assertEquals(0, hit!!.paragraph)
+    assertEquals("critica", hit.query)
+    assertEquals(paragraphs[0].text.indexOf("critica"), hit.offset)
+    // Dentro lo stesso paragrafo vince la parola che viene prima.
+    val same = TranscriptParagraphs.split(listOf(segment(0, 3_000, "Kant e la critica")), 10)
+    assertEquals("kant", TranscriptSearch.firstHit(same, "critica* kant")!!.query)
+    // La frase intera, quando c'e', vince anche su una parola detta prima.
+    val phrase = TranscriptParagraphs.split(
+      listOf(segment(0, 3_000, "Kant nacque a Konigsberg."), segment(10_000, 13_000, "La critica di Kant e' difficile")),
+      10,
+    )
+    assertEquals(TranscriptSearch.FirstHit(1, phrase[1].text.indexOf("critica di"), "critica di"), TranscriptSearch.firstHit(phrase, "critica di"))
+  }
+
+  @Test
+  fun `niente da trovare, niente momento`() {
+    val segments = listOf(segment(0, 3_000, "Solo Hegel qui"))
+    assertEquals(null, TranscriptSearch.firstMoment(segments, "Kant"))
+    assertEquals(null, TranscriptSearch.firstMoment(emptyList(), "Kant"))
+    // Le parole di una lettera sola non si cercano: «a» sarebbe dappertutto.
+    assertEquals(null, TranscriptSearch.firstMoment(segments, "a"))
+  }
+
+  @Test
+  fun `le parole di una ricerca sono quelle di FTS4`() {
+    assertEquals(listOf("kant", "critica"), TranscriptSearch.searchTerms("\"kant\"* -critica  a"))
+    assertEquals(listOf("Città"), TranscriptSearch.searchTerms("Città citta"))
+  }
+
+  @Test
+  fun `arrivati nella sessione, la corrente e' l'occorrenza del momento`() {
+    val segments = listOf(
+      segment(0, 3_000, "Kant all'inizio"),
+      segment(10_000, 13_000, "poi ancora Kant", listOf(RawWord(10_000, 10_500, "poi"), RawWord(10_500, 11_000, "ancora"), RawWord(11_500, 12_000, "Kant"))),
+      segment(20_000, 23_000, "e Kant alla fine"),
+    )
+    val paragraphs = TranscriptParagraphs.split(segments, TranscriptParagraphs.MAX_SEGMENTS_ON_SCREEN)
+    val matches = TranscriptSearch.find(paragraphs.map { it.text }, "kant")
+    assertEquals(3, matches.size)
+    assertEquals(1, TranscriptSearch.matchAt(paragraphs, matches, 11_500))
+    assertEquals(0, TranscriptSearch.matchAt(paragraphs, matches, 0))
+    // Un momento dopo tutte: l'ultima, la piu' vicina.
+    assertEquals(2, TranscriptSearch.matchAt(paragraphs, matches, 60_000))
+    assertEquals(0, TranscriptSearch.matchAt(paragraphs, emptyList(), 5_000))
+  }
 }

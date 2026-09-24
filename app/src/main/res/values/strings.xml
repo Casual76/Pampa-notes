@@ -286,6 +286,9 @@
   <!-- Ricerca -->
   <string name="search_no_results_detail">Prova con meno parole, o con una parte di parola.</string>
   <string name="search_match_in_title">Trovato nel titolo</string>
+  <!-- La ricerca che salta al minuto: una riga per registrazione trovata -->
+  <string name="search_moment_somewhere">Nella registrazione</string>
+  <string name="search_moment_session">Registrazione</string>
   <plurals name="search_in_transcripts">
     <item quantity="one">%d nella trascrizione</item>
     <item quantity="other">%d nelle trascrizioni</item>

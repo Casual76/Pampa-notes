@@ -60,8 +60,16 @@ import dev.pampa.pampanotes.core.transcription.TranscriptSearch
  * si azzera solo quando cambia la parola ([onResults]).
  */
 @Stable
-class TranscriptSearchState(open: Boolean = false, query: String = "", current: Int = 0) {
+class TranscriptSearchState(open: Boolean = false, query: String = "", current: Int = 0, focusOnOpen: Boolean = true) {
   var open by mutableStateOf(open)
+    private set
+
+  /**
+   * La barra prende il fuoco (e la tastiera sale) quando compare. Non quando la ricerca arriva gia'
+   * scritta dalla ricerca di tutte le note: li' si e' venuti a leggere e ad ascoltare, e la tastiera
+   * coprirebbe proprio il paragrafo trovato.
+   */
+  var focusOnOpen by mutableStateOf(focusOnOpen)
     private set
   var query by mutableStateOf(query)
   var current by mutableIntStateOf(current)
@@ -79,6 +87,14 @@ class TranscriptSearchState(open: Boolean = false, query: String = "", current: 
 
   fun show() {
     open = true
+    focusOnOpen = true
+  }
+
+  /** Aperta gia' scritta, senza tastiera: la ricerca che salta al minuto (vedi `SessionScreen`). */
+  fun showWith(query: String) {
+    open = true
+    focusOnOpen = false
+    this.query = query
   }
 
   /** Chiudere cancella: una ricerca riaperta domani non deve ritrovare le evidenziazioni di oggi. */
@@ -111,10 +127,10 @@ class TranscriptSearchState(open: Boolean = false, query: String = "", current: 
 
   companion object {
     val Saver: Saver<TranscriptSearchState, Any> = Saver(
-      save = { listOf(it.open, it.query, it.current) },
+      save = { listOf(it.open, it.query, it.current, it.focusOnOpen) },
       restore = { saved ->
         val list = saved as List<*>
-        TranscriptSearchState(list[0] as Boolean, list[1] as String, list[2] as Int)
+        TranscriptSearchState(list[0] as Boolean, list[1] as String, list[2] as Int, list.getOrNull(3) as? Boolean ?: true)
       },
     )
   }
@@ -143,7 +159,7 @@ fun TranscriptSearchBar(
   modifier: Modifier = Modifier,
 ) {
   val focus = remember { FocusRequester() }
-  LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+  LaunchedEffect(Unit) { if (state.focusOnOpen) runCatching { focus.requestFocus() } }
   val total = state.matches.size
   val counter = when {
     state.query.isBlank() -> null

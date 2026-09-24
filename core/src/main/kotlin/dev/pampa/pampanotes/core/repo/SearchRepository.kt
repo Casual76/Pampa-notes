@@ -2,7 +2,11 @@ package dev.pampa.pampanotes.core.repo
 
 import dev.pampa.pampanotes.core.db.NoteEntity
 import dev.pampa.pampanotes.core.db.SearchDao
+import dev.pampa.pampanotes.core.db.SegmentDao
 import dev.pampa.pampanotes.core.db.SessionDao
+import dev.pampa.pampanotes.core.db.TranscriptDao
+import dev.pampa.pampanotes.core.transcription.TranscriptParagraphs
+import dev.pampa.pampanotes.core.transcription.TranscriptSearch
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
@@ -23,6 +27,9 @@ data class TranscriptSnippet(
   val transcriptId: String,
   val sessionId: String,
   val snippet: String,
+  /** Titolo e giorno della sessione: con piu' lezioni nella stessa nota, dicono quale. */
+  val sessionTitle: String = "",
+  val sessionDate: String = "",
 )
 
 @Singleton
@@ -31,6 +38,8 @@ class SearchRepository @Inject constructor(
   private val notes: NoteRepository,
   private val folders: FolderRepository,
   private val sessions: SessionDao,
+  private val transcripts: TranscriptDao,
+  private val segments: SegmentDao,
 ) {
 
   /**
@@ -45,10 +54,17 @@ class SearchRepository @Inject constructor(
     val noteHits = runCatching { search.searchNotes(prepared, limit) }.getOrDefault(emptyList())
     val transcriptHits = runCatching { search.searchTranscripts(prepared, limit) }.getOrDefault(emptyList())
 
+    // Una sessione una volta sola: la grezza e la sua raffinata dicono la stessa cosa, e il tocco
+    // porta comunque alla stessa registrazione, nello stesso momento.
+    val sessionHits = transcriptHits.distinctBy { it.sessionId }
+    val sessionRows = runCatching { sessions.getAll(sessionHits.map { it.sessionId }.take(MAX_SQL_ARGS)) }
+      .getOrDefault(emptyList())
+      .associateBy { it.id }
     val byNote = LinkedHashMap<String, MutableList<TranscriptSnippet>>()
-    transcriptHits.forEach { hit ->
+    sessionHits.forEach { hit ->
+      val session = sessionRows[hit.sessionId]
       byNote.getOrPut(hit.noteId) { mutableListOf() }
-        .add(TranscriptSnippet(hit.transcriptId, hit.sessionId, hit.snippet))
+        .add(TranscriptSnippet(hit.transcriptId, hit.sessionId, hit.snippet, session?.title.orEmpty(), session?.date.orEmpty()))
     }
 
     val noteSnippets = noteHits.associate { it.noteId to it.snippet }
@@ -69,9 +85,36 @@ class SearchRepository @Inject constructor(
     }.sortedByDescending { it.note.updatedAt }
   }
 
+  /**
+   * «La ricerca che salta al minuto»: il momento in cui, nella registrazione [sessionId], si dice la
+   * prima volta quello che si e' cercato. Null se la grezza non c'e' o non lo contiene (il risultato
+   * veniva da una raffinata, o FTS4 ha trovato le parole separate da segni che qui contano).
+   *
+   * Si chiede solo per i risultati che si vedono, e legge il meno possibile: i segmenti senza le
+   * parole coi tempi ([SegmentDao.byTranscriptWithoutWords]), e le parole del solo segmento trovato.
+   * Gli stessi paragrafi e lo stesso confronto della ricerca dentro la sessione
+   * ([TranscriptSearch.firstHit]), cosi' l'occorrenza da cui la sessione parte e' una delle sue.
+   */
+  suspend fun momentOf(sessionId: String, query: String): TranscriptSearch.Moment? = withContext(Dispatchers.IO) {
+    val raw = transcripts.rawForSession(sessionId) ?: return@withContext null
+    val light = segments.byTranscriptWithoutWords(raw.id)
+    val paragraphs = TranscriptParagraphs.split(light, TranscriptParagraphs.MAX_SEGMENTS_ON_SCREEN)
+    val hit = withContext(Dispatchers.Default) { TranscriptSearch.firstHit(paragraphs, query) } ?: return@withContext null
+    val paragraph = paragraphs[hit.paragraph]
+    val index = TranscriptSearch.segmentAt(paragraph, hit.offset)
+    val segment = paragraph.segments[index]
+    // Il tempo della parola, se il segmento ne ha; senza, l'inizio del segmento (come `timeOf`).
+    val words = segments.wordsOf(segment.id)
+    val complete = paragraph.copy(segments = paragraph.segments.toMutableList().also { it[index] = segment.copy(wordsJson = words) })
+    TranscriptSearch.Moment(TranscriptSearch.timeOf(complete, hit.offset), hit.query)
+  }
+
   suspend fun rebuildIndex() = withContext(Dispatchers.IO) { search.rebuild() }
 
   companion object {
+    /** Il tetto degli argomenti di una query SQLite su Android: i risultati sono al massimo 60. */
+    private const val MAX_SQL_ARGS = 900
+
     /**
      * Da quello che si scrive a quello che FTS4 capisce.
      *

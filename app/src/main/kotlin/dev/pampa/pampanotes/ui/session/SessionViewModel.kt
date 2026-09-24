@@ -64,6 +64,12 @@ import dev.pampa.pampanotes.core.transcription.SessionAssembler
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 
+/**
+ * Aperta dalla ricerca di tutte le note: la parola da scrivere nella ricerca della sessione, e il
+ * momento in cui la si dice (null se la grezza non la contiene: si cerca e basta).
+ */
+data class SearchJump(val atMs: Long?, val query: String)
+
 /** Un salto di silenzio appena fatto, da dire per un attimo nel lettore: quanto, e quale (per ripeterlo). */
 data class SkipNotice(val skippedMs: Long, val id: Long)
 
@@ -194,6 +200,39 @@ class SessionViewModel @Inject constructor(
 
   /** Aperta da «Riprendi ad ascoltare» o da «Ascolta»: il lettore parte da solo ([resumeIfAsked]). */
   private val resumeRequested: Boolean = savedStateHandle.get<String>("play") == "1"
+
+  // --- La ricerca che salta al minuto ---------------------------------------------------------
+  //
+  // `at` e `q` della rotta (vedi `Routes.SESSION`): il lettore va al momento appena la playlist e'
+  // caricata, la schermata apre la ricerca con la parola. Ognuna delle due cose una volta sola, con il
+  // segno in [savedState]: una rotazione, o la morte del processo, non riportano indietro chi nel
+  // frattempo si e' spostato.
+  private val jumpAtMs: Long? = savedStateHandle.get<String>("at")?.toLongOrNull()?.coerceAtLeast(0L)
+  private val jumpQuery: String? = savedStateHandle.get<String>("q")?.takeIf { it.isNotBlank() }
+
+  /** La pagina e' stata aperta dalla ricerca: solo allora c'e' un salto da segnare come usato. */
+  val openedWithJump: Boolean = jumpAtMs != null || jumpQuery != null
+
+  private val _seekPending = MutableStateFlow(jumpAtMs != null && savedStateHandle.get<Boolean>(JUMP_SEEK_USED) != true)
+
+  private val _searchJump = MutableStateFlow(
+    jumpQuery?.takeIf { savedStateHandle.get<Boolean>(JUMP_SEARCH_USED) != true }?.let { SearchJump(jumpAtMs, it) },
+  )
+
+  /** La ricerca da aprire gia' scritta, finche' la schermata non l'ha aperta ([searchJumpApplied]). */
+  val searchJump: StateFlow<SearchJump?> = _searchJump
+
+  /**
+   * C'e' ancora qualcosa del salto da fare: la shell lo guarda per sapere se, spostando la pagina da
+   * un pannello all'altro, la rotta nuova deve ancora portare `at` e `q` (vedi `syncPanes`).
+   */
+  val jumpPending: StateFlow<Boolean> = combine(_seekPending, _searchJump) { seek, search -> seek || search != null }
+    .stateIn(viewModelScope, SharingStarted.Eagerly, _seekPending.value || _searchJump.value != null)
+
+  fun searchJumpApplied() {
+    savedState[JUMP_SEARCH_USED] = true
+    _searchJump.value = null
+  }
 
   /** Si e' ascoltato qualcosa in questa pagina: solo allora l'uscita salva il punto. */
   @Volatile private var listened = false
@@ -341,6 +380,7 @@ class SessionViewModel @Inject constructor(
         player.load(
           state.parts.map { PlayablePart(id = it.id, file = files.audioFile(it.fileName), durationMs = it.durationMs) },
         )
+        seekIfAsked()
         resumeIfAsked()
       }
     }
@@ -400,9 +440,26 @@ class SessionViewModel @Inject constructor(
     if (!resumeRequested || savedState.get<Boolean>(RESUME_CONSUMED) == true) return
     savedState[RESUME_CONSUMED] = true
     // Il punto salvato, se e' di questa sessione e non e' finita; altrimenti dall'inizio. «Ascolta»
-    // della scheda Registrazioni apre cosi' anche una sessione mai ascoltata qui.
-    settingsStore.lastListened.first()?.takeIf { it.sessionId == sessionId && !it.finished }?.let { player.seekTo(it.positionMs) }
+    // della scheda Registrazioni apre cosi' anche una sessione mai ascoltata qui. Con un momento
+    // chiesto dalla ricerca vale quello: il lettore c'e' gia' ([seekIfAsked]) e parte da li'.
+    if (jumpAtMs == null) {
+      settingsStore.lastListened.first()?.takeIf { it.sessionId == sessionId && !it.finished }?.let { player.seekTo(it.positionMs) }
+    }
     player.play()
+  }
+
+  /**
+   * Aperta dalla ricerca: il lettore va nel momento in cui si dice la parola, fermo (parte da solo
+   * solo con `play=1`). Passa da [seekTo], perche' e' un posto scelto: se capita dentro un silenzio
+   * lungo, «Salta i silenzi» non lo porta via. Aspetta che la playlist sia caricata — con i file sul
+   * computer di casa, fino a dopo «Scarica» — e poi non torna piu'.
+   */
+  private fun seekIfAsked() {
+    val at = jumpAtMs ?: return
+    if (!_seekPending.value) return
+    savedState[JUMP_SEEK_USED] = true
+    _seekPending.value = false
+    seekTo(at)
   }
 
   /**
@@ -586,6 +643,8 @@ class SessionViewModel @Inject constructor(
     /** Ogni quanto si salva il punto mentre suona: abbastanza da non perdere piu' di una frase. */
     const val SAVE_EVERY_MS = 15_000L
     const val RESUME_CONSUMED = "resumeConsumed"
+    const val JUMP_SEEK_USED = "jumpSeekUsed"
+    const val JUMP_SEARCH_USED = "jumpSearchUsed"
     /** Quanto resta a schermo «saltati 16 min»: il tempo di leggerlo, non di aspettarlo. */
     const val NOTICE_MS = 2_500L
   }
