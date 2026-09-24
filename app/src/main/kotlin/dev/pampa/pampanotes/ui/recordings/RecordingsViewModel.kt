@@ -1,5 +1,6 @@
 package dev.pampa.pampanotes.ui.recordings
 
+import dev.pampa.pampanotes.core.db.JobDao
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -39,6 +40,8 @@ data class RecordingItem(
   val folder: FolderEntity?,
   val job: JobEntity? = null,
   val elsewhere: NoteTranscribingElsewhere? = null,
+  /** L'ultimo tentativo di trascrizione di una sua sessione, se e' fallito: il badge lo dice. */
+  val failed: JobEntity? = null,
 ) {
   /** Le sessioni senza trascrizione che nessuno sta trascrivendo, ne' qui ne' altrove. */
   val toTranscribe: Int get() = row.untranscribedSessions - (elsewhere?.untranscribed ?: 0)
@@ -93,6 +96,7 @@ class RecordingsViewModel @Inject constructor(
   audioParts: AudioPartDao,
   transcripts: TranscriptDao,
   stats: StatsRepository,
+  jobDao: JobDao,
 ) : ViewModel() {
 
   private val sectionStats: Flow<RecordingsStats> = combine(
@@ -102,23 +106,26 @@ class RecordingsViewModel @Inject constructor(
   ) { recorded, words, transcriptionStats -> RecordingsStats(recorded, words, transcriptionStats) }
 
   /** Lavori di qui e segni degli altri dispositivi, per nota: il badge dice «in coda» o dove. */
-  private val work: Flow<Pair<Map<String, JobEntity>, Map<String, NoteTranscribingElsewhere>>> = combine(
+  private val work: Flow<Triple<Map<String, JobEntity>, Map<String, NoteTranscribingElsewhere>, Map<String, JobEntity>>> = combine(
     transcription.observeActive().map { active ->
       active.mapNotNull { job -> sessions.get(job.sessionId)?.noteId?.let { it to job } }.toMap()
     },
     transcription.observeElsewhere().map { TranscribingMarker.byNote(it.values) },
-  ) { jobs, elsewhere -> jobs to elsewhere }
+    jobDao.observeLatestFailed().map { failed ->
+      failed.mapNotNull { job -> sessions.get(job.sessionId)?.noteId?.let { it to job } }.toMap()
+    },
+  ) { jobs, elsewhere, failed -> Triple(jobs, elsewhere, failed) }
 
   private val content = combine(
     folders.observeChildren(null).map { rows -> rows.filter { it.folder.isPersonal } },
     noteDao.observePersonalRows(),
     folders.observeAll(),
     work,
-  ) { roots, rows, all, (jobs, elsewhere) ->
+  ) { roots, rows, all, (jobs, elsewhere, failed) ->
     val byId = all.associateBy { it.id }
     RecordingsUiState(
       folders = roots,
-      recordings = rows.map { RecordingItem(it, byId[it.note.folderId], jobs[it.note.id], elsewhere[it.note.id]) },
+      recordings = rows.map { RecordingItem(it, byId[it.note.folderId], jobs[it.note.id], elsewhere[it.note.id], failed[it.note.id]) },
       loading = false,
     )
   }

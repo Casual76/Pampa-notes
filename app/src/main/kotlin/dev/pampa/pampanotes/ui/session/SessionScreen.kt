@@ -367,11 +367,20 @@ private fun LazyListScope.jobItem(state: SessionUiState, onCancelJob: (String) -
   val failed = state.failedJob
   if (job == null && failed != null && state.elsewhere == null) {
     item(key = "job-failed") {
+      // Una registrazione muta non e' un guasto: e' la risposta. Niente rosso, e il tasto dice che
+      // rifarla da' con ogni probabilita' lo stesso risultato.
+      val silent = failed.errorCode == "no_speech"
       FluidCard(highlighted = true) {
         Text(
-          text = stringResource(if (failed.type == JobType.REFINE) R.string.job_failed_refine else R.string.job_failed_transcribe),
+          text = stringResource(
+            when {
+              silent -> R.string.job_no_speech_title
+              failed.type == JobType.REFINE -> R.string.job_failed_refine
+              else -> R.string.job_failed_transcribe
+            },
+          ),
           style = MaterialTheme.typography.titleSmall,
-          color = MaterialTheme.colorScheme.error,
+          color = if (silent) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error,
         )
         Text(
           text = jobErrorText(failed.errorCode ?: "unknown", failed.errorMessage, failed.provider),
@@ -379,7 +388,7 @@ private fun LazyListScope.jobItem(state: SessionUiState, onCancelJob: (String) -
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         FluidButton(
-          text = stringResource(R.string.job_retry),
+          text = stringResource(if (silent) R.string.job_no_speech_retry else R.string.job_retry),
           onClick = { onRetryJob(failed) },
           style = FluidButtonStyle.Plain,
           fillWidth = true,
@@ -580,7 +589,9 @@ private fun LazyListScope.transcriptSection(
     }
   }
 
-  if (state.activeTranscript == null && !state.loading) {
+  // Con l'avviso del tentativo fallito, che ha gia' il suo tasto, questo ripeterebbe la stessa cosa.
+  val failedShown = state.job == null && state.failedJob?.type == JobType.TRANSCRIBE && state.elsewhere == null
+  if (state.activeTranscript == null && !state.loading && !failedShown) {
     item(key = "empty") {
       FluidEmptyState(
         title = stringResource(

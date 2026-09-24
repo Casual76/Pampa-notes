@@ -65,6 +65,7 @@
   <string name="folder_empty_meta">Vuota</string>
 
   <!-- Cartella -->
+  <string name="recordings_folder_placeholder">Viaggi, interviste, riunioni…</string>
   <string name="folder_name_placeholder">Storia, Filosofia, Matematica…</string>
   <string name="folder_delete_title">Eliminare «%1$s»?</string>
   <string name="folder_delete_message">Se ne vanno anche le note, gli audio e le trascrizioni che contiene. Non si torna indietro.</string>
@@ -497,6 +498,7 @@
   <string name="settings_vram_failed">Il computer non ha salvato: %1$s</string>
   <string name="settings_vram_read_only">Per cambiarle serve l\'accesso del proprietario del computer.</string>
   <string name="settings_gb">%1$s GB</string>
+  <string name="import_date_header_recording">Il giorno della registrazione</string>
   <string name="import_date_header">Il giorno della lezione</string>
   <string name="import_date_detail">Letto dalle registrazioni, non dal giorno dell\'import</string>
   <string name="import_date_many_days">%1$d giorni diversi: una lezione per giorno</string>
@@ -531,6 +533,8 @@
   <string name="a11y_not_selected">Non selezionata</string>
   <string name="job_failed_transcribe">La trascrizione non è riuscita</string>
   <string name="job_failed_refine">La versione ripulita non è riuscita</string>
+  <string name="job_no_speech_title">Nessuna parola in questa registrazione</string>
+  <string name="job_no_speech_retry">Trascrivi lo stesso</string>
   <string name="job_retry">Riprova</string>
   <string name="part_delete">Elimina la registrazione</string>
   <string name="part_delete_title">Eliminare la registrazione?</string>
@@ -1264,6 +1268,8 @@
   <string name="recordings_listen">Ascolta</string>
   <string name="recordings_open_note">Apri la nota</string>
   <string name="recordings_import_here">Importa qui</string>
+  <string name="recordings_silent">Senza parole</string>
+  <string name="recordings_failed">Non riuscita</string>
   <string name="recordings_transcribed">Trascritta</string>
   <string name="recordings_move_in">Sposta in Registrazioni</string>
   <string name="recordings_move_out">Sposta fra le materie</string>

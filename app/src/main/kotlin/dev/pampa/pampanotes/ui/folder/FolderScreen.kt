@@ -349,6 +349,7 @@ private fun FolderScreen(
       initialName = "",
       initialTone = null,
       initialIcon = null,
+      placeholder = if (state.personal) stringResource(R.string.recordings_folder_placeholder) else null,
       onDismiss = { creatingFolder = false },
       onConfirm = { name, tone, icon ->
         onCreateSubfolder(name, tone, icon)

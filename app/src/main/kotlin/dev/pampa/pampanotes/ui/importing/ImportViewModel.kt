@@ -69,6 +69,9 @@ data class ImportUiState(
 
   /** Le cartelle di Registrazioni: un gruppo loro, cosi' un audio che non e' una lezione ha dove andare. */
   val personalFolders: List<FolderEntity> get() = folders.filter { it.id in personalFolderIds }
+
+  /** Va in Registrazioni: le parole della scuola («lezione») li' non valgono. */
+  val toPersonal: Boolean get() = selectedFolderId != null && selectedFolderId in personalFolderIds
   val hasAudio: Boolean get() = included.any { it.isAudio || (it.sdocx?.recordings?.isNotEmpty() == true) }
 
   /** Le registrazioni nell'ordine in cui [AudioImporter] le importa: per nome, come le numera un registratore. */

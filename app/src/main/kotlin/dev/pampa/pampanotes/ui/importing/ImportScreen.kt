@@ -594,7 +594,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sessionDateSection(
   val days = state.recordedDays
   item {
     FluidSectionHeader(
-      title = stringResource(R.string.import_date_header),
+      title = stringResource(if (state.toPersonal) R.string.import_date_header_recording else R.string.import_date_header),
       detail = stringResource(R.string.import_date_detail),
     )
   }

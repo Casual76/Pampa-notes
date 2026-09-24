@@ -136,7 +136,8 @@ fun RecordingsRoute(
       return@FluidScreen
     }
 
-    item(key = "hero") { RecordingsHero(state.stats) }
+    // Senza audio la tessera direbbe «< 1 min»: niente di vero da dire, niente tessera.
+    if (state.stats.recordedMs > 0) item(key = "hero") { RecordingsHero(state.stats) }
 
     item(key = "folders-header") { FluidSectionHeader(title = stringResource(R.string.home_section_folders)) }
     item(key = "folders") {
@@ -235,6 +236,7 @@ fun RecordingsRoute(
       initialName = existing?.name.orEmpty(),
       initialTone = existing?.tone,
       initialIcon = existing?.icon,
+      placeholder = stringResource(R.string.recordings_folder_placeholder),
       onDismiss = { editing = null },
       onConfirm = { name, tone, icon ->
         if (existing == null) viewModel.createFolder(name, tone, icon) else viewModel.updateFolder(existing.id, name, tone, icon)
@@ -365,6 +367,9 @@ private fun recordingSubtitle(item: RecordingItem): String {
 private fun recordingBadge(item: RecordingItem): (@Composable () -> Unit)? {
   val (label, tone) = when {
     item.job != null -> jobBadgeLabel(item.job) to FluidTone.Primary
+    // Tentata e senza parole: non e' «da trascrivere», e' muta. Fallita per altro, lo si dice.
+    item.toTranscribe > 0 && item.failed?.errorCode == "no_speech" -> stringResource(R.string.recordings_silent) to FluidTone.Neutral
+    item.toTranscribe > 0 && item.failed != null -> stringResource(R.string.recordings_failed) to FluidTone.Danger
     item.toTranscribe > 0 -> stringResource(R.string.note_to_transcribe) to FluidTone.Warning
     item.elsewhere != null && item.elsewhere.untranscribed > 0 ->
       stringResource(R.string.transcribing_elsewhere, item.elsewhere.device) to FluidTone.Primary

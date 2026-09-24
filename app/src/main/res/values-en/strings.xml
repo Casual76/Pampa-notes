@@ -61,6 +61,7 @@
   </plurals>
   <string name="folder_empty_meta">Empty</string>
 
+  <string name="recordings_folder_placeholder">Trips, interviews, meetings…</string>
   <string name="folder_name_placeholder">History, Philosophy, Maths…</string>
   <string name="folder_delete_title">Delete “%1$s”?</string>
   <string name="folder_delete_message">Its notes, audio and transcripts go with it. This cannot be undone.</string>
@@ -467,6 +468,7 @@
   <string name="settings_vram_failed">The computer did not save: %1$s</string>
   <string name="settings_vram_read_only">Changing these needs the computer owner\'s access.</string>
   <string name="settings_gb">%1$s GB</string>
+  <string name="import_date_header_recording">The day of the recording</string>
   <string name="import_date_header">The day of the lecture</string>
   <string name="import_date_detail">Read from the recordings, not from the import day</string>
   <string name="import_date_many_days">%1$d different days: one lecture per day</string>
@@ -501,6 +503,8 @@
   <string name="a11y_not_selected">Not selected</string>
   <string name="job_failed_transcribe">The transcription failed</string>
   <string name="job_failed_refine">The cleaned-up version failed</string>
+  <string name="job_no_speech_title">No words in this recording</string>
+  <string name="job_no_speech_retry">Transcribe anyway</string>
   <string name="job_retry">Try again</string>
   <string name="part_delete">Delete the recording</string>
   <string name="part_delete_title">Delete this recording?</string>
@@ -1234,6 +1238,8 @@
   <string name="recordings_listen">Listen</string>
   <string name="recordings_open_note">Open note</string>
   <string name="recordings_import_here">Import here</string>
+  <string name="recordings_silent">No words</string>
+  <string name="recordings_failed">Failed</string>
   <string name="recordings_transcribed">Transcribed</string>
   <string name="recordings_move_in">Move to Recordings</string>
   <string name="recordings_move_out">Move to subjects</string>
