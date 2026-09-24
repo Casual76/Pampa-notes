@@ -206,6 +206,7 @@ Cinque cose non ovvie, tutte in `core/backup/`:
 | M17 export per destinazione, tre pallini al tocco, data vera delle registrazioni, pezzi uguali, VRAM stimata, avanzamento in tempo reale dal computer, statistiche | fatto |
 | M18 il PC trascrive per impronta e taglia da se', «solo sul computer», date vere delle note, home con «Da fare» e «Riprendi ad ascoltare», statistiche sincronizzate | fatto |
 | M19 Registrazioni: una sezione per l'audio che non e' scuola, coi suoi numeri e di serie solo sul computer | fatto |
+| M20 i silenzi (niente testo inventato, segni nel testo, «salta i silenzi»), cerca dentro una registrazione e fino al minuto, capitoli, chi parla con le voci rinominabili, slider di vetro, companion che non gira in un contenitore | fatto |
 
 Dopo M7, il rifacimento dell'interfaccia (engine 1.32–1.35): misura di lettura e pagine intere,
 vetro solo sugli elementi piccoli, tre pannelli sul tablet, la materia che colora l'app, il testo
