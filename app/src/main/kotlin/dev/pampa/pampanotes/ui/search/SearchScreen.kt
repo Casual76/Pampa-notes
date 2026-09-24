@@ -1,5 +1,8 @@
 package dev.pampa.pampanotes.ui.search
 
+import androidx.compose.runtime.remember
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -40,6 +43,10 @@ fun SearchRoute(
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
   val moments by viewModel.moments.collectAsStateWithLifecycle()
+  // Si apre la ricerca per scrivere: il campo prende il fuoco da solo. Solo se e' vuoto — tornando
+  // indietro da un risultato la tastiera non deve coprire l'elenco che si stava guardando.
+  val focus = remember { FocusRequester() }
+  LaunchedEffect(Unit) { if (state.query.isBlank()) runCatching { focus.requestFocus() } }
 
   FluidScreen(
     title = stringResource(R.string.search_title),
@@ -52,7 +59,7 @@ fun SearchRoute(
         onValueChange = viewModel::setQuery,
         placeholder = stringResource(R.string.search_placeholder),
         leading = { Icon(Icons.Rounded.Search, contentDescription = null) },
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().focusRequester(focus),
       )
     }
 
