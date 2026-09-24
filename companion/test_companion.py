@@ -334,7 +334,10 @@ class AutoPiecesTest(StateMixin, unittest.TestCase):
         server.STATE["device"] = "cuda"
         server.STATE["batch_size"] = 8
         audio = [0.0] * 16000 * 60 * 50  # cinquanta minuti
-        with mock.patch("whisperx.load_audio", return_value=audio, create=True),                 mock.patch.object(server, "transcribe_audio", fake_transcribe_audio),                 mock.patch.object(server, "replan_for_job"):
+        with mock.patch.object(server, "load_audio", return_value=audio), \
+                mock.patch.object(server, "probe_duration", return_value=50 * 60.0), \
+                mock.patch.object(server, "transcribe_audio", fake_transcribe_audio), \
+                mock.patch.object(server, "replan_for_job"):
             result = server._transcribe("x.m4a", "it", server.JobProgress(), max_minutes="auto")
         # 8x per quattro minuti = 32, arrotondato a 30: cinquanta minuti vanno in pezzi.
         self.assertEqual((seen["max_minutes"], result["max_minutes_used"]), (30, 30))
@@ -759,6 +762,325 @@ class PiecesTest(StateMixin, unittest.TestCase):
         self.assertEqual((result["batch_size"], result["device_used"]), (16, "cuda"))
 
 
+class LanguageTest(StateMixin, unittest.TestCase):
+    """La lingua si riconosce dove si parla, non sui primi trenta secondi (che possono essere rumore)."""
+
+    class Speaker(FakeEngine):
+        """Riconosce «it» dove c'e' voce e «en» sul rumore, come un Whisper davanti a una stanza vuota."""
+
+        def __init__(self) -> None:
+            super().__init__(None)
+            self.heard: list[float] = []
+
+        def needs_load(self) -> bool:
+            return False
+
+        def detect_language(self, audio) -> str:
+            level = float(abs(audio).mean())
+            self.heard.append(level)
+            return "it" if level > 0.1 else "en"
+
+    def test_windows_go_where_it_is_loud_and_do_not_overlap(self) -> None:
+        import numpy
+
+        energies = numpy.full(int(600 / 0.02), 0.01, dtype=numpy.float32)
+        energies[int(400 / 0.02) : int(460 / 0.02)] = 0.3  # un minuto di voce al minuto sei e quaranta
+        starts = server.speech_windows(energies, 0.02)
+        self.assertEqual(len(starts), 3)
+        self.assertTrue(400 <= starts[0] <= 430, starts)
+        self.assertTrue(all(abs(a - b) >= 29.99 for a in starts for b in starts if a is not b))
+
+    def test_noise_first_then_speech_gives_the_language_of_the_speech(self) -> None:
+        import numpy
+
+        # Venti minuti di rumore, poi venticinque di lezione: WhisperX avrebbe ascoltato il rumore.
+        audio = numpy.concatenate([
+            numpy.full(20 * 60 * RATE, 0.02, dtype=numpy.float32),
+            lecture(25),
+        ])
+        engine = self.Speaker()
+        seen: list[str | None] = []
+
+        def fake_run_job(piece, language, engine, batch_size, device, progress=None, prompt=None):
+            seen.append(language)
+            return {"segments": [], "language": language or "en", "device_used": device, "batch_size": batch_size, "alignment": "ok"}
+
+        server.STATE.update(device="cuda", batch_size=16)
+        with mock.patch.object(server, "run_job", fake_run_job), self.assertLogs("pampa", level="INFO"):
+            result = server.transcribe_audio(audio, RATE, None, RecordingProgress(), engine, max_minutes=20)
+        self.assertEqual(result["language"], "it")
+        self.assertEqual(seen, ["it", "it", "it"], "la stessa lingua per tutti i pezzi, anche il primo di solo rumore")
+        self.assertTrue(all(level > 0.1 for level in engine.heard[:1]))
+
+    def test_a_language_given_by_the_app_is_not_detected_again(self) -> None:
+        engine = self.Speaker()
+        with mock.patch.object(server, "run_job", lambda piece, language, *a, **k: {"segments": [], "language": language}):
+            server.transcribe_audio(lecture(5), RATE, "de", RecordingProgress(), engine)
+        self.assertEqual(engine.heard, [])
+
+    def test_a_model_that_cannot_detect_leaves_it_to_the_first_piece(self) -> None:
+        class Broken(self.Speaker):
+            def detect_language(self, audio) -> str:
+                raise FakeOOM()
+
+        with self.assertLogs("pampa", level="WARNING"):
+            self.assertIsNone(server.spoken_language(server.LoadedAudio(lecture(2), RATE), 0.02, Broken(), RecordingProgress()))
+
+
+def seg(start: float, end: float, text: str, words: list[dict] | None = None) -> dict:
+    segment = {"start": start, "end": end, "text": text}
+    if words is not None:
+        segment["words"] = words
+    return segment
+
+
+class HallucinationTest(unittest.TestCase):
+    """[drop_hallucinations]: quello che Whisper scrive sul rumore se ne va, la lezione resta com'e'."""
+
+    FRAME = 0.02
+
+    def room(self, seconds: float, voice: list[tuple[float, float]] = ()) -> "numpy.ndarray":
+        """Le energie di una stanza (fondo 0,01) con della voce (0,2) nei tratti [voice]."""
+        import numpy
+
+        generator = numpy.random.default_rng(3)
+        energies = (0.008 + 0.004 * generator.random(int(seconds / self.FRAME))).astype(numpy.float32)
+        for start, end in voice:
+            energies[int(start / self.FRAME) : int(end / self.FRAME)] = 0.2
+        return energies
+
+    def test_echoes_of_the_prompt_go(self) -> None:
+        energies = self.room(120, voice=[(60, 64)])
+        segments = [
+            seg(10.0, 10.14, "18h"),
+            seg(20.0, 20.3, "18h 18h 18h"),
+            seg(30.0, 30.2, "18h30"),
+            seg(40.0, 41.5, "Napoli, 18h. Napoli, 18h."),
+            seg(60.0, 61.4, "Napoli."),  # detto davvero, chiaro, per un secondo e mezzo
+            seg(62.0, 64.0, "Siamo arrivati a Napoli alle 18."),
+        ]
+        kept, dropped = server.drop_hallucinations(segments, energies, self.FRAME, prompt="Napoli 18h")
+        self.assertEqual([s["text"] for s in kept], ["Napoli.", "Siamo arrivati a Napoli alle 18."])
+        self.assertEqual(dropped, {"eco": 4})
+
+    def test_silence_phrases_go_only_when_alone_or_in_the_noise(self) -> None:
+        energies = self.room(200, voice=[(50, 58), (100, 104)])
+        segments = [
+            seg(20.0, 20.6, "Grazie."),  # sola, nel rumore
+            seg(50.0, 54.0, "E con questo abbiamo finito la parte sulla peste."),
+            seg(54.5, 55.3, "Grazie."),  # detta a lezione, attaccata al resto
+            seg(55.8, 58.0, "Adesso passiamo al Seicento."),
+            seg(100.0, 101.2, "Buonanotte a tutti."),  # sola ma piena di voce: sola basta
+            seg(150.0, 150.8, "Grazie, grazie."),
+            seg(170.0, 173.0, "Grazie a tutti per essere venuti fin qui oggi."),  # non e' una frase del silenzio
+        ]
+        kept, dropped = server.drop_hallucinations(segments, energies, self.FRAME)
+        self.assertEqual(
+            [s["text"] for s in kept],
+            [
+                "E con questo abbiamo finito la parte sulla peste.",
+                "Grazie.",
+                "Adesso passiamo al Seicento.",
+                "Grazie a tutti per essere venuti fin qui oggi.",
+            ],
+        )
+        self.assertEqual(dropped, {"frasi": 3})
+
+    def test_short_or_fast_segments_go_only_over_the_noise_floor(self) -> None:
+        energies = self.room(100, voice=[(40, 45)])
+        segments = [
+            seg(10.0, 10.14, "e quindi abbiamo detto che"),  # 190 caratteri al secondo, nel rumore
+            seg(20.0, 20.2, "Sì."),  # corto, nel rumore
+            seg(40.0, 40.2, "Sì."),  # corto ma pieno di voce: qualcuno ha risposto
+            seg(41.0, 41.5, "e quindi abbiamo detto che"),  # veloce ma con la voce sotto
+            seg(60.0, 64.0, "una frase detta piano, lontano dal microfono"),  # lenta: resta anche nel rumore
+        ]
+        kept, dropped = server.drop_hallucinations(segments, energies, self.FRAME)
+        self.assertEqual([s["start"] for s in kept], [40.0, 41.0, 60.0])
+        self.assertEqual(dropped, {"brevi": 2})
+
+    def test_a_denoised_recording_is_judged_against_the_voice(self) -> None:
+        # Come il telefono di «Napoli 18h»: silenzio digitale a −95 dB, voce a −25, e gli «a posto»
+        # inventati a −51 — trenta volte sopra il fondo, ma lontanissimi dalla voce.
+        import numpy
+
+        db = lambda value: 10 ** (value / 20)  # noqa: E731
+        energies = numpy.full(int(300 / self.FRAME), db(-95), dtype=numpy.float32)
+        energies[int(100 / self.FRAME) : int(160 / self.FRAME)] = db(-25)
+        energies[int(20 / self.FRAME) : int(21 / self.FRAME)] = db(-51)
+        energies[int(150 / self.FRAME) : int(151 / self.FRAME)] = db(-40)  # uno che risponde piano
+        energies[int(200 / self.FRAME) : int(202 / self.FRAME)] = db(-70)  # un fruscio lungo
+        segments = [
+            seg(20.0, 20.2, "a posto"),
+            seg(100.0, 110.0, "Allora ragazzi, domani sveglia alle sette e colazione alle sette e mezza."),
+            seg(150.0, 150.2, "sì"),
+            seg(200.0, 202.0, "e allora ci vediamo domani"),  # lento, ma 45 dB sotto la voce
+        ]
+        floors, speech = server.sound_levels(energies, self.FRAME)
+        self.assertAlmostEqual(20 * math.log10(speech), -25, places=0)
+        kept, dropped = server.drop_hallucinations(segments, energies, self.FRAME)
+        self.assertEqual([s["start"] for s in kept], [100.0, 150.0])
+        self.assertEqual(dropped, {"brevi": 1, "muti": 1})
+
+    def test_loops_are_shortened_not_dropped(self) -> None:
+        unit = "ho dormito 3 ore e mezzo".split()
+        tokens = unit * 8
+        words = [{"word": w, "start": 5.0 + i * 0.3, "end": 5.0 + i * 0.3 + 0.25, "score": 0.5} for i, w in enumerate(tokens)]
+        segments = [
+            seg(5.0, words[-1]["end"], " ".join(tokens), words),
+            seg(30.0, 34.0, "la la la la la la la la la la la la la la la la"),
+            seg(40.0, 44.0, "Allora, ho dormito, ho dormito, ho dormito, ho dormito, ho dormito, ho dormito."),
+        ]
+        self.assertGreater(server.compression_ratio(segments[0]["text"]), server.LOOP_COMPRESSION)
+        kept, dropped = server.drop_hallucinations(segments, None, self.FRAME)
+        self.assertEqual([s["text"] for s in kept], ["ho dormito 3 ore e mezzo", "la", "Allora, ho dormito,"])
+        first = kept[0]
+        self.assertEqual([w["word"] for w in first["words"]], unit)
+        self.assertEqual((first["start"], first["end"]), (5.0, words[len(unit) - 1]["end"]), "i tempi della prima volta")
+        self.assertEqual(kept[1]["words"], [], "parole e testo non si corrispondevano: meglio nessuna")
+        self.assertEqual(dropped, {"giri": 3})
+
+    def test_a_shortened_loop_is_judged_by_what_it_was(self) -> None:
+        # «via via via…» detto in mezzo al brusio: accorciato a «via» dura 0,2 s, ma era 2,6 s di voce.
+        import numpy
+
+        energies = numpy.full(int(60 / self.FRAME), 0.05, dtype=numpy.float32)
+        words = [{"word": "via", "start": 10.0 + i * 0.24, "end": 10.2 + i * 0.24, "score": 0.8} for i in range(11)]
+        segments = [seg(10.0, words[-1]["end"], " ".join(["via"] * 11), words)]
+        kept, dropped = server.drop_hallucinations(segments, energies, self.FRAME)
+        self.assertEqual([s["text"] for s in kept], ["via"])
+        self.assertEqual(dropped, {"giri": 1})
+
+    def test_real_lecture_is_left_alone(self) -> None:
+        energies = self.room(60, voice=[(0, 60)])
+        text = (
+            "No, no, aspettate: la peste del 1656 a Napoli non arriva dal mare come quella del 1348, "
+            "arriva con i soldati. E i soldati, i soldati spagnoli, erano ovunque."
+        )
+        segments = [seg(1.0, 12.0, text), seg(13.0, 15.0, "Grazie a voi per la domanda."), seg(16.0, 17.0, "Sì, sì, sì.")]
+        kept, dropped = server.drop_hallucinations(segments, energies, self.FRAME, prompt="Napoli, peste, 1656")
+        self.assertEqual(kept, segments)
+        self.assertEqual(dropped, {})
+        self.assertLess(server.compression_ratio(text), server.LOOP_COMPRESSION)
+
+    def test_empty_and_credits_go_and_nothing_quiet_without_energies(self) -> None:
+        segments = [
+            seg(1.0, 2.0, "..."),
+            seg(3.0, 6.0, "Sottotitoli creati dalla comunità Amara.org"),
+            seg(6.5, 6.8, "Teksting av Nicolai Winther"),  # le ore mute prese per norvegese
+            seg(7.0, 7.1, "breve ma senza energie non si sa"),
+            seg(8.0, 11.0, "I sottotitoli di questo film erano sbagliati."),
+        ]
+        kept, dropped = server.drop_hallucinations(segments, None, self.FRAME)
+        self.assertEqual([s["text"] for s in kept], ["breve ma senza energie non si sa", "I sottotitoli di questo film erano sbagliati."])
+        self.assertEqual(dropped, {"vuoti": 1, "crediti": 2})
+        self.assertEqual(server.describe_dropped(dropped), "1 senza parole, 2 titoli di coda")
+
+    def test_collapse_keeps_the_first_unit(self) -> None:
+        self.assertEqual(server.collapse_repeats(["a", "a", "a"]), [0])
+        self.assertEqual(server.collapse_repeats(["no", "no"]), [0, 1], "una parola detta due volte e' vera")
+        self.assertEqual(server.collapse_repeats(["a", "b", "a", "b", "c"]), [0, 1, 4])
+        self.assertEqual(server.collapse_repeats(["la"] * 4), [0], "l'unita' piu' corta, non «la la»")
+
+    def test_the_response_has_real_ratios_and_no_invented_silence(self) -> None:
+        segments = [{"start": 0.5, "end": 2.0, "text": "una frase qualunque", "avg_logprob": -0.4}]
+
+        def fake_transcribe_audio(audio, *args, **kwargs):
+            return {"segments": segments, "language": "it", "device_used": "cuda", "batch_size": 8,
+                    "alignment": "ok", "chunks": 1, "dropped": {"eco": 2}}
+
+        with mock.patch.object(server, "load_audio", return_value=[0.0] * 16000), \
+                mock.patch.object(server, "probe_duration", return_value=1.0), \
+                mock.patch.object(server, "transcribe_audio", fake_transcribe_audio), \
+                mock.patch.object(server, "replan_for_job"):
+            result = server._transcribe("x.m4a", "it", server.JobProgress())
+        out = result["segments"][0]
+        self.assertIsNone(out["no_speech_prob"], "0,0 diceva «voce di sicuro» e spegneva il filtro dell'app")
+        self.assertEqual(out["avg_logprob"], -0.4)
+        self.assertAlmostEqual(out["compression_ratio"], server.compression_ratio("una frase qualunque"), places=3)
+        self.assertEqual(result["dropped"], {"eco": 2})
+        json.dumps(result, allow_nan=False)
+
+
+class DecodeTest(unittest.TestCase):
+    """L'audio da ffmpeg in float32, in un array solo; e le lezioni lunghe a pezzi."""
+
+    RATE = 16000
+
+    def setUp(self) -> None:
+        import shutil
+
+        if shutil.which("ffmpeg") is None:
+            self.skipTest("ffmpeg non installato")
+        import numpy
+        import wave
+
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.path = Path(folder.name) / "tono.wav"
+        seconds = 3.0
+        t = numpy.arange(int(seconds * self.RATE)) / self.RATE
+        # Un tono che cresce: ogni tratto e' diverso dagli altri, e una fetta sbagliata si vede.
+        signal = (0.5 * numpy.sin(2 * numpy.pi * 440 * t) * (t / seconds)).astype(numpy.float32)
+        self.pcm = (signal * 32767).astype(numpy.int16)
+        with wave.open(str(self.path), "wb") as out:
+            out.setnchannels(1)
+            out.setsampwidth(2)
+            out.setframerate(self.RATE)
+            out.writeframes(self.pcm.tobytes())
+        self.expected = self.pcm.astype(numpy.float32) / 32768.0
+
+    def test_whole_file_matches_the_samples(self) -> None:
+        import numpy
+
+        for expected_s in (3.0, 0.5, None):  # giusto, bugiardo (l'array cresce), sconosciuto
+            audio = server.load_audio(self.path, self.RATE, expected_s=expected_s)
+            self.assertEqual(audio.dtype, numpy.float32)
+            self.assertEqual(len(audio), len(self.expected), expected_s)
+            self.assertLess(float(numpy.abs(audio - self.expected).max()), 1e-4)
+
+    def test_a_stretch_is_the_same_as_a_slice(self) -> None:
+        import numpy
+
+        piece = server.load_audio(self.path, self.RATE, start_s=1.0, duration_s=1.0)
+        self.assertEqual(len(piece), self.RATE)
+        self.assertLess(float(numpy.abs(piece - self.expected[self.RATE : 2 * self.RATE]).max()), 1e-4)
+
+    def test_streamed_energies_are_those_of_the_whole_array(self) -> None:
+        import numpy
+
+        with mock.patch.object(server, "DECODE_BLOCK_BYTES", 7000):  # blocchi che non cadono sulle finestre
+            energies, samples = server.stream_energies(self.path, self.RATE)
+        self.assertEqual(samples, len(self.expected))
+        whole = server.frame_energies(self.expected, self.RATE)
+        self.assertEqual(len(energies), len(whole))
+        self.assertLess(float(numpy.abs(energies - whole).max()), 1e-4)
+        streamed = server.StreamedAudio(self.path, self.RATE)
+        self.assertAlmostEqual(streamed.duration_s, 3.0, places=3)
+        self.assertEqual(len(streamed.piece(2.0, 3.0)), self.RATE)
+
+    def test_duration_with_and_without_ffprobe(self) -> None:
+        import shutil
+
+        self.assertAlmostEqual(server.probe_duration(self.path), 3.0, places=1)
+        which = {"ffprobe": None, "ffmpeg": shutil.which("ffmpeg")}
+        with mock.patch.object(server.shutil, "which", side_effect=which.get):
+            self.assertAlmostEqual(server.probe_duration(self.path), 3.0, places=1)
+        self.assertIsNone(server.probe_duration(self.path.with_name("non-esiste.wav")))
+
+    def test_broken_file_and_cancel(self) -> None:
+        broken = self.path.with_name("rotto.m4a")
+        broken.write_bytes(b"non e' audio")
+        with self.assertRaises(RuntimeError):
+            server.load_audio(broken, self.RATE)
+
+        def cancelled() -> None:
+            raise server.JobCancelled()
+
+        with self.assertRaises(server.JobCancelled):
+            server.load_audio(self.path, self.RATE, check=cancelled)
+
+
 class WordsTest(unittest.TestCase):
     def test_words_without_times_or_nan_are_dropped(self) -> None:
         segment = {
@@ -956,7 +1278,14 @@ class EnsureModelTest(StateMixin, unittest.TestCase):
         import types
 
         loads: list[tuple] = []
-        fake = types.SimpleNamespace(load_model=lambda name, device, compute_type: loads.append((name, device, compute_type)) or f"modello {name}")
+        options: list[dict] = []
+
+        def load_model(name, device, compute_type, **more):
+            loads.append((name, device, compute_type))
+            options.append(more)
+            return f"modello {name}"
+
+        fake = types.SimpleNamespace(load_model=load_model)
         old = object()
         server.STATE.update(model=old, loaded_as=("large-v3", "cpu", "int8"), name="large-v3", device="cpu", compute_type="int8")
         self.addCleanup(server.STATE.update, model=None, loaded_as=None)
@@ -966,6 +1295,8 @@ class EnsureModelTest(StateMixin, unittest.TestCase):
             server.STATE["name"] = "medium"
             server.ensure_model()
         self.assertEqual(loads, [("medium", "cpu", "int8")])
+        # Il VAD piu' severo arriva alla pipeline: e' la prima difesa contro il rumore.
+        self.assertEqual(options[0]["vad_options"], server.VAD_OPTIONS)
         self.assertEqual(server.STATE["model"], "modello medium")
         self.assertEqual(server.STATE["loaded_as"], ("medium", "cpu", "int8"))
 
@@ -2054,6 +2385,52 @@ class ArchiveTest(unittest.TestCase):
                 with self.assertRaises(archive.StalledUpload):
                     store.store("0" * 64, "x.m4a", "audio/mp4", chunks())
                 self.assertEqual(list((Path(folder) / "tmp").glob("*.part")), [])
+            finally:
+                store.db.close()
+
+    def test_same_blob_stored_while_the_first_is_open(self) -> None:
+        # Il `PUT` dell'archivio e il caricamento con `archive=1` della stessa registrazione: il secondo
+        # trovava il blob gia' scritto (e aperto da ffmpeg) e Windows rifiutava il rename, WinError 5.
+        data = b"la stessa registrazione, due volte"
+        sha = hashlib.sha256(data).hexdigest()
+        with tempfile.TemporaryDirectory() as folder:
+            store = archive.Archive(Path(folder))
+            try:
+                path = store.store(sha, "x.opus", "audio/opus", [data])["path"]
+                with path.open("rb"):
+                    again = store.store(sha, "x.opus", "audio/opus", [data])
+                self.assertEqual(again["path"], path)
+                self.assertEqual(path.read_bytes(), data)
+                self.assertEqual(list((Path(folder) / "tmp").glob("*.part")), [])
+                self.assertEqual(store.stats(), (1, len(data)))
+            finally:
+                store.db.close()
+
+    def test_rename_refused_for_a_moment_is_retried(self) -> None:
+        data = b"un file che l'antivirus guarda un istante"
+        sha = hashlib.sha256(data).hexdigest()
+        real_replace = os.replace
+        calls: list[int] = []
+
+        def flaky(source, destination):
+            calls.append(1)
+            if len(calls) < 3:
+                raise PermissionError(5, "Accesso negato")
+            real_replace(source, destination)
+
+        with tempfile.TemporaryDirectory() as folder:
+            store = archive.Archive(Path(folder))
+            try:
+                with mock.patch.object(archive.os, "replace", flaky), mock.patch.object(archive, "PLACE_PAUSE_S", 0.0):
+                    path = store.store(sha, "x.m4a", "audio/mp4", [data])["path"]
+                self.assertEqual(len(calls), 3)
+                self.assertEqual(path.read_bytes(), data)
+                with mock.patch.object(archive.os, "replace", side_effect=PermissionError(5, "Accesso negato")), \
+                        mock.patch.object(archive, "PLACE_PAUSE_S", 0.0):
+                    other = b"un altro file, che non entra mai"
+                    with self.assertRaises(PermissionError):
+                        store.store(hashlib.sha256(other).hexdigest(), "y.m4a", "audio/mp4", [other])
+                self.assertEqual(list((Path(folder) / "tmp").glob("*.part")), [], "il .part rifiutato non resta")
             finally:
                 store.db.close()
 
