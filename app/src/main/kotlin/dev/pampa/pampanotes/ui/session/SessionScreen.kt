@@ -339,6 +339,7 @@ private fun SessionScreen(
   val mergeLabel = stringResource(R.string.session_merge)
   val deleteLabel = stringResource(R.string.session_delete)
   val moreLabel = stringResource(R.string.action_more)
+  val chaptersLabel = stringResource(R.string.session_chapters)
   // Lo stato nel nome, perche' il menu dell'engine non ha una spunta; e la soglia, perche' le righe
   // della trascrizione dicono solo i silenzi di un minuto e piu', e un salto di 14 secondi senza
   // la soglia sembrerebbe un errore.
@@ -363,14 +364,6 @@ private fun SessionScreen(
     // spazio l'ultimo paragrafo di una lezione non si riesce a leggere.
     extraBottomPadding = (if (state.playable) PlayerBarHeight else 0.dp) + (if (search.open) SearchBarHeight else 0.dp),
     actions = {
-      // I capitoli, dalla barra: in mezzo a diciannove ore la riga sopra il testo e' lontana.
-      if (chapters.isNotEmpty()) {
-        FluidBarAction(
-          icon = Icons.AutoMirrored.Rounded.Toc,
-          contentDescription = stringResource(R.string.session_chapters),
-          onClick = { showingChapters = true },
-        )
-      }
       // La lente apre e chiude la ricerca dentro la registrazione: c'e' solo quando c'e' un testo.
       if (active != null && active.text.isNotBlank()) {
         FluidBarAction(
@@ -394,6 +387,12 @@ private fun SessionScreen(
             // grezza coi suoi tempi, ed e' da lei che si sa dove si tace.
             if (state.playable && state.segments.isNotEmpty()) {
               add(FluidContextAction(label = skipSilenceLabel, icon = Icons.Rounded.FastForward) { onSkipSilence(!skipSilence) })
+            }
+            // I capitoli dal menu, raggiungibile anche a meta' di diciannove ore, dove la riga sopra
+            // il testo e' lontana. Non come terzo tasto della barra: con tre, il titolo compatto non
+            // ci stava piu' («3486 parol…»).
+            if (chapters.isNotEmpty()) {
+              add(FluidContextAction(label = chaptersLabel, icon = Icons.AutoMirrored.Rounded.Toc) { showingChapters = true })
             }
             if (state.raw != null && state.job == null) {
               add(
