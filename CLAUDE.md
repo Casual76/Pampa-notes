@@ -790,6 +790,32 @@ di Claude, che sposta `%APPDATA%` in una copia virtuale. L'eccezione veniva ingh
 `trust_sentence_splitter` aggiunge a NLTK la cartella vera; `/health` dice per lingua come e' andato
 l'ultimo allineamento (`"alignment": {"it": "ok"}`).
 
+**Il silenzio non si trascrive.** «Napoli 18h» (19,8 ore, una gita registrata di notte) tornava con
+le ore 0–3 e 13–18 tutte inventate: 407 eco del titolo mandato come vocabolario («18h 18h 18h»:
+WhisperX rilegge il prompt a ogni finestra da trenta secondi), un centinaio di «Grazie.», 78 giri a
+vuoto. Il companion ora si difende da se', su quattro fronti. Il **VAD** e' piu' severo
+(`VAD_OPTIONS`, 0,6/0,45: nelle ore mute i tratti mandati a Whisper si dimezzano, le parole dell'ora
+parlata restano le stesse); `repetition_penalty` e `no_repeat_ngram_size` sono stati provati e
+**lasciati spenti** (`ASR_OPTIONS`): vietano al modello le ripetizioni vere — «vorrei fare festa»,
+ripetuto da chi parlava, diventava «vuoi rifare festa… vuol fa festa». La **lingua**, se l'app non la
+dice, si riconosce a maggioranza sulle tre finestre da trenta secondi piu' parlate del file
+(`spoken_language`), non sui primi trenta secondi: su quel file erano rumore, e WhisperX sceglieva
+inglese e *traduceva* la gita. Dopo l'allineamento **`drop_hallucinations`** toglie quello che non e'
+stato detto: segmenti senza parole, titoli di coda dei sottotitoli (in piu' lingue: sul rumore anche la
+lingua e' a caso), eco del vocabolario (tutte le parole nel prompt, e ripetute, corte, veloci o
+quiete), «Grazie»/«Buonanotte» corti e soli o quieti, segmenti corti o veloci sopra un audio quieto, e
+tutto quello che sta 40 dB sotto la voce; i giri (rapporto di compressione vero oltre 2,4) si
+accorciano a una volta sola, coi tempi della prima. «Quieto» vuol dire 2 dB sul fondo del blocco da
+dieci minuti **o** 24 dB sotto la voce del file (`sound_levels`): quel telefono toglieva il rumore da
+se', il fondo era a −95 dB e solo la distanza dalla voce separava le frasi vere (−17/−45) da quelle
+inventate (−48/−95). Sul file intero: 2213 segmenti → 1827, zero nelle ore mute, 251 eco, 996 parole
+di giri, 316 parole d'altro, tutte controllate a mano. I conteggi vanno nel log («allucinazioni: …»)
+e nella risposta (`dropped`); `compression_ratio` e' quello vero e `no_speech_prob` e' `null` (prima
+0,0, che spegneva il filtro dell'app). La **memoria**: l'audio si decodifica in float32 direttamente
+in un array della misura giusta (`load_audio`: 11,75 → 4,65 GB per quel file), e oltre le quattro ore,
+se va comunque in pezzi, non si tiene affatto (`StreamedAudio`: un giro per le energie, poi ogni pezzo
+con `-ss`/`-t`, 0,5 GB; un pezzo puo' cominciare fino a 30 ms dopo il taglio, che cade in un silenzio).
+
 **A che punto e', mentre trascrive.** Una richiesta al computer e' una sola `POST` che torna quando
 ha finito, e per un'ora il telefono non sapeva niente. Ora l'app manda `X-Pampa-Job: <uuid>` e, finito
 l'invio, chiede `GET /v1/jobs/<uuid>` ogni secondo (`RemoteJobPoller`): `state` fra `received`,
@@ -879,7 +905,10 @@ toccare la venv. Modello, calcolo e lotto si fissano all'inizio del lavoro per t
 precaricamento passa dalla stessa fila, l'allineatore resta uno (quello della lingua di adesso) e
 la sua memoria non finisce fra «gli altri». `config.json` si scrive tutto o niente, sotto un
 lucchetto. Un file dell'archivio aperto (un download, ffmpeg) non si cancella: la riga resta e la
-`DELETE` risponde 503 `file_in_use`.
+`DELETE` risponde 503 `file_in_use`. Lo stesso blob caricato due volte insieme (il `PUT` dell'archivio
+e una trascrizione con `archive=1`) non da' piu' un 500 per `WinError 5`: chi arriva secondo trova il
+blob con la stessa impronta e butta il suo `.part`, e un rename rifiutato un istante si riprova
+(`archive._place`).
 
 **Quello che Whisper inventa nei silenzi.** Una registrazione di venti ore («Napoli 18h») e' tornata
 con 407 segmenti che dicevano solo «18h», un centinaio di «Grazie.» e «Buonanotte» sparsi nelle

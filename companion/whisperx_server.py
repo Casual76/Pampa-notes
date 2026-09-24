@@ -988,6 +988,23 @@ def apply_plan(plan: dict[str, Any]) -> None:
     STATE["batch_size"] = plan["batch_size"]
 
 
+# Il VAD di WhisperX (pyannote) decide quali tratti vanno a Whisper. Coi valori di serie (0,5 per
+# aprire, 0,363 per chiudere) passava anche il rumore di fondo di una registrazione lasciata accesa:
+# «Napoli 18h», venti ore di cui dieci di stanza vuota, tornava con le ore 0–3 e 13–18 quasi tutte
+# inventate. Un po' piu' severo per aprire e per restare aperto: un tratto di voce vera supera 0,6
+# senza fatica, un fruscio no. Misurato su tre ore di quel file: nelle due di stanza vuota i tratti
+# mandati a Whisper scendono da 41 a 19 e da 23 a 8; in quella in cui si parla le parole restano le
+# stesse (1231 contro 1233). Le allucinazioni che passano lo stesso le toglie [drop_hallucinations].
+VAD_OPTIONS = {"vad_onset": 0.6, "vad_offset": 0.45}
+# Le opzioni di decodifica della pipeline a lotti (`generate_segment_batched` le passa a ctranslate2).
+# Vuote di proposito. `repetition_penalty` 1,1 con `no_repeat_ngram_size` 3 toglie i giri a vuoto, ma
+# vieta al modello di ripetere tre parole in trenta secondi anche quando le ripete chi parla: sull'ora
+# vera di «Napoli 18h» «vorrei fare festa… ha detto vorrei fare festa» diventava «vuoi rifare festa…
+# vuol fa festa», «la mia gatta» «la mia gatto»; la sola `repetition_penalty` perdeva il 6% delle
+# parole e un «nemmeno» che rovesciava la frase. I giri li accorcia [drop_hallucinations], dopo.
+ASR_OPTIONS: dict[str, Any] = {}
+
+
 def ensure_model(name: str | None = None, compute_type: str | None = None) -> None:
     """
     Carica il modello se non c'e'. Chiamato dalla richiesta, non dall'avvio.
@@ -1023,6 +1040,8 @@ def ensure_model(name: str | None = None, compute_type: str | None = None) -> No
         name,
         device=STATE["device"],
         compute_type=compute_type,
+        vad_options=dict(VAD_OPTIONS),
+        asr_options=dict(ASR_OPTIONS),
     )
     STATE["loaded_as"] = wanted
     # Quanto e' nostro, per sapere poi quanto e' degli altri ([others_gb]).
@@ -2317,11 +2336,18 @@ class Engine:
         wanted = (self.name, STATE["device"], self.compute_type)
         return STATE["model"] is None or STATE["loaded_as"] not in (None, wanted)
 
+    def detect_language(self, audio: Any) -> str | None:
+        """La lingua dei primi trenta secondi di [audio], o None se il modello non lo sa fare."""
+        detect = getattr(self.main_model(), "detect_language", None)
+        return detect(audio) if callable(detect) else None
+
     def cpu_model(self) -> Any:
         import whisperx
 
         log.warning("carico %s sul processore (int8) per questa lezione: sara' piu' lenta", self.name)
-        return whisperx.load_model(self.name, device="cpu", compute_type="int8")
+        return whisperx.load_model(
+            self.name, device="cpu", compute_type="int8", vad_options=dict(VAD_OPTIONS), asr_options=dict(ASR_OPTIONS),
+        )
 
     def align(
         self,
@@ -2677,6 +2703,563 @@ def _shifted(segment: dict, offset: float) -> dict:
     return moved
 
 
+# --- l'audio, con una copia sola --------------------------------------------------------------------
+#
+# `whisperx.load_audio` chiede a ffmpeg interi a 16 bit, li raccoglie tutti in un `bytes`, li converte
+# in float32 e poi li divide per 32768: tre copie della lezione vive insieme. Per «Napoli 18h» (19,8
+# ore, 4,3 GB in float32) il picco di memoria impegnata era 11,75 GB, e 103 secondi. Qui ffmpeg scrive
+# gia' float32 e i byte cadono in un array preparato della misura che il contenitore dichiara: una
+# copia, e basta — 4,65 GB, 41 secondi.
+
+# Oltre questa durata, se la lezione va comunque in pezzi, l'audio intero non si tiene in memoria: un
+# primo giro calcola le energie (tagli, lingua, silenzi) e ogni pezzo si decodifica quando tocca a lui
+# (lo stesso file: 0,5 GB). Il prezzo: `-ss` su un opus cade al pacchetto, e un pezzo puo' cominciare
+# fino a 30 ms dopo il punto chiesto (misurato). Il taglio sta in un silenzio, e l'allineamento lavora
+# a finestre di 20 ms: sotto le quattro ore l'array intero resta la strada esatta, e la piu' comune.
+STREAM_ABOVE_S = 4 * 3600
+DECODE_BLOCK_BYTES = 4 * 1024 * 1024
+PROBE_TIMEOUT_S = 30
+_DURATION_LINE = re.compile(rb"Duration:\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)")
+_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0  # CREATE_NO_WINDOW
+
+
+def probe_duration(path: str | Path) -> float | None:
+    """
+    Quanto dura il file secondo il contenitore, senza decodificarlo: ffprobe, o se manca (il setup
+    porta solo ffmpeg, vedi `archive.audio_recorded_us`) la riga «Duration:» di `ffmpeg -i`.
+    """
+    commands = []
+    if probe := shutil.which("ffprobe"):
+        commands.append((probe, [probe, "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)]))
+    if ffmpeg := shutil.which("ffmpeg"):
+        commands.append((ffmpeg, [ffmpeg, "-hide_banner", "-nostdin", "-i", str(path)]))
+    for program, command in commands:
+        try:
+            answer = subprocess.run(
+                command, capture_output=True, timeout=PROBE_TIMEOUT_S, stdin=subprocess.DEVNULL, creationflags=_NO_WINDOW,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if program == probe:
+            seconds = _finite(answer.stdout.strip() or None, math.nan)
+        else:
+            match = _DURATION_LINE.search(answer.stderr or b"")
+            seconds = int(match[1]) * 3600 + int(match[2]) * 60 + float(match[3]) if match else math.nan
+        if seconds > 0:
+            return seconds
+    return None
+
+
+def _decode_command(path: str | Path, sample_rate: int, start_s: float | None = None, duration_s: float | None = None) -> list[str]:
+    """Il comando di `whisperx.load_audio` (mono, [sample_rate]), ma in float32, e volendo un tratto solo."""
+    command = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "0"]
+    if start_s:
+        command += ["-ss", f"{start_s:.3f}"]
+    if duration_s is not None:
+        command += ["-t", f"{duration_s:.3f}"]
+    return command + ["-i", str(path), "-f", "f32le", "-ac", "1", "-acodec", "pcm_f32le", "-ar", str(sample_rate), "-"]
+
+
+@contextlib.contextmanager
+def _ffmpeg_output(command: list[str]):
+    """
+    ffmpeg che scrive su una pipe, letta da chi usa il blocco. Gli errori vanno in un temporaneo e
+    non in un'altra pipe: una pipe di errori che nessuno svuota, piena, fermerebbe ffmpeg e noi con lui.
+    """
+    with tempfile.TemporaryFile() as errors:
+        process = subprocess.Popen(
+            command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errors, bufsize=0, creationflags=_NO_WINDOW,
+        )
+        try:
+            yield process.stdout
+        except BaseException:
+            process.kill()
+            process.wait()
+            raise
+        finally:
+            process.stdout.close()
+        if process.wait() != 0:
+            errors.seek(0)
+            raise RuntimeError(f"Failed to load audio: {errors.read()[-2000:].decode('utf-8', errors='replace').strip()}")
+
+
+def load_audio(
+    path: str | Path,
+    sample_rate: int,
+    start_s: float | None = None,
+    duration_s: float | None = None,
+    expected_s: float | None = None,
+    check: Callable[[], None] | None = None,
+) -> Any:
+    """
+    L'audio (o il tratto da [start_s] lungo [duration_s]) come float32 mono, in un array solo.
+
+    L'array si prepara lungo quanto il contenitore dice ([expected_s], da [probe_duration]) piu' due
+    secondi, e ffmpeg ci scrive dentro a blocchi: niente `bytes` intermedio, niente conversione. Se il
+    contenitore mente, l'array cresce (una copia, solo in quel caso). [check] si chiama a ogni
+    blocco: una lezione annullata smette di decodificare subito, non dopo venti ore di audio.
+    """
+    import numpy as np
+
+    span = duration_s if duration_s is not None else expected_s
+    buffer = np.empty(int(math.ceil(((span or 600.0) + 2.0) * sample_rate)), dtype=np.float32)
+    filled = 0
+    with _ffmpeg_output(_decode_command(path, sample_rate, start_s, duration_s)) as stream:
+        while True:
+            if check is not None:
+                check()
+            if filled == buffer.nbytes:
+                bigger = np.empty(len(buffer) + max(len(buffer) // 2, sample_rate * 600), dtype=np.float32)
+                bigger[: len(buffer)] = buffer
+                buffer = bigger
+            with memoryview(buffer).cast("B") as raw:
+                read = stream.readinto(raw[filled : filled + DECODE_BLOCK_BYTES])
+            if not read:
+                break
+            filled += read
+    count = filled // 4
+    try:
+        # Restituisce i due secondi di scorta senza copiare: nessun altro vede ancora l'array.
+        buffer.resize(count, refcheck=False)
+    except ValueError:
+        buffer = buffer[:count]
+    return buffer
+
+
+def stream_energies(path: str | Path, sample_rate: int, check: Callable[[], None] | None = None) -> tuple[Any, int]:
+    """
+    [frame_energies] di tutto il file e quanti campioni ha, decodificando a blocchi senza tenerlo.
+
+    I blocchi sono multipli esatti della finestra di [FRAME_MS], cosi' le energie sono le stesse che
+    darebbe l'array intero: stessi tagli, qualunque strada abbia preso la lezione.
+    """
+    import numpy as np
+
+    frame_bytes = max(1, int(round(sample_rate * FRAME_MS / 1000))) * 4
+    block = max(frame_bytes, DECODE_BLOCK_BYTES // frame_bytes * frame_bytes)
+    buffer = bytearray(block)
+    parts: list[Any] = []
+    filled = total = 0
+    with _ffmpeg_output(_decode_command(path, sample_rate)) as stream, memoryview(buffer) as view:
+        while True:
+            if check is not None:
+                check()
+            read = stream.readinto(view[filled:])
+            filled += read or 0
+            total += read or 0
+            if filled == block or (not read and filled):
+                usable = filled - filled % frame_bytes
+                if usable:
+                    parts.append(frame_energies(np.frombuffer(buffer, dtype=np.float32, count=usable // 4), sample_rate))
+                    view[: filled - usable] = view[usable:filled]
+                    filled -= usable
+            if not read:
+                break
+    energies = np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
+    return energies, total // 4
+
+
+class LoadedAudio:
+    """La lezione tutta in memoria: i pezzi sono fette dello stesso array, niente copie."""
+
+    def __init__(self, audio: Any, sample_rate: int) -> None:
+        self.audio = audio
+        self.sample_rate = sample_rate
+        self.duration_s = len(audio) / sample_rate
+        self._energies: Any = None
+
+    def energies(self) -> Any:
+        if self._energies is None:
+            self._energies = frame_energies(self.audio, self.sample_rate)
+        return self._energies
+
+    def piece(self, start_s: float, end_s: float) -> Any:
+        if start_s <= 0 and end_s >= self.duration_s:
+            return self.audio
+        return self.audio[int(round(start_s * self.sample_rate)) : int(round(end_s * self.sample_rate))]
+
+    def release(self) -> None:
+        self.audio = None
+
+
+class StreamedAudio:
+    """
+    Una lezione troppo lunga per tenerla in memoria ([STREAM_ABOVE_S]): le energie da un primo giro
+    ([stream_energies]), e ogni pezzo decodificato da ffmpeg quando serve (`-ss`/`-t`). Venti ore
+    costano due decodifiche invece di 4,6 GB fermi per tutta la trascrizione.
+    """
+
+    def __init__(self, path: str | Path, sample_rate: int, check: Callable[[], None] | None = None) -> None:
+        self.path = path
+        self.sample_rate = sample_rate
+        self.check = check
+        self._energies, samples = stream_energies(path, sample_rate, check)
+        self.duration_s = samples / sample_rate
+
+    def energies(self) -> Any:
+        return self._energies
+
+    def piece(self, start_s: float, end_s: float) -> Any:
+        return load_audio(self.path, self.sample_rate, start_s=start_s, duration_s=end_s - start_s, check=self.check)
+
+    def release(self) -> None:
+        pass
+
+
+# --- la lingua --------------------------------------------------------------------------------------
+#
+# Senza una lingua dall'app, WhisperX la riconosce sui primi trenta secondi del file. «Napoli 18h»
+# cominciava con tre ore di stanza vuota: la lingua si decideva sul rumore, e il rumore si trascriveva
+# in quella lingua. Qui si ascoltano i trenta secondi in cui si parla di piu' — la finestra con
+# l'energia mediana piu' alta, che un colpo isolato non alza — e la lingua vale per tutti i pezzi.
+
+LANGUAGE_WINDOW_S = 30.0
+LANGUAGE_STEP_S = 5.0
+# Tre finestre diverse, a maggioranza: una sola puo' capitare su una canzone o una frase straniera.
+LANGUAGE_VOTES = 3
+
+
+def speech_windows(energies: Any, frame_s: float, count: int = LANGUAGE_VOTES, window_s: float = LANGUAGE_WINDOW_S) -> list[float]:
+    """Dove cominciano le [count] finestre da [window_s] con l'energia mediana piu' alta, senza sovrapporsi."""
+    import numpy as np
+
+    frames = max(1, int(round(window_s / frame_s)))
+    if len(energies) <= frames:
+        return [0.0]
+    step = max(1, int(round(LANGUAGE_STEP_S / frame_s)))
+    windows = np.lib.stride_tricks.sliding_window_view(energies, frames)[::step]
+    scores = np.median(windows, axis=1)
+    chosen: list[int] = []
+    for index in np.argsort(scores)[::-1]:
+        start = int(index) * step
+        if all(abs(start - other) >= frames for other in chosen):
+            chosen.append(start)
+            if len(chosen) == count:
+                break
+    return [start * frame_s for start in chosen]
+
+
+def spoken_language(source: Any, frame_s: float, engine: Engine, progress: JobProgress) -> str | None:
+    """
+    La lingua delle finestre di [speech_windows], a maggioranza (a pari merito, la piu' parlata).
+
+    None se il modello non la sa dire o non si carica: allora la riconosce [run_job] come prima, e
+    il ripiego sul processore resta tutto suo.
+    """
+    try:
+        if engine.needs_load():
+            progress.set("loading_model")
+        votes: list[str] = []
+        for start_s in speech_windows(source.energies(), frame_s):
+            progress.check_cancelled()
+            window = source.piece(start_s, min(source.duration_s, start_s + LANGUAGE_WINDOW_S))
+            language = engine.detect_language(window)
+            if not language:
+                return None
+            votes.append(language)
+    except JobCancelled:
+        raise
+    except Exception as error:  # noqa: BLE001
+        engine.release()
+        log.warning("lingua non riconosciuta in anticipo (%s: %s): la riconosce il primo pezzo", type(error).__name__, error)
+        return None
+    if not votes:
+        return None
+    best = max(votes, key=lambda language: (votes.count(language), -votes.index(language)))
+    log.info("lingua: %s (%s)", best, ", ".join(votes))
+    return best
+
+
+# --- le allucinazioni -------------------------------------------------------------------------------
+#
+# Whisper davanti al rumore non tace: scrive. Nel file vero da cui nasce tutto questo («Napoli 18h»,
+# 2354 segmenti) c'erano 407 eco del titolo passato come vocabolario («18h 18h 18h»), un centinaio di
+# «Grazie.» e «Buonanotte» nei tratti muti, 78 giri a vuoto («la la la…»). Si riconoscevano da tre
+# cose che una frase vera non ha insieme: allineati durano un soffio (mediana 140 ms contro 1,8 s),
+# vanno a undici parole al secondo (il parlato a 3,5), e l'audio sotto e' quieto. La
+# confidenza del modello da sola non basta (−0,71 contro −0,47: si sovrappongono).
+#
+# Le regole sono strette apposta: una frase lunga, piena di voce e di parole diverse non si tocca mai.
+
+# Oltre questo rapporto di compressione (quello di Whisper: byte / byte con zlib) il testo gira in tondo.
+LOOP_COMPRESSION = 2.4
+# Un'unita' ripetuta piu' lunga di cosi' (in parole) non si cerca: non e' piu' un giro, e' un discorso.
+LOOP_MAX_UNIT = 12
+# Un segmento allineato piu' corto di cosi', o piu' veloce di cosi', non e' qualcuno che parla...
+SHORT_SPAN_S = 0.25
+FAST_CHARS_PER_S = 25.0
+# ...se l'audio sotto e' «quieto»: meno di [QUIET_RATIO] volte il fondo del suo tratto, o piu' di
+# [QUIET_BELOW_SPEECH_DB] sotto il livello della voce del file. Servono tutti e due. Con un fruscio
+# costante il fondo e' il fruscio, e un'allucinazione ci sta appena sopra. Ma il telefono di «Napoli
+# 18h» toglieva il rumore da se': il fondo era a −95 dB, ogni colpo di tosse stava 40 dB sopra, e la
+# misura contro il fondo non diceva niente. Li' contava la distanza dalla voce: le frasi vere fra −17
+# e −45 dB, gli «18h» e i «Grazie.» inventati fra −48 e −95, con la voce (vedi [sound_levels]) a −26.
+# Il margine sul fondo e' di soli 2 dB: nelle ore di chiacchiere di quel file il fondo era il brusio
+# stesso (−36/−40 dB), e con 6 dB se ne andavano «Ma che c'e'?», «Non lo so, mi dispiace».
+QUIET_RATIO = 1.25
+QUIET_BELOW_SPEECH_DB = 24.0
+# Ancora piu' giu', nessuna durata la salva: quaranta decibel sotto la voce del file non si capisce
+# una parola, e quello che Whisper ci scrive («Ja.», «Takk for oss.» sulle ore mute) e' inventato.
+MUTE_BELOW_SPEECH_DB = 40.0
+# Il fondo e' il decimo percentile delle energie di ogni dieci minuti: il rumore di una stanza cambia
+# in venti ore, e un fondo unico per tutto il file confonderebbe il condizionatore con il silenzio.
+FLOOR_PERCENTILE = 10
+FLOOR_BLOCK_S = 600.0
+# La voce invece si misura su tutto il file, perche' in un blocco di sola stanza vuota non c'e': il
+# 95° percentile delle finestre che stanno almeno 20 dB sopra il fondo del loro blocco.
+SPEECH_PERCENTILE = 95
+ACTIVE_ABOVE_FLOOR = 10.0
+# Le frasi del silenzio: corte, e sole (tre secondi di niente prima e dopo) o sopra un audio quieto.
+PHRASE_MAX_S = 2.0
+ISOLATION_S = 3.0
+# Quello che Whisper scrive nel silenzio perche' l'ha visto in coda a mille video. Solo frasi intere:
+# «grazie» dentro una frase vera non c'entra. Niente «ciao a tutti», che una lezione la apre davvero.
+SILENCE_PHRASES = frozenset(
+    {
+        "grazie", "grazie a tutti", "grazie mille", "grazie a voi", "grazie per la visione",
+        "grazie per l ascolto", "grazie per aver guardato", "buonanotte", "buonanotte a tutti",
+        "thank you", "thanks for watching", "thank you for watching",
+    }
+)
+# I titoli di coda dei sottotitoli amatoriali: in una lezione non si dicono mai. In piu' lingue perche'
+# sul rumore anche la lingua e' a caso: le ore mute di «Napoli 18h», prese da sole, venivano
+# riconosciute come norvegese, e ogni colpo di tosse diventava «Teksting av Nicolai Winther».
+CREDITS = re.compile(
+    r"\bamara org\b|\bai media\b|\bnicolai winther\b|\bqtss\b"
+    r"|^(sottotitoli|subtitles|subtitulos|subtítulos|sous titres|untertitel\w*|teksting|undertekst\w*|undertext\w*)"
+    r" (creati|a cura|e revisione|di|by|av|por|de|der|réalisés)\b"
+)
+HALLUCINATION_REASONS = {
+    "vuoti": "senza parole",
+    "giri": "giri a vuoto accorciati",
+    "crediti": "titoli di coda",
+    "eco": "eco del vocabolario",
+    "frasi": "frasi del silenzio",
+    "brevi": "brevi nel rumore",
+    "muti": "sotto la voce",
+}
+
+
+def normalized_words(text: str) -> list[str]:
+    """Le parole, minuscole e senza punteggiatura: «L'ha detto, 18h30!» -> ["l", "ha", "detto", "18h30"]."""
+    return re.findall(r"[^\W_]+", (text or "").lower())
+
+
+def _pieces_of_words(text: str) -> list[str]:
+    """Come [normalized_words], ma separando cifre e lettere: «18h30» -> ["18", "h", "30"]."""
+    return re.findall(r"\d+|[^\W\d_]+", (text or "").lower())
+
+
+def compression_ratio(text: str) -> float:
+    """Il rapporto di compressione di Whisper: quanto zlib accorcia il testo. Un parlato vero sta sotto 2."""
+    import zlib
+
+    data = (text or "").encode("utf-8")
+    return len(data) / len(zlib.compress(data)) if data else 0.0
+
+
+def collapse_repeats(keys: list[str], max_unit: int = LOOP_MAX_UNIT) -> list[int]:
+    """
+    Gli indici delle parole da tenere quando un'unita' si ripete di fila: ne resta la prima.
+
+    L'unita' puo' essere di una parola (almeno tre volte: «no, no» si dice davvero) o di piu' (almeno
+    due volte). A ogni posizione vince la ripetizione che copre piu' parole, e a pari copertura
+    l'unita' piu' corta: «la la la la» diventa «la», non «la la».
+    """
+    kept: list[int] = []
+    index, count = 0, len(keys)
+    while index < count:
+        best: tuple[int, int] | None = None
+        for unit in range(1, min(max_unit, (count - index) // 2) + 1):
+            pattern = keys[index : index + unit]
+            repeats = 1
+            while keys[index + repeats * unit : index + (repeats + 1) * unit] == pattern:
+                repeats += 1
+            if repeats >= (3 if unit == 1 else 2) and (best is None or repeats * unit > best[0]):
+                best = (repeats * unit, unit)
+        if best is None:
+            kept.append(index)
+            index += 1
+        else:
+            kept.extend(range(index, index + best[1]))
+            index += best[0]
+    return kept
+
+
+def _collapsed(segment: dict) -> dict | None:
+    """Il segmento con i giri tolti, o None se non c'era niente da togliere. I tempi sono quelli delle parole tenute."""
+    tokens = (segment.get("text") or "").split()
+    keys = [" ".join(normalized_words(token)) for token in tokens]
+    kept = list(range(len(tokens)))
+    for _ in range(3):  # un giro dentro un giro: «a b a b c a b a b c» -> «a b c»
+        inner = collapse_repeats([keys[i] for i in kept])
+        if len(inner) == len(kept):
+            break
+        kept = [kept[i] for i in inner]
+    if len(kept) == len(tokens):
+        return None
+    shorter = dict(segment)
+    shorter["text"] = " ".join(tokens[i] for i in kept)
+    words = segment.get("words") or []
+    if len(words) == len(tokens):
+        shorter["words"] = [words[i] for i in kept]
+        timed = [
+            w for w in shorter["words"]
+            if not math.isnan(_finite(w.get("start"), math.nan)) and not math.isnan(_finite(w.get("end"), math.nan))
+        ]
+        if timed:
+            shorter["start"], shorter["end"] = float(timed[0]["start"]), float(timed[-1]["end"])
+    else:
+        # Parole e testo non si corrispondono una a una: meglio nessuna parola accesa che quelle sbagliate.
+        shorter["words"] = []
+    return shorter
+
+
+def noise_floors(energies: Any, frame_s: float, block_s: float = FLOOR_BLOCK_S) -> list[float]:
+    """Il fondo di ogni blocco da [block_s]: il [FLOOR_PERCENTILE]-esimo percentile, senza lo zero digitale."""
+    import numpy as np
+
+    block = max(1, int(round(block_s / frame_s)))
+    floors: list[float] = []
+    for first in range(0, len(energies), block):
+        window = energies[first : first + block]
+        if len(window) < block // 2 and len(energies) >= block:
+            window = energies[-block:]  # un moncone finale si misura con i dieci minuti prima
+        audible = window[window > 1e-6]
+        floors.append(float(np.percentile(audible, FLOOR_PERCENTILE)) if len(audible) else 1e-6)
+    return floors
+
+
+def sound_levels(energies: Any, frame_s: float) -> tuple[list[float], float | None]:
+    """
+    I fondi di ogni blocco ([noise_floors]) e il livello della voce di tutto il file: il
+    [SPEECH_PERCENTILE]-esimo percentile delle finestre almeno [ACTIVE_ABOVE_FLOOR] volte sopra il
+    fondo del loro blocco. None se nel file non c'e' niente sopra il fondo.
+    """
+    import numpy as np
+
+    floors = noise_floors(energies, frame_s)
+    if not floors:
+        return floors, None
+    block = max(1, int(round(FLOOR_BLOCK_S / frame_s)))
+    per_frame = np.repeat(np.asarray(floors, dtype=np.float32), block)[: len(energies)]
+    active = energies[energies >= per_frame * ACTIVE_ABOVE_FLOOR]
+    return floors, (float(np.percentile(active, SPEECH_PERCENTILE)) if len(active) else None)
+
+
+def _rms(energies: Any, frame_s: float, start: float, end: float) -> float | None:
+    """L'energia (RMS) sotto [start, end], dalle finestre di [frame_energies]."""
+    import numpy as np
+
+    first = max(0, int(start / frame_s))
+    last = max(first + 1, int(math.ceil(end / frame_s)))
+    span = np.asarray(energies[first:last], dtype=np.float64)
+    return float(np.sqrt(np.mean(span * span))) if len(span) else None
+
+
+def drop_hallucinations(
+    segments: list[dict],
+    energies: Any = None,
+    frame_s: float = FRAME_MS / 1000,
+    prompt: str | None = None,
+) -> tuple[list[dict], dict[str, int]]:
+    """
+    Toglie dai segmenti (gia' allineati e messi in fila) quello che Whisper ha scritto sul rumore.
+
+    Nell'ordine:
+      * **vuoti** — niente lettere ne' cifre («...», «- -»);
+      * **giri** — rapporto di compressione oltre [LOOP_COMPRESSION]: la ripetizione si accorcia a
+        una volta sola (coi tempi delle parole tenute), il segmento resta. Non si butta testo vero;
+      * **crediti** — i titoli di coda dei sottotitoli ([CREDITS]);
+      * **eco** — tutte le parole stanno nel vocabolario mandato come prompt (e le cifre attaccate,
+        «18h30»): Whisper lo rilegge a ogni finestra da trenta secondi, e sul rumore lo ripete. Si
+        toglie se ripete le parole, o se non sembra detto da qualcuno: corto, veloce o quieto.
+        «Napoli» detto chiaro per un secondo, dal vivo, resta;
+      * **brevi** — allineato in meno di [SHORT_SPAN_S] o a piu' di [FAST_CHARS_PER_S] caratteri al
+        secondo, sopra un audio quieto (vicino al fondo, o molto sotto la voce: [QUIET_RATIO]);
+      * **muti** — lungo quanto si vuole, ma [MUTE_BELOW_SPEECH_DB] sotto la voce del file;
+      * **frasi** — una frase del silenzio ([SILENCE_PHRASES]), corta, e sola fra i segmenti rimasti
+        o sopra un audio quieto.
+
+    Senza energie ([energies] None) le regole che guardano il fondo non scattano. Torna i segmenti
+    tenuti e quanti ne ha tolti (o accorciati) per ragione.
+    """
+    floors, speech = sound_levels(energies, frame_s) if energies is not None and len(energies) else ([], None)
+    below_speech = speech * 10 ** (-QUIET_BELOW_SPEECH_DB / 20) if speech else 0.0
+    mute = speech * 10 ** (-MUTE_BELOW_SPEECH_DB / 20) if speech else 0.0
+    counts = {reason: 0 for reason in HALLUCINATION_REASONS}
+    prompt_keys = set(_pieces_of_words(prompt or ""))
+
+    def rms_of(segment: dict) -> float | None:
+        return _rms(energies, frame_s, segment["start"], segment["end"]) if floors else None
+
+    def quiet(segment: dict) -> bool:
+        rms = rms_of(segment)
+        if rms is None:
+            return False
+        floor = floors[min(len(floors) - 1, int(segment["start"] / FLOOR_BLOCK_S))]
+        return rms < max(QUIET_RATIO * floor, below_speech)
+
+    first_pass: list[dict] = []
+    for original in segments:
+        segment = dict(original)
+        segment["start"] = _finite(segment.get("start"), 0.0)
+        segment["end"] = max(segment["start"], _finite(segment.get("end"), segment["start"]))
+        text = (segment.get("text") or "").strip()
+        words = normalized_words(text)
+        if not words:
+            counts["vuoti"] += 1
+            continue
+        # Durata, velocita' ed energia si misurano sul segmento com'e' arrivato: un giro accorciato
+        # dura quanto la sua prima volta, e sembrerebbe «corto» anche quando era voce vera.
+        measured = segment
+        span = segment["end"] - segment["start"]
+        pace = len(text) / span if span > 0 else math.inf
+        repeated = len(words) > len(set(words))
+        if compression_ratio(text) > LOOP_COMPRESSION and (shorter := _collapsed(segment)) is not None:
+            counts["giri"] += 1
+            segment = shorter
+            text = segment["text"].strip()
+            words = normalized_words(text)
+        if CREDITS.search(" ".join(words)):
+            counts["crediti"] += 1
+            continue
+        pieces = _pieces_of_words(text)
+        if prompt_keys and any(p in prompt_keys and not p.isdigit() for p in pieces) and all(
+            p in prompt_keys or p.isdigit() for p in pieces
+        ):
+            if repeated or span < 1.0 or pace > FAST_CHARS_PER_S or quiet(measured):
+                counts["eco"] += 1
+                continue
+        if (span < SHORT_SPAN_S or pace > FAST_CHARS_PER_S) and quiet(measured):
+            counts["brevi"] += 1
+            continue
+        if (rms := rms_of(measured)) is not None and rms < mute:
+            counts["muti"] += 1
+            continue
+        first_pass.append(segment)
+
+    kept: list[dict] = []
+    for index, segment in enumerate(first_pass):
+        words = normalized_words(segment["text"])
+        # «Grazie, grazie.» e' la stessa frase: le ripetizioni di fila non contano.
+        phrase = " ".join(w for i, w in enumerate(words) if i == 0 or w != words[i - 1])
+        span = segment["end"] - segment["start"]
+        if phrase in SILENCE_PHRASES and span < PHRASE_MAX_S:
+            before = segment["start"] - first_pass[index - 1]["end"] if index > 0 else math.inf
+            after = first_pass[index + 1]["start"] - segment["end"] if index + 1 < len(first_pass) else math.inf
+            if (before >= ISOLATION_S and after >= ISOLATION_S) or quiet(segment):
+                counts["frasi"] += 1
+                continue
+        kept.append(segment)
+    return kept, {reason: count for reason, count in counts.items() if count}
+
+
+def describe_dropped(counts: dict[str, int]) -> str:
+    """«407 eco del vocabolario, 98 frasi del silenzio» per il log."""
+    return ", ".join(f"{count} {HALLUCINATION_REASONS[reason]}" for reason, count in counts.items() if count) or "niente"
+
+
 def transcribe_audio(
     audio: Any,
     sample_rate: int,
@@ -2699,29 +3282,34 @@ def transcribe_audio(
 
     Lotto e dispositivo si leggono una volta, qui, e valgono per tutti i pezzi: /v1/admin/settings
     puo' cambiare [STATE] mentre si trascrive, e il pezzo due non deve partire con un altro lotto.
+
+    [audio] e' l'array della lezione, o una sorgente ([LoadedAudio], [StreamedAudio]) che i pezzi li
+    decodifica quando servono. Senza una lingua, la si riconosce prima dei pezzi dove si parla di
+    piu' ([spoken_language]); alla fine si tolgono le allucinazioni ([drop_hallucinations]).
     """
     batch_size = int(batch_size or STATE["batch_size"])
     device = device or STATE["device"]
-    total_s = len(audio) / sample_rate
+    source = audio if isinstance(audio, (LoadedAudio, StreamedAudio)) else LoadedAudio(audio, sample_rate)
+    audio = None
+    total_s = source.duration_s
+    frame_s = FRAME_MS / 1000
+    energies = source.energies()
     count = piece_count(total_s, max_minutes)
-    if count > 1:
-        frame_s = FRAME_MS / 1000
-        bounds = plan_pieces(frame_energies(audio, sample_rate), frame_s, total_s, count)
-    else:
-        bounds = [(0.0, total_s)]
+    bounds = plan_pieces(energies, frame_s, total_s, count) if count > 1 else [(0.0, total_s)]
     if len(bounds) > 1:
         log.info("divido %.1f min in %d pezzi (tetto %d min)", total_s / 60, len(bounds), max_minutes)
 
     segments: list[dict] = []
-    detected = language
+    detected = language or spoken_language(source, frame_s, engine, progress)
     device_used = device
     alignment = "ok"
     used_batch = batch_size
     for index, (start_s, end_s) in enumerate(bounds):
         progress.check_cancelled()
         progress.piece(index + 1, len(bounds))
-        piece = audio if len(bounds) == 1 else audio[int(round(start_s * sample_rate)) : int(round(end_s * sample_rate))]
+        piece = source.piece(start_s, end_s)
         job = run_job(piece, detected, engine, batch_size, device, progress, prompt=prompt)
+        piece = None
         detected = detected or job.get("language")
         segments.extend(_shifted(segment, start_s) for segment in job["segments"])
         if job.get("device_used") == "cpu":
@@ -2732,14 +3320,19 @@ def transcribe_audio(
     # Niente di grande resta nel frame: se qualcuno lo conserva (una libreria che tiene da parte un
     # errore d'import col suo traceback, vedi [warm_imports]) si porterebbe dietro il modello e
     # l'audio, e scaricare il modello non restituirebbe piu' la scheda.
-    audio = piece = None
+    source.release()
+    source = piece = None
+    kept, dropped = drop_hallucinations(segments, energies, frame_s, prompt=prompt)
+    if dropped:
+        log.info("allucinazioni: %s (restano %d segmenti su %d)", describe_dropped(dropped), len(kept), len(segments))
     return {
-        "segments": segments,
+        "segments": kept,
         "language": detected or "en",
         "device_used": device_used,
         "batch_size": used_batch,
         "alignment": alignment,
         "chunks": len(bounds),
+        "dropped": dropped,
     }
 
 
@@ -2751,7 +3344,6 @@ def _transcribe(
     max_minutes: int | str | None = None,
 ) -> dict[str, Any]:
     """Il lavoro vero, su un thread suo: WhisperX blocca, e bloccare il loop ferma anche /health."""
-    import whisperx
     from whisperx.audio import SAMPLE_RATE
 
     progress = progress or JobProgress()
@@ -2763,15 +3355,27 @@ def _transcribe(
     progress.check_cancelled()
     # ffmpeg che decodifica un'ora di m4a sono secondi veri: meglio dirlo che restare «in coda».
     progress.set("decoding")
-    audio = whisperx.load_audio(path)
+    check = progress.check_cancelled
+    # «auto»: la lunghezza dei pezzi la sceglie il computer da quanto e' lunga la lezione e quanto va
+    # veloce ([auto_piece_minutes]). Prima di decodificare con la durata del contenitore, per sapere se
+    # la lezione sta in memoria; dopo con quella vera.
+    expected_s = probe_duration(path)
+    if expected_s and expected_s > STREAM_ABOVE_S:
+        planned = auto_piece_minutes(expected_s, device) if max_minutes == "auto" else max_minutes
+        streamed = piece_count(expected_s, planned) > 1
+    else:
+        streamed = False
+    if streamed:
+        log.info("%.1f ore: la decodifico a pezzi invece di tenerla tutta in memoria", expected_s / 3600)
+        source: LoadedAudio | StreamedAudio = StreamedAudio(path, SAMPLE_RATE, check)
+    else:
+        source = LoadedAudio(load_audio(path, SAMPLE_RATE, expected_s=expected_s, check=check), SAMPLE_RATE)
     progress.check_cancelled()
-    audio_s = len(audio) / SAMPLE_RATE
+    audio_s = source.duration_s
     progress.audio_s = audio_s
-    # «auto»: la lunghezza dei pezzi la sceglie il computer, adesso che sa quanto e' lunga la lezione
-    # e quanto va veloce ([auto_piece_minutes]).
     cap = auto_piece_minutes(audio_s, device) if max_minutes == "auto" else max_minutes
     job = transcribe_audio(
-        audio, SAMPLE_RATE, language, progress, engine, max_minutes=cap, prompt=prompt, batch_size=batch_size, device=device,
+        source, SAMPLE_RATE, language, progress, engine, max_minutes=cap, prompt=prompt, batch_size=batch_size, device=device,
     )
     STATE["alignment"][job["language"]] = job["alignment"]
 
@@ -2788,23 +3392,23 @@ def _transcribe(
                 "start": _finite(segment.get("start"), 0.0),
                 "end": _finite(segment.get("end"), 0.0),
                 "text": text,
-                # WhisperX non li restituisce: l'app li usa per scartare le allucinazioni, e valori
-                # che dicono "voce presente, confidenza buona" lasciano passare tutto — che e' il
-                # comportamento giusto quando l'informazione non c'e'.
-                "avg_logprob": _finite(segment.get("avg_logprob"), -0.2),
-                "no_speech_prob": _finite(segment.get("no_speech_prob"), 0.0),
-                "compression_ratio": 1.0,
+                # La confidenza la da' WhisperX; la probabilita' di silenzio no, e resta null: prima
+                # era 0,0 — «voce di sicuro» — e il filtro dell'app non poteva scattare mai. Il
+                # rapporto di compressione e' quello vero del testo ([compression_ratio]).
+                "avg_logprob": _finite_or_none(segment.get("avg_logprob")),
+                "no_speech_prob": None,
+                "compression_ratio": round(compression_ratio(text), 3),
                 "temperature": 0.0,
                 "tokens": [],
                 "words": words_of(segment),
             }
         )
 
-    gc.collect()
     # Niente di grande resta nel frame: se qualcuno lo conserva (una libreria che tiene da parte un
     # errore d'import col suo traceback, vedi [warm_imports]) si porterebbe dietro il modello e
     # l'audio, e scaricare il modello non restituirebbe piu' la scheda.
-    audio = None
+    source = None
+    gc.collect()
     return {
         "task": "transcribe",
         "language": job["language"],
@@ -2818,6 +3422,8 @@ def _transcribe(
         "chunks": job["chunks"],
         # Il tetto usato davvero, in minuti; 0 = intera. Con «auto» e' quello che l'app mostra.
         "max_minutes_used": int(cap or 0),
+        # Quanti segmenti inventati sono stati tolti, per ragione ([drop_hallucinations]).
+        "dropped": job.get("dropped") or {},
     }
 
 
@@ -2833,6 +3439,12 @@ def _finite(value: Any, fallback: float) -> float:
     except (TypeError, ValueError):
         return fallback
     return number if math.isfinite(number) else fallback
+
+
+def _finite_or_none(value: Any) -> float | None:
+    """Come [_finite], ma un valore che non c'e' resta null invece di diventare un numero inventato."""
+    number = _finite(value, math.nan)
+    return None if math.isnan(number) else number
 
 
 def words_of(segment: dict) -> list[dict]:

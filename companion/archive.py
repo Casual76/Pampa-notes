@@ -207,7 +207,7 @@ class Archive:
             if expected_size is not None and size != expected_size:
                 raise ValueError(f"attesi {expected_size} byte, arrivati {size}")
             target.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(temp, target)
+            _place(temp, target, size)
         finally:
             if temp.exists():
                 temp.unlink()
@@ -219,6 +219,43 @@ class Archive:
             self.db.commit()
         log.info("archiviato %s (%.1f MB) come %s", name, size / 1_000_000, target.name)
         return {"sha256": sha256, "name": name, "mime": mime, "ext": ext, "size": size, "path": target}
+
+
+# Quante volte, e ogni quanto, si riprova a dare al `.part` il nome del blob quando Windows dice di no.
+PLACE_ATTEMPTS = 5
+PLACE_PAUSE_S = 0.2
+
+
+def _place(temp: Path, target: Path, size: int) -> None:
+    """
+    Il `.part` verificato prende il nome del blob — a meno che il blob ci sia gia'.
+
+    Il nome e' l'impronta, quindi un blob con quel nome e quella misura *e'* questo file: il `.part`
+    si butta. Succedeva davvero: il telefono archiviava una registrazione con un `PUT` mentre la
+    stessa partiva da trascrivere con `archive=1`, e il secondo dei due `os.replace` trovava il
+    blob appena scritto — o aperto da ffmpeg — e Windows rispondeva `WinError 5`: un 500 per un
+    file che nell'archivio c'era gia'. Se il blob non c'e', un `PermissionError` e' quasi sempre
+    un altro processo che tiene il file un istante (l'antivirus, l'indicizzatore, l'altro
+    caricamento a meta' rinomina): si riprova qualche volta, riguardando ogni volta se nel
+    frattempo il blob e' arrivato.
+    """
+    refused: PermissionError | None = None
+    for attempt in range(PLACE_ATTEMPTS + 1):
+        with contextlib.suppress(OSError):
+            if target.stat().st_size == size:
+                log.info("archivio: %s c'era gia', tengo quello", target.name)
+                return
+        if attempt == PLACE_ATTEMPTS:
+            break
+        if attempt:
+            time.sleep(PLACE_PAUSE_S * attempt)
+        try:
+            os.replace(temp, target)
+            return
+        except PermissionError as error:
+            refused = error
+    assert refused is not None
+    raise refused
 
 
 ARCHIVE: Archive | None = None
