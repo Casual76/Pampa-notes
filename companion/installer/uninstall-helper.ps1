@@ -13,9 +13,13 @@
                    (ci sono archive.db o blobs/): un archive_root scritto male non deve portarsi via
                    una cartella qualunque;
     purge-models   cancella dalla cache di Hugging Face i modelli che il companion scarica, e solo
-                   quelli: Whisper (Systran/faster-whisper-*), le voci (pyannote/*) e l'allineamento
-                   delle parole (jonatasgrosman/wav2vec2-*). Sono gigabyte, e senza il companion non
-                   li usa nessuno; il resto della cache e' di altri programmi e resta.
+                   quelli: Whisper (Systran/faster-whisper-*, Systran/faster-distil-whisper-*,
+                   mobiuslabsgmbh/faster-whisper-large-v3-turbo), le voci (pyannote/*) e
+                   l'allineamento delle parole (jonatasgrosman/wav2vec2-*); e dalla cache di torch
+                   (hub\checkpoints) l'allineamento di torchaudio (wav2vec2_*, voxpopuli_*), che per
+                   inglese, francese, tedesco, spagnolo e italiano non passa da Hugging Face. Sono
+                   gigabyte, e senza il companion non li usa nessuno; il resto delle due cache e' di
+                   altri programmi e resta.
 
 .PARAMETER App
   La cartella del companion installato.
@@ -29,13 +33,33 @@ param(
 # I modelli che il companion scarica nella cache di Hugging Face (install.py, fetch_model.py e le
 # lezioni). Una cartella per repository, "models--<autore>--<nome>": si toglie solo quello che
 # corrisponde qui, mai la cache intera.
-$ModelPatterns = @("models--Systran--faster-whisper-*", "models--pyannote--*", "models--jonatasgrosman--wav2vec2-*")
+# I Whisper sono tre famiglie: large-v3 e i piccoli da Systran, distil-large-v3 da Systran col nome
+# "faster-distil-whisper-", e large-v3-turbo da mobiuslabsgmbh (lo sceglie faster-whisper, non noi).
+$ModelPatterns = @(
+  "models--Systran--faster-whisper-*",
+  "models--Systran--faster-distil-whisper-*",
+  "models--mobiuslabsgmbh--faster-whisper-large-v3-turbo",
+  "models--pyannote--*",
+  "models--jonatasgrosman--wav2vec2-*"
+)
+# Gli allineatori delle lingue che torchaudio ha di suo (en, fr, de, es, it) non stanno nella cache di
+# Hugging Face: sono file sciolti in torch\hub\checkpoints ("wav2vec2_fairseq_base_ls960_asr_ls960.pth",
+# "wav2vec2_voxpopuli_base_10k_asr_it.pt"). Solo questi nomi: il resto della cartella e' di altri.
+$CheckpointPatterns = @("wav2vec2_*", "voxpopuli_*")
 
 function Get-HubCache {
   # Lo stesso ordine di huggingface_hub: HF_HUB_CACHE, poi HF_HOME\hub, poi ~\.cache\huggingface\hub.
   if ($env:HF_HUB_CACHE) { return $env:HF_HUB_CACHE }
   if ($env:HF_HOME) { return (Join-Path $env:HF_HOME "hub") }
   return (Join-Path $env:USERPROFILE ".cache\huggingface\hub")
+}
+
+function Get-TorchCheckpoints {
+  # Lo stesso ordine di torch.hub: TORCH_HOME, poi XDG_CACHE_HOME\torch, poi ~\.cache\torch.
+  $torch = Join-Path $env:USERPROFILE ".cache\torch"
+  if ($env:XDG_CACHE_HOME) { $torch = Join-Path $env:XDG_CACHE_HOME "torch" }
+  if ($env:TORCH_HOME) { $torch = $env:TORCH_HOME }
+  return (Join-Path $torch "hub\checkpoints")
 }
 
 $ErrorActionPreference = "SilentlyContinue"
@@ -97,6 +121,14 @@ switch ($Action) {
               Remove-Item -LiteralPath $_.FullName -Recurse -Force
             }
           }
+        }
+      }
+    }
+    $checkpoints = Get-TorchCheckpoints
+    if (Test-Path -LiteralPath $checkpoints) {
+      foreach ($pattern in $CheckpointPatterns) {
+        Get-ChildItem -LiteralPath $checkpoints -File -Filter $pattern | ForEach-Object {
+          Remove-Item -LiteralPath $_.FullName -Force
         }
       }
     }

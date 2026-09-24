@@ -252,6 +252,41 @@ class ExportWritersTest {
   }
 
   @Test
+  fun `i capitoli chiamano le voci col nome dato, come i paragrafi`() {
+    // Tre tratti separati da mezz'ora di niente, in ognuno due voci che si alternano.
+    fun talk(fromMs: Long) = (0 until 12).map { i ->
+      val start = fromMs + i * 10_000L
+      segment("p1", start, start + 9_000, "e poi si continua a parlare")
+        .copy(speaker = if (i % 2 == 0) "SPEAKER_01" else "SPEAKER_00")
+    }
+    val segments = talk(0) + talk(40 * 60_000L) + talk(90 * 60_000L)
+    val session = session(
+      parts = listOf(part("p1", "riunione.m4a", 2 * 3_600_000L, 0)),
+      transcript = transcript(TranscriptKind.RAW, segments.joinToString(" ") { it.text }),
+      segments = segments,
+    ).copy(voiceNames = mapOf(VoiceNames.key("p1", "SPEAKER_01") to "Marco *il prof*"))
+    val note = note(sessions = listOf(session))
+    val layout = layout(listOf(note))
+    val piece = layout.of(note).transcripts.values.single().single()
+    val text = writer.transcriptFile(note, piece, layout)
+
+    // Prima la riga del capitolo diceva «Voce 1, Voce 2» mentre il paragrafo sotto diceva «Marco».
+    assertTrue(text, text.contains("1. [00:00]–01:59 · 2 min di parlato · 72 parole · Marco \\*il prof\\*, Voce 2 · "))
+    assertTrue(text, text.contains("[00:00] **Marco \\*il prof\\*:** "))
+    assertFalse(text, text.contains("Voce 1"))
+
+    val index = IndexWriter().index(layout)
+    assertTrue(index, index.contains("  - Capitolo 2 · [40:00]–41:59 · 2 min di parlato · 72 parole · Marco \\*il prof\\*, Voce 2"))
+    assertFalse(index, index.contains("Voce 1"))
+
+    // Senza nomi resta com'era.
+    val unnamed = note(sessions = listOf(session.copy(voiceNames = emptyMap())))
+    val unnamedLayout = layout(listOf(unnamed))
+    val plain = writer.transcriptFile(unnamed, unnamedLayout.of(unnamed).transcripts.values.single().single(), unnamedLayout)
+    assertTrue(plain, plain.contains("72 parole · Voce 1, Voce 2 · "))
+  }
+
+  @Test
   fun `una versione raffinata non ha i tempi e lo dice`() {
     val raw = transcript(TranscriptKind.RAW, "Testo grezzo.")
     val refined = transcript(TranscriptKind.REFINED, "Testo ripulito.", model = "gpt-oss-120b", parentId = raw.id)

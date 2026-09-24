@@ -179,8 +179,13 @@ begin
   { Dentro gli apici singoli di PowerShell l'apice si scrive due volte. }
   StringChangeEx(Command, '''', '''''', True);
   StringChangeEx(Folder, '''', '''''', True);
-  Script := '$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ''' +
-    Command + '''; CurrentDirectory = ''' + Folder + ''' }; exit $r.ReturnValue';
+  { Esce con 0 solo se WMI ha creato il processo. Prima era `exit $r.ReturnValue`: con
+    Invoke-CimMethod fallito $r restava vuoto, `exit $null` e' `exit 0`, e questa copia usciva
+    convinta di essersi rilanciata senza che partisse niente. 'Stop' rende terminanti anche gli
+    errori di CIM che non lo sono, cosi' il catch li vede. Lo stesso script sta in fuori.py. }
+  Script := '$ErrorActionPreference = ''Stop''; try { $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create ' +
+    '-Arguments @{ CommandLine = ''' + Command + '''; CurrentDirectory = ''' + Folder + ''' }; ' +
+    'if ($null -eq $r) { exit 1 }; exit [int]$r.ReturnValue } catch { exit 1 }';
   ScriptPath := ExpandConstant('{tmp}\fuori.ps1');
   Result := SaveStringToFile(ScriptPath, Script, False) and
     Exec('powershell.exe', '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ScriptPath + '"', '', SW_HIDE,
@@ -197,13 +202,20 @@ begin
   Boxed := RedirectedTo;
   if Boxed = '' then
     Exit;
-  { Questa copia esce in ogni caso: o ne e' partita una fuori, o dentro non si installa. }
+  { Questa copia esce in ogni caso: o ne e' partita una fuori, o dentro non si installa. Se il
+    rilancio fallisce non si va avanti qui dentro: il companion finirebbe nella copia privata di
+    %LOCALAPPDATA% dell'altra app, dove il PC non lo trova (e install.py lo rifiuterebbe comunque,
+    uscita 4, dopo aver gia' preparato Python). Meglio fermarsi subito e dire come lanciarlo. }
   Result := False;
   if RelaunchOutside then
-    Log('Partito dentro il contenitore di ' + Boxed + ': rilanciato fuori con WMI.')
-  else if not WizardSilent then
+  begin
+    Log('Partito dentro il contenitore di ' + Boxed + ': rilanciato fuori con WMI.');
+    Exit;
+  end;
+  Log('Partito dentro il contenitore di ' + Boxed + ' e il rilancio con WMI non e'' riuscito: mi fermo.');
+  if not WizardSilent then
     MsgBox('Il setup e'' partito dentro un''altra app (' + Boxed + '): Windows metterebbe il companion nella sua copia ' +
-      'privata delle cartelle, dove il computer non lo trova.' + #13#10 + #13#10 +
+      'privata delle cartelle, dove il computer non lo trova, e non sono riuscito a ripartire da fuori.' + #13#10 + #13#10 +
       'Chiudi e lancia il setup con un doppio clic da Esplora file.', mbError, MB_OK);
 end;
 
@@ -302,12 +314,13 @@ begin
       if MsgBox('Tenere le impostazioni (config.json: account, codice, modello)?' + #13#10 +
         'Servono se lo reinstalli.', mbConfirmation, MB_YESNO or MB_DEFBUTTON1) = IDNO then
         DeleteFile(AppPath('config.json'));
-      { I modelli stanno nella cache di Hugging Face, fuori da questa cartella: sono gigabyte, e la
-        disinstallazione li lasciava li'. Si tolgono solo quelli che il companion scarica (Whisper,
-        le voci, l'allineamento), e solo a chi dice di si': li userebbe anche un altro companion
-        di questo computer, per esempio una copia per le prove. }
+      { I modelli stanno nella cache di Hugging Face e in quella di torch (gli allineatori di
+        torchaudio), fuori da questa cartella: sono gigabyte, e la disinstallazione li lasciava li'.
+        Si tolgono solo quelli che il companion scarica (Whisper, le voci, l'allineamento), e solo a
+        chi dice di si': li userebbe anche un altro companion di questo computer, per esempio una
+        copia per le prove. }
       if MsgBox('Cancellare anche i modelli scaricati per la trascrizione (Whisper, la separazione delle voci, ' +
-        'l''allineamento delle parole)? Sono qualche gigabyte nella cache di Hugging Face.' + #13#10 + #13#10 +
+        'l''allineamento delle parole)? Sono qualche gigabyte nelle cache di Hugging Face e di torch.' + #13#10 + #13#10 +
         'Rispondi No se sul computer c''e'' un''altra copia del companion, o se pensi di reinstallarlo.',
         mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
         RunHelper('purge-models');

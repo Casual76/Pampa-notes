@@ -188,6 +188,47 @@ def main() -> None:
     assert got and got[-1]["hash"] == f"h{NOW + 5001}", got
     print("push: chi riscrive sopra la sua ultima versione passa anche con la base vecchia; gli altri no"); ok += 1
 
+    # 12. l'app di prima (1.0.2) non sa dei nomi delle voci ne' delle voci dei segmenti: riscrivendo
+    #     una sessione o una trascrizione non deve cancellarli. Una chiave assente tiene quello che
+    #     c'era; una chiave presente (anche null) e' l'app nuova, e vince.
+    names = json.dumps({"p1|SPEAKER_00": "Marco"})
+    r = push("tablet", [change("sessions", "voci", 6000, payload={"id": "voci", "noteId": "n2", "title": "Riunione", "voiceNames": names})])
+    assert r["applied"] == 1, r
+    base = r["seq"]
+    r = push("telefono", [change("sessions", "voci", 6001, payload={"id": "voci", "noteId": "n2", "title": "Riunione del martedi'"}, baseHash=f"h{NOW + 6000}")])
+    assert r["applied"] == 1, r
+    got = [c for c in pull("tablet", base)["changes"] if c["id"] == "voci"][-1]
+    assert got["payload"]["title"] == "Riunione del martedi'" and got["payload"]["voiceNames"] == names, got
+    r = push("tablet", [change("sessions", "voci", 6002, payload={"id": "voci", "noteId": "n2", "title": "Riunione", "voiceNames": None}, baseHash=f"h{NOW + 6001}")])
+    assert r["applied"] == 1, r
+    got = [c for c in pull("telefono", r["seq"] - 1)["changes"] if c["id"] == "voci"][-1]
+    assert got["payload"]["voiceNames"] is None, got
+    print("sessioni: l'app di prima non cancella i nomi delle voci, un null dell'app nuova si'"); ok += 1
+
+    def seg(part: str, index: int, start: int, text: str, session_start: int, **extra) -> dict:
+        return {"transcriptId": "tv", "partId": part, "indexInPart": index, "partStartMs": start, "partEndMs": start + 900,
+                "sessionStartMs": session_start, "sessionEndMs": session_start + 900, "text": text, **extra}
+
+    labelled = [seg("p1", 0, 0, "Cominciamo?", 0, speaker="SPEAKER_00"), seg("p1", 1, 1000, "Si'.", 1000, speaker="SPEAKER_01"),
+                seg("p2", 0, 0, "Dopo la pausa.", 60000, speaker="SPEAKER_00")]
+    r = push("tablet", [change("transcripts", "tv", 6100, payload={"id": "tv", "sessionId": "voci", "text": "..."}, segments=labelled)])
+    assert r["applied"] == 1, r
+    # Il telefono di prima mette p2 davanti a p1 (i tempi di sessione cambiano) e ha ritrascritto un
+    # segmento di p1: quello non combacia piu' e resta senza voce, gli altri la tengono.
+    old = [seg("p2", 0, 0, "Dopo la pausa.", 0), seg("p1", 0, 0, "Cominciamo?", 900), seg("p1", 1, 1000, "Si', certo.", 1900)]
+    r = push("telefono", [change("transcripts", "tv", 6101, payload={"id": "tv", "sessionId": "voci", "text": "..."}, segments=old, baseHash=f"h{NOW + 6100}")])
+    assert r["applied"] == 1, r
+    got = [c for c in pull("tablet", r["seq"] - 1)["changes"] if c["id"] == "tv"][-1]
+    assert [s.get("speaker") for s in got["segments"]] == ["SPEAKER_00", "SPEAKER_00", None], got["segments"]
+    assert got["segments"][0]["sessionStartMs"] == 0, "il resto del segmento e' quello mandato"
+    # L'app nuova che manda la chiave (anche null) decide lei.
+    fresh = [dict(s, speaker=None) for s in old]
+    r = push("tablet", [change("transcripts", "tv", 6102, payload={"id": "tv", "sessionId": "voci", "text": "..."}, segments=fresh, baseHash=f"h{NOW + 6101}")])
+    assert r["applied"] == 1, r
+    got = [c for c in pull("telefono", r["seq"] - 1)["changes"] if c["id"] == "tv"][-1]
+    assert all(s["speaker"] is None for s in got["segments"]), got["segments"]
+    print("trascrizioni: l'app di prima non cancella le voci dei segmenti che combaciano"); ok += 1
+
     print(f"\n{ok} verifiche passate")
 
 

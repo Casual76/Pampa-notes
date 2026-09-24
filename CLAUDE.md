@@ -1066,8 +1066,11 @@ sulla strada del computer che lavora da se' e solo se `/health` dichiara `diariz
 a un companion vecchio, mai a pezzi tagliati sul telefono. `SegmentEntity.speaker` (database 10,
 nullable) viaggia coi segmenti dentro la trascrizione, e **vuoto non entra nell'impronta**
 (`SyncCodec.canonicalSegments`, provato byte per byte contro la forma di prima in
-`SegmentPayloadTest`): l'aggiornamento non sporca nessuna trascrizione. Un'app di prima che riceve
-una trascrizione con le voci le perde e, se la riscrive, la rimanda senza: si aggiornano tutti.
+`SegmentPayloadTest`): l'aggiornamento non sporca nessuna trascrizione. Un'app di prima (la 1.0.2)
+che riceve una trascrizione con le voci le perde e, se la riscrive (un riordino), la rimanda senza la
+chiave `speaker`: il Worker rimette le voci che aveva sui segmenti che combaciano per parte, posto,
+tempi nel file e testo (`keepSpeakers` in `worker/src/sync.ts`; un segmento ritrascritto non
+combacia e resta senza). Un'app nuova manda sempre la chiave, anche `null`, e decide lei.
 L'etichetta e' una chiave, non un nome: `TranscriptParagraphs.voices` la traduce in «Voce 1», «Voce 2»
 nell'ordine in cui compaiono, **parte per parte** (ogni registrazione si separa per conto suo: la
 stessa persona in due parti e' due voci), e **solo se almeno una parte ha due voci**: un monologo in
@@ -1100,8 +1103,11 @@ separazione nuova ridà le etichette da capo, e «Marco» finirebbe sulle frasi 
 vanno dappertutto dove va «Voce N»: a schermo, nell'export (`ExportSession.voiceNames` →
 `TranscriptBlock.voiceName`, `**Marco:**`, coi segni del Markdown resi letterali) e nella pagina
 condivisa, che legge `voiceNames` dalla riga della sessione nell'indice (`voiceNamesOf` in
-`worker/src/shares.ts`, le stesse regole, e il nome passa da `esc` prima del DOM). Un'app di prima
-ignora il campo e, se riscrive la sessione, lo perde: si aggiornano tutti.
+`worker/src/shares.ts`, le stesse regole, e il nome passa da `esc` prima del DOM), e nella riga dei
+capitoli dell'export (`ChapterLines.namesOf`). Un'app di prima ignora il campo e riscrive la sessione
+senza la chiave: il Worker tiene i nomi che aveva (`keepMissing`, come il `kind` delle cartelle), e
+solo un `null` mandato da un'app nuova li toglie. Togliere una parte (`deletePart`) toglie anche i
+nomi delle sue voci.
 
 **Annullare, perdersi, ripetersi.** Ogni trascrizione sul companion e' un lavoro condiviso
 (`SharedWork`) con chi lo aspetta: due richieste uguali (stessa impronta, lingua, vocabolario,
@@ -1271,9 +1277,11 @@ WhisperX). Adesso c'e' un installer per Windows in `companion/installer/`:
   dell'avvio automatico solo se e' della sua cartella (`shortcut_mentions`): una seconda copia si
   prendeva quello della prima, e disinstallandola lo cancellava.
 - **La disinstallazione** chiede (di serie No) se togliere i modelli dalla cache di Hugging Face —
-  solo `models--Systran--faster-whisper-*`, `models--pyannote--*`,
-  `models--jonatasgrosman--wav2vec2-*` (`uninstall-helper.ps1 purge-models`, che segue
-  `HF_HUB_CACHE`/`HF_HOME`) — e toglie `%LOCALAPPDATA%\PampaNotes` solo se e' rimasta vuota.
+  solo `models--Systran--faster-whisper-*`, `models--Systran--faster-distil-whisper-*`,
+  `models--mobiuslabsgmbh--faster-whisper-large-v3-turbo`, `models--pyannote--*`,
+  `models--jonatasgrosman--wav2vec2-*`, piu' gli allineatori di torchaudio (`wav2vec2_*`,
+  `voxpopuli_*` in `torch\hub\checkpoints`, che non passano da Hugging Face)
+  (`uninstall-helper.ps1 purge-models`, che segue `HF_HUB_CACHE`/`HF_HOME` e `TORCH_HOME`) — e toglie `%LOCALAPPDATA%\PampaNotes` solo se e' rimasta vuota.
   `test_install` controlla anche che ogni modulo importato da `avvio.pyw`, `tray.py` e dal server
   entri nei `Source:` del setup.
 - Nell'app: Impostazioni → Servizi → «Installa sul tuo computer» (e una riga nel primo avvio), con

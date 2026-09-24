@@ -156,7 +156,12 @@ export async function push(env: Env, ownerId: string, body: PushRequest): Promis
   await env.DB.prepare("INSERT OR IGNORE INTO owners (ownerId, seq, prunedSeq) VALUES (?, 0, 0)").bind(ownerId).run();
 
   const existing = await currentVersions(env, ownerId, body.changes);
-  const kinds = await storedFolderKinds(env, ownerId, body.changes);
+  // Quello che un'app di prima non sa di dover mandare, e che la sua riscrittura cancellerebbe: il
+  // tipo di una cartella, i nomi delle voci di una sessione, le voci dei segmenti (vedi `keepMissing`
+  // e `keepSpeakers`).
+  const kinds = await storedFields(env, ownerId, body.changes, "folders", "kind");
+  const voiceNames = await storedFields(env, ownerId, body.changes, "sessions", "voiceNames");
+  const speakers = await storedSpeakers(env, ownerId, body.changes);
   // Le trascrizioni che il dispositivo manda uguali a quelle che ci sono, con dei segmenti: se qui
   // di segmenti non ce ne sono, il lotto di prima e' morto fra la riga e i blocchi (col codice di
   // prima, che li scriveva in `batch` diversi), e «uguale, si salta» li lascerebbe persi per sempre.
@@ -171,8 +176,9 @@ export async function push(env: Env, ownerId: string, body: PushRequest): Promis
   for (const change of body.changes) {
     // Troppo grande per una riga di D1: non ci stara' mai, e un errore di D1 a meta' lotto
     // fermerebbe anche tutte le altre. Si rifiuta questa, e il resto passa.
-    const payload = change.op === "U" ? JSON.stringify(keepFolderKind(change, kinds)) : null;
-    const chunks = change.tbl === "transcripts" && change.op === "U" && Array.isArray(change.segments) ? chunkSegments(change.segments) : [];
+    const kept = change.tbl === "folders" ? keepMissing(change, "folders", "kind", kinds) : keepMissing(change, "sessions", "voiceNames", voiceNames);
+    const payload = change.op === "U" ? JSON.stringify(kept) : null;
+    const chunks = change.tbl === "transcripts" && change.op === "U" && Array.isArray(change.segments) ? chunkSegments(keepSpeakers(change, speakers)) : [];
     if ((payload !== null && bytesOf(payload) > MAX_ROW_BYTES) || chunks === null) {
       rejected.push({ tbl: change.tbl, id: change.id, reason: "too_large" });
       continue;
@@ -277,33 +283,111 @@ async function currentVersions(env: Env, ownerId: string, changes: Change[]): Pr
 }
 
 /**
- * Una cartella che arriva senza `kind` da un'app di prima delle Registrazioni tiene quello che
- * aveva: altrimenti rinominarla dal telefono non aggiornato la faceva tornare una materia su tutti i
- * dispositivi — nelle statistiche di scuola, nell'«Esporta tutto», e non piu' solo sul computer.
- * L'impronta resta quella che il dispositivo ha mandato: un'app nuova che la tira la ricalcola col
- * `kind` e la rimanda una volta, e da li' combaciano.
+ * Una riga che arriva **senza** un campo nuovo da un'app che non lo conosce tiene quello che l'indice
+ * aveva. Due casi:
+ *
+ * - `folders.kind`: una cartella di Registrazioni rinominata dal telefono non aggiornato tornava una
+ *   materia su tutti i dispositivi — nelle statistiche di scuola, nell'«Esporta tutto», e non piu'
+ *   solo sul computer.
+ * - `sessions.voiceNames`: la 1.0.2 non sa dei nomi delle voci, e una sessione che riscrive (un
+ *   titolo, un riordino) arriva senza la chiave; «Marco» tornava «Voce 1» dappertutto.
+ *
+ * Conta solo la chiave **assente**: un'app nuova che manda `"voiceNames": null` li ha tolti davvero
+ * («Torna a Voce 2» sull'ultimo nome), e quello vince. L'impronta resta quella che il dispositivo ha
+ * mandato: un'app nuova che la tira la ricalcola col campo e la rimanda una volta, e da li' combaciano.
  */
-function keepFolderKind(change: Change, kinds: Map<string, string>): unknown {
+function keepMissing(change: Change, tbl: Table, field: string, stored: Map<string, string>): unknown {
   const payload = change.payload as Record<string, unknown> | null | undefined;
-  if (change.tbl !== "folders" || !payload || typeof payload !== "object" || "kind" in payload) return change.payload;
-  const kind = kinds.get(change.id);
-  return kind ? { ...payload, kind } : change.payload;
+  if (change.tbl !== tbl || !payload || typeof payload !== "object" || Array.isArray(payload) || field in payload) return change.payload;
+  const value = stored.get(change.id);
+  return value ? { ...payload, [field]: value } : change.payload;
 }
 
-async function storedFolderKinds(env: Env, ownerId: string, changes: Change[]): Promise<Map<string, string>> {
-  const kinds = new Map<string, string>();
+/** Il valore di [field] (una stringa non vuota) nelle righe di [tbl] che arrivano senza quella chiave. */
+async function storedFields(env: Env, ownerId: string, changes: Change[], tbl: Table, field: string): Promise<Map<string, string>> {
+  const values = new Map<string, string>();
   const ids = [...new Set(changes.filter((c) => {
     const p = c.payload as Record<string, unknown> | null | undefined;
-    return c.tbl === "folders" && c.op === "U" && p && typeof p === "object" && !("kind" in p);
+    return c.tbl === tbl && c.op === "U" && p && typeof p === "object" && !Array.isArray(p) && !(field in p);
   }).map((c) => c.id))];
   for (let i = 0; i < ids.length; i += 90) {
     const slice = ids.slice(i, i + 90);
     const rows = await env.DB.prepare(
-      `SELECT rowId, json_extract(payload, '$.kind') AS kind FROM state WHERE ownerId = ? AND tbl = 'folders' AND op = 'U' AND rowId IN (${slice.map(() => "?").join(",")})`,
-    ).bind(ownerId, ...slice).all<{ rowId: string; kind: string | null }>();
-    for (const r of rows.results) if (typeof r.kind === "string" && r.kind) kinds.set(r.rowId, r.kind);
+      `SELECT rowId, json_extract(payload, ?) AS value FROM state WHERE ownerId = ? AND tbl = ? AND op = 'U' AND rowId IN (${slice.map(() => "?").join(",")})`,
+    ).bind(`$.${field}`, ownerId, tbl, ...slice).all<{ rowId: string; value: unknown }>();
+    for (const r of rows.results) if (typeof r.value === "string" && r.value) values.set(r.rowId, r.value);
   }
-  return kinds;
+  return values;
+}
+
+/**
+ * Chi e' un segmento, indipendentemente da dove sta nella sessione: la parte, il posto nella parte,
+ * i tempi dentro il file e il testo. `sessionStartMs` no, di proposito: un riordino fatto dall'app
+ * di prima lo cambia, e le voci devono restare.
+ */
+function segmentIdentity(segment: Record<string, unknown>): string {
+  return JSON.stringify([segment.partId, segment.indexInPart, segment.partStartMs, segment.partEndMs, segment.text]);
+}
+
+/** Una trascrizione i cui segmenti non hanno la chiave `speaker`: la manda un'app che non conosce le voci. */
+function lacksSpeakers(c: Change): boolean {
+  return c.tbl === "transcripts" && c.op === "U" && Array.isArray(c.segments) && c.segments.length > 0 &&
+    c.segments.every((s) => s !== null && typeof s === "object" && !Array.isArray(s) && !("speaker" in s));
+}
+
+/**
+ * Le voci che l'indice ha gia' sui segmenti delle trascrizioni che arrivano senza ([lacksSpeakers]):
+ * per trascrizione, dall'identita' del segmento ([segmentIdentity]) all'etichetta. Si leggono solo i
+ * blocchi che ne hanno almeno una (`"speaker":"`, come li scrive `JSON.stringify`).
+ */
+async function storedSpeakers(env: Env, ownerId: string, changes: Change[]): Promise<Map<string, Map<string, string>>> {
+  const out = new Map<string, Map<string, string>>();
+  const ids = [...new Set(changes.filter(lacksSpeakers).map((c) => c.id))];
+  for (let i = 0; i < ids.length; i += 90) {
+    const slice = ids.slice(i, i + 90);
+    const rows = await env.DB.prepare(
+      `SELECT transcriptId, payload FROM segment_chunks WHERE ownerId = ? AND transcriptId IN (${slice.map(() => "?").join(",")}) AND instr(payload, '"speaker":"') > 0`,
+    ).bind(ownerId, ...slice).all<{ transcriptId: string; payload: string }>();
+    for (const r of rows.results) {
+      let segments: unknown;
+      try {
+        segments = JSON.parse(r.payload);
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(segments)) continue;
+      const byIdentity = out.get(r.transcriptId) ?? new Map<string, string>();
+      for (const s of segments) {
+        if (!s || typeof s !== "object") continue;
+        const speaker = (s as Record<string, unknown>).speaker;
+        if (typeof speaker === "string" && speaker) byIdentity.set(segmentIdentity(s as Record<string, unknown>), speaker);
+      }
+      if (byIdentity.size) out.set(r.transcriptId, byIdentity);
+    }
+  }
+  return out;
+}
+
+/**
+ * I segmenti di una trascrizione mandata da un'app di prima delle voci (la 1.0.2: nessun segmento ha
+ * la chiave `speaker`), con le voci che l'indice aveva. Senza, un telefono non aggiornato che
+ * riordinava le parti di una riunione rimandava la trascrizione e cancellava «chi parla» per tutti.
+ *
+ * Segmento per segmento, e solo dove l'identita' combacia ([segmentIdentity]: parte, posto, tempi nel
+ * file e testo). Un riordino o una parte tolta lasciano gli altri segmenti identici, e le voci restano;
+ * una parte ritrascritta dall'app di prima ha segmenti nuovi, e li' le voci non ci sono — ed e' giusto,
+ * l'app di prima non separa. Il limite: se la ritrascrizione ridesse per caso un segmento identico in
+ * tutto (stesso posto, stessi millisecondi, stesso testo), quel segmento terrebbe la voce di prima.
+ * Un'app nuova manda sempre la chiave (anche `null`, un segmento senza voce), e li' non si tocca niente.
+ */
+function keepSpeakers(change: Change, stored: Map<string, Map<string, string>>): unknown[] {
+  const segments = change.segments ?? [];
+  const byIdentity = stored.get(change.id);
+  if (!byIdentity || !lacksSpeakers(change)) return segments;
+  return segments.map((s) => {
+    const speaker = byIdentity.get(segmentIdentity(s as Record<string, unknown>));
+    return speaker ? { ...(s as Record<string, unknown>), speaker } : s;
+  });
 }
 
 async function segmentChunkCounts(env: Env, ownerId: string, transcriptIds: string[]): Promise<Map<string, number>> {

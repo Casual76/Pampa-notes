@@ -141,7 +141,7 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
     }
 
     // I capitoli che cominciano in questo pezzo, prima del testo: e' la mappa di quello che segue.
-    if (chapters.isNotEmpty()) append(chapterLines.section(chapters)).append(NL)
+    if (chapters.isNotEmpty()) append(chapterLines.section(chapters, session)).append(NL)
 
     append(blocksText(session, piece.blocks, announceFirst = piece.index > 1)).append(NL)
 
@@ -181,7 +181,7 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
       if (options.timestamps && !session.hasTimings) append("> ").append(labels.refinedHasNoTimings).append(NL).append(NL)
       // I capitoli, solo dove i tempi si stampano: senza, non si potrebbero seguire nel testo.
       if (options.timestamps) {
-        chapterLines.of(session).takeIf { it.isNotEmpty() }?.let { append(chapterLines.section(it, level = 4)).append(NL) }
+        chapterLines.of(session).takeIf { it.isNotEmpty() }?.let { append(chapterLines.section(it, session, level = 4)).append(NL) }
       }
       append(blocksText(session, TranscriptPieces.blocks(session, options), announceFirst = false)).append(NL)
     }
@@ -251,18 +251,10 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
       // Il nome dato alla voce («Rinomina le voci») al posto di «Voce N», con la punteggiatura del
       // Markdown neutralizzata: un «*» in un nome chiuderebbe il grassetto a meta'.
       block.voice?.let { number ->
-        val label = block.voiceName?.let(::escapeInline) ?: labels.voice.replace("%1\$d", number.toString())
+        val label = block.voiceName?.let { escapeInline(it) } ?: labels.voice.replace("%1\$d", number.toString())
         append("**").append(label).append(":** ")
       }
       append(block.text)
-    }
-  }
-
-  /** Un testo scritto dall'utente dentro una riga di Markdown, coi segni che contano resi letterali. */
-  private fun escapeInline(text: String): String = buildString {
-    text.forEach { char ->
-      if (char in MARKDOWN_INLINE) append('\\')
-      append(char)
     }
   }
 
@@ -341,6 +333,18 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
 
     /** I segni che dentro una riga cambiano il senso del testo: enfasi, codice, collegamenti, HTML. */
     private const val MARKDOWN_INLINE = "\\`*_[]<>"
+
+    /**
+     * Un testo scritto dall'utente dentro una riga di Markdown, coi segni che contano resi letterali.
+     * Lo usano il paragrafo (`**Marco:**`) e la riga dei capitoli ([ChapterLines]): lo stesso nome
+     * deve uscire uguale nei due posti.
+     */
+    internal fun escapeInline(text: String): String = buildString {
+      text.forEach { char ->
+        if (char in MARKDOWN_INLINE) append('\\')
+        append(char)
+      }
+    }
 
     /** Una stringa YAML sempre fra virgolette: un titolo con i due punti dentro romperebbe il documento. */
     fun yaml(value: String): String = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""

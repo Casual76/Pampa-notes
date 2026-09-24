@@ -680,6 +680,52 @@ class ContainerTest(unittest.TestCase):
             self.assertEqual(install.main(["--app", folder, "--console"]), install.EXIT_CONTAINER)
         self.assertIn("Claude_x", install.container_message("Claude_x"))
 
+    @staticmethod
+    def iss_relaunch_script(command: str, folder: str) -> str:
+        """Lo script di `RelaunchOutside` com'e' scritto nel setup, con `Command` e `Folder` al loro posto."""
+        text = (HERE / "PampaCompanion.iss").read_text(encoding="utf-8")
+        body = text.split("function RelaunchOutside", 1)[1].split("\nend;", 1)[0]
+        expression = re.search(r"Script := (.*?);\n", body, re.S).group(1)
+        values = {"Command": command, "Folder": folder}
+        parts: list[str] = []
+        # Solo stringhe Pascal ('' e' un apice) e i due nomi, uniti da +.
+        for literal, name in re.findall(r"'((?:[^']|'')*)'|([A-Za-z]+)", expression):
+            parts.append(literal.replace("''", "'") if not name else values[name])
+        return "".join(parts)
+
+    @unittest.skipUnless(sys.platform == "win32", "lo script e' PowerShell")
+    def test_the_setup_relaunch_fails_when_wmi_fails(self) -> None:
+        import subprocess
+
+        script = self.iss_relaunch_script('"C:\\Setup.exe" /FUORI', "C:\\Temp")
+        self.assertIn("CommandLine = '\"C:\\Setup.exe\" /FUORI'", script)
+
+        # Una funzione con lo stesso nome vince sul cmdlet: WMI finto, lo script del setup vero.
+        def exit_code(fake: str) -> int:
+            with tempfile.TemporaryDirectory() as folder:
+                path = Path(folder) / "fuori.ps1"
+                path.write_text(f"function Invoke-CimMethod {{ {fake} }}\n{script}", encoding="utf-8")
+                done = subprocess.run(
+                    ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(path)],
+                    capture_output=True, timeout=60,
+                )
+            return done.returncode
+
+        # Prima `exit $r.ReturnValue` con $r vuoto usciva 0, e il setup si chiudeva senza ripartire.
+        self.assertEqual(exit_code("Write-Error 'accesso negato'"), 1)
+        self.assertEqual(exit_code("throw 'WMI fermo'"), 1)
+        self.assertEqual(exit_code("$null"), 1)
+        self.assertEqual(exit_code("[pscustomobject]@{ ReturnValue = 8 }"), 8)
+        self.assertEqual(exit_code("[pscustomobject]@{ ReturnValue = 0 }"), 0)
+
+    def test_the_setup_stops_when_the_relaunch_fails(self) -> None:
+        text = (HERE / "PampaCompanion.iss").read_text(encoding="utf-8")
+        body = text.split("function InitializeSetup", 1)[1].split("\nend;", 1)[0]
+        # Rilanciato: esce senza dire niente. Non rilanciato: si ferma lo stesso (Result resta False) e lo dice.
+        self.assertIn("Result := False;\n  if RelaunchOutside then", body)
+        self.assertIn("MsgBox(", body)
+        self.assertNotIn("Result := True;\n  end", body)
+
 
 # --- la disinstallazione ---------------------------------------------------------------------------------
 
@@ -690,15 +736,29 @@ class UninstallModelsTest(unittest.TestCase):
         import os
         import subprocess
 
-        with tempfile.TemporaryDirectory() as hub, tempfile.TemporaryDirectory() as app:
+        with tempfile.TemporaryDirectory() as hub, tempfile.TemporaryDirectory() as app, \
+                tempfile.TemporaryDirectory() as torch:
             ours = ["models--Systran--faster-whisper-large-v3", "models--pyannote--speaker-diarization-community-1",
-                    "models--jonatasgrosman--wav2vec2-large-xlsr-53-italian"]
-            theirs = ["models--openai--whisper-large-v3", "models--meta-llama--Llama-3.1-8B", "datasets--x--y"]
+                    "models--jonatasgrosman--wav2vec2-large-xlsr-53-italian",
+                    # distil-large-v3 e large-v3-turbo: stessi pesi di large, altri autori e altri nomi.
+                    "models--Systran--faster-distil-whisper-large-v3",
+                    "models--mobiuslabsgmbh--faster-whisper-large-v3-turbo"]
+            theirs = ["models--openai--whisper-large-v3", "models--meta-llama--Llama-3.1-8B", "datasets--x--y",
+                      "models--mobiuslabsgmbh--altro-modello"]
             for name in ours + theirs:
                 (Path(hub) / name / "blobs").mkdir(parents=True)
                 (Path(hub) / name / "blobs" / "a").write_text("x", encoding="utf-8")
             (Path(hub) / ".locks" / ours[0]).mkdir(parents=True)
-            env = dict(os.environ, HF_HUB_CACHE=hub)
+            # Gli allineatori di torchaudio: file sciolti nella cache di torch, accanto a quelli di altri.
+            checkpoints = Path(torch) / "hub" / "checkpoints"
+            checkpoints.mkdir(parents=True)
+            our_files = ["wav2vec2_fairseq_base_ls960_asr_ls960.pth", "wav2vec2_voxpopuli_base_10k_asr_it.pt",
+                         "voxpopuli_prova.pt"]
+            their_files = ["resnet50-0676ba61.pth", "hubert_fairseq_base_ls960.pth"]
+            for name in our_files + their_files:
+                (checkpoints / name).write_text("x", encoding="utf-8")
+            # TORCH_HOME sempre: senza, la prova toglierebbe gli allineatori veri di questo PC.
+            env = dict(os.environ, HF_HUB_CACHE=hub, TORCH_HOME=torch)
             done = subprocess.run(
                 ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(HERE / "uninstall-helper.ps1"),
                  "-App", app, "-Action", "purge-models"],
@@ -708,6 +768,7 @@ class UninstallModelsTest(unittest.TestCase):
             left = sorted(entry.name for entry in Path(hub).iterdir() if entry.name != ".locks")
             self.assertEqual(left, sorted(theirs))
             self.assertEqual(list((Path(hub) / ".locks").iterdir()), [])
+            self.assertEqual(sorted(entry.name for entry in checkpoints.iterdir()), sorted(their_files))
 
     def test_the_uninstaller_asks_and_removes_an_empty_data_folder(self) -> None:
         text = (HERE / "PampaCompanion.iss").read_text(encoding="utf-8")

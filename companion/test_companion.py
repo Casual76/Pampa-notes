@@ -21,6 +21,8 @@ import json
 import math
 import os
 import socket
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -3189,6 +3191,48 @@ class FuoriLoopTest(unittest.TestCase):
         relaunches, _ = self.run_avvio(["avvio.pyw", fuori.RELAUNCHED], "Claude_pzs8sxrjxfjjc")
         self.assertEqual(relaunches, [])
 
+    def test_avvio_goes_on_when_the_relaunch_fails(self) -> None:
+        avvio = load_avvio()
+        lines: list[str] = []
+        with mock.patch.object(avvio.sys, "argv", ["avvio.pyw"]), \
+                mock.patch.object(fuori, "redirected_to", return_value="Claude_pzs8sxrjxfjjc"), \
+                mock.patch.object(fuori, "relaunch_outside", return_value=False), \
+                mock.patch.object(avvio, "healthy", return_value=True), mock.patch.object(avvio, "log", lines.append):
+            avvio.main()
+        self.assertFalse(any("rilanciato fuori" in line for line in lines), lines)
+        self.assertTrue(any("WMI ha rifiutato" in line for line in lines), lines)
+        # E' andato avanti: ha guardato il server (che risponde) invece di uscire subito.
+        self.assertTrue(any("risponde gia'" in line for line in lines), lines)
+
+    @unittest.skipUnless(sys.platform == "win32", "lo script e' PowerShell")
+    def test_the_relaunch_script_fails_when_wmi_fails(self) -> None:
+        script = fuori.relaunch_script(["python.exe", "avvio.pyw", fuori.RELAUNCHED], Path("C:/Prova d'autore"))
+
+        # Una funzione con lo stesso nome vince sul cmdlet: WMI finto, lo script vero.
+        def exit_code(fake: str) -> int:
+            done = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                 f"function Invoke-CimMethod {{ {fake} }}; {script}"],
+                capture_output=True, timeout=60,
+            )
+            return done.returncode
+
+        # Prima `exit $r.ReturnValue` con $r vuoto usciva 0, e il chiamante si credeva rilanciato.
+        self.assertEqual(exit_code("throw 'WMI fermo'"), 1)
+        self.assertEqual(exit_code("Write-Error 'accesso negato'"), 1, "un errore non terminante conta lo stesso")
+        self.assertEqual(exit_code("$null"), 1)
+        self.assertEqual(exit_code("[pscustomobject]@{ ReturnValue = 9 }"), 9)
+        self.assertEqual(exit_code("param($ClassName, $MethodName, $Arguments) "
+                                   "if ($Arguments.CurrentDirectory -ne 'C:\\Prova d''autore') { throw 'cartella' }; "
+                                   "[pscustomobject]@{ ReturnValue = 0 }"), 0)
+
+    def test_relaunch_outside_is_false_when_powershell_fails(self) -> None:
+        failed = subprocess.CompletedProcess(args=[], returncode=1)
+        with mock.patch.object(fuori.subprocess, "run", return_value=failed):
+            self.assertFalse(fuori.relaunch_outside(["x.exe"], Path(".")))
+        with mock.patch.object(fuori.subprocess, "run", side_effect=OSError("niente powershell")):
+            self.assertFalse(fuori.relaunch_outside(["x.exe"], Path(".")))
+
     def test_avvio_inside_store_python_goes_on(self) -> None:
         relaunches, lines = self.run_avvio(["avvio.pyw"], self.STORE)
         self.assertEqual(relaunches, [], "dallo Store non si esce: rilanciarsi sarebbe un giro senza fine")
@@ -3359,8 +3403,8 @@ class DiarizationTest(StateMixin, unittest.TestCase):
                  (RepositoryNotFoundError("401"), False, "non riconosce"), (OSError("rete"), False, "Non riesco")]
         for error, ok, words in cases:
             with mock.patch.object(huggingface_hub, "auth_check", side_effect=error):
-                self.assertEqual(server.check_diarization_access("hf_x")[0], ok)
-                self.assertIn(words, server.check_diarization_access("hf_x")[1])
+                self.assertEqual(server.check_diarization_access("hf_segreto")[0], ok)
+                self.assertIn(words, server.check_diarization_access("hf_segreto")[1])
 
     @staticmethod
     def http_error(status: int) -> BaseException:
@@ -3379,7 +3423,7 @@ class DiarizationTest(StateMixin, unittest.TestCase):
             for status, words in cases:
                 server.STATE["diarization_denied"] = False
                 with mock.patch.object(huggingface_hub, "auth_check", side_effect=self.http_error(status)):
-                    ok, message = server.check_diarization_access("hf_x")
+                    ok, message = server.check_diarization_access("hf_segreto")
                 self.assertFalse(ok)
                 self.assertIn(words, message)
                 self.assertNotIn("Non riesco", message, "un rifiuto non e' «riprova piu' tardi»")
@@ -3389,12 +3433,33 @@ class DiarizationTest(StateMixin, unittest.TestCase):
                 self.assertIsNone(server.diarize_request("1"))
             # Un errore di rete non dice niente del token: il rifiuto resta com'era.
             with mock.patch.object(huggingface_hub, "auth_check", side_effect=self.http_error(503)):
-                self.assertIn("Non riesco", server.check_diarization_access("hf_x")[1])
+                self.assertIn("Non riesco", server.check_diarization_access("hf_segreto")[1])
             self.assertTrue(server.STATE["diarization_denied"])
             # Un controllo riuscito le riaccende.
             with mock.patch.object(huggingface_hub, "auth_check", return_value=None):
-                self.assertTrue(server.check_diarization_access("hf_x")[0])
+                self.assertTrue(server.check_diarization_access("hf_segreto")[0])
             self.assertTrue(server.diarization_available())
+
+    def test_a_late_answer_for_a_replaced_token_changes_nothing(self) -> None:
+        import huggingface_hub
+
+        # Il controllo del token di prima torna dopo che dal menu se n'e' salvato un altro.
+        server.STATE.update(hf_token="hf_nuovo", diarization_denied=False)
+        with mock.patch.object(huggingface_hub, "auth_check", side_effect=self.http_error(401)):
+            ok, message = server.check_diarization_access("hf_vecchio")
+        self.assertFalse(ok)
+        self.assertIn("Token non valido", message, "a chi l'ha chiesto si risponde lo stesso")
+        self.assertFalse(server.STATE["diarization_denied"], "il rifiuto era del token di prima")
+        # E un «va bene» tardivo non riaccende le voci per un token rifiutato.
+        server.STATE["diarization_denied"] = True
+        with mock.patch.object(huggingface_hub, "auth_check", return_value=None):
+            self.assertTrue(server.check_diarization_access("hf_vecchio")[0])
+        self.assertTrue(server.STATE["diarization_denied"])
+        # Tolto il token mentre si controllava: niente si scrive.
+        server.STATE.update(hf_token=None, diarization_denied=False)
+        with mock.patch.object(huggingface_hub, "auth_check", side_effect=self.http_error(403)):
+            server.check_diarization_access("hf_vecchio")
+        self.assertFalse(server.STATE["diarization_denied"])
 
     def test_a_lesson_refused_by_hugging_face_takes_the_voices_off(self) -> None:
         def refused(_device: str):

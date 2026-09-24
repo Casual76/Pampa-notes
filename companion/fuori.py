@@ -88,18 +88,37 @@ def container_to_leave(argv: list[str]) -> tuple[str | None, bool]:
     return boxed, not inescapable(boxed)
 
 
-def relaunch_outside(args: list[str], cwd: Path) -> bool:
+def relaunch_script(args: list[str], cwd: Path) -> str:
     """
-    Rilancia `args` attraverso WMI (`Win32_Process.Create`): il processo nasce dal servizio di
-    Windows e non eredita il contenitore di chi lo chiede. True se WMI ha accettato.
+    Lo script PowerShell che rilancia `args` con WMI ed esce con 0 solo se il processo e' nato.
+
+    Prima era `$r = Invoke-CimMethod …; exit $r.ReturnValue`: se `Invoke-CimMethod` falliva (WMI
+    fermo, accesso negato) `$r` restava vuoto, `exit $null` e' `exit 0`, e chi chiamava si credeva
+    rilanciato e usciva — col companion che non ripartiva da nessuna parte. Adesso ogni errore e'
+    terminante (`$ErrorActionPreference = 'Stop'`: molti errori di CIM non lo sono, e il `catch` non
+    li vedrebbe), un risultato vuoto e' un fallimento, e `ReturnValue` e' il codice di WMI (0 = fatto).
+    Lo stesso script sta in `installer/PampaCompanion.iss` (`RelaunchOutside`).
     """
     command = subprocess.list2cmdline(args).replace("'", "''")
     folder = str(cwd).replace("'", "''")
-    script = (
+    return (
+        "$ErrorActionPreference = 'Stop'; "
+        "try { "
         "$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create "
         f"-Arguments @{{ CommandLine = '{command}'; CurrentDirectory = '{folder}' }}; "
-        "exit $r.ReturnValue"
+        "if ($null -eq $r) { exit 1 }; "
+        "exit [int]$r.ReturnValue "
+        "} catch { exit 1 }"
     )
+
+
+def relaunch_outside(args: list[str], cwd: Path) -> bool:
+    """
+    Rilancia `args` attraverso WMI (`Win32_Process.Create`): il processo nasce dal servizio di
+    Windows e non eredita il contenitore di chi lo chiede. True solo se WMI ha davvero creato il
+    processo ([relaunch_script]): chi riceve True esce, e un True sbagliato lascia il PC senza companion.
+    """
+    script = relaunch_script(args, cwd)
     try:
         done = subprocess.run(
             ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],

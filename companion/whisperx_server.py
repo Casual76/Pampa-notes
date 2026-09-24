@@ -3835,11 +3835,24 @@ def check_diarization_access(token: str) -> tuple[bool, str]:
     except Exception as error:  # noqa: BLE001 — rete assente, Hugging Face giu': non e' colpa del token
         denied = denial_message(error)
         if denied is not None:
-            STATE["diarization_denied"] = True
+            _set_denied_for(token, True)
             return False, denied
         return False, _scrub(f"Non riesco a controllare adesso ({type(error).__name__}): il token e' salvato, si provera' alla prima registrazione.")
-    STATE["diarization_denied"] = False
+    _set_denied_for(token, False)
     return True, "Tutto pronto: le registrazioni che l'app manda torneranno con le voci separate."
+
+
+def _set_denied_for(token: str, denied: bool) -> None:
+    """
+    Scrive l'esito di un controllo solo se il token controllato e' ancora quello in uso.
+
+    Il controllo gira su un thread e dura secondi: nel frattempo il token si puo' cambiare o togliere
+    dal menu. Senza questa guardia un «rifiutato» arrivato tardi per il token di prima spegneva le
+    voci col token nuovo (buono) appena salvato, e un «va bene» tardivo le riaccendeva per uno
+    rifiutato. L'esito di un token che non c'e' piu' non dice niente di quello di adesso.
+    """
+    if STATE.get("hf_token") == token:
+        STATE["diarization_denied"] = denied
 
 
 class DiarizerAccessDenied(RuntimeError):

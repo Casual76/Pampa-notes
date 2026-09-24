@@ -223,6 +223,18 @@ class SessionRepositoryTest {
   }
 
   @Test
+  fun togliere_una_parte_porta_via_i_nomi_delle_sue_voci() = runTest {
+    val session = seedSession("sessione", parts = listOf("prima" to 30L, "seconda" to 20L))
+    repository.renameVoice(session, VoiceNames.key("prima", "SPEAKER_00"), "Marco")
+    repository.renameVoice(session, VoiceNames.key("seconda", "SPEAKER_01"), "Giulia")
+
+    repository.deletePart("prima")
+
+    // Il nome di Marco era della registrazione tolta: non resta nella colonna, ne' fra i suggerimenti.
+    assertEquals(mapOf(VoiceNames.key("seconda", "SPEAKER_01") to "Giulia"), VoiceNames.decode(db.sessions().get(session)!!.voiceNames))
+  }
+
+  @Test
   fun la_trascrizione_mostrata_resta_una_che_esiste() = runTest {
     val session = seedSession("sessione", parts = listOf("prima" to 30L, "seconda" to 20L))
     val raw = transcribe(session, listOf("prima" to "L'inizio.", "seconda" to "Il seguito."))

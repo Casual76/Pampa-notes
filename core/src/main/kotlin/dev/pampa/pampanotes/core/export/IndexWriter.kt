@@ -89,8 +89,9 @@ class IndexWriter(private val labels: ExportLabels = ExportLabels()) {
   private fun chaptersOf(session: ExportSession, pieces: List<TranscriptFile>, layout: BundleLayout): String = buildString {
     // Solo se i tempi si stampano: un indice di tempi su un testo senza tempi non si segue.
     if (pieces.none { it.startMs != null }) return@buildString
+    val names = chapterLines.namesOf(session)
     chapterLines.of(session).forEach { chapter ->
-      append("  - ").append(labels.chapter).append(' ').append(chapter.number).append(" · ").append(chapterLines.line(chapter))
+      append("  - ").append(labels.chapter).append(' ').append(chapter.number).append(" · ").append(chapterLines.line(chapter, names))
       if (pieces.size > 1) {
         pieces.lastOrNull { piece -> piece.startMs?.let { it <= chapter.startMs } == true }?.let { piece ->
           append(" · ").append(mdLink("${piece.index} ${labels.of} ${piece.count}", layout.link(INDEX, piece.path)))

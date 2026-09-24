@@ -220,6 +220,13 @@ class SessionRepository @Inject constructor(
     segments.deleteByPart(partId)
     parts.delete(partId)
     runCatching { files.audioFile(part.fileName).delete() }
+    // I nomi dati alle voci di quella registrazione se ne vanno con lei: la chiave e' della parte
+    // (`VoiceNames.key`), e restati nella colonna non li mostrava nessuno ma viaggiavano col sync e
+    // tornavano fra le scorciatoie di «Chi e' Voce 2?» come se qualcuno parlasse ancora.
+    sessions.get(sessionId)?.let { session ->
+      val kept = VoiceNames.forget(session.voiceNames, listOf(partId))
+      if (kept != session.voiceNames) sessions.setVoiceNames(sessionId, kept, System.currentTimeMillis())
+    }
     renumber(parts.bySession(sessionId))
     rebuildRaw(sessionId)
     deleteIfEmpty(sessionId)
