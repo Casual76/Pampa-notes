@@ -302,7 +302,7 @@
     <item quantity="other">note raccolte</item>
   </plurals>
   <string name="home_hero_description">Pronte da dare a un assistente come fonti.</string>
-  <string name="home_metric_folders">Cartelle</string>
+  <string name="home_metric_folders">Materie</string>
   <string name="home_metric_jobs">In corso</string>
   <string name="home_metric_hours">Di lezione</string>
   <string name="home_metric_words">Parole</string>

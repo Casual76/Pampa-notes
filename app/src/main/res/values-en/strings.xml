@@ -283,7 +283,7 @@
     <item quantity="other">notes collected</item>
   </plurals>
   <string name="home_hero_description">Ready to hand to an assistant as sources.</string>
-  <string name="home_metric_folders">Folders</string>
+  <string name="home_metric_folders">Subjects</string>
   <string name="home_metric_jobs">Running</string>
   <string name="home_metric_hours">Of lessons</string>
   <string name="home_metric_words">Words</string>
