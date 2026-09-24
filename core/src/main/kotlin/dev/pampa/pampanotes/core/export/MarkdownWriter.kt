@@ -231,6 +231,9 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
         }
       }
       block.startMs?.let { append('[').append(timestamp(it)).append("] ") }
+      // «Chi parla»: davanti a ogni paragrafo, non solo al cambio. Un assistente cita un paragrafo
+      // alla volta, e un «ha detto» senza chi l'ha detto nel paragrafo stesso si perde.
+      block.voice?.let { append("**").append(labels.voice.replace("%1\$d", it.toString())).append(":** ") }
       append(block.text)
     }
   }

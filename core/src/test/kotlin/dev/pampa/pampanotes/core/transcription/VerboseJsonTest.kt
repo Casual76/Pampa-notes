@@ -1,5 +1,6 @@
 package dev.pampa.pampanotes.core.transcription
 
+import dev.pampa.pampanotes.core.audio.ChunkSpec
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -148,5 +149,36 @@ class ProviderConfigTest {
     // Un catalogo che cambia nomi non deve lasciare l'app senza modello.
     assertEquals("whisper-next", GroqWhisperProvider.pickModel(listOf("llama-4", "whisper-next")))
     assertEquals(null, GroqWhisperProvider.pickModel(listOf("llama-4")))
+  }
+
+  @Test
+  fun `la voce del companion si legge, e vuota vale come assente`() {
+    val result = VerboseJson.parse(
+      Json.parseToJsonElement(
+        """
+        {"text":"a b","segments":[
+          {"start":0.0,"end":1.0,"text":"a","speaker":"SPEAKER_01"},
+          {"start":1.0,"end":2.0,"text":"b","speaker":""},
+          {"start":2.0,"end":3.0,"text":"c"}
+        ]}
+        """.trimIndent(),
+      ),
+    )
+    assertEquals(listOf("SPEAKER_01", null, null), result.segments.map { it.speaker })
+  }
+
+  @Test
+  fun `le voci di due pezzi mandati a parte non si confondono`() {
+    val stitched = TranscriptStitcher.stitch(
+      listOf(
+        ChunkTranscript(ChunkSpec(0, 0, 60_000), listOf(RawSegment(1_000, 3_000, "Primo.", speaker = "SPEAKER_00"))),
+        ChunkTranscript(ChunkSpec(1, 60_000, 120_000), listOf(RawSegment(1_000, 3_000, "Secondo.", speaker = "SPEAKER_00"))),
+      ),
+    )
+    assertEquals(listOf("0:SPEAKER_00", "1:SPEAKER_00"), stitched.segments.map { it.speaker })
+    val single = TranscriptStitcher.stitch(
+      listOf(ChunkTranscript(ChunkSpec(0, 0, 60_000), listOf(RawSegment(1_000, 3_000, "Solo.", speaker = "SPEAKER_00")))),
+    )
+    assertEquals("SPEAKER_00", single.segments.single().speaker)
   }
 }

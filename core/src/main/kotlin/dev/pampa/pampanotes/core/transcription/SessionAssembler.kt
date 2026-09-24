@@ -100,6 +100,7 @@ object SessionAssembler {
           avgLogProb = segment.avgLogProb,
           wordsEncoded = WordTimings.encode(filled.words, originMs = segment.startMs),
           wordsEstimated = filled.estimated,
+          speaker = segment.speaker,
         )
       }
       if (transcript.text.isNotBlank()) texts += transcript.text

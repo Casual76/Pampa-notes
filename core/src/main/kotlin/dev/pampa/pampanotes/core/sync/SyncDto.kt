@@ -6,6 +6,7 @@ import dev.pampa.pampanotes.core.db.SegmentEntity
 import dev.pampa.pampanotes.core.files.Hashing
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -204,11 +205,28 @@ object SyncCodec {
    */
   fun transcriptHash(payloadHash: String, segments: List<SegmentEntity>): String {
     if (segments.isEmpty()) return payloadHash
+    val digest = Hashing.sha256(canonicalSegments(segments))
+    return Hashing.sha256("$payloadHash:$digest")
+  }
+
+  /**
+   * I segmenti come entrano nell'impronta: in ordine, senza id, e senza le colonne nuove quando sono
+   * vuote. `speaker` (database 10) e' null in ogni trascrizione di prima: scritto come `null`,
+   * l'aggiornamento avrebbe cambiato l'impronta di tutte le trascrizioni di tutti, e ognuna sarebbe
+   * risalita come «cambiata». Piena, conta: e' cosi' che le voci separate arrivano agli altri.
+   */
+  internal fun canonicalSegments(segments: List<SegmentEntity>): String {
     val canonical = segments
       .map { it.copy(id = 0) }
       .sortedWith(compareBy({ it.sessionStartMs }, { it.partId }, { it.indexInPart }, { it.partStartMs }))
-    val digest = Hashing.sha256(json.encodeToString(SEGMENTS, canonical))
-    return Hashing.sha256("$payloadHash:$digest")
+    val encoded = json.encodeToJsonElement(SEGMENTS, canonical) as JsonArray
+    val stripped = JsonArray(
+      encoded.map { element ->
+        val obj = element as? JsonObject ?: return@map element
+        if (obj["speaker"] is JsonNull) JsonObject(obj - "speaker") else obj
+      },
+    )
+    return json.encodeToString(JsonElement.serializer(), stripped)
   }
 
   private val SEGMENTS = kotlinx.serialization.builtins.ListSerializer(SegmentEntity.serializer())

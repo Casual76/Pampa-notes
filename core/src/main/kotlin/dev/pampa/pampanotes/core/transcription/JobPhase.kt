@@ -76,7 +76,7 @@ sealed interface JobPhase {
     }
 
     override val stepPercent: Int?
-      get() = percent.takeIf { stage == RemoteStage.TRANSCRIBING || stage == RemoteStage.ALIGNING }
+      get() = percent.takeIf { stage == RemoteStage.TRANSCRIBING || stage == RemoteStage.ALIGNING || stage == RemoteStage.DIARIZING }
   }
 
   data class Refining(val chunk: Int, val chunks: Int) : JobPhase {

@@ -226,6 +226,32 @@ class MigrationTest {
     }
   }
 
+  @Test
+  fun migrazione9a10_i_segmenti_di_prima_non_hanno_voce() {
+    helper.createDatabase(NAME, 9).use { db ->
+      db.execSQL("INSERT INTO folders (id, name, sortOrder, createdAt, updatedAt) VALUES ('f', 'Riunioni', 0, 1, 1)")
+      db.execSQL("INSERT INTO notes (id, folderId, title, body, pinned, createdAt, updatedAt) VALUES ('n', 'f', 'Martedi', '', 0, 1, 1)")
+      db.execSQL("INSERT INTO sessions (id, noteId, title, date, position, createdAt, updatedAt) VALUES ('s', 'n', '', '2026-09-24', 0, 1, 1)")
+      db.execSQL(
+        "INSERT INTO transcripts (id, sessionId, kind, provider, model, text, wordCount, status, createdAt) " +
+          "VALUES ('t', 's', 'RAW', 'custom', 'large-v3', 'ciao', 1, 'OK', 1)",
+      )
+      db.execSQL(
+        "INSERT INTO segments (transcriptId, partId, indexInPart, partStartMs, partEndMs, sessionStartMs, sessionEndMs, text, wordsEstimated) " +
+          "VALUES ('t', 'p', 0, 0, 1000, 0, 1000, 'ciao', 0)",
+      )
+    }
+
+    helper.runMigrationsAndValidate(NAME, 10, true).use { db ->
+      db.query("SELECT text, speaker FROM segments").use { cursor ->
+        cursor.moveToFirst()
+        assertEquals("ciao", cursor.getString(0))
+        // Nessuno aveva separato le voci: vuota, e l'impronta della trascrizione resta quella di prima.
+        assertNull(cursor.getString(1))
+      }
+    }
+  }
+
   private companion object {
     const val NAME = "migration-test.db"
   }

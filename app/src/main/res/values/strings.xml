@@ -394,6 +394,7 @@
   <string name="job_phase_remote_loading">il computer carica il modello</string>
   <string name="job_phase_remote_transcribing">trascrivo · %1$d%%</string>
   <string name="job_phase_remote_aligning">allineo le parole · %1$d%%</string>
+  <string name="job_phase_remote_diarizing">separo le voci · %1$d%%</string>
   <string name="job_phase_remote_done">il computer ha finito, arriva il testo</string>
   <string name="job_phase_remote_failed">il computer si è fermato</string>
   <string name="job_phase_remote_cpu">sul processore</string>
@@ -573,6 +574,7 @@
   <string name="session_no_transcript_elsewhere">Si trascrive dal dispositivo che ha la registrazione, o da qui quando sarà arrivata al computer di casa.</string>
   <string name="session_silence">— %1$s di silenzio —</string>
   <string name="session_silence_hours">h</string>
+  <string name="session_voice">Voce %1$d</string>
   <string name="session_silence_resume">%1$s. Tocca per riprendere dal minuto %2$s</string>
 
   <!-- Le parti di una sessione -->
@@ -1210,6 +1212,14 @@
   <string name="home_stats_speed_detail_single_elsewhere">il tempo reale, da %1$s</string>
   <!-- apptx -->
   <string name="settings_custom_chunk_on_computer">Con il companion aggiornato i pezzi li taglia il computer, e una registrazione che ha già nel suo archivio non passa dal telefono: qui non si decodifica niente.</string>
+  <string name="settings_speakers_header">Chi parla</string>
+  <string name="settings_speakers_detail">Separa le voci: «Voce 1», «Voce 2»</string>
+  <string name="settings_speakers_personal">Registrazioni</string>
+  <string name="settings_speakers_always">Sempre</string>
+  <string name="settings_speakers_never">Mai</string>
+  <string name="settings_speakers_ready">Il computer di casa separa le voci dopo aver trascritto, e ogni paragrafo dice di chi è. Solo il computer: con Groq le registrazioni tornano senza voci.</string>
+  <string name="settings_speakers_needs_token">Il computer di casa non sa ancora farlo: sul PC, nel menu dell\'icona, «Separazione delle voci…» chiede un token gratuito di Hugging Face.</string>
+  <string name="settings_speakers_unknown">Lo fa solo il computer di casa, con un token gratuito di Hugging Face (sul PC: menu dell\'icona, «Separazione delle voci…»). Con Groq le registrazioni tornano senza voci.</string>
 
   <!-- compOnly -->
   <string name="computer_only_on">Solo sul computer</string>

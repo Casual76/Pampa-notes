@@ -285,6 +285,7 @@ class SessionRepository @Inject constructor(
           avgLogProb = segment.avgLogProb,
           wordsJson = segment.wordsEncoded,
           wordsEstimated = segment.wordsEstimated,
+          speaker = segment.speaker,
         )
       },
     )
@@ -365,6 +366,7 @@ class SessionRepository @Inject constructor(
               avgLogProb = segment.avgLogProb,
               wordsJson = segment.wordsEncoded,
               wordsEstimated = segment.wordsEstimated,
+              speaker = segment.speaker,
             )
           },
       )
@@ -412,6 +414,7 @@ class SessionRepository @Inject constructor(
     // ricomporre una sessione non cambia nulla di quel riferimento.
     wordsEncoded = entity.wordsJson,
     wordsEstimated = entity.wordsEstimated,
+    speaker = entity.speaker,
   )
 
   /** Una grezza nuova che eredita l'anagrafica dalle trascrizioni da cui i segmenti vengono. */

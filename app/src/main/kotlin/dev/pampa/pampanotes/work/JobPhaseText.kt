@@ -88,6 +88,7 @@ object JobPhaseText {
       RemoteStage.LOADING_MODEL -> context.getString(R.string.job_phase_remote_loading)
       RemoteStage.TRANSCRIBING -> context.getString(R.string.job_phase_remote_transcribing, phase.percent)
       RemoteStage.ALIGNING -> context.getString(R.string.job_phase_remote_aligning, phase.percent)
+      RemoteStage.DIARIZING -> context.getString(R.string.job_phase_remote_diarizing, phase.percent)
       RemoteStage.DONE -> context.getString(R.string.job_phase_remote_done)
       RemoteStage.FAILED -> context.getString(R.string.job_phase_remote_failed)
     }
@@ -98,7 +99,7 @@ object JobPhaseText {
     return join(partLabel(context, phase.part, phase.parts), chunkLabel(context, phase.chunk, phase.chunks), step, cpu, eta)
   }
 
-  private val WORKING = setOf(RemoteStage.LOADING_MODEL, RemoteStage.TRANSCRIBING, RemoteStage.ALIGNING)
+  private val WORKING = setOf(RemoteStage.LOADING_MODEL, RemoteStage.TRANSCRIBING, RemoteStage.ALIGNING, RemoteStage.DIARIZING)
 
   /** «ancora 40 s», «ancora 3 min»: arrotondato in su, perche' «ancora 0 min» con la barra ferma e' peggio. */
   fun etaText(context: Context, seconds: Int): String = if (seconds < 60) {

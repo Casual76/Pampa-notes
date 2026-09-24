@@ -42,6 +42,13 @@ data class TranscribeRequest(
    */
   val prompt: String? = null,
   val temperature: Double = 0.0,
+  /**
+   * «Chi parla»: chiedere al computer di casa di separare le voci (`diarize=1`). Lo decide
+   * [dev.pampa.pampanotes.core.repo.TranscriptionRepository.requestFor] dalla preferenza e dalla
+   * sezione della nota; [TranscriptionRunner] lo manda solo a un companion che dichiara
+   * [CompanionFeatures.DIARIZE], e mai a Groq, che non saprebbe cosa farne.
+   */
+  val diarize: Boolean = false,
 )
 
 /** Un pezzo di testo con i suoi tempi, come lo restituisce il servizio. */
@@ -59,6 +66,12 @@ data class RawSegment(
    * produce. Chi non le ha se le fa stimare da [WordTimings], cosi' la UI ha una strada sola.
    */
   val words: List<RawWord> = emptyList(),
+  /**
+   * La voce che lo dice («SPEAKER_00»), quando il computer di casa ha separato le voci. L'etichetta
+   * vale solo dentro la stessa registrazione: la schermata la traduce in «Voce 1» parte per parte
+   * (vedi [TranscriptParagraphs]).
+   */
+  val speaker: String? = null,
 )
 
 /** Una parola con i suoi tempi. I millisecondi sono nello stesso riferimento del segmento. */
@@ -99,6 +112,8 @@ enum class RemoteStage(val code: String) {
   LOADING_MODEL("loading_model"),
   TRANSCRIBING("transcribing"),
   ALIGNING("aligning"),
+  /** «Chi parla»: separa le voci, dopo l'allineamento e solo se glielo si e' chiesto. */
+  DIARIZING("diarizing"),
   DONE("done"),
   FAILED("failed"),
   ;
@@ -191,6 +206,12 @@ object CompanionFeatures {
 
   /** Divide da se' una registrazione lunga (`max_minutes`), con la stessa regola di `ChunkPolicy`. */
   const val SERVER_CHUNKS = "server_chunks"
+
+  /**
+   * Separa le voci (`diarize=1`): ogni segmento torna con `speaker`. C'e' solo quando sul computer
+   * c'e' il token di Hugging Face che il modello chiede.
+   */
+  const val DIARIZE = "diarize"
 }
 
 /** Come caricare un file al companion quando sa fare di piu' di un server qualsiasi. */

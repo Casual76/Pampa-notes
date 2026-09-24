@@ -112,6 +112,11 @@ DEFAULTS: dict[str, Any] = {
     # d'ufficio li lascerebbe fuori senza dire perche'. Si spegne dal menu dell'icona, quando tutti
     # i dispositivi sono aggiornati.
     "accept_anonymous": False,
+    # «Chi parla»: il token di lettura di Hugging Face con cui si scarica il modello che separa le
+    # voci (pyannote, vedi `DIARIZE_MODEL` nel server). Vuoto = la separazione non c'e', e /health
+    # non la offre. Si scrive dal menu dell'icona («Separazione delle voci...») e non si stampa mai:
+    # ne' nel registro, ne' in /health, ne' in /v1/admin/settings. Vale anche la variabile HF_TOKEN.
+    "hf_token": "",
 }
 
 

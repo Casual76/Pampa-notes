@@ -89,6 +89,8 @@ object VerboseJson {
       noSpeechProb = obj["no_speech_prob"].asDouble()?.toFloat(),
       avgLogProb = obj["avg_logprob"].asDouble()?.toFloat(),
       words = parseWords(obj["words"]),
+      // «Chi parla»: solo il companion con le voci separate lo manda; vuoto vale come assente.
+      speaker = obj["speaker"].asString()?.trim()?.takeIf { it.isNotEmpty() },
     )
   }
 

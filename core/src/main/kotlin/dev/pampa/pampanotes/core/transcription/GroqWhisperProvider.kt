@@ -326,6 +326,8 @@ class OpenAiCompatProvider(
     )
     request.language?.takeIf { it.isNotBlank() }?.let { fields["language"] = it }
     request.prompt?.takeIf { it.isNotBlank() }?.let { fields["prompt"] = it }
+    // «Chi parla»: il runner lo accende solo per un companion che dichiara `diarize`.
+    if (request.diarize) fields[FIELD_DIARIZE] = "1"
     return fields
   }
 
@@ -605,6 +607,7 @@ class OpenAiCompatProvider(
     const val FIELD_ARCHIVE = "archive"
     const val FIELD_NAME = "name"
     const val FIELD_MAX_MINUTES = "max_minutes"
+    const val FIELD_DIARIZE = "diarize"
     const val MAX_MINUTES_AUTO = "auto"
 
     /** `features` di `/health`: un elenco di stringhe. Qualunque altra forma vale «niente». */

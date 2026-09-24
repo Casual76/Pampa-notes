@@ -832,6 +832,8 @@ private fun LazyListScope.transcriptBody(
       }
       ParagraphCard(
         paragraph = paragraph,
+        // «Chi parla»: la voce si dice dove cambia, non su ogni card.
+        voice = paragraph.voice?.takeIf { it != paragraphs.getOrNull(index - 1)?.voice },
         isActive = isActive,
         // Una lambda e non un valore: la posizione cambia cinque volte al secondo, e passandola come
         // parametro ogni battito rimisurerebbe il paragrafo. Cosi' cambia solo il disegno.
@@ -891,6 +893,7 @@ private fun SilenceRow(silenceMs: Long, resumeMs: Long, onSeek: (Long) -> Unit) 
 @Composable
 private fun ParagraphCard(
   paragraph: Paragraph,
+  voice: Int?,
   isActive: Boolean,
   positionMs: () -> Long,
   onSeek: (Long) -> Unit,
@@ -902,7 +905,9 @@ private fun ParagraphCard(
   val scheme = MaterialTheme.colorScheme
 
   FluidCard(highlighted = isActive, onClick = null, animateContent = false) {
-    val spoken = Formats.timestamp(paragraph.startMs)
+    val time = Formats.timestamp(paragraph.startMs)
+    // «0:42 · Voce 2»: la voce sta nella stessa riga piccola del tempo, e TalkBack la legge con lui.
+    val spoken = voice?.let { "$time · ${stringResource(R.string.session_voice, it)}" } ?: time
     val atLabel = stringResource(R.string.session_at, spoken)
     Text(
       text = spoken,
@@ -955,6 +960,9 @@ private class Paragraph(val base: TranscriptParagraphs.Paragraph) {
 
   /** Il silenzio lungo che lo precede, da dire in una riga sua; null se non c'e'. */
   val silenceBeforeMs: Long? get() = base.silenceBeforeMs
+
+  /** «Chi parla»: il numero della voce, o null senza voci separate. */
+  val voice: Int? get() = base.voice
 
   /**
    * Le parole con i loro tempi, nel tempo della sessione.

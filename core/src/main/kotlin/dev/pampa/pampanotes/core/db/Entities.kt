@@ -218,6 +218,17 @@ data class SegmentEntity(
    */
   @ColumnInfo(defaultValue = "0")
   val wordsEstimated: Boolean = false,
+  /**
+   * «Chi parla» (database 10): l'etichetta della voce data dal computer di casa («SPEAKER_00»), o
+   * null quando le voci non sono state separate — tutte le trascrizioni di prima, e quelle di Groq.
+   *
+   * Vale solo dentro la stessa parte (ogni registrazione si separa per conto suo), quindi non e' un
+   * nome ma una chiave: la schermata e l'export la traducono in «Voce 1», «Voce 2» per ordine di
+   * apparizione, parte per parte ([dev.pampa.pampanotes.core.transcription.TranscriptParagraphs]).
+   * Viaggia coi segmenti dentro il payload della trascrizione, e vuota non cambia l'impronta
+   * ([dev.pampa.pampanotes.core.sync.SyncCodec.transcriptHash]).
+   */
+  val speaker: String? = null,
 )
 
 enum class SourceKind { TEXT, MARKDOWN, PDF, DOCX, IMAGE, AUDIO, SDOCX, CLIPBOARD, SHARE, OTHER }

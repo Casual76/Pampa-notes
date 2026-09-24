@@ -159,7 +159,9 @@ class ProgressScale(durationsMs: List<Long>, private val uploadShare: Float) {
       RemoteStage.RECEIVED, RemoteStage.QUEUED, RemoteStage.DECODING, RemoteStage.LOADING_MODEL, RemoteStage.FAILED -> 0f
       RemoteStage.TRANSCRIBING -> TRANSCRIBE_SHARE * progress.fraction
       RemoteStage.ALIGNING -> TRANSCRIBE_SHARE + (1f - TRANSCRIBE_SHARE) * progress.fraction
-      RemoteStage.DONE -> 1f
+      // Le voci vengono dopo tutti i pezzi, sull'audio intero: la parte e' trascritta, e il passo di
+      // adesso ha la sua barra. Riportare indietro quella della lezione sembrerebbe un passo indietro.
+      RemoteStage.DIARIZING, RemoteStage.DONE -> 1f
     }
   }
 }
@@ -204,6 +206,8 @@ data class SessionSegment(
   val wordsEncoded: String? = null,
   /** Vero quando le parole sono una stima e non un allineamento. La schermata lo dice. */
   val wordsEstimated: Boolean = false,
+  /** La voce che lo dice, quando il computer le ha separate («chi parla»). */
+  val speaker: String? = null,
 )
 
 /** Il risultato di un pezzo, salvato su disco appena arriva. */
@@ -224,6 +228,7 @@ private data class StoredSegment(
   val avgLogProb: Float? = null,
   /** Con il default vuoto, un lavoro a meta' della versione precedente si rilegge ancora. */
   val words: List<StoredWord> = emptyList(),
+  val speaker: String? = null,
 )
 
 @Serializable
@@ -278,12 +283,17 @@ class TranscriptionRunner @Inject constructor(
     // Una domanda per lavoro: il computer sa lavorare da se'? Se si', il telefono non decodifica e
     // non taglia niente, e una registrazione che il computer ha gia' non la scarica ne' la rimanda.
     val computer = computerMode(provider, archiveUploads)
+    // «Chi parla» si chiede solo a un computer che dichiara di saperlo fare, e solo sulla strada in
+    // cui la parte va intera: sulla strada di sempre (Groq, un companion vecchio, un ospite) il campo
+    // non parte, e i pezzi tagliati qui avrebbero comunque voci che non si riconoscono fra loro.
+    val plain = request.copy(diarize = false)
+    val onComputer = request.copy(diarize = request.diarize && computer?.diarize == true)
 
     sorted.forEachIndexed { index, part ->
       currentCoroutineContext().ensureActive()
       val partDir = File(workDir, "part-${part.id}").apply { mkdirs() }
       computer?.let { mode ->
-        transcribeOnComputer(part, index, parts.size, partDir, mode, request, scale, onArchived, onProgress)
+        transcribeOnComputer(part, index, parts.size, partDir, mode, onComputer, scale, onArchived, onProgress)
           ?.let {
             transcripts += it
             return@forEachIndexed
@@ -295,7 +305,7 @@ class TranscriptionRunner @Inject constructor(
         partCount = parts.size,
         workDir = partDir,
         provider = provider,
-        request = request,
+        request = plain,
         chunkMinutes = chunkMinutes,
         scale = scale,
         onProgress = onProgress,
@@ -317,6 +327,8 @@ class TranscriptionRunner @Inject constructor(
     val maxMinutes: Int?,
     /** Tenere nell'archivio del computer quello che si carica. */
     val archive: Boolean,
+    /** Il computer sa separare le voci ([CompanionFeatures.DIARIZE]). */
+    val diarize: Boolean = false,
   ) {
     /**
      * Il computer ha detto che chi chiede e' un ospite: da li' in poi, per questo lavoro, la strada
@@ -337,7 +349,10 @@ class TranscriptionRunner @Inject constructor(
     if (CompanionFeatures.BY_REF !in features) return null
     val maxMinutes = provider.capabilities.maxChunkMinutes
     if (maxMinutes != null && CompanionFeatures.SERVER_CHUNKS !in features) return null
-    return ComputerMode(companion, maxMinutes, archiveUploads && CompanionFeatures.ARCHIVE_UPLOAD in features)
+    return ComputerMode(
+      companion, maxMinutes, archiveUploads && CompanionFeatures.ARCHIVE_UPLOAD in features,
+      diarize = CompanionFeatures.DIARIZE in features,
+    )
   }
 
   /**
@@ -715,6 +730,7 @@ class TranscriptionRunner @Inject constructor(
             noSpeechProb = segment.noSpeechProb,
             avgLogProb = segment.avgLogProb,
             words = segment.words.map { RawWord(it.startMs, it.endMs, it.text) },
+            speaker = segment.speaker,
           )
         },
       )
@@ -736,6 +752,7 @@ class TranscriptionRunner @Inject constructor(
           noSpeechProb = segment.noSpeechProb,
           avgLogProb = segment.avgLogProb,
           words = segment.words.map { StoredWord(it.startMs, it.endMs, it.text) },
+          speaker = segment.speaker,
         )
       },
     )

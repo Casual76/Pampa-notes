@@ -32,6 +32,15 @@ enum class TranscriptionProviderId(val id: String) {
 enum class RefinementPreset { CLEAN, STRUCTURED, CUSTOM }
 
 /**
+ * «Chi parla»: quando chiedere al computer di casa di separare le voci.
+ *
+ * Di serie solo per le Registrazioni ([PERSONAL]): una riunione o un'intervista hanno piu' voci, una
+ * lezione ne ha una, e separarla costerebbe un minuto di scheda per scoprire che parlava il
+ * professore. Il computer lo fa solo se ha il token di Hugging Face (`features` di `/health`).
+ */
+enum class SpeakerSeparation { PERSONAL, ALWAYS, NEVER }
+
+/**
  * Le preferenze dell'app. Quelle del tema stanno nell'engine (`EngineSettingsStore`), le chiavi dei
  * provider in `AiKeyStore`: qui c'e' solo cio' che riguarda note, trascrizioni ed export.
  */
@@ -66,6 +75,8 @@ data class PampaSettings(
   val customOnly: Boolean = false,
   /** Trascrivi subito quando importi un audio, senza chiederlo. */
   val autoTranscribeOnImport: Boolean = true,
+  /** «Separa le voci»: vedi [SpeakerSeparation]. */
+  val speakerSeparation: SpeakerSeparation = SpeakerSeparation.PERSONAL,
   /** L'indirizzo di casa, sulla rete locale. */
   val endpointUrl: String = "",
   /** L'indirizzo che vale anche da fuori (Tailscale). Vuoto se non lo si usa. */
@@ -155,6 +166,7 @@ class PampaSettingsStore(
   suspend fun setCustomOnly(only: Boolean) = edit { it[CustomOnly] = only }
   suspend fun setMirrorEnabled(enabled: Boolean) = edit { it[MirrorEnabled] = enabled }
   suspend fun setAutoTranscribeOnImport(enabled: Boolean) = edit { it[AutoTranscribe] = enabled }
+  suspend fun setSpeakerSeparation(mode: SpeakerSeparation) = edit { it[SpeakerSeparationKey] = mode.name }
   /**
    * Il computer di casa, scritto da chi lo usa: se cambia qualcosa, la modifica e' nata qui e
    * deve salire all'account ([touchEndpoint]). `touch = false` per chi rimette un valore che non
@@ -554,6 +566,8 @@ class PampaSettingsStore(
     preferredProvider = TranscriptionProviderId.fromId(this[PreferredProvider]),
     customOnly = this[CustomOnly] ?: false,
     autoTranscribeOnImport = this[AutoTranscribe] ?: true,
+    speakerSeparation = this[SpeakerSeparationKey]?.let { runCatching { SpeakerSeparation.valueOf(it) }.getOrNull() }
+      ?: SpeakerSeparation.PERSONAL,
     endpointUrl = this[EndpointUrl] ?: "",
     endpointRemoteUrl = this[EndpointRemoteUrl] ?: "",
     endpointName = this[EndpointName] ?: "",
@@ -600,6 +614,7 @@ class PampaSettingsStore(
     val CustomOnly = booleanPreferencesKey("custom_only")
     val MirrorEnabled = booleanPreferencesKey("mirror_enabled")
     val AutoTranscribe = booleanPreferencesKey("auto_transcribe")
+    val SpeakerSeparationKey = stringPreferencesKey("speaker_separation")
     val EndpointUrl = stringPreferencesKey("endpoint_url")
     val EndpointRemoteUrl = stringPreferencesKey("endpoint_remote_url")
     val EndpointName = stringPreferencesKey("endpoint_name")

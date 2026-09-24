@@ -2,6 +2,7 @@ package dev.pampa.pampanotes.core.backup
 
 import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.RefinementPreset
+import dev.pampa.pampanotes.core.settings.SpeakerSeparation
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
 import java.time.Instant
 import java.time.ZoneId
@@ -43,6 +44,8 @@ data class BackupSettings(
   val preferredProvider: String = "groq",
   val customOnly: Boolean = false,
   val autoTranscribeOnImport: Boolean = true,
+  /** «Separa le voci» ([dev.pampa.pampanotes.core.settings.SpeakerSeparation]), per nome. */
+  val speakerSeparation: String = "PERSONAL",
   val endpointUrl: String = "",
   val endpointName: String = "",
   val endpointModel: String = "",
@@ -133,6 +136,7 @@ fun PampaSettings.toBackup(): BackupSettings = BackupSettings(
   preferredProvider = preferredProvider.id,
   customOnly = customOnly,
   autoTranscribeOnImport = autoTranscribeOnImport,
+  speakerSeparation = speakerSeparation.name,
   endpointUrl = endpointUrl,
   endpointName = endpointName,
   endpointModel = endpointModel,
@@ -149,6 +153,9 @@ fun BackupSettings.providerId(): TranscriptionProviderId = TranscriptionProvider
 
 fun BackupSettings.preset(): RefinementPreset =
   runCatching { RefinementPreset.valueOf(refinementPreset) }.getOrDefault(RefinementPreset.CLEAN)
+
+fun BackupSettings.separation(): SpeakerSeparation =
+  runCatching { SpeakerSeparation.valueOf(speakerSeparation) }.getOrDefault(SpeakerSeparation.PERSONAL)
 
 private val backupStamp: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd-HHmm", Locale.ROOT)
 
