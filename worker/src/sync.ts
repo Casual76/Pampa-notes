@@ -156,6 +156,7 @@ export async function push(env: Env, ownerId: string, body: PushRequest): Promis
   await env.DB.prepare("INSERT OR IGNORE INTO owners (ownerId, seq, prunedSeq) VALUES (?, 0, 0)").bind(ownerId).run();
 
   const existing = await currentVersions(env, ownerId, body.changes);
+  const kinds = await storedFolderKinds(env, ownerId, body.changes);
   // Le trascrizioni che il dispositivo manda uguali a quelle che ci sono, con dei segmenti: se qui
   // di segmenti non ce ne sono, il lotto di prima e' morto fra la riga e i blocchi (col codice di
   // prima, che li scriveva in `batch` diversi), e «uguale, si salta» li lascerebbe persi per sempre.
@@ -170,7 +171,7 @@ export async function push(env: Env, ownerId: string, body: PushRequest): Promis
   for (const change of body.changes) {
     // Troppo grande per una riga di D1: non ci stara' mai, e un errore di D1 a meta' lotto
     // fermerebbe anche tutte le altre. Si rifiuta questa, e il resto passa.
-    const payload = change.op === "U" ? JSON.stringify(change.payload) : null;
+    const payload = change.op === "U" ? JSON.stringify(keepFolderKind(change, kinds)) : null;
     const chunks = change.tbl === "transcripts" && change.op === "U" && Array.isArray(change.segments) ? chunkSegments(change.segments) : [];
     if ((payload !== null && bytesOf(payload) > MAX_ROW_BYTES) || chunks === null) {
       rejected.push({ tbl: change.tbl, id: change.id, reason: "too_large" });
@@ -273,6 +274,36 @@ async function currentVersions(env: Env, ownerId: string, changes: Change[]): Pr
     }
   }
   return existing;
+}
+
+/**
+ * Una cartella che arriva senza `kind` da un'app di prima delle Registrazioni tiene quello che
+ * aveva: altrimenti rinominarla dal telefono non aggiornato la faceva tornare una materia su tutti i
+ * dispositivi — nelle statistiche di scuola, nell'«Esporta tutto», e non piu' solo sul computer.
+ * L'impronta resta quella che il dispositivo ha mandato: un'app nuova che la tira la ricalcola col
+ * `kind` e la rimanda una volta, e da li' combaciano.
+ */
+function keepFolderKind(change: Change, kinds: Map<string, string>): unknown {
+  const payload = change.payload as Record<string, unknown> | null | undefined;
+  if (change.tbl !== "folders" || !payload || typeof payload !== "object" || "kind" in payload) return change.payload;
+  const kind = kinds.get(change.id);
+  return kind ? { ...payload, kind } : change.payload;
+}
+
+async function storedFolderKinds(env: Env, ownerId: string, changes: Change[]): Promise<Map<string, string>> {
+  const kinds = new Map<string, string>();
+  const ids = [...new Set(changes.filter((c) => {
+    const p = c.payload as Record<string, unknown> | null | undefined;
+    return c.tbl === "folders" && c.op === "U" && p && typeof p === "object" && !("kind" in p);
+  }).map((c) => c.id))];
+  for (let i = 0; i < ids.length; i += 90) {
+    const slice = ids.slice(i, i + 90);
+    const rows = await env.DB.prepare(
+      `SELECT rowId, json_extract(payload, '$.kind') AS kind FROM state WHERE ownerId = ? AND tbl = 'folders' AND op = 'U' AND rowId IN (${slice.map(() => "?").join(",")})`,
+    ).bind(ownerId, ...slice).all<{ rowId: string; kind: string | null }>();
+    for (const r of rows.results) if (typeof r.kind === "string" && r.kind) kinds.set(r.rowId, r.kind);
+  }
+  return kinds;
 }
 
 async function segmentChunkCounts(env: Env, ownerId: string, transcriptIds: string[]): Promise<Map<string, number>> {
