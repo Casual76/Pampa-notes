@@ -2858,33 +2858,68 @@ class TrayTest(unittest.TestCase):
             _sys.stdout.close()
             self.assertIn("una riga", (Path(root) / "logs" / "tray-stderr.log").read_text(encoding="utf-8"))
 
-    def test_the_token_check_runs_off_the_window_thread(self) -> None:
+    def test_the_voices_dialog_talks_to_the_tray_without_tk_in_the_server(self) -> None:
+        # Il 24/09 una finestra Tk su un thread del server ha fatto chiudere a Tcl il processo intero.
+        import finestra_voci
         import tray
 
-        release = threading.Event()
-        seen: list[str] = []
+        self.assertNotIn("tkinter", Path(tray.__file__).read_text(encoding="utf-8"), "Tk non si apre nel processo del server")
+        replies: list[str] = []
+        saved: list[str] = []
+        checked = threading.Event()
 
-        def slow(token: str) -> tuple[bool, str]:
-            seen.append(threading.current_thread().name)
-            release.wait(5)
-            return True, "Tutto pronto"
+        def check(token: str) -> tuple[bool, str]:
+            checked.set()
+            return True, f"Tutto pronto\ncon {token}"
 
-        box = tray.check_in_background("hf_x", check=slow)
-        # Torna subito, con la risposta ancora da arrivare: la finestra intanto disegna.
-        self.assertFalse(box["done"])
-        release.set()
-        for _ in range(100):
-            if box["done"]:
-                break
-            time.sleep(0.02)
-        self.assertEqual((box["done"], box["message"]), (True, "Tutto pronto"))
-        self.assertEqual(seen, ["controllo-hf"])
-        broken = tray.check_in_background("hf_x", check=lambda token: 1 / 0)
-        for _ in range(100):
-            if broken["done"]:
-                break
-            time.sleep(0.02)
-        self.assertIn("Non riesco a controllare", broken["message"])
+        lines = [
+            finestra_voci.request_line("save", 1, " hf_ nuovo \n"),
+            finestra_voci.request_line("save", 2, ""),  # vuoto: non toglie niente
+            "rumore senza giro\n",
+        ]
+        with mock.patch.dict(server.STATE, {"hf_token": None}):
+            tray.serve_voices_dialog(lines, replies.append, save=saved.append, check=check)
+            self.assertTrue(checked.wait(5))
+            for _ in range(100):
+                if replies:
+                    break
+                time.sleep(0.02)
+        self.assertEqual(saved, ["hf_nuovo"], "il token incollato con spazi arriva intero, e uno vuoto non si salva")
+        self.assertEqual(replies, ["1 Tutto pronto con hf_nuovo\n"], "una risposta, su una riga sola")
+        self.assertEqual(finestra_voci.parse_reply(replies[0]), (1, "Tutto pronto con hf_nuovo"))
+        self.assertIsNone(finestra_voci.parse_reply("Tutto pronto\n"))
+
+        replies.clear()
+        tray.serve_voices_dialog([finestra_voci.request_line("remove", 3)], replies.append, save=saved.append)
+        self.assertEqual(saved[-1], "", "togliere e' salvare vuoto")
+        self.assertTrue(replies[0].startswith("3 Tolto"))
+
+        def broken(token: str) -> None:
+            raise OSError("disco pieno")
+
+        replies.clear()
+        tray.serve_voices_dialog([finestra_voci.request_line("save", 4, "hf_x")], replies.append, save=broken)
+        self.assertIn("non e' stato salvato", replies[0])
+
+        replies.clear()
+        with mock.patch.dict(server.STATE, {"hf_token": "hf_vecchio"}):
+            tray.serve_voices_dialog([finestra_voci.request_line("check", 5)], replies.append, check=lambda token: 1 / 0)
+            for _ in range(100):
+                if replies:
+                    break
+                time.sleep(0.02)
+        self.assertEqual(replies, ["5 Non riesco a controllare adesso (ZeroDivisionError).\n"])
+
+    def test_the_voices_dialog_hears_when_the_tray_is_gone(self) -> None:
+        import io
+        import queue
+
+        import finestra_voci
+
+        into: queue.Queue = queue.Queue()
+        finestra_voci.listen(io.StringIO("7 Tutto pronto\nnon una risposta\n"), into)
+        self.assertEqual(into.get_nowait(), (7, "Tutto pronto"))
+        self.assertIsNone(into.get_nowait(), "stdin chiuso: l'icona non c'e' piu'")
 
 
 class AddressTest(unittest.TestCase):

@@ -319,26 +319,27 @@ def voices_label(_: Any = None) -> str:
     return "Separazione delle voci (accesa)..." if server.STATE.get("hf_token") else "Separazione delle voci..."
 
 
-# Una finestra alla volta: due clic sul menu non devono aprire due Tk su due thread.
+# Una finestra alla volta: due clic sul menu non devono aprirne due che scrivono lo stesso token.
 _VOICES_OPEN = threading.Lock()
-
-HF_MODEL_PAGE = f"https://huggingface.co/{server.DIARIZE_MODEL}"
-HF_TOKENS_PAGE = "https://huggingface.co/settings/tokens"
 
 
 def on_voices(icon: pystray.Icon, _: Any) -> None:
     """
     La finestra per il token di Hugging Face, che accende «chi parla» (vedi `diarize_segments` nel
-    server). Su un thread suo: il menu dell'icona ha il suo giro di eventi, e Tk vuole il proprio.
+    server). In un processo suo (`finestra_voci.py`), mai qui dentro: il 24/09 una finestra Tk su un
+    thread del server, chiusa, ha fatto chiudere a Tcl il processo intero a meta' di una trascrizione
+    (vedi la testa di finestra_voci.py). Questo thread la lancia, risponde alle sue richieste e
+    aspetta che si chiuda.
     """
     if not _VOICES_OPEN.acquire(blocking=False):
         return
 
     def run() -> None:
         try:
-            voices_dialog(icon)
+            open_voices_dialog(icon)
         except Exception:  # noqa: BLE001 — una finestra che non si apre non deve portarsi via l'icona
             server.log.exception("la finestra della separazione delle voci non si apre")
+            icon.notify("La finestra della separazione delle voci non si apre: guarda il registro.", "Pampa Notes")
         finally:
             _VOICES_OPEN.release()
 
@@ -361,133 +362,123 @@ def save_hf_token(token: str) -> None:
     SETTINGS["hf_token_disabled"] = not token
 
 
-# Quanto aspetta la finestra la risposta di Hugging Face prima di dire «non risponde». Il controllo
-# gira su un thread suo e la finestra resta viva comunque; questo e' solo il momento in cui smettere
-# di dire «controllo...».
-HF_CHECK_WAIT_S = 20.0
+def dialog_python() -> Path:
+    """
+    Il Python con cui lanciare la finestra: `python.exe` accanto a quello dell'icona, che con
+    `pythonw.exe` e' l'unico dei due con stdin e stdout garantiti su una pipe. La console non si vede
+    lo stesso (CREATE_NO_WINDOW in [open_voices_dialog]).
+    """
+    here = Path(sys.executable)
+    console = here.with_name("python.exe")
+    return console if console.exists() else here
 
 
-def check_in_background(token: str, check: Any = None) -> dict[str, Any]:
-    """
-    Fa partire [server.check_diarization_access] su un thread suo e torna subito una scatola che il
-    thread riempie (`done`, `message`). La finestra la guarda col suo `after`: Tk si tocca solo dal
-    thread della finestra, e la domanda a Hugging Face — che senza rete puo' durare decine di secondi
-    — non blocca piu' la finestra (prima restava bianca e «non risponde» finche' non tornava).
-    """
+def open_voices_dialog(icon: pystray.Icon) -> None:
+    command = [str(dialog_python()), str(config.HERE / "finestra_voci.py"), "--modello", server.DIARIZE_MODEL]
+    if server.STATE.get("hf_token"):
+        command.append("--acceso")
+    logs = config.HERE / "logs"
+    logs.mkdir(exist_ok=True)
+    with (logs / "finestra-voci.log").open("a", encoding="utf-8") as errors:
+        process = subprocess.Popen(
+            command,
+            cwd=config.HERE,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=errors,
+            text=True,
+            encoding="utf-8",
+            bufsize=1,
+            # Anche gli errori della finestra in UTF-8, come il resto dei registri.
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+            creationflags=0x08000000 if sys.platform == "win32" else 0,  # CREATE_NO_WINDOW
+        )
+        assert process.stdin is not None and process.stdout is not None
+        writing = threading.Lock()
+
+        def reply(line: str) -> None:
+            with writing:
+                try:
+                    process.stdin.write(line)
+                    process.stdin.flush()
+                except (OSError, ValueError):
+                    pass  # la finestra e' gia' chiusa: la risposta non serve a nessuno
+
+        serve_voices_dialog(process.stdout, reply, changed=lambda: refresh(icon))
+        with writing:
+            try:
+                process.stdin.close()
+            except OSError:
+                pass
+        process.wait()
+
+
+def reply_line(round_: str, message: str) -> str:
+    """Una risposta per la finestra: una riga sola, qualunque cosa ci sia nel messaggio."""
+    return f"{round_} {' '.join(message.split())}\n"
+
+
+def safe_check(token: str, check: Any = None) -> str:
+    """[server.check_diarization_access], con un errore imprevisto detto invece che rilanciato."""
     check = check or server.check_diarization_access
-    box: dict[str, Any] = {"done": False, "message": ""}
-
-    def run() -> None:
-        try:
-            _, box["message"] = check(token)
-        except Exception as error:  # noqa: BLE001 — un controllo che si rompe e' un controllo non fatto
-            box["message"] = f"Non riesco a controllare adesso ({type(error).__name__})."
-        box["done"] = True
-
-    threading.Thread(target=run, daemon=True, name="controllo-hf").start()
-    return box
+    try:
+        _, message = check(token)
+    except Exception as error:  # noqa: BLE001 — un controllo che si rompe e' un controllo non fatto
+        return f"Non riesco a controllare adesso ({type(error).__name__})."
+    return message
 
 
-def voices_dialog(icon: pystray.Icon) -> None:
+def serve_voices_dialog(lines: Any, reply: Any, changed: Any = None, save: Any = None, check: Any = None) -> None:
     """
-    Tre passi spiegati, due link, un campo e «Salva». Il token non si mostra (ne' qui ne' nel
-    registro): si incolla, si salva, e la finestra dice se Hugging Face lo accetta per quel modello.
+    Risponde alle richieste della finestra (`finestra_voci.py`) finche' non si chiude.
+
+    Salvare e togliere si fanno qui, subito, in ordine; il controllo con Hugging Face — che senza rete
+    dura decine di secondi — su un thread suo, cosi' un «Togli il token» non aspetta la rete. Un esito
+    arrivato tardi per un token che non e' piu' quello in uso non spegne ne' accende niente: ci pensa
+    `server._set_denied_for`, e la finestra lo scarta dal giro.
     """
-    import tkinter as tk
-    from tkinter import ttk
+    changed = changed or (lambda: None)
+    save = save or save_hf_token
 
-    root = tk.Tk()
-    root.title("Pampa Notes - Separazione delle voci")
-    root.resizable(False, False)
-    frame = ttk.Frame(root, padding=16)
-    frame.grid()
-    intro = (
-        "Pampa Notes puo' dire chi parla in una registrazione: «Voce 1», «Voce 2»...\n"
-        "Il modello che lo fa (pyannote) e' gratuito ma si scarica da Hugging Face,\n"
-        "che chiede tre cose, una volta sola:\n\n"
-        "  1. un account gratuito su huggingface.co;\n"
-        f"  2. accettare le condizioni del modello {server.DIARIZE_MODEL}\n"
-        "      (il modulo in cima alla sua pagina);\n"
-        "  3. un token di lettura: Settings -> Access Tokens -> Create new token, tipo «Read».\n\n"
-        "Poi incolla qui il token. Resta su questo computer, in config.json."
-    )
-    ttk.Label(frame, text=intro, justify="left").grid(row=0, column=0, columnspan=3, sticky="w")
-    ttk.Button(frame, text="Apri la pagina del modello", command=lambda: webbrowser.open(HF_MODEL_PAGE)).grid(
-        row=1, column=0, sticky="w", pady=(12, 0)
-    )
-    ttk.Button(frame, text="Crea il token", command=lambda: webbrowser.open(HF_TOKENS_PAGE)).grid(
-        row=1, column=1, sticky="w", pady=(12, 0)
-    )
-    ttk.Label(frame, text="Token di Hugging Face:").grid(row=2, column=0, columnspan=3, sticky="w", pady=(16, 4))
-    value = tk.StringVar()
-    entry = ttk.Entry(frame, textvariable=value, show="•", width=56)
-    entry.grid(row=3, column=0, columnspan=3, sticky="we")
-    configured = bool(server.STATE.get("hf_token"))
-    status = tk.StringVar(value="Un token e' gia' salvato: incollane un altro per sostituirlo." if configured else "")
-    ttk.Label(frame, textvariable=status, wraplength=440, justify="left").grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
-    # Il controllo in corso: un numero che cresce, cosi' la risposta di un controllo vecchio (un token
-    # sostituito mentre si aspettava) non scrive sopra quella di adesso.
-    pending = {"round": 0}
+    def checked(round_: str, token: str) -> None:
+        reply(reply_line(round_, safe_check(token, check)))
+        changed()
 
-    def follow(box: dict[str, Any], round_: int, started: float) -> None:
-        """Guarda la scatola del thread ogni 200 ms, dal thread della finestra."""
-        if round_ != pending["round"]:
-            return
-        if box["done"]:
-            status.set(box["message"])
-            refresh(icon)
-            return
-        if time.monotonic() - started > HF_CHECK_WAIT_S:
-            status.set("Hugging Face non risponde: il token e' salvato, si provera' alla prima registrazione.")
-            return
-        root.after(200, follow, box, round_, started)
+    def check_later(round_: str, token: str) -> None:
+        threading.Thread(target=checked, args=(round_, token), daemon=True, name="controllo-hf").start()
 
-    def check(token: str, saying: str) -> None:
-        pending["round"] += 1
-        status.set(saying)
-        root.after(200, follow, check_in_background(token), pending["round"], time.monotonic())
-
-    def save() -> None:
-        token = value.get().strip()
-        if not token:
-            status.set("Incolla prima il token.")
-            return
-        try:
-            save_hf_token(token)
-        except OSError as error:
-            server.log.warning("config.json non si scrive: %s", error)
-            status.set("config.json non si scrive: il token vale solo fino al riavvio.")
-            return
-        server.log.info("separazione delle voci: token salvato dal menu")
-        value.set("")
-        refresh(icon)
-        check(token, "Salvato. Controllo con Hugging Face...")
-
-    def remove() -> None:
-        # Un controllo ancora in corso non deve scrivere «Tutto pronto» dopo «Tolto».
-        pending["round"] += 1
-        try:
-            save_hf_token("")
-        except OSError as error:
-            server.log.warning("config.json non si scrive: %s", error)
-        server.log.info("separazione delle voci: token tolto dal menu")
-        status.set("Tolto: le registrazioni torneranno senza voci, anche dopo un riavvio.")
-        refresh(icon)
-
-    buttons = ttk.Frame(frame)
-    buttons.grid(row=5, column=0, columnspan=3, sticky="e", pady=(16, 0))
-    ttk.Button(buttons, text="Togli il token", command=remove).grid(row=0, column=0, padx=(0, 8))
-    ttk.Button(buttons, text="Salva", command=save).grid(row=0, column=1, padx=(0, 8))
-    ttk.Button(buttons, text="Chiudi", command=root.destroy).grid(row=0, column=2)
-    entry.focus_set()
-    if configured:
-        # Il token salvato si ricontrolla aprendo la finestra: chi ha appena accettato le condizioni
-        # del modello riaccende le voci cosi', senza incollare niente (un rifiuto le aveva spente).
-        check(str(server.STATE.get("hf_token")), "Un token e' gia' salvato: controllo con Hugging Face...")
-    root.bind("<Return>", lambda _event: save())
-    root.bind("<Escape>", lambda _event: root.destroy())
-    root.attributes("-topmost", True)
-    root.mainloop()
+    for line in lines:
+        command, _, rest = line.strip().partition(" ")
+        round_, _, token = rest.partition(" ")
+        if not round_.isdigit():
+            continue
+        token = token.strip()
+        if command == "save" and token:
+            try:
+                save(token)
+            except OSError as error:
+                server.log.warning("config.json non si scrive: %s", error)
+                reply(reply_line(round_, "config.json non si scrive: il token non e' stato salvato."))
+                continue
+            server.log.info("separazione delle voci: token salvato dal menu")
+            changed()
+            check_later(round_, token)
+        elif command == "remove":
+            try:
+                save("")
+            except OSError as error:
+                server.log.warning("config.json non si scrive: %s", error)
+                reply(reply_line(round_, "config.json non si scrive: tolto solo fino al riavvio."))
+            else:
+                reply(reply_line(round_, "Tolto: le registrazioni torneranno senza voci, anche dopo un riavvio."))
+            server.log.info("separazione delle voci: token tolto dal menu")
+            changed()
+        elif command == "check":
+            current = server.STATE.get("hf_token")
+            if current:
+                check_later(round_, str(current))
+            else:
+                reply(reply_line(round_, "Nessun token salvato."))
 
 
 def on_quit(icon: pystray.Icon, _: Any) -> None:

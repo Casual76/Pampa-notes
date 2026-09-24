@@ -1060,7 +1060,7 @@ pezzi), e risponde `max_minutes_used`, che lo slider fermo mostra come «Ultima 
 `pyannote/speaker-diarization-community-1`), e ogni segmento torna con `speaker` («SPEAKER_00»).
 **Quello che l'utente deve fare, una volta**: un account gratuito su huggingface.co, accettare le
 condizioni sulla pagina del modello, creare un token di tipo *Read* e incollarlo dal menu dell'icona,
-«Separazione delle voci…» (`tray.voices_dialog`: salva `hf_token` in `config.json` col writer atomico
+«Separazione delle voci…» (`finestra_voci.py`, servita da `tray.serve_voices_dialog`: salva `hf_token` in `config.json` col writer atomico
 di `config.py`, e chiede subito a Hugging Face se il token apre il modello — `check_diarization_access`
 dice se mancano le condizioni o il token e' sbagliato). Vale anche `HF_TOKEN`. Il token non si stampa
 mai (registro, `/health`, `/v1/admin/settings`). **Senza token non cambia niente**: `/health` non
@@ -1093,8 +1093,14 @@ non e' velocita'**: `diarize_segments` torna anche i suoi secondi, che escono da
 `processing_s` (`transcription_work_s`) e vanno in `diarize_s` — dentro, `auto_piece_minutes`
 cominciava a tagliare lezioni che andavano intere. **Il ripiego sul processore restituisce la
 scheda**: dentro l'`except` c'e' solo il segno, e modello nuovo e seconda passata vengono dopo, quando
-il traceback coi tensori non c'e' piu'. Nel menu, il controllo del token gira su un thread
-(`tray.check_in_background`, la finestra lo guarda con `after`: senza rete restava bianca), e
+il traceback coi tensori non c'e' piu'. **La finestra del token sta in un processo suo**
+(`finestra_voci.py`): il 24/09, dentro il server su un thread, chiuderla ha fatto distruggere una
+`StringVar` dal thread sbagliato e Tcl ha chiuso il companion (`Tcl_AsyncDelete`) a meta' di una
+registrazione da diciannove ore. **Tk non entra mai nel processo del server** (un test lo guarda).
+La finestra parla con l'icona su stdin/stdout, una riga per richiesta (`save|remove|check <giro>`) e
+una per risposta (`<giro> <messaggio>`): `config.json` lo scrive solo l'icona, il controllo con
+Hugging Face gira su un thread dell'icona e mette `diarization_denied` nello stato del server, e la
+finestra scarta le risposte di un giro vecchio e dopo venti secondi dice «non risponde». E
 «Togli il token» scrive `hf_token_disabled`, che spegne anche `HF_TOKEN` dell'ambiente dopo un
 riavvio (`resolve_hf_token`); salvare un token lo rimette falso.
 
