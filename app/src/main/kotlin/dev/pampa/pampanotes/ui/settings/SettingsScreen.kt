@@ -3,7 +3,6 @@ package dev.pampa.pampanotes.ui.settings
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import kotlin.math.roundToInt
-import dev.antigravity.fluidengine.ui.fluid.FluidSlider
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.material3.Text
 import androidx.compose.material3.MaterialTheme
@@ -57,6 +56,7 @@ import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.BuildConfig
 import dev.pampa.pampanotes.R
+import dev.pampa.pampanotes.ui.common.LiquidSlider
 import dev.pampa.pampanotes.ui.common.rememberDraft
 import dev.pampa.pampanotes.ui.common.UpdateViewModel
 import dev.pampa.pampanotes.ui.common.updatesSection
@@ -574,12 +574,15 @@ private fun CustomChunkPicker(settings: PampaSettings, viewModel: SettingsViewMo
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
-      FluidSlider(
+      // Il vetro di Kyant, non lo slider dell'engine: maniglia bianca che si fa lente sotto il dito.
+      LiquidSlider(
         value = index,
-        onValueChange = { index = it.roundToInt().toFloat() },
+        onValueChange = { index = it },
         valueRange = 0f..CHUNK_STOPS.lastIndex.toFloat(),
         enabled = !auto,
+        snap = { it.roundToInt().toFloat() },
         onValueChangeFinished = { viewModel.setCustomMaxMinutes(chunkMinutesAt(index.roundToInt())) },
+        contentDescription = stringResource(R.string.settings_custom_chunk_slider),
       )
     }
   }

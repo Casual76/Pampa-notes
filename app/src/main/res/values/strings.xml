@@ -1307,6 +1307,7 @@
   <string name="transcribing_elsewhere">In trascrizione su %1$s</string>
   <string name="transcribing_elsewhere_detail">La trascrizione arriverà qui con la sincronizzazione: non serve rifarla da questo dispositivo.</string>
   <!-- pezzi automatici -->
+  <string name="settings_custom_chunk_slider">Durata massima di un pezzo</string>
   <string name="settings_custom_chunk_auto">Automatico</string>
   <string name="settings_custom_chunk_auto_detail">Prima di ogni lezione il computer sceglie quanto lunghi fare i pezzi, da quanto va veloce: sulla scheda video di solito la lezione va intera, sul processore in pezzi più corti, così un annullamento o un riavvio perdono poco.</string>
   <string name="settings_custom_chunk_auto_last">Ultima lezione: pezzi da %1$d minuti</string>

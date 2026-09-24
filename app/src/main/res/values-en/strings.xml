@@ -1277,6 +1277,7 @@
   <string name="transcribing_elsewhere">Transcribing on %1$s</string>
   <string name="transcribing_elsewhere_detail">The transcript will arrive here with sync: no need to redo it from this device.</string>
   <!-- pezzi automatici -->
+  <string name="settings_custom_chunk_slider">Maximum length of a piece</string>
   <string name="settings_custom_chunk_auto">Automatic</string>
   <string name="settings_custom_chunk_auto_detail">Before each lesson the computer picks how long the pieces are from how fast it runs: on the graphics card a lesson usually stays whole, on the processor it gets shorter pieces, so a cancellation or a restart loses little.</string>
   <string name="settings_custom_chunk_auto_last">Last lesson: %1$d-minute pieces</string>
