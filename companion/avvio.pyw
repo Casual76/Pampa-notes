@@ -65,8 +65,10 @@ def launch() -> subprocess.Popen[bytes]:
     runner = pythonw if pythonw.exists() else Path(sys.executable)
     LOGS.mkdir(exist_ok=True)
     stderr = (LOGS / "tray-stderr.log").open("ab")
+    # Rilanciati fuori da un contenitore: anche tray.py non guarda piu' (vedi fuori.RELAUNCHED).
+    relaunched = [fuori.RELAUNCHED] if fuori.RELAUNCHED in sys.argv else []
     return subprocess.Popen(
-        [str(runner), str(HERE / "tray.py")],
+        [str(runner), str(HERE / "tray.py"), *relaunched],
         cwd=HERE,
         stdin=subprocess.DEVNULL,
         stdout=stderr,
@@ -81,10 +83,15 @@ def main() -> None:
     at = port()
     # Lanciato da dentro un'altra app (un terminale in un'app che virtualizza AppData): ci si
     # rilancia fuori prima di fare qualunque cosa. Vedi fuori.py.
-    boxed = fuori.redirected_to()
-    if boxed:
+    # Il rilancio porta `--fuori`: chi lo riceve non guarda piu', o un contenitore da cui non si esce
+    # (il Python dello Store) lo farebbe rilanciare per sempre.
+    boxed, leave = fuori.container_to_leave(sys.argv)
+    if boxed and not leave:
+        log(f"partito dentro il contenitore di {boxed}, da cui non si esce: vado avanti (l'archivio finira' li' dentro)")
+    elif boxed:
         runner = Path(sys.executable)
-        if fuori.relaunch_outside([str(runner), str(HERE / "avvio.pyw"), *sys.argv[1:]], HERE):
+        again = [argument for argument in sys.argv[1:] if argument != fuori.RELAUNCHED] + [fuori.RELAUNCHED]
+        if fuori.relaunch_outside([str(runner), str(HERE / "avvio.pyw"), *again], HERE):
             log(f"partito dentro il contenitore di {boxed}: rilanciato fuori con WMI")
             return
         log(f"partito dentro il contenitore di {boxed} e WMI ha rifiutato: vado avanti lo stesso")

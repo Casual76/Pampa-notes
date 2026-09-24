@@ -49,6 +49,15 @@ class FailedJobsTest {
     assertEquals(FailureStanding.ORPHANED, FailedJobs.standing(silent, false, emptyList(), listOf(silent)))
   }
 
+  @Test
+  fun `riprovare una trascrizione muta la rifa' da capo`() {
+    // I pezzi vuoti rimasti nella cartella del lavoro facevano fallire «Riprova» senza chiamare nessuno.
+    assertEquals(true, FailedJobs.discardsWorkOnRetry(job("j1", createdAt = 100, errorCode = FailedJobs.NO_SPEECH)))
+    // Un guasto vero riparte dai pezzi gia' fatti, e un raffinamento non ha pezzi.
+    assertEquals(false, FailedJobs.discardsWorkOnRetry(job("j2", createdAt = 100, errorCode = "network")))
+    assertEquals(false, FailedJobs.discardsWorkOnRetry(job("r1", createdAt = 100, type = JobType.REFINE, errorCode = FailedJobs.NO_SPEECH)))
+  }
+
   private fun job(
     id: String,
     createdAt: Long,

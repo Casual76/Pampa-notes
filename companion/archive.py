@@ -141,13 +141,21 @@ class Archive:
     def path_for(self, sha256: str, ext: str) -> Path:
         return self.blobs / sha256[:2] / f"{sha256}.{ext}"
 
-    def get(self, sha256: str) -> dict[str, Any] | None:
+    def _row(self, sha256: str) -> dict[str, Any] | None:
+        """La riga cosi' com'e', col percorso dove il file dovrebbe stare, che ci sia o no."""
         with self.lock:
             row = self.db.execute("SELECT sha256, name, mime, ext, size, added_at FROM files WHERE sha256 = ?", (sha256,)).fetchone()
         if row is None:
             return None
         record = dict(zip(("sha256", "name", "mime", "ext", "size", "added_at"), row))
-        path = self.path_for(record["sha256"], record["ext"])
+        record["path"] = self.path_for(record["sha256"], record["ext"])
+        return record
+
+    def get(self, sha256: str) -> dict[str, Any] | None:
+        record = self._row(sha256)
+        if record is None:
+            return None
+        path = record["path"]
         # Una riga senza il suo file non si cancella: si risponde «non c'e'» e basta. Il file puo'
         # essere solo invisibile a questo processo — il 24/09 un companion avviato dall'app di Claude
         # aveva scritto 80 registrazioni nella copia di AppData che Windows tiene per quell'app, e
@@ -156,7 +164,6 @@ class Archive:
         if not path.exists():
             log.warning("archivio: %s ha la riga ma non il file (%s)", sha256[:12], path)
             return None
-        record["path"] = path
         return record
 
     def remove(self, sha256: str) -> bool:
@@ -168,8 +175,12 @@ class Archive:
         disco senza nessuno che lo sapesse — ne' [get], ne' le statistiche, ne' una `DELETE` ripetuta
         l'avrebbero piu' trovato. Adesso la riga resta, e chi ha chiesto si sente dire [BlobInUse]:
         riprova fra poco e trova tutto com'era.
+
+        La riga si legge da se', non con [get]: [get] dice «non c'e'» per una riga senza file, e una
+        `DELETE` su quella rispondeva 404 lasciandola li' per sempre, contata nelle statistiche.
+        Qui chi chiede vuole che il file sparisca: se non c'e' gia', resta da togliere la riga.
         """
-        record = self.get(sha256)
+        record = self._row(sha256)
         if record is None:
             return False
         try:
@@ -182,9 +193,28 @@ class Archive:
         return True
 
     def stats(self) -> tuple[int, int]:
+        """Quanti file e quanti byte, contando solo le righe il cui file c'e' davvero: vedi [inventory]."""
+        count, size, _ = self.inventory()
+        return count, size
+
+    def inventory(self) -> tuple[int, int, int]:
+        """
+        File presenti, i loro byte, e le righe il cui file non si vede ([get] le tratta come assenti).
+
+        Prima si contavano le righe: una riga senza file (vedi [get]) diceva al tray e al telefono
+        che l'archivio aveva una registrazione che nessuno poteva scaricare. Le mancanti si dicono a
+        parte, perche' spesso non sono perse ma invisibili a questo processo.
+        """
         with self.lock:
-            count, size = self.db.execute("SELECT COUNT(*), COALESCE(SUM(size), 0) FROM files").fetchone()
-        return int(count), int(size)
+            rows = self.db.execute("SELECT sha256, ext, size FROM files").fetchall()
+        count = size = missing = 0
+        for sha256, ext, length in rows:
+            if self.path_for(sha256, ext).exists():
+                count += 1
+                size += int(length)
+            else:
+                missing += 1
+        return count, size, missing
 
     def store(self, sha256: str, name: str, mime: str, chunks: Any, expected_size: int | None = None) -> dict[str, Any]:
         """
@@ -476,8 +506,8 @@ def build_router(check_token: Callable[[Request], None]) -> APIRouter:
     @router.get("")
     def stats(request: Request) -> dict[str, Any]:
         check_token(request)
-        count, size = current().stats()
-        return {"count": count, "bytes": size, "root": str(current().root)}
+        count, size, missing = current().inventory()
+        return {"count": count, "bytes": size, "missing": missing, "root": str(current().root)}
 
     @router.head("/{sha256}")
     def head(request: Request, sha256: str) -> Response:

@@ -1352,6 +1352,22 @@ def trust_sentence_splitter(language: str) -> None:
         nltk.data.path.append(str(real))
 
 
+# Le lingue che si allineano parola per parola. Non tutte quelle per cui WhisperX conosce un modello:
+# sul rumore la lingua e' a caso, e le ore mute di «Napoli 18h» riconosciute come nynorsk hanno fatto
+# scaricare e caricare `NbAiLab/nb-wav2vec2-1b-nynorsk`, un miliardo di parametri e 3,6 GB, per
+# allineare dei «Takk for oss.» inventati. Qui: le cinque di torchaudio (piccole, quelle di sempre) e
+# qualche wav2vec2 «large» da 300 milioni di Hugging Face, per lingue che una lezione puo' avere
+# davvero. Per le altre i tempi restano quelli di Whisper, per frase, e l'app le stima.
+ALIGN_LANGUAGES = frozenset({"en", "fr", "de", "es", "it", "ja", "zh", "nl", "uk", "pt", "ru", "pl", "ca"})
+# Lo stato dell'allineamento per una lingua che non si allinea (o il cui modello non si carica):
+# /health lo mostra, ma non spegne `word_timestamps` per le lingue che vanno.
+ALIGN_UNAVAILABLE = "non disponibile"
+
+
+class AlignmentUnavailable(RuntimeError):
+    """La lingua non ha un allineatore qui, o il suo non si e' caricato: tempi per frase, niente errore."""
+
+
 def align_model_for(language: str, device: str | None = None):
     """
     Il modello di allineamento della lingua, tenuto da parte dopo il primo uso.
@@ -1360,33 +1376,56 @@ def align_model_for(language: str, device: str | None = None):
     dell'ultima lingua, che e' quasi sempre anche quella della prossima. **Uno solo**: prima ne
     restava uno per ogni lingua incontrata, fino allo sfratto del modello grande, e una lezione in
     inglese in mezzo a quelle in italiano lasciava sulla scheda un gigabyte che il piano della VRAM
-    non vedeva. Cambiando lingua il vecchio se ne va, e la sua riserva torna alla scheda, prima di
-    caricare il nuovo. Quello sul processore del ripiego (vedi [run_job]) non si tiene: serve a una
-    lezione sola, e la prossima torna sulla scheda.
+    non vedeva. Cambiando lingua il vecchio se ne va, e la sua riserva torna alla scheda, appena il
+    nuovo si e' caricato: se il nuovo non si carica, il vecchio resta. Quello sul processore del
+    ripiego (vedi [run_job]) non si tiene: serve a una lezione sola, e la prossima torna sulla scheda.
+
+    Solo per le lingue di [ALIGN_LANGUAGES]: per le altre [AlignmentUnavailable], senza toccare
+    niente.
 
     Quanto occupa sulla scheda si misura al caricamento (`align_gb`): e' nostro, non degli altri
     programmi ([others_gb]).
     """
     import whisperx
 
+    if language not in ALIGN_LANGUAGES:
+        raise AlignmentUnavailable(f"nessun allineatore per '{language}'")
     device = device or STATE["device"]
     if device != STATE["device"]:
         trust_sentence_splitter(language)
-        return whisperx.load_align_model(language_code=language, device=device)
+        return _load_align_model(whisperx, language, device)
     if language not in STATE["align"]:
-        if STATE["align"]:
-            log.info("lascio l'allineamento per '%s'", "', '".join(STATE["align"]))
-            STATE["align"].clear()
-            STATE["align_gb"] = 0.0
-            gc.collect()
-            empty_cuda_cache()
         log.info("carico l'allineamento per '%s'...", language)
         trust_sentence_splitter(language)
         before = vram_gb()
-        model, metadata = whisperx.load_align_model(language_code=language, device=device)
+        model, metadata = _load_align_model(whisperx, language, device)
+        measured = max(0.0, vram_gb() - before)
+        # Il vecchio se ne va solo adesso che il nuovo c'e'. Prima usciva per primo, e se il nuovo
+        # non si caricava (un modello che non si scarica, la rete che manca) restavano senza
+        # allineatore anche le lezioni in italiano, fino al riavvio. Per un istante sulla scheda
+        # ce ne sono due: qualche centinaio di MB, contro un pomeriggio di parole a stima.
+        if STATE["align"]:
+            log.info("lascio l'allineamento per '%s'", "', '".join(STATE["align"]))
+            STATE["align"].clear()
+            gc.collect()
+            empty_cuda_cache()
         STATE["align"][language] = (model, metadata)
-        STATE["align_gb"] = max(0.0, vram_gb() - before)
+        STATE["align_gb"] = measured
     return STATE["align"][language]
+
+
+def _load_align_model(whisperx: Any, language: str, device: str):
+    """
+    `whisperx.load_align_model`, con l'errore di caricamento detto come [AlignmentUnavailable]: la
+    lingua resta senza parole allineate, le altre no. La memoria finita resta com'e', perche' la
+    gestisce [run_job] (riprova sul processore).
+    """
+    try:
+        return whisperx.load_align_model(language_code=language, device=device)
+    except Exception as error:  # noqa: BLE001
+        if is_oom(error):
+            raise
+        raise AlignmentUnavailable(f"allineatore per '{language}' non caricato: {type(error).__name__}: {error}") from error
 
 
 # * `by_ref`: `source_sha256` trascrive un file gia' nell'archivio, senza che il telefono lo mandi;
@@ -1415,7 +1454,8 @@ def health() -> dict[str, Any]:
         "busy": STATE["busy"],
         # L'app lo guarda per sapere se il testo si accendera' parola per parola davvero o per stima.
         # Vero finche' non si sa il contrario: prima della prima lezione non c'e' niente da dire.
-        "word_timestamps": all(status == "ok" for status in alignment.values()),
+        # Una lingua che qui non si allinea ([ALIGN_UNAVAILABLE]) non conta: le altre si accendono.
+        "word_timestamps": all(status in ("ok", ALIGN_UNAVAILABLE) for status in alignment.values()),
         # Per lingua, "ok" o l'errore: un allineamento rotto si vede qui, senza leggere il registro.
         "alignment": alignment,
         # Le tre righe qui sotto non le legge l'app: le legge chi sta guardando la VRAM.
@@ -2341,6 +2381,29 @@ class Engine:
         detect = getattr(self.main_model(), "detect_language", None)
         return detect(audio) if callable(detect) else None
 
+    def language_vote(self, audio: Any) -> tuple[str | None, float | None]:
+        """
+        La lingua dei primi trenta secondi di [audio] e quanto il modello ne e' sicuro (0–1).
+
+        `detect_language` di WhisperX la probabilita' la scrive nel registro e la butta, e sul rumore
+        e' quella che conta: sulle ore mute «Napoli 18h» votava `nn, nn, haw`, e il norvegese
+        vinceva. Qui si rifanno i suoi tre passi (spettrogramma, encoder, `detect_language`
+        di ctranslate2) tenendo il numero. Un modello che quei pezzi non li ha (una versione diversa,
+        quelli finti delle prove) dice solo la lingua, con probabilita' None: «non lo so», che vale
+        come un voto sicuro, cioe' come prima.
+        """
+        pipeline = self.main_model()
+        whisper = getattr(pipeline, "model", None)
+        native = getattr(whisper, "model", None)
+        if callable(getattr(whisper, "encode", None)) and callable(getattr(native, "detect_language", None)):
+            from whisperx.audio import N_SAMPLES, log_mel_spectrogram
+
+            n_mels = (getattr(whisper, "feat_kwargs", None) or {}).get("feature_size") or 80
+            mel = log_mel_spectrogram(audio[:N_SAMPLES], n_mels=n_mels, padding=max(0, N_SAMPLES - len(audio)))
+            token, probability = native.detect_language(whisper.encode(mel))[0][0]
+            return token[2:-2], float(probability)
+        return self.detect_language(audio), None
+
     def cpu_model(self) -> Any:
         import whisperx
 
@@ -2499,17 +2562,21 @@ def run_job(
     detected = transcription.get("language") or language or "en"
     segments = transcription.get("segments", [])
 
-    alignment = "ok"
+    # Niente segmenti (tutto silenzio, o tutto tolto dal VAD): niente da allineare, nessun modello da
+    # caricare per la lingua che Whisper ha tirato a indovinare sul rumore, e niente da dire in
+    # /health su come va l'allineamento in quella lingua (None).
+    alignment: str | None = "ok" if segments else None
     progress.check_cancelled()
     try:
         align_device = device_used
         try:
-            progress.set("aligning")
-            segments = engine.align(segments, detected, audio, align_device, progress_callback=progress.callback("aligning"))
-            # Quello che l'allineamento ha usato resta nella riserva di torch, e il pezzo dopo lo
-            # trascrive ctranslate2, che quella riserva non la vede: due gigabyte tenuti per niente
-            # sotto la trascrizione (23/09, 10,6 GB di picco con il lotto da 7). Si restituiscono.
-            engine.release()
+            if segments:
+                progress.set("aligning")
+                segments = engine.align(segments, detected, audio, align_device, progress_callback=progress.callback("aligning"))
+                # Quello che l'allineamento ha usato resta nella riserva di torch, e il pezzo dopo lo
+                # trascrive ctranslate2, che quella riserva non la vede: due gigabyte tenuti per niente
+                # sotto la trascrizione (23/09, 10,6 GB di picco con il lotto da 7). Si restituiscono.
+                engine.release()
         except Exception as error:
             if align_device != "cuda" or not is_oom(error):
                 raise
@@ -2517,6 +2584,11 @@ def run_job(
             log.warning("allineamento: memoria della scheda finita, lo rifaccio sul processore")
             progress.set("aligning", detail="cpu")
             segments = engine.align(segments, detected, audio, "cpu", progress_callback=progress.callback("aligning"))
+    except AlignmentUnavailable as missing:
+        # Una lingua senza allineatore (o col suo che non si carica) non e' un guasto: i tempi
+        # restano quelli di Whisper, e le altre lingue continuano ad allinearsi come prima.
+        alignment = ALIGN_UNAVAILABLE
+        log.info("allineamento %s per '%s' (%s): tengo i tempi di Whisper", ALIGN_UNAVAILABLE, detected, missing)
     except Exception as error:  # noqa: BLE001
         # Senza allineamento i tempi restano quelli di Whisper: meno precisi, ma una trascrizione
         # con tempi approssimativi vale piu' di un errore. Con la traccia, pero': senza, l'errore di
@@ -2713,10 +2785,15 @@ def _shifted(segment: dict, offset: float) -> dict:
 
 # Oltre questa durata, se la lezione va comunque in pezzi, l'audio intero non si tiene in memoria: un
 # primo giro calcola le energie (tagli, lingua, silenzi) e ogni pezzo si decodifica quando tocca a lui
-# (lo stesso file: 0,5 GB). Il prezzo: `-ss` su un opus cade al pacchetto, e un pezzo puo' cominciare
-# fino a 30 ms dopo il punto chiesto (misurato). Il taglio sta in un silenzio, e l'allineamento lavora
-# a finestre di 20 ms: sotto le quattro ore l'array intero resta la strada esatta, e la piu' comune.
+# (lo stesso file: 0,5 GB). Ogni pezzo comincia al campione giusto: vedi [_decode_command]. Sotto le
+# quattro ore l'array intero resta la strada piu' comune.
 STREAM_ABOVE_S = 4 * 3600
+# Il salto nel contenitore si ferma cosi' tanto prima del tratto, e il resto si decodifica e si butta.
+SEEK_MARGIN_S = 2.0
+# Quanto audio si prepara al massimo prima di vederlo arrivare: la durata dichiarata puo' mentire. Un
+# WAV mai chiuso (un registratore spento a meta') dice 37 ore, e 37 ore in float32 sono 8,5 GB chiesti
+# in un colpo per un file che ne ha dieci minuti. Oltre, l'array cresce man mano (vedi [load_audio]).
+PREALLOCATE_MAX_S = 4 * 3600
 DECODE_BLOCK_BYTES = 4 * 1024 * 1024
 PROBE_TIMEOUT_S = 30
 _DURATION_LINE = re.compile(rb"Duration:\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)")
@@ -2751,13 +2828,29 @@ def probe_duration(path: str | Path) -> float | None:
 
 
 def _decode_command(path: str | Path, sample_rate: int, start_s: float | None = None, duration_s: float | None = None) -> list[str]:
-    """Il comando di `whisperx.load_audio` (mono, [sample_rate]), ma in float32, e volendo un tratto solo."""
+    """
+    Il comando di `whisperx.load_audio` (mono, [sample_rate]), ma in float32, e volendo un tratto solo.
+
+    Il tratto si prende in due salti. Un `-ss` davanti a `-i` salta nel contenitore, e su un m4a o un
+    opus cade al pacchetto: il pezzo cominciava 10–20 ms dopo il taglio (181 e 289 campioni su un
+    m4a di prova), e i tempi di tutte le sue parole erano spostati di tanto. Un `-ss` dopo `-i`
+    invece decodifica e butta fino al campione giusto, ma dall'inizio del file: su venti ore, ore di
+    decodifica per l'ultimo pezzo. Quindi il salto grosso nel contenitore fino a [SEEK_MARGIN_S]
+    prima, e gli ultimi secondi decodificati e buttati: esatto al campione, e costa due secondi.
+    Anche la durata (`-t`) va dopo `-i`, cioe' si conta sull'uscita: davanti conterebbe dal salto
+    grosso, e il pezzo finirebbe due secondi prima.
+    """
     command = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "0"]
-    if start_s:
-        command += ["-ss", f"{start_s:.3f}"]
+    coarse = max(0.0, (start_s or 0.0) - SEEK_MARGIN_S)
+    fine = (start_s or 0.0) - coarse
+    if coarse > 0:
+        command += ["-ss", f"{coarse:.3f}"]
+    command += ["-i", str(path)]
+    if fine > 0:
+        command += ["-ss", f"{fine:.6f}"]
     if duration_s is not None:
-        command += ["-t", f"{duration_s:.3f}"]
-    return command + ["-i", str(path), "-f", "f32le", "-ac", "1", "-acodec", "pcm_f32le", "-ar", str(sample_rate), "-"]
+        command += ["-t", f"{duration_s:.6f}"]
+    return command + ["-f", "f32le", "-ac", "1", "-acodec", "pcm_f32le", "-ar", str(sample_rate), "-"]
 
 
 @contextlib.contextmanager
@@ -2798,18 +2891,27 @@ def load_audio(
     secondi, e ffmpeg ci scrive dentro a blocchi: niente `bytes` intermedio, niente conversione. Se il
     contenitore mente, l'array cresce (una copia, solo in quel caso). [check] si chiama a ogni
     blocco: una lezione annullata smette di decodificare subito, non dopo venti ore di audio.
+
+    Pero' al massimo [PREALLOCATE_MAX_S] prima di vedere l'audio: un WAV mai chiuso dichiara 37 ore
+    e ne ha dieci minuti. Oltre, l'array cresce di meta' alla volta, senza mai superare la durata
+    dichiarata: una lezione vera di venti ore «intera» costa qualche copia in piu', un file che mente
+    chiede al massimo le quattro ore, o una volta e mezza quello che ha davvero.
     """
     import numpy as np
 
     span = duration_s if duration_s is not None else expected_s
-    buffer = np.empty(int(math.ceil(((span or 600.0) + 2.0) * sample_rate)), dtype=np.float32)
+    declared = int(math.ceil(((span or 600.0) + 2.0) * sample_rate))
+    buffer = np.empty(min(declared, int(PREALLOCATE_MAX_S * sample_rate)), dtype=np.float32)
     filled = 0
     with _ffmpeg_output(_decode_command(path, sample_rate, start_s, duration_s)) as stream:
         while True:
             if check is not None:
                 check()
             if filled == buffer.nbytes:
-                bigger = np.empty(len(buffer) + max(len(buffer) // 2, sample_rate * 600), dtype=np.float32)
+                grown = len(buffer) + max(len(buffer) // 2, sample_rate * 600)
+                if declared > len(buffer):
+                    grown = min(grown, declared)
+                bigger = np.empty(grown, dtype=np.float32)
                 bigger[: len(buffer)] = buffer
                 buffer = bigger
             with memoryview(buffer).cast("B") as raw:
@@ -2917,6 +3019,12 @@ LANGUAGE_WINDOW_S = 30.0
 LANGUAGE_STEP_S = 5.0
 # Tre finestre diverse, a maggioranza: una sola puo' capitare su una canzone o una frase straniera.
 LANGUAGE_VOTES = 3
+# Sotto questa probabilita' la finestra non vota: su trenta secondi di parlato Whisper e' sicuro della
+# lingua, sul rumore tira a indovinare (le ore mute di «Napoli 18h»: `nn, nn, haw`). Misurato: trenta
+# secondi di rumore bianco danno «nn» a 0,47 col modello base, cinque secondi (il resto e' vuoto) a 0,52 —
+# per questo non 0,5. Una finestra scartata per troppo scrupolo costa poco: se nessuna vota, la
+# lingua la riconosce il primo pezzo, come prima.
+LANGUAGE_MIN_PROBABILITY = 0.6
 
 
 def speech_windows(energies: Any, frame_s: float, count: int = LANGUAGE_VOTES, window_s: float = LANGUAGE_WINDOW_S) -> list[float]:
@@ -2943,20 +3051,28 @@ def spoken_language(source: Any, frame_s: float, engine: Engine, progress: JobPr
     """
     La lingua delle finestre di [speech_windows], a maggioranza (a pari merito, la piu' parlata).
 
-    None se il modello non la sa dire o non si carica: allora la riconosce [run_job] come prima, e
-    il ripiego sul processore resta tutto suo.
+    Votano solo le finestre di cui il modello e' sicuro almeno [LANGUAGE_MIN_PROBABILITY]: su un
+    file tutto rumore le tre «finestre piu' parlate» sono rumore anche loro, e la maggioranza di tre
+    tiri a caso (`nn, nn, haw`) faceva trascrivere la lezione in norvegese e caricare un allineatore
+    da 3,6 GB. Nessun voto sicuro: None.
+
+    None anche se il modello non la sa dire o non si carica: allora la riconosce [run_job] come
+    prima, e il ripiego sul processore resta tutto suo.
     """
     try:
         if engine.needs_load():
             progress.set("loading_model")
         votes: list[str] = []
+        heard: list[str] = []
         for start_s in speech_windows(source.energies(), frame_s):
             progress.check_cancelled()
             window = source.piece(start_s, min(source.duration_s, start_s + LANGUAGE_WINDOW_S))
-            language = engine.detect_language(window)
+            language, probability = engine.language_vote(window)
             if not language:
                 return None
-            votes.append(language)
+            heard.append(language if probability is None else f"{language} {probability:.2f}")
+            if probability is None or probability >= LANGUAGE_MIN_PROBABILITY:
+                votes.append(language)
     except JobCancelled:
         raise
     except Exception as error:  # noqa: BLE001
@@ -2964,9 +3080,11 @@ def spoken_language(source: Any, frame_s: float, engine: Engine, progress: JobPr
         log.warning("lingua non riconosciuta in anticipo (%s: %s): la riconosce il primo pezzo", type(error).__name__, error)
         return None
     if not votes:
+        if heard:
+            log.info("lingua: nessun voto sicuro (%s), la riconosce il primo pezzo", ", ".join(heard))
         return None
     best = max(votes, key=lambda language: (votes.count(language), -votes.index(language)))
-    log.info("lingua: %s (%s)", best, ", ".join(votes))
+    log.info("lingua: %s (%s)", best, ", ".join(heard))
     return best
 
 
@@ -3009,6 +3127,10 @@ FLOOR_BLOCK_S = 600.0
 # 95° percentile delle finestre che stanno almeno 20 dB sopra il fondo del loro blocco.
 SPEECH_PERCENTILE = 95
 ACTIVE_ABOVE_FLOOR = 10.0
+# Un'eco del vocabolario piu' corta di cosi' non e' stata detta. Era un secondo, e se ne andava la
+# risposta vera di una parola sola — «Chi l'ha scritto?» «Fichte.» —, che allineata dura mezzo
+# secondo: a quella durata decide l'energia sotto ([QUIET_RATIO]), non l'orologio.
+ECHO_MIN_S = 0.3
 # Le frasi del silenzio: corte, e sole (tre secondi di niente prima e dopo) o sopra un audio quieto.
 PHRASE_MAX_S = 2.0
 ISOLATION_S = 3.0
@@ -3024,10 +3146,18 @@ SILENCE_PHRASES = frozenset(
 # I titoli di coda dei sottotitoli amatoriali: in una lezione non si dicono mai. In piu' lingue perche'
 # sul rumore anche la lingua e' a caso: le ore mute di «Napoli 18h», prese da sole, venivano
 # riconosciute come norvegese, e ogni colpo di tosse diventava «Teksting av Nicolai Winther».
+#
+# Solo le formule intere, e solo su un segmento corto ([CREDITS_MAX_WORDS]): i titoli di coda sono
+# una riga sola. Prima bastavano «ai media» in un punto qualunque e «Sottotitoli di» in apertura, e
+# se ne andavano frasi vere — «Il ministro ha poi parlato ai media della crisi», «Sottotitoli di un
+# film in lingua originale aiutano molto». «AI-Media» vale solo dentro la sua formula («Captions by
+# AI-Media»); «di» e «de» da soli non sono una formula, «a cura di» si'.
+CREDITS_MAX_WORDS = 10
 CREDITS = re.compile(
-    r"\bamara org\b|\bai media\b|\bnicolai winther\b|\bqtss\b"
+    r"\bamara org\b|\bnicolai winther\b|\bqtss\b"
+    r"|^(captions|captioning|subtitles|subtitled) by ai media\b"
     r"|^(sottotitoli|subtitles|subtitulos|subtítulos|sous titres|untertitel\w*|teksting|undertekst\w*|undertext\w*)"
-    r" (creati|a cura|e revisione|di|by|av|por|de|der|réalisés)\b"
+    r" (creati|a cura di|e revisione|by|av|por|realizados por|réalisés par|der|im auftrag)\b"
 )
 HALLUCINATION_REASONS = {
     "vuoti": "senza parole",
@@ -3170,11 +3300,11 @@ def drop_hallucinations(
       * **vuoti** — niente lettere ne' cifre («...», «- -»);
       * **giri** — rapporto di compressione oltre [LOOP_COMPRESSION]: la ripetizione si accorcia a
         una volta sola (coi tempi delle parole tenute), il segmento resta. Non si butta testo vero;
-      * **crediti** — i titoli di coda dei sottotitoli ([CREDITS]);
+      * **crediti** — i titoli di coda dei sottotitoli ([CREDITS]), su un segmento corto;
       * **eco** — tutte le parole stanno nel vocabolario mandato come prompt (e le cifre attaccate,
         «18h30»): Whisper lo rilegge a ogni finestra da trenta secondi, e sul rumore lo ripete. Si
-        toglie se ripete le parole, o se non sembra detto da qualcuno: corto, veloce o quieto.
-        «Napoli» detto chiaro per un secondo, dal vivo, resta;
+        toglie se ripete le parole, o se non sembra detto da qualcuno: cortissimo ([ECHO_MIN_S]),
+        veloce o quieto. «Fichte.» detto chiaro per mezzo secondo, dal vivo, resta;
       * **brevi** — allineato in meno di [SHORT_SPAN_S] o a piu' di [FAST_CHARS_PER_S] caratteri al
         secondo, sopra un audio quieto (vicino al fondo, o molto sotto la voce: [QUIET_RATIO]);
       * **muti** — lungo quanto si vuole, ma [MUTE_BELOW_SPEECH_DB] sotto la voce del file;
@@ -3221,14 +3351,14 @@ def drop_hallucinations(
             segment = shorter
             text = segment["text"].strip()
             words = normalized_words(text)
-        if CREDITS.search(" ".join(words)):
+        if len(words) <= CREDITS_MAX_WORDS and CREDITS.search(" ".join(words)):
             counts["crediti"] += 1
             continue
         pieces = _pieces_of_words(text)
         if prompt_keys and any(p in prompt_keys and not p.isdigit() for p in pieces) and all(
             p in prompt_keys or p.isdigit() for p in pieces
         ):
-            if repeated or span < 1.0 or pace > FAST_CHARS_PER_S or quiet(measured):
+            if repeated or span < ECHO_MIN_S or pace > FAST_CHARS_PER_S or quiet(measured):
                 counts["eco"] += 1
                 continue
         if (span < SHORT_SPAN_S or pace > FAST_CHARS_PER_S) and quiet(measured):
@@ -3302,7 +3432,8 @@ def transcribe_audio(
     segments: list[dict] = []
     detected = language or spoken_language(source, frame_s, engine, progress)
     device_used = device
-    alignment = "ok"
+    # None finche' nessun pezzo ha avuto qualcosa da allineare: vedi [run_job].
+    alignment: str | None = None
     used_batch = batch_size
     for index, (start_s, end_s) in enumerate(bounds):
         progress.check_cancelled()
@@ -3314,8 +3445,9 @@ def transcribe_audio(
         segments.extend(_shifted(segment, start_s) for segment in job["segments"])
         if job.get("device_used") == "cpu":
             device_used = "cpu"
-        if job.get("alignment", "ok") != "ok" and alignment == "ok":
-            alignment = job["alignment"]
+        status = job.get("alignment", "ok")
+        if status is not None and alignment in (None, "ok"):
+            alignment = status
         used_batch = job.get("batch_size", used_batch)
     # Niente di grande resta nel frame: se qualcuno lo conserva (una libreria che tiene da parte un
     # errore d'import col suo traceback, vedi [warm_imports]) si porterebbe dietro il modello e
@@ -3377,7 +3509,8 @@ def _transcribe(
     job = transcribe_audio(
         source, SAMPLE_RATE, language, progress, engine, max_minutes=cap, prompt=prompt, batch_size=batch_size, device=device,
     )
-    STATE["alignment"][job["language"]] = job["alignment"]
+    if job["alignment"] is not None:
+        STATE["alignment"][job["language"]] = job["alignment"]
 
     out = []
     for segment in job["segments"]:

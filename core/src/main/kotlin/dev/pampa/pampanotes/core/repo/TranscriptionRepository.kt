@@ -17,6 +17,7 @@ import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.db.TranscriptKind
 import dev.pampa.pampanotes.core.db.TranscriptStatus
 import dev.pampa.pampanotes.core.db.TranscriptionRunEntity
+import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.model.Ids
 import dev.pampa.pampanotes.core.model.wordCount
 import dev.pampa.pampanotes.core.settings.PampaSettings
@@ -71,6 +72,7 @@ class TranscriptionRepository @Inject constructor(
   private val computerAuth: ComputerAuth,
   private val stats: StatsRepository,
   private val sessionRepository: SessionRepository,
+  private val files: AppFiles,
 ) {
 
   fun observeAll(): Flow<List<JobEntity>> = jobs.observeAll()
@@ -385,6 +387,9 @@ class TranscriptionRepository @Inject constructor(
    */
   suspend fun retry(jobId: String): JobEntity? {
     val job = jobs.get(jobId) ?: return null
+    // Una registrazione muta ha lasciato i suoi risultati vuoti nella cartella del lavoro, e con lo
+    // stesso id «Riprova» li rileggerebbe invece di chiedere di nuovo ([FailedJobs.discardsWorkOnRetry]).
+    if (FailedJobs.discardsWorkOnRetry(job)) runCatching { java.io.File(files.jobs, job.id).deleteRecursively() }
     // Il conto delle volte che il computer e' sparito riparte: chi riprova ha di solito rimesso a
     // posto il computer. Le opzioni di un raffinamento (il preset) invece restano.
     val options = if (job.type == JobType.TRANSCRIBE) null else job.optionsJson
