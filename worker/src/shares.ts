@@ -254,6 +254,8 @@ export interface PageSegment {
   text: string;
   /** `inizio,fine,testo` per riga, tempi relativi a `sessionStartMs`. */
   words: string | null;
+  /** «Chi parla»: l'etichetta del computer («SPEAKER_00»), null senza voci separate. */
+  speaker: string | null;
 }
 
 export interface PageSession {
@@ -321,9 +323,9 @@ export async function pageData(env: ShareEnv, token: string): Promise<PageData |
       const segments: PageSegment[] = [];
       let estimated = false;
       for (const c of chunks.results) {
-        for (const s of JSON.parse(c.payload) as { partId: string; partStartMs: number; sessionStartMs: number; sessionEndMs: number; text: string; wordsJson?: string | null; wordsEstimated?: boolean }[]) {
+        for (const s of JSON.parse(c.payload) as { partId: string; partStartMs: number; sessionStartMs: number; sessionEndMs: number; text: string; wordsJson?: string | null; wordsEstimated?: boolean; speaker?: string | null }[]) {
           if (s.wordsEstimated) estimated = true;
-          segments.push({ partId: s.partId, sessionStartMs: s.sessionStartMs, sessionEndMs: s.sessionEndMs, text: s.text, words: s.wordsJson ?? null });
+          segments.push({ partId: s.partId, sessionStartMs: s.sessionStartMs, sessionEndMs: s.sessionEndMs, text: s.text, words: s.wordsJson ?? null, speaker: s.speaker ?? null });
         }
       }
       segments.sort((a, b) => a.sessionStartMs - b.sessionStartMs);

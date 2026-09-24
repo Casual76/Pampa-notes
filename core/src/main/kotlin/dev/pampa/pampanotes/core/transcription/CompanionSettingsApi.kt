@@ -81,6 +81,8 @@ sealed interface CompanionStatus {
     val vram: VramEstimate?,
     val settings: CompanionSettings?,
     val canEdit: Boolean,
+    /** «Chi parla»: il computer sa separare le voci ([CompanionFeatures.DIARIZE], cioe' ha il token). */
+    val diarize: Boolean = false,
   ) : CompanionStatus
 }
 
@@ -133,7 +135,10 @@ class CompanionSettingsApi @Inject constructor(
       .onFailure { if (it is CancellationException) throw it }
       .getOrNull()
       ?.let(CompanionSettingsJson::parseSettings)
-    return CompanionStatus.Ready(gpu = parsed.gpu, vram = parsed.vram, settings = settings, canEdit = settings != null)
+    return CompanionStatus.Ready(
+      gpu = parsed.gpu, vram = parsed.vram, settings = settings, canEdit = settings != null,
+      diarize = CompanionFeatures.DIARIZE in OpenAiCompatProvider.parseFeatures(health),
+    )
   }
 
   /** La stima per delle impostazioni non salvate. Null se il companion non sa farla. */

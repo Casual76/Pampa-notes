@@ -203,6 +203,7 @@ class TranscriptionRunnerTest {
     val byRefCalls = mutableListOf<Pair<String, Int?>>()
     val uploadCalls = mutableListOf<CompanionUpload>()
     val plainCalls = mutableListOf<File>()
+    val requests = mutableListOf<TranscribeRequest>()
     var remoteToSend: List<RemoteProgress> = emptyList()
 
     override val id = OpenAiCompatProvider.ID
@@ -221,6 +222,7 @@ class TranscriptionRunnerTest {
       onRemote: (RemoteProgress) -> Unit,
     ): TranscriptResult {
       plainCalls += file
+      requests += request
       return plain(file)
     }
 
@@ -231,6 +233,7 @@ class TranscriptionRunnerTest {
       onRemote: (RemoteProgress) -> Unit,
     ): TranscriptResult {
       byRefCalls += sha256 to maxMinutes
+      requests += request
       remoteToSend.forEach(onRemote)
       return byRef(sha256)
     }
@@ -244,6 +247,7 @@ class TranscriptionRunnerTest {
       onRemote: (RemoteProgress) -> Unit,
     ): TranscriptResult {
       uploadCalls += upload
+      requests += request
       onProgress(UploadProgress(16, 16))
       remoteToSend.forEach(onRemote)
       return upload(upload)
@@ -349,6 +353,25 @@ class TranscriptionRunnerTest {
     val companion = FakeCompanion(allFeatures)
     runner.transcribeSession("job", listOf(part("a", 0)), companion, TranscribeRequest("m"), chunkMinutes = 10, archiveUploads = false)
     assertEquals(false, companion.uploadCalls.single().archive)
+  }
+
+  @Test
+  fun `le voci si chiedono solo a chi sa separarle, e arrivano sui segmenti`() = runBlocking {
+    val voiced = FakeCompanion(
+      allFeatures + CompanionFeatures.DIARIZE,
+      byRef = { TranscriptResult("a", listOf(RawSegment(0, 5_000, "a", speaker = "SPEAKER_00")), "it", 60_000) },
+    )
+    val result = runner.transcribeSession("job-v", listOf(archivedPart("a")), voiced, TranscribeRequest("m", diarize = true), chunkMinutes = 10)
+    assertEquals(listOf(true), voiced.requests.map { it.diarize })
+    assertEquals("SPEAKER_00", result.segments.single().speaker)
+
+    val mute = FakeCompanion(allFeatures)
+    runner.transcribeSession("job-m", listOf(archivedPart("b")), mute, TranscribeRequest("m", diarize = true), chunkMinutes = 10)
+    assertEquals("un computer senza token non riceve il campo", listOf(false), mute.requests.map { it.diarize })
+
+    val old = FakeCompanion(features = emptySet())
+    runner.transcribeSession("job-o", listOf(archivedPart("c", local = true)), old, TranscribeRequest("m", diarize = true), chunkMinutes = 10)
+    assertEquals("la strada di sempre non lo manda mai", listOf(false), old.requests.map { it.diarize })
   }
 
   @Test

@@ -288,6 +288,121 @@ def on_anonymous(icon: pystray.Icon, _: Any) -> None:
     refresh(icon)
 
 
+def voices_label(_: Any = None) -> str:
+    return "Separazione delle voci (accesa)..." if server.STATE.get("hf_token") else "Separazione delle voci..."
+
+
+# Una finestra alla volta: due clic sul menu non devono aprire due Tk su due thread.
+_VOICES_OPEN = threading.Lock()
+
+HF_MODEL_PAGE = f"https://huggingface.co/{server.DIARIZE_MODEL}"
+HF_TOKENS_PAGE = "https://huggingface.co/settings/tokens"
+
+
+def on_voices(icon: pystray.Icon, _: Any) -> None:
+    """
+    La finestra per il token di Hugging Face, che accende «chi parla» (vedi `diarize_segments` nel
+    server). Su un thread suo: il menu dell'icona ha il suo giro di eventi, e Tk vuole il proprio.
+    """
+    if not _VOICES_OPEN.acquire(blocking=False):
+        return
+
+    def run() -> None:
+        try:
+            voices_dialog(icon)
+        except Exception:  # noqa: BLE001 — una finestra che non si apre non deve portarsi via l'icona
+            server.log.exception("la finestra della separazione delle voci non si apre")
+        finally:
+            _VOICES_OPEN.release()
+
+    threading.Thread(target=run, daemon=True, name="voci").start()
+
+
+def save_hf_token(token: str) -> None:
+    """Il token in `config.json` (tutto o niente, sotto il lucchetto di config.py) e nel server, subito."""
+    config.set_value("hf_token", token)
+    server.STATE["hf_token"] = token or None
+    SETTINGS["hf_token"] = token
+
+
+def voices_dialog(icon: pystray.Icon) -> None:
+    """
+    Tre passi spiegati, due link, un campo e «Salva». Il token non si mostra (ne' qui ne' nel
+    registro): si incolla, si salva, e la finestra dice se Hugging Face lo accetta per quel modello.
+    """
+    import tkinter as tk
+    from tkinter import ttk
+
+    root = tk.Tk()
+    root.title("Pampa Notes - Separazione delle voci")
+    root.resizable(False, False)
+    frame = ttk.Frame(root, padding=16)
+    frame.grid()
+    intro = (
+        "Pampa Notes puo' dire chi parla in una registrazione: «Voce 1», «Voce 2»...\n"
+        "Il modello che lo fa (pyannote) e' gratuito ma si scarica da Hugging Face,\n"
+        "che chiede tre cose, una volta sola:\n\n"
+        "  1. un account gratuito su huggingface.co;\n"
+        f"  2. accettare le condizioni del modello {server.DIARIZE_MODEL}\n"
+        "      (il modulo in cima alla sua pagina);\n"
+        "  3. un token di lettura: Settings -> Access Tokens -> Create new token, tipo «Read».\n\n"
+        "Poi incolla qui il token. Resta su questo computer, in config.json."
+    )
+    ttk.Label(frame, text=intro, justify="left").grid(row=0, column=0, columnspan=3, sticky="w")
+    ttk.Button(frame, text="Apri la pagina del modello", command=lambda: webbrowser.open(HF_MODEL_PAGE)).grid(
+        row=1, column=0, sticky="w", pady=(12, 0)
+    )
+    ttk.Button(frame, text="Crea il token", command=lambda: webbrowser.open(HF_TOKENS_PAGE)).grid(
+        row=1, column=1, sticky="w", pady=(12, 0)
+    )
+    ttk.Label(frame, text="Token di Hugging Face:").grid(row=2, column=0, columnspan=3, sticky="w", pady=(16, 4))
+    value = tk.StringVar()
+    entry = ttk.Entry(frame, textvariable=value, show="•", width=56)
+    entry.grid(row=3, column=0, columnspan=3, sticky="we")
+    configured = bool(server.STATE.get("hf_token"))
+    status = tk.StringVar(value="Un token e' gia' salvato: incollane un altro per sostituirlo." if configured else "")
+    ttk.Label(frame, textvariable=status, wraplength=440, justify="left").grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+    def save() -> None:
+        token = value.get().strip()
+        if not token:
+            status.set("Incolla prima il token.")
+            return
+        try:
+            save_hf_token(token)
+        except OSError as error:
+            server.log.warning("config.json non si scrive: %s", error)
+            status.set("config.json non si scrive: il token vale solo fino al riavvio.")
+            return
+        server.log.info("separazione delle voci: token salvato dal menu")
+        status.set("Salvato. Controllo con Hugging Face...")
+        root.update_idletasks()
+        _, message = server.check_diarization_access(token)
+        status.set(message)
+        value.set("")
+        refresh(icon)
+
+    def remove() -> None:
+        try:
+            save_hf_token("")
+        except OSError as error:
+            server.log.warning("config.json non si scrive: %s", error)
+        server.log.info("separazione delle voci: token tolto dal menu")
+        status.set("Tolto: le registrazioni torneranno senza voci.")
+        refresh(icon)
+
+    buttons = ttk.Frame(frame)
+    buttons.grid(row=5, column=0, columnspan=3, sticky="e", pady=(16, 0))
+    ttk.Button(buttons, text="Togli il token", command=remove).grid(row=0, column=0, padx=(0, 8))
+    ttk.Button(buttons, text="Salva", command=save).grid(row=0, column=1, padx=(0, 8))
+    ttk.Button(buttons, text="Chiudi", command=root.destroy).grid(row=0, column=2)
+    entry.focus_set()
+    root.bind("<Return>", lambda _event: save())
+    root.bind("<Escape>", lambda _event: root.destroy())
+    root.attributes("-topmost", True)
+    root.mainloop()
+
+
 def on_quit(icon: pystray.Icon, _: Any) -> None:
     SERVER.should_exit = True
     icon.stop()
@@ -422,6 +537,7 @@ def build_menu() -> pystray.Menu:
         pystray.MenuItem(update_label, on_update, visible=update_available),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Apri la cartella dell'archivio", on_archive),
+        pystray.MenuItem(voices_label, on_voices),
         pystray.MenuItem("Apri le impostazioni (config.json)", on_config),
         pystray.MenuItem("Apri i log", on_logs),
         pystray.MenuItem("Avvio automatico", on_autostart, checked=autostart_enabled),

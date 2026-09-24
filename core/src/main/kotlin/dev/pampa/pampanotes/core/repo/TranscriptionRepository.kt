@@ -21,6 +21,7 @@ import dev.pampa.pampanotes.core.model.Ids
 import dev.pampa.pampanotes.core.model.wordCount
 import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
+import dev.pampa.pampanotes.core.settings.SpeakerSeparation
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
 import dev.pampa.pampanotes.core.transcription.ComputerAuth
 import dev.pampa.pampanotes.core.transcription.GroqWhisperProvider
@@ -436,6 +437,13 @@ class TranscriptionRepository @Inject constructor(
       language = note?.language ?: settings.languageOrNull,
       // Solo il vocabolario: il titolo della nota, messo qui, Whisper lo ripeteva nei silenzi.
       prompt = TranscriptionPrompt.of(settings.vocabulary),
+      // «Chi parla»: di serie per le Registrazioni. Chiederlo non basta: il runner lo manda solo a
+      // un computer che dichiara di saperlo fare.
+      diarize = when (settings.speakerSeparation) {
+        SpeakerSeparation.NEVER -> false
+        SpeakerSeparation.ALWAYS -> true
+        SpeakerSeparation.PERSONAL -> note != null && PersonalScope.isPersonal(note.folderId, db.folders().all())
+      },
     )
   }
 

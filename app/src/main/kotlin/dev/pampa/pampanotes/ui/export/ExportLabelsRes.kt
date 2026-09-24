@@ -46,6 +46,8 @@ fun exportLabels(): ExportLabels = ExportLabels(
   hours = stringResource(R.string.session_silence_hours),
   // La stessa riga della schermata: il segnaposto resta, lo riempie il writer con la durata.
   silence = stringResource(R.string.session_silence),
+  // «Voce %1$d»: anche questo lo riempie il writer, col numero della voce.
+  voice = stringResource(R.string.session_voice),
   words = stringResource(R.string.export_label_words),
   note = stringResource(R.string.export_label_note),
   notesPlural = stringResource(R.string.export_label_notes_plural),

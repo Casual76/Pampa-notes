@@ -196,6 +196,33 @@ L'allineamento, se finisce la memoria, si rifà sul processore. La risposta dice
 
 Per dare un'idea: su una RTX 4070 Ti, `large-v3` fa una lezione di **31 minuti in 45 secondi**.
 
+## Chi parla
+
+Il computer sa anche dire chi parla in una registrazione: ogni frase torna con la sua voce
+(`"speaker": "SPEAKER_00"`), e l'app scrive «Voce 1», «Voce 2». Lo fa pyannote, che arriva già con
+WhisperX, ma il suo modello (`pyannote/speaker-diarization-community-1`) sta dietro le condizioni
+d'uso di Hugging Face. Una volta sola:
+
+1. un account gratuito su [huggingface.co](https://huggingface.co);
+2. sulla [pagina del modello](https://huggingface.co/pyannote/speaker-diarization-community-1),
+   accetta le condizioni (il modulo in cima);
+3. in *Settings → Access Tokens* crea un token di tipo **Read**;
+4. tasto destro sull'icona → **Separazione delle voci...**, incolla il token, **Salva**. La finestra
+   chiede subito a Hugging Face se il token apre il modello, e dice cosa manca.
+
+Il token finisce in `config.json` (`hf_token`; vale anche la variabile `HF_TOKEN`) e non si stampa
+mai: né nel registro, né in `/health`. Senza token la separazione non c'è, `/health` non la offre
+(`features` senza `diarize`) e l'app non la chiede.
+
+Con il token, l'app manda `diarize=1` (di serie solo per le Registrazioni: una lezione ha una voce
+sola). La separazione si fa dopo la trascrizione e l'allineamento, **sull'audio intero** — le voci
+si riconoscono solo dentro la stessa separazione — col modello caricato per quella lezione e buttato
+alla fine. Serve circa un gigabyte e mezzo di scheda: se non c'è posto, o se la memoria finisce a
+metà, si fa sul processore. Oltre le due ore si separa a finestre, e le voci di ogni finestra hanno
+un nome loro (`2:SPEAKER_00`): la stessa persona può comparire come due voci, mai due persone come
+una. **Non fa mai fallire una trascrizione**: un token sbagliato o un errore di pyannote lasciano la
+lezione senza voci, e `/health` lo dice in `diarization.last`.
+
 ## A che punto è
 
 Finito il caricamento, dal telefono una trascrizione era un'attesa muta: la barra ferma al 100% per

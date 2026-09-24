@@ -29,6 +29,7 @@ import argparse
 import asyncio
 import contextlib
 import dataclasses
+import functools
 import gc
 import hashlib
 import json
@@ -54,8 +55,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 # pyannote e torchcodec stampano in avvio un muro di avvisi su ffmpeg che non riguardano niente di
-# quello che facciamo qui (la diarizzazione non si usa). Sembravano errori, e una console che
-# sembra piena di errori e' una console che fa chiudere la finestra.
+# quello che facciamo qui (la separazione delle voci, quando c'e', riceve l'audio gia' in memoria e
+# non passa da torchcodec). Sembravano errori, e una console che sembra piena di errori e' una
+# console che fa chiudere la finestra.
 warnings.filterwarnings("ignore", message=".*torchcodec.*")
 warnings.filterwarnings("ignore", message=".*TensorFloat-32.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="pyannote.*")
@@ -98,6 +100,11 @@ STATE: dict[str, Any] = {
     # allineamento che fallisce non ferma niente — la trascrizione esce lo stesso, coi tempi per
     # frase — e cosi' e' rimasto rotto per giorni senza che nessuno lo vedesse.
     "alignment": {},
+    # «Chi parla» (vedi [diarize_segments]): il token di Hugging Face con cui si scarica il modello,
+    # None = separazione spenta. Non si stampa mai. Accanto, l'esito dell'ultima separazione ("ok" o
+    # l'errore), che /health mostra per la stessa ragione di `alignment`.
+    "hf_token": None,
+    "diarization": None,
     "busy": False,
     # Quando e' finita l'ultima trascrizione. Da qui parte il conto per lo sfratto.
     "last_used": 0.0,
@@ -249,7 +256,7 @@ STOPPED = threading.Event()
 # Le percentuali sono vere: vengono dai callback di WhisperX (un passo per segmento della VAD in
 # trascrizione, uno per segmento in allineamento), non da una stima sul tempo.
 
-JOB_STATES = ("received", "queued", "decoding", "loading_model", "transcribing", "aligning", "done", "failed")
+JOB_STATES = ("received", "queued", "decoding", "loading_model", "transcribing", "aligning", "diarizing", "done", "failed")
 JOB_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{8,64}")
 # Dopo la fine un lavoro resta leggibile dieci minuti: l'app lo chiede fino all'ultima risposta, e
 # una risposta persa per strada non deve trasformarsi in un 404 che sembra un companion vecchio.
@@ -257,7 +264,7 @@ JOB_KEEP_S = 10 * 60
 # Uno che non finisce mai (il telefono sparito a meta' caricamento) se ne va comunque.
 JOB_STALE_S = 6 * 3600
 JOB_LIMIT = 256
-ACTIVE_JOB_STATES = ("decoding", "loading_model", "transcribing", "aligning")
+ACTIVE_JOB_STATES = ("decoding", "loading_model", "transcribing", "aligning", "diarizing")
 
 
 def bearer_hash(bearer: str) -> str:
@@ -394,7 +401,7 @@ class JobProgress:
         # La stima c'e' solo quando dice qualcosa: con il 2% fatto in un secondo verrebbe fuori un
         # numero che cambia di minuti a ogni domanda.
         eta = None
-        if state in ("transcribing", "aligning") and 0.03 <= fraction < 1.0 and in_state >= 2.0:
+        if state in ("transcribing", "aligning", "diarizing") and 0.03 <= fraction < 1.0 and in_state >= 2.0:
             eta = round(in_state * (1.0 - fraction) / fraction, 1)
         return {
             "id": self.id,
@@ -1442,7 +1449,10 @@ def health() -> dict[str, Any]:
         "vram": public_plan(STATE["vram"]),
         # Quello che questo companion sa fare in piu' della chiamata di OpenAI. L'app lo legge prima
         # di ogni lavoro: senza la lista (un companion vecchio) fa tutto da se', come prima.
-        "features": list(FEATURES),
+        # `diarize` c'e' solo con un token di Hugging Face: vedi [diarization_available].
+        "features": list(FEATURES) + (["diarize"] if diarization_available() else []),
+        # «Chi parla»: se si puo', con quale modello, e com'e' andata l'ultima volta. Mai il token.
+        "diarization": diarization_status(),
     }
 
 
@@ -1987,6 +1997,11 @@ async def transcriptions(
     archive_flag: str = Form(default="", alias="archive"),
     name: str = Form(default=""),
     max_minutes: str = Form(default=""),
+    # «Chi parla»: `diarize=1` chiede le voci per questa richiesta, se il computer ha un token (vedi
+    # [diarize_request]). `min_speakers`/`max_speakers` aiutano pyannote quando si sa quanti sono.
+    diarize: str = Form(default=""),
+    min_speakers: str = Form(default=""),
+    max_speakers: str = Form(default=""),
 ):
     """
     La chiamata vera. Multipart come OpenAI, risposta `verbose_json` con i segmenti.
@@ -2004,7 +2019,9 @@ async def transcriptions(
       * `archive=1` con `file` e `source_sha256`: il file mandato entra nell'archivio (impronta
         verificata, come un `PUT`) e si trascrive da li'. Senza, resta un temporaneo che se ne va a
         fine lavoro — e' la strada di chi i file sul computer non li vuole;
-      * `max_minutes`: la divisione in pezzi la fa il computer ([transcribe_audio]).
+      * `max_minutes`: la divisione in pezzi la fa il computer ([transcribe_audio]);
+      * `diarize=1`: ogni segmento torna con la voce che lo dice (`speaker`), se il computer sa
+        separarle; altrimenti il campo si ignora e la trascrizione esce come sempre.
 
     Impronta e archivio sono **solo del proprietario**: a un ospite uno `sha256` direbbe se un file
     e' nell'archivio di un altro. Gli ospiti mandano il file, come sempre.
@@ -2064,11 +2081,12 @@ async def transcriptions(
         cap: int | str | None = "auto" if max_minutes.strip().lower() == "auto" else _positive_int(max_minutes)
         vocabulary = prompt.strip() or None
         lang = language.strip() or None
+        voices = diarize_request(diarize, min_speakers, max_speakers)
 
         # La stessa registrazione, con le stesse richieste, gia' in corso per qualcun altro — il tablet
         # che non sapeva che il telefono l'aveva mandata, o il telefono che la rimanda dopo aver perso
         # la risposta: ci si aggancia a quella. Il computer la fa una volta, e la danno a tutti e due.
-        key = (sha, lang or "", vocabulary or "", cap or 0) if sha and archived else None
+        key = (sha, lang or "", vocabulary or "", cap or 0, voices) if sha and archived else None
         # Annullata mentre il file arrivava (`DELETE /v1/jobs/{id}` o il telefono che se ne va): il
         # lavoro non si comincia, e non ci si aggancia a quello di un altro. Prima lo si scopriva solo
         # un secondo dopo, in [_await_work], con il lavoro gia' creato e magari gia' in decodifica.
@@ -2086,7 +2104,7 @@ async def transcriptions(
         else:
             work = SharedWork(key=key, progress=JobProgress("w" + secrets.token_hex(8)))
             work.task = asyncio.create_task(
-                _run_work(work, source, lang, vocabulary, cap, 0 if caller.kind == "owner" else 1, who, label)
+                _run_work(work, source, lang, vocabulary, cap, 0 if caller.kind == "owner" else 1, who, label, voices)
             )
             if key is not None:
                 INFLIGHT[key] = work
@@ -2167,7 +2185,7 @@ INFLIGHT: dict[tuple, SharedWork] = {}
 
 async def _run_work(
     work: SharedWork, source: Path, language: str | None, prompt: str | None, cap: int | str | None,
-    priority: int, who: str, label: str,
+    priority: int, who: str, label: str, voices: "DiarizeRequest | None" = None,
 ) -> dict[str, Any]:
     """La trascrizione vera: il turno nella fila, poi WhisperX su un thread."""
     progress = work.progress
@@ -2186,7 +2204,11 @@ async def _run_work(
                 # Su un thread anche il caricamento del modello: cosi' `/health` continua a
                 # rispondere durante i minuti del primo avvio, invece di far credere all'app che il
                 # server sia morto.
-                result = await asyncio.to_thread(_transcribe, str(source), language, progress, prompt=prompt, max_minutes=cap)
+                # Le voci solo se chieste: chi non le chiede chiama [_transcribe] come prima.
+                extra = {"diarize": voices} if voices is not None else {}
+                result = await asyncio.to_thread(
+                    _transcribe, str(source), language, progress, prompt=prompt, max_minutes=cap, **extra,
+                )
             except JobCancelled:
                 log.info("%snessuno aspetta piu' %s: il computer si ferma", who, label)
                 progress.set("failed", detail="annullata")
@@ -3270,6 +3292,7 @@ def transcribe_audio(
     prompt: str | None = None,
     batch_size: int | None = None,
     device: str | None = None,
+    diarize: "DiarizeRequest | None" = None,
 ) -> dict[str, Any]:
     """
     [run_job] sull'audio intero, o su ogni pezzo se [max_minutes] lo chiede ([piece_count]).
@@ -3317,6 +3340,11 @@ def transcribe_audio(
         if job.get("alignment", "ok") != "ok" and alignment == "ok":
             alignment = job["alignment"]
         used_batch = job.get("batch_size", used_batch)
+    # «Chi parla», dopo l'allineamento di tutti i pezzi e sull'audio intero: una voce si riconosce
+    # solo dentro la stessa separazione, quindi non si separa pezzo per pezzo ([diarize_segments]).
+    diarization = None
+    if diarize is not None and segments:
+        segments, diarization = diarize_segments(segments, source, diarize, progress, device)
     # Niente di grande resta nel frame: se qualcuno lo conserva (una libreria che tiene da parte un
     # errore d'import col suo traceback, vedi [warm_imports]) si porterebbe dietro il modello e
     # l'audio, e scaricare il modello non restituirebbe piu' la scheda.
@@ -3333,6 +3361,7 @@ def transcribe_audio(
         "alignment": alignment,
         "chunks": len(bounds),
         "dropped": dropped,
+        "diarization": diarization,
     }
 
 
@@ -3342,6 +3371,7 @@ def _transcribe(
     progress: JobProgress | None = None,
     prompt: str | None = None,
     max_minutes: int | str | None = None,
+    diarize: "DiarizeRequest | None" = None,
 ) -> dict[str, Any]:
     """Il lavoro vero, su un thread suo: WhisperX blocca, e bloccare il loop ferma anche /health."""
     from whisperx.audio import SAMPLE_RATE
@@ -3374,10 +3404,14 @@ def _transcribe(
     audio_s = source.duration_s
     progress.audio_s = audio_s
     cap = auto_piece_minutes(audio_s, device) if max_minutes == "auto" else max_minutes
+    extra = {"diarize": diarize} if diarize is not None else {}
     job = transcribe_audio(
         source, SAMPLE_RATE, language, progress, engine, max_minutes=cap, prompt=prompt, batch_size=batch_size, device=device,
+        **extra,
     )
     STATE["alignment"][job["language"]] = job["alignment"]
+    if job.get("diarization") is not None:
+        STATE["diarization"] = job["diarization"]
 
     out = []
     for segment in job["segments"]:
@@ -3401,6 +3435,8 @@ def _transcribe(
                 "temperature": 0.0,
                 "tokens": [],
                 "words": words_of(segment),
+                # La voce, solo quando le voci sono state separate: senza, la risposta e' quella di sempre.
+                **({"speaker": segment["speaker"]} if segment.get("speaker") else {}),
             }
         )
 
@@ -3424,6 +3460,10 @@ def _transcribe(
         "max_minutes_used": int(cap or 0),
         # Quanti segmenti inventati sono stati tolti, per ragione ([drop_hallucinations]).
         "dropped": job.get("dropped") or {},
+        # «Chi parla»: "ok", l'errore, o None se non si e' chiesto. Un errore non ferma niente: la
+        # trascrizione esce senza voci. `speakers` e' quante voci diverse ci sono.
+        "diarization": job.get("diarization"),
+        "speakers": len({s["speaker"] for s in out if s.get("speaker")}),
     }
 
 
@@ -3464,14 +3504,371 @@ def words_of(segment: dict) -> list[dict]:
         end = _finite(word.get("end"), math.nan)
         if math.isnan(start) or math.isnan(end):
             continue
-        out.append(
-            {
-                "word": text,
-                "start": start,
-                "end": end,
-                "score": _finite(word.get("score"), 0.0),
-            }
+        entry = {
+            "word": text,
+            "start": start,
+            "end": end,
+            "score": _finite(word.get("score"), 0.0),
+        }
+        if word.get("speaker"):
+            entry["speaker"] = word["speaker"]
+        out.append(entry)
+    return out
+
+
+# --- chi parla ------------------------------------------------------------------------------------
+#
+# La separazione delle voci (in gergo, «diarizzazione»): ogni segmento torna con l'etichetta della
+# voce che lo dice — SPEAKER_00, SPEAKER_01... — e l'app le chiama «Voce 1», «Voce 2» nell'ordine in
+# cui compaiono. Serve alle Registrazioni (una riunione, un'intervista, una telefonata) molto piu' che
+# a una lezione, dove parla uno solo: per questo si chiede per richiesta (`diarize=1`) e non vale
+# sempre.
+#
+# Il modello e' quello di pyannote che WhisperX usa di serie, e sta dietro le condizioni d'uso di
+# Hugging Face: per scaricarlo serve un account gratuito, accettare le condizioni della pagina del
+# modello e un token di lettura, che si scrive dal menu dell'icona («Separazione delle voci...»).
+# Senza token la separazione non esiste: /health non la offre e `diarize=1` si ignora.
+#
+# Due regole che non si vedono:
+#   * **si separa sull'audio intero, dopo l'allineamento di tutti i pezzi.** Le etichette valgono
+#     solo dentro la stessa separazione: SPEAKER_00 del pezzo due non e' per forza SPEAKER_00 del
+#     pezzo uno. Solo oltre [DIARIZE_WINDOW_S] l'audio si separa a finestre, e allora le voci di ogni
+#     finestra sono voci diverse per costruzione («2:SPEAKER_00»): meglio una «Voce 5» che e' la
+#     stessa persona della «Voce 1» di un'etichetta sola data a due persone;
+#   * **non fa mai fallire una trascrizione.** Un token sbagliato, le condizioni non accettate, la
+#     scheda piena, un errore di pyannote: si scrive nel registro e in /health, e la lezione esce
+#     senza voci, come se non le si fosse chieste.
+
+DIARIZE_MODEL = "pyannote/speaker-diarization-community-1"
+# Fin qui si separa l'audio intero in una volta. Il raggruppamento delle voci di pyannote lavora su
+# tutti gli spezzoni della registrazione insieme, e la sua memoria cresce col quadrato: due ore sono
+# qualche centinaio di megabyte, venti ore non starebbero in nessun computer di casa.
+DIARIZE_WINDOW_S = 2 * 3600
+# Quanta VRAM chiede la separazione nel momento peggiore: i due modelli di pyannote sono piccoli
+# (decine di megabyte), il resto sono i lotti degli spezzoni. Non entra nel piano della VRAM
+# ([plan_vram]) perche' arriva dopo la trascrizione, quando il lotto di Whisper e' gia' stato
+# restituito; si controlla pero' prima di cominciare ([diarize_device]): su Windows una scheda piena
+# non da' «out of memory», travasa nella RAM condivisa e va sei volte piu' piano.
+DIARIZE_GB = 1.5
+# Oltre venti voci pyannote non distingue piu' niente: un numero piu' grande e' un errore di battitura.
+MAX_SPEAKERS_LIMIT = 20
+# Le finestre in cui si cercano i turni che toccano un tempo ([assign_speakers]).
+SPEAKER_BIN_S = 10.0
+
+
+@dataclass(frozen=True)
+class DiarizeRequest:
+    """`diarize=1` di una richiesta, con i limiti al numero di voci se il telefono li conosce."""
+
+    min_speakers: int | None = None
+    max_speakers: int | None = None
+
+
+@functools.lru_cache(maxsize=1)
+def _pyannote_installed() -> bool:
+    """pyannote arriva con WhisperX, ma un'installazione a mano puo' non averlo: si guarda una volta."""
+    try:
+        import importlib.util
+
+        return importlib.util.find_spec("pyannote.audio") is not None
+    except Exception:  # noqa: BLE001 — un pacchetto rotto vale come assente
+        return False
+
+
+def diarization_available() -> bool:
+    """Si possono separare le voci? Serve il token, e serve pyannote."""
+    return bool(STATE.get("hf_token")) and _pyannote_installed()
+
+
+def diarization_status() -> dict[str, Any]:
+    """La parte di /health su «chi parla». `configured` dice se c'e' un token, mai quale."""
+    return {
+        "available": diarization_available(),
+        "configured": bool(STATE.get("hf_token")),
+        "model": DIARIZE_MODEL,
+        # "ok", l'errore dell'ultima volta, o None se non e' mai stata chiesta da quando il server e' su.
+        "last": STATE.get("diarization"),
+    }
+
+
+def diarize_request(flag: str, min_speakers: str = "", max_speakers: str = "") -> DiarizeRequest | None:
+    """
+    I campi del form, in una richiesta di separazione o in niente.
+
+    Niente quando non si chiede, e niente anche quando si chiede ma il computer non sa farlo: un
+    telefono che manda `diarize=1` a un companion senza token riceve la trascrizione di sempre, non un
+    errore. I limiti si prendono solo se sono numeri sensati, e se sono al contrario si girano.
+    """
+    if not _truthy(flag or "") or not diarization_available():
+        return None
+    low = _positive_int(min_speakers or "")
+    high = _positive_int(max_speakers or "")
+    low = min(low, MAX_SPEAKERS_LIMIT) if low else None
+    high = min(high, MAX_SPEAKERS_LIMIT) if high else None
+    if low and high and low > high:
+        low, high = high, low
+    return DiarizeRequest(low, high)
+
+
+def check_diarization_access(token: str) -> tuple[bool, str]:
+    """
+    Il token apre il modello? Lo chiede il menu dell'icona appena si salva un token, cosi' quello che
+    manca si scopre adesso e non alla prima riunione registrata.
+
+    Una domanda sola a Hugging Face (`auth_check`), senza scaricare niente. Le tre risposte che contano
+    sono tre cose diverse da fare: accettare le condizioni, rifare il token, o riprovare piu' tardi.
+    """
+    try:
+        from huggingface_hub import auth_check
+        from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
+
+        auth_check(DIARIZE_MODEL, token=token)
+    except ImportError:
+        return False, "Manca huggingface_hub: reinstalla il companion."
+    except GatedRepoError:
+        return False, "Il token funziona, ma le condizioni del modello non sono ancora accettate: aprile dalla pagina del modello."
+    except RepositoryNotFoundError:
+        return False, "Hugging Face non riconosce questo token: controlla di averlo copiato tutto."
+    except Exception as error:  # noqa: BLE001 — rete assente, Hugging Face giu': non e' colpa del token
+        return False, _scrub(f"Non riesco a controllare adesso ({type(error).__name__}): il token e' salvato, si provera' alla prima registrazione.")
+    return True, "Tutto pronto: le registrazioni che l'app manda torneranno con le voci separate."
+
+
+def _scrub(text: str) -> str:
+    """Un messaggio d'errore senza il token, se per caso lo contiene: il registro si legge e si manda."""
+    token = STATE.get("hf_token")
+    return text.replace(token, "***") if token else text
+
+
+def load_diarizer(device: str) -> Any:
+    """
+    Il modello di pyannote, sul dispositivo chiesto. Si carica per una lezione e si butta dopo
+    ([diarize_segments]): dal disco sono pochi secondi, e tenerlo in memoria fra una registrazione e
+    l'altra vorrebbe dire un gigabyte in piu' sotto le lezioni, che le voci non le chiedono.
+
+    La prima volta lo scarica Hugging Face (nella sua cache, come i modelli di Whisper). Se il token
+    non puo' leggerlo — condizioni non accettate, token revocato — pyannote non alza un errore
+    chiaro: torna None, e qui lo si dice con parole che spiegano cosa fare.
+    """
+    from pyannote.audio import Pipeline
+
+    try:
+        import torch
+
+        target = torch.device(device)
+    except Exception:  # noqa: BLE001 — senza torch non c'e' nemmeno pyannote; lo dira' from_pretrained
+        target = device
+    pipeline = Pipeline.from_pretrained(DIARIZE_MODEL, token=STATE.get("hf_token"))
+    if pipeline is None:
+        raise RuntimeError(
+            f"il modello {DIARIZE_MODEL} non si scarica con questo token: accetta le condizioni sulla sua "
+            "pagina di Hugging Face con lo stesso account del token"
         )
+    return _DiarizerAdapter(pipeline.to(target))
+
+
+class _DiarizerAdapter:
+    """
+    Il `Pipeline` di pyannote con la chiamata di `whisperx.diarize.DiarizationPipeline`: audio come
+    array a 16 kHz, e in uscita i turni (inizio, fine, voce). Scritto qui e non preso da WhisperX
+    perche' quello costruisce un DataFrame di pandas per ogni turno, e [assign_speakers] vuole tuple.
+    """
+
+    def __init__(self, pipeline: Any) -> None:
+        self.pipeline = pipeline
+
+    def __call__(
+        self,
+        audio: Any,
+        min_speakers: int | None = None,
+        max_speakers: int | None = None,
+        progress_callback: Callable[[float], None] | None = None,
+    ) -> list[tuple[float, float, str]]:
+        import torch
+        from whisperx.audio import SAMPLE_RATE
+
+        # Nessuna copia: la vista dell'array diventa un tensore che ne condivide la memoria.
+        data = {"waveform": torch.from_numpy(audio[None, :]), "sample_rate": SAMPLE_RATE}
+        hook = None
+        if progress_callback is not None:
+            # Due passi con un contatore ciascuno (come in WhisperX): gli spezzoni, poi le impronte
+            # delle voci. Si mettono in fila in una barra sola che non torna mai indietro.
+            ranges = {"segmentation": (0.0, 50.0), "embeddings": (50.0, 99.0)}
+
+            def hook(step_name, _artifact, file=None, total=None, completed=None):  # noqa: ANN001
+                if total and completed is not None:
+                    low, high = ranges.get(step_name, (0.0, 99.0))
+                    progress_callback(low + min(completed / total, 1.0) * (high - low))
+
+        output = self.pipeline(
+            data, min_speakers=min_speakers, max_speakers=max_speakers, **({"hook": hook} if hook else {}),
+        )
+        # pyannote 4 torna un oggetto con due risposte: quella «esclusiva» ha una voce sola per istante,
+        # che e' quello che serve per dare una voce a una frase (due persone che si parlano sopra sono
+        # comunque una frase sola in Whisper). Il 3 torna l'`Annotation` direttamente.
+        annotation = getattr(output, "exclusive_speaker_diarization", None) or getattr(output, "speaker_diarization", output)
+        return [(float(turn.start), float(turn.end), str(label)) for turn, _, label in annotation.itertracks(yield_label=True)]
+
+
+def diarize_device(device: str) -> str:
+    """
+    Dove separare: sulla scheda se c'e' posto per [DIARIZE_GB], altrimenti sul processore.
+
+    La domanda si fa al driver, adesso: la trascrizione ha appena finito, e quello che si e' preso
+    Whisper si vede li'. Sul processore la separazione di un'ora e' questione di minuti, non di ore.
+    """
+    if device != "cuda":
+        return device
+    driver = nvidia_query(max_age_s=0)
+    if driver is not None and float(driver.get("free_gb", DIARIZE_GB)) < DIARIZE_GB:
+        log.info("separazione delle voci: la scheda ha %.1f GB liberi, la faccio sul processore", driver["free_gb"])
+        return "cpu"
+    return device
+
+
+def diarize_windows(source: Any, total_s: float) -> list[tuple[float, float]]:
+    """L'audio intero, o finestre uguali tagliate nei silenzi se e' piu' lungo di [DIARIZE_WINDOW_S]."""
+    if total_s <= DIARIZE_WINDOW_S:
+        return [(0.0, total_s)]
+    count = math.ceil(total_s / DIARIZE_WINDOW_S)
+    return plan_pieces(source.energies(), FRAME_MS / 1000, total_s, count)
+
+
+def diarize_segments(
+    segments: list[dict],
+    source: Any,
+    request: DiarizeRequest,
+    progress: JobProgress,
+    device: str,
+) -> tuple[list[dict], str]:
+    """
+    Separa le voci di [source] e le mette sui segmenti (e sulle parole): torna i segmenti e l'esito.
+
+    [source] e' la stessa sorgente dei pezzi ([LoadedAudio] o [StreamedAudio]): l'audio che e' gia' in
+    memoria si separa da li', senza decodificarlo di nuovo. Il modello si carica adesso — dopo
+    l'allineamento, quando la scheda ha restituito i lotti di Whisper — e se ne va alla fine, con la
+    sua riserva. Se la scheda finisce la memoria a meta' si rifa' sul processore. Qualunque altro
+    errore lascia i segmenti come sono e lo dice nell'esito: la trascrizione non si perde per le voci.
+    Solo un annullamento esce, perche' e' un annullamento della lezione.
+    """
+    windows = diarize_windows(source, source.duration_s)
+    turns: list[tuple[float, float, str]] = []
+    diarizer = None
+    where = diarize_device(device)
+    started = time.time()
+    try:
+        progress.check_cancelled()
+        progress.set("diarizing", detail=None if where == device else where)
+        diarizer = load_diarizer(where)
+        for index, (start_s, end_s) in enumerate(windows):
+            progress.check_cancelled()
+            piece = source.piece(start_s, end_s)
+            step = _diarize_step(progress, index, len(windows))
+            options = {"min_speakers": request.min_speakers, "max_speakers": request.max_speakers, "progress_callback": step}
+            try:
+                found = diarizer(piece, **options)
+            except Exception as error:
+                if where != "cuda" or not is_oom(error):
+                    raise
+                diarizer = None
+                gc.collect()
+                empty_cuda_cache()
+                log.warning("separazione delle voci: memoria della scheda finita, la rifaccio sul processore")
+                where = "cpu"
+                progress.set("diarizing", detail="cpu")
+                diarizer = load_diarizer(where)
+                found = diarizer(piece, **options)
+            piece = None
+            # Con piu' finestre le voci di ognuna sono sue: vedi il commento in cima a questa parte.
+            prefix = f"{index + 1}:" if len(windows) > 1 else ""
+            turns.extend((start_s + begin, start_s + end, prefix + label) for begin, end, label in found)
+        labelled = assign_speakers(segments, turns)
+        voices = len({label for _, _, label in turns})
+        log.info("voci separate: %d in %.0f s%s", voices, time.time() - started, " (sul processore)" if where == "cpu" and device == "cuda" else "")
+        return labelled, "ok"
+    except JobCancelled:
+        raise
+    except Exception as error:  # noqa: BLE001 — le voci non fanno mai fallire una trascrizione
+        outcome = _scrub(f"errore: {type(error).__name__}: {error}")[:300]
+        log.warning("separazione delle voci non riuscita, la trascrizione esce senza: %s", outcome)
+        return segments, outcome
+    finally:
+        # Come in [run_job]: niente di grande resta nel frame, e la riserva torna alla scheda.
+        diarizer = piece = None
+        gc.collect()
+        empty_cuda_cache()
+
+
+def _diarize_step(progress: JobProgress, index: int, count: int) -> Callable[[float], None]:
+    """Il percento di pyannote dentro la finestra [index], nella barra di tutte le finestre."""
+
+    def step(percent: float) -> None:
+        progress.check_cancelled()
+        inside = min(100.0, max(0.0, float(percent))) / 100.0
+        progress.advance((index + inside) / count, "diarizing")
+
+    return step
+
+
+def assign_speakers(segments: list[dict], turns: list[tuple[float, float, str]]) -> list[dict]:
+    """
+    La voce di ogni segmento e di ogni parola: quella che nel suo intervallo parla piu' a lungo.
+
+    La stessa regola di `whisperx.assign_word_speakers`, scritta qui per non passare da pandas e per
+    provarla senza modelli. Un segmento che non tocca nessun turno (pyannote non ha sentito voce dove
+    Whisper ha scritto qualcosa, di solito un soffio a un confine) prende la voce del turno piu'
+    vicino: un segmento senza voce in mezzo a una conversazione spezzerebbe il paragrafo per niente.
+    Una parola invece resta senza, se nessuno la copre: meglio nessuna etichetta che una inventata.
+
+    Torna copie: i segmenti che entrano non si toccano.
+    """
+    timed = [(start, end, label) for start, end, label in turns if end > start]
+    if not timed:
+        return segments
+    bins: dict[int, list[int]] = {}
+    for position, (start, end, _) in enumerate(timed):
+        for slot in range(int(start // SPEAKER_BIN_S), int(end // SPEAKER_BIN_S) + 1):
+            bins.setdefault(slot, []).append(position)
+
+    def dominant(start: float, end: float) -> str | None:
+        totals: dict[str, float] = {}
+        seen: set[int] = set()
+        point = end <= start
+        for slot in range(int(start // SPEAKER_BIN_S), int(max(start, end) // SPEAKER_BIN_S) + 1):
+            for position in bins.get(slot, ()):
+                if position in seen:
+                    continue
+                seen.add(position)
+                begin, finish, label = timed[position]
+                if point:
+                    share = 1.0 if begin <= start <= finish else 0.0
+                else:
+                    share = min(finish, end) - max(begin, start)
+                if share > 0:
+                    totals[label] = totals.get(label, 0.0) + share
+        if not totals:
+            return None
+        # A parita', la voce che compare prima nell'elenco: lo stesso audio da' la stessa risposta.
+        return max(totals, key=lambda label: totals[label])
+
+    def nearest(moment: float) -> str:
+        return min(timed, key=lambda turn: max(turn[0] - moment, moment - turn[1], 0.0))[2]
+
+    out = []
+    for segment in segments:
+        start = _finite(segment.get("start"), 0.0)
+        end = _finite(segment.get("end"), start)
+        labelled = dict(segment)
+        labelled["speaker"] = dominant(start, end) or nearest((start + end) / 2)
+        if segment.get("words"):
+            words = []
+            for word in segment["words"]:
+                begin = _finite(word.get("start"), math.nan)
+                finish = _finite(word.get("end"), math.nan)
+                voice = None if math.isnan(begin) or math.isnan(finish) else dominant(begin, finish)
+                words.append(dict(word, speaker=voice) if voice else word)
+            labelled["words"] = words
+        out.append(labelled)
     return out
 
 
@@ -3591,6 +3988,10 @@ def configure(settings: dict[str, Any], path: Path | None = None) -> dict[str, A
     STATE["index_url"] = str(resolved.get("index_url") or "").strip()
     STATE["owner"] = str(resolved.get("owner") or "").strip()
     STATE["accept_anonymous"] = bool(resolved.get("accept_anonymous"))
+    # «Chi parla»: il token di config.json, o quello dell'ambiente (HF_TOKEN, la variabile che
+    # Hugging Face stesso legge). Mai nel registro: si dice solo se c'e'.
+    STATE["hf_token"] = str(resolved.get("hf_token") or "").strip() or os.environ.get("HF_TOKEN", "").strip() or None
+    log.info("separazione delle voci: %s", "disponibile" if diarization_available() else "spenta (serve un token di Hugging Face)")
     # Le verifiche tenute da parte valevano per l'account di prima.
     GUEST_CACHE.clear()
     TICKET_CACHE.clear()
@@ -3660,6 +4061,8 @@ def banner(settings: dict[str, Any]) -> None:
         print(f"  Entra chi ha fatto l'accesso nell'app con {STATE['owner']}.")
     if STATE["accept_anonymous"]:
         print("  Accesso libero acceso: si trascrive anche senza credenziali (accept_anonymous in config.json).")
+    if diarization_available():
+        print("  Separazione delle voci disponibile: l'app la chiede per le registrazioni.")
     print(f"  {describe_plan(STATE['vram'])}.")
     if STATE["idle_seconds"]:
         print(f"  Il modello si carica alla prima registrazione e se ne va dopo {settings['idle_minutes']} minuti di silenzio.")

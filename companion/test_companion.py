@@ -123,7 +123,7 @@ class StateMixin:
 
     SAVED = (
         "token", "index_url", "owner", "accept_anonymous", "alignment", "device", "name", "compute_type",
-        "batch_size", "idle_seconds", "tunables", "vram", "gpu", "config_path",
+        "batch_size", "idle_seconds", "tunables", "vram", "gpu", "config_path", "hf_token", "diarization",
     )
 
     def setUp(self) -> None:  # noqa: D401
@@ -2074,6 +2074,31 @@ class ServerTest(StateMixin, unittest.TestCase):
         data = json.loads(self.call("GET", "/health")[2])
         self.assertEqual(set(data["features"]), {"by_ref", "archive_upload", "server_chunks", "file_meta", "prompt", "auto_chunks"})
 
+    def test_diarize_is_a_feature_only_with_a_token_and_the_token_never_shows(self) -> None:
+        server.STATE["hf_token"] = None
+        data = json.loads(self.call("GET", "/health")[2])
+        self.assertNotIn("diarize", data["features"])
+        self.assertEqual((data["diarization"]["available"], data["diarization"]["configured"]), (False, False))
+        server.STATE["hf_token"] = "hf_segretissimo"
+        with mock.patch.object(server, "_pyannote_installed", return_value=True):
+            raw = self.call("GET", "/health")[2]
+        data = json.loads(raw)
+        self.assertIn("diarize", data["features"])
+        self.assertTrue(data["diarization"]["available"])
+        self.assertEqual(data["diarization"]["model"], server.DIARIZE_MODEL)
+        self.assertNotIn(b"hf_segretissimo", raw)
+
+    def test_diarize_reaches_the_work_only_when_the_computer_can(self) -> None:
+        server.STATE["hf_token"] = None
+        _, _, seen = self.transcribe_with({"diarize": "1"}, audio=b"voce")
+        self.assertNotIn("diarize", seen, "senza token la richiesta e' quella di sempre")
+        server.STATE["hf_token"] = "hf_x"
+        with mock.patch.object(server, "_pyannote_installed", return_value=True):
+            _, _, seen = self.transcribe_with({"diarize": "1", "min_speakers": "3", "max_speakers": "2"}, audio=b"voce")
+            self.assertEqual(seen["diarize"], server.DiarizeRequest(2, 3), "limiti girati se al contrario")
+            _, _, plain = self.transcribe_with({}, audio=b"voce")
+        self.assertNotIn("diarize", plain)
+
     def test_by_ref_reads_the_blob_and_keeps_it(self) -> None:
         data = b"una lezione gia' nell'archivio" * 50
         sha = hashlib.sha256(data).hexdigest()
@@ -2646,6 +2671,18 @@ class TrayTest(unittest.TestCase):
             counter.leave()
             self.assertTrue(tray.idle_for_update())
 
+    def test_the_voices_token_goes_to_config_and_to_the_server(self) -> None:
+        import tray
+
+        with mock.patch.object(tray.config, "set_value") as written, mock.patch.dict(server.STATE, {"hf_token": None}):
+            tray.save_hf_token("hf_nuovo")
+            written.assert_called_once_with("hf_token", "hf_nuovo")
+            self.assertEqual(server.STATE["hf_token"], "hf_nuovo")
+            self.assertIn("accesa", tray.voices_label())
+            tray.save_hf_token("")
+            self.assertIsNone(server.STATE["hf_token"], "un token vuoto spegne la separazione")
+            self.assertNotIn("accesa", tray.voices_label())
+
 
 class AddressTest(unittest.TestCase):
     def test_real_lan_goes_before_virtual_adapters(self) -> None:
@@ -2703,3 +2740,167 @@ class FuoriTest(unittest.TestCase):
             with mock.patch.dict(os.environ, {"LOCALAPPDATA": root}), mock.patch.object(fuori.sys, "platform", "win32"):
                 self.assertIsNone(REAL_REDIRECTED())
             self.assertEqual(list((Path(root) / "PampaNotes").iterdir()), [], "la sonda resta in giro")
+
+
+# --- chi parla -------------------------------------------------------------------------------------
+
+
+class FakeDiarizer:
+    """Il modello di pyannote finto: torna i turni che gli si danno, o finisce la memoria a comando."""
+
+    def __init__(self, turns: list[tuple[float, float, str]], error: BaseException | None = None) -> None:
+        self.turns = turns
+        self.error = error
+        self.calls: list[tuple[int, int | None, int | None]] = []
+
+    def __call__(self, audio, min_speakers=None, max_speakers=None, progress_callback=None):  # noqa: ANN001
+        self.calls.append((len(audio), min_speakers, max_speakers))
+        if progress_callback is not None:
+            progress_callback(50.0)
+        if self.error is not None:
+            raise self.error
+        if progress_callback is not None:
+            progress_callback(100.0)
+        return list(self.turns)
+
+
+class DiarizationTest(StateMixin, unittest.TestCase):
+    """«Chi parla»: le voci sui segmenti, senza modelli veri e senza mai far fallire la lezione."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        server.STATE.update(device="cuda", batch_size=16, hf_token="hf_segreto", diarization=None)
+
+    @staticmethod
+    def conversation(language) -> dict:  # noqa: ANN001
+        return {
+            "segments": [
+                {"start": 1.0, "end": 4.0, "text": "buongiorno a tutti",
+                 "words": [{"word": "buongiorno", "start": 1.0, "end": 1.8, "score": 0.9},
+                           {"word": "a", "start": 1.9, "end": 2.0, "score": 0.9},
+                           {"word": "tutti", "start": 2.1, "end": 2.6, "score": 0.9}]},
+                {"start": 5.0, "end": 8.0, "text": "grazie, anche a te"},
+                # Whisper ha scritto qualcosa dove pyannote non ha sentito nessuno.
+                {"start": 20.0, "end": 21.0, "text": "eh no"},
+            ],
+            "language": language or "it", "device_used": "cuda", "batch_size": 16, "alignment": "ok",
+        }
+
+    def run_with(self, diarizer, minutes: float = 1, request=None, loads: list | None = None):  # noqa: ANN001
+        def fake_run_job(piece, language, engine, batch_size, device, progress=None, prompt=None):  # noqa: ANN001
+            return self.conversation(language)
+
+        def load(device: str):
+            if loads is not None:
+                loads.append(device)
+            return diarizer if isinstance(diarizer, FakeDiarizer) else diarizer(device)
+
+        progress = RecordingProgress()
+        with mock.patch.object(server, "run_job", fake_run_job), mock.patch.object(server, "load_diarizer", load), \
+                mock.patch.object(server, "drop_hallucinations", lambda segments, *a, **k: (segments, {})):
+            result = server.transcribe_audio(
+                lecture(minutes), RATE, "it", progress, FakeEngine(None),
+                diarize=request or server.DiarizeRequest(), batch_size=16, device="cuda",
+            )
+        return result, progress
+
+    def test_each_segment_gets_the_voice_that_speaks_longest(self) -> None:
+        diarizer = FakeDiarizer([(0.5, 4.2, "SPEAKER_01"), (4.8, 6.0, "SPEAKER_00"), (6.0, 8.5, "SPEAKER_01")])
+        result, progress = self.run_with(diarizer, request=server.DiarizeRequest(2, 4))
+        first, second, stray = result["segments"]
+        self.assertEqual(first["speaker"], "SPEAKER_01")
+        self.assertEqual(second["speaker"], "SPEAKER_01", "2 secondi contro 1,2: vince chi parla di piu'")
+        self.assertEqual(stray["speaker"], "SPEAKER_01", "senza turni sopra, la voce del turno piu' vicino")
+        self.assertEqual([w["speaker"] for w in first["words"]], ["SPEAKER_01"] * 3)
+        self.assertEqual(result["diarization"], "ok")
+        self.assertEqual(diarizer.calls, [(60 * RATE, 2, 4)], "l'audio intero, una volta, coi limiti chiesti")
+        self.assertIn(("diarizing", None), progress.trail)
+        self.assertEqual(progress.reached["diarizing"], 1.0)
+
+    def test_a_failure_leaves_the_lesson_without_voices_and_without_the_token(self) -> None:
+        def broken(_device: str):
+            raise RuntimeError("401 Client Error: token hf_segreto non valido")
+
+        with self.assertLogs("pampa", level="WARNING") as logs:
+            result, _ = self.run_with(broken)
+        self.assertEqual(len(result["segments"]), 3)
+        self.assertTrue(all("speaker" not in segment for segment in result["segments"]))
+        self.assertTrue(result["diarization"].startswith("errore: RuntimeError"))
+        self.assertNotIn("hf_segreto", result["diarization"])
+        self.assertNotIn("hf_segreto", "\n".join(logs.output))
+
+    def test_a_full_card_moves_the_voices_to_the_processor(self) -> None:
+        full = FakeDiarizer([], error=FakeOOM())
+        fine = FakeDiarizer([(0.0, 30.0, "SPEAKER_00")])
+        loads: list[str] = []
+        result, progress = self.run_with(lambda device: full if device == "cuda" else fine, loads=loads)
+        self.assertEqual(loads, ["cuda", "cpu"])
+        self.assertEqual(result["segments"][0]["speaker"], "SPEAKER_00")
+        self.assertIn(("diarizing", "cpu"), progress.trail)
+
+    def test_no_room_on_the_card_goes_straight_to_the_processor(self) -> None:
+        loads: list[str] = []
+        driver = {"free_gb": 0.4, "total_gb": 12.0, "used_gb": 11.6}
+        with mock.patch.object(server, "nvidia_query", return_value=driver):
+            self.run_with(FakeDiarizer([(0.0, 30.0, "SPEAKER_00")]), loads=loads)
+        self.assertEqual(loads, ["cpu"])
+
+    def test_a_cancel_during_the_voices_cancels_the_lesson(self) -> None:
+        class Cancelling(FakeDiarizer):
+            def __call__(self, audio, min_speakers=None, max_speakers=None, progress_callback=None):  # noqa: ANN001
+                raise server.JobCancelled()
+
+        with self.assertRaises(server.JobCancelled):
+            self.run_with(Cancelling([]))
+
+    def test_very_long_audio_is_separated_in_windows_with_their_own_voices(self) -> None:
+        diarizer = FakeDiarizer([(0.0, 30.0, "SPEAKER_00")])
+        with mock.patch.object(server, "DIARIZE_WINDOW_S", 25 * 60):
+            result, _ = self.run_with(diarizer, minutes=45)
+        self.assertEqual(len(diarizer.calls), 2)
+        self.assertEqual(result["segments"][0]["speaker"], "1:SPEAKER_00", "le voci di una finestra sono sue")
+
+    def test_request_needs_a_token_and_pyannote(self) -> None:
+        with mock.patch.object(server, "_pyannote_installed", return_value=True):
+            self.assertEqual(server.diarize_request("1"), server.DiarizeRequest())
+            self.assertEqual(server.diarize_request("1", "0", "99"), server.DiarizeRequest(None, server.MAX_SPEAKERS_LIMIT))
+            self.assertIsNone(server.diarize_request(""))
+            server.STATE["hf_token"] = None
+            self.assertIsNone(server.diarize_request("1"))
+        server.STATE["hf_token"] = "hf_x"
+        with mock.patch.object(server, "_pyannote_installed", return_value=False):
+            self.assertIsNone(server.diarize_request("1"))
+
+    def test_assign_speakers_does_not_touch_its_input(self) -> None:
+        segments = [{"start": 0.0, "end": 1.0, "text": "a", "words": [{"word": "a", "start": 0.0, "end": 0.0}]}]
+        out = server.assign_speakers(segments, [(0.0, 2.0, "SPEAKER_00")])
+        self.assertNotIn("speaker", segments[0])
+        self.assertEqual(out[0]["speaker"], "SPEAKER_00")
+        self.assertEqual(out[0]["words"][0]["speaker"], "SPEAKER_00", "una parola lunga zero sta dentro il turno")
+        self.assertEqual(server.assign_speakers(segments, []), segments)
+
+    def test_the_answer_carries_speakers_only_when_there_are(self) -> None:
+        segment = {"start": 0.0, "end": 1.0, "text": "ciao", "speaker": "SPEAKER_00",
+                   "words": [{"word": "ciao", "start": 0.0, "end": 0.5, "score": 0.9, "speaker": "SPEAKER_00"}]}
+        self.assertEqual(server.words_of(segment)[0]["speaker"], "SPEAKER_00")
+        self.assertNotIn("speaker", server.words_of({"words": [{"word": "x", "start": 0.0, "end": 0.1}]})[0])
+
+    def test_the_token_check_tells_what_is_missing(self) -> None:
+        import huggingface_hub
+        from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
+
+        cases = [(None, True, "Tutto pronto"), (GatedRepoError("gated"), False, "condizioni"),
+                 (RepositoryNotFoundError("401"), False, "non riconosce"), (OSError("rete"), False, "Non riesco")]
+        for error, ok, words in cases:
+            with mock.patch.object(huggingface_hub, "auth_check", side_effect=error):
+                self.assertEqual(server.check_diarization_access("hf_x")[0], ok)
+                self.assertIn(words, server.check_diarization_access("hf_x")[1])
+
+    def test_configure_reads_the_token_from_the_environment_too(self) -> None:
+        settings = dict(config.DEFAULTS, device="cpu")
+        with tempfile.TemporaryDirectory() as root, mock.patch.dict(os.environ, {"HF_TOKEN": "hf_ambiente"}), \
+                mock.patch.object(server.archive, "open_archive"):
+            server.configure(dict(settings, archive_root=root))
+            self.assertEqual(server.STATE["hf_token"], "hf_ambiente")
+            server.configure(dict(settings, archive_root=root, hf_token=" hf_file "))
+            self.assertEqual(server.STATE["hf_token"], "hf_file")

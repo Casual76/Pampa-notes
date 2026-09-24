@@ -69,4 +69,41 @@ class TranscriptParagraphsTest {
     assertEquals("1 h 20 min", TranscriptParagraphs.silenceDuration(80 * 60_000))
     assertEquals("1 h 20 m", TranscriptParagraphs.silenceDuration(80 * 60_000, hours = "h", minutes = "m"))
   }
+
+  // --- chi parla ---------------------------------------------------------------------------------
+
+  private fun spoken(startMs: Long, speaker: String?, partId: String = "p1") =
+    segment(startMs, startMs + 900, "Frase.", partId).copy(speaker = speaker)
+
+  @Test
+  fun `una voce nuova va a capo e ha il suo numero nell'ordine in cui compare`() {
+    val paragraphs = TranscriptParagraphs.split(
+      listOf(
+        spoken(0, "SPEAKER_01"),
+        spoken(1_000, "SPEAKER_01"),
+        spoken(2_000, "SPEAKER_00"),
+        spoken(3_000, "SPEAKER_01"),
+      ),
+    )
+    assertEquals(listOf(2, 1, 1), paragraphs.map { it.segments.size })
+    assertEquals("la prima voce che parla e' la Voce 1, qualunque etichetta abbia", listOf(1, 2, 1), paragraphs.map { it.voice })
+  }
+
+  @Test
+  fun `una voce sola non si dice, e senza voci non cambia niente`() {
+    val alone = TranscriptParagraphs.split(listOf(spoken(0, "SPEAKER_00"), spoken(1_000, "SPEAKER_00")))
+    assertEquals(1, alone.size)
+    assertNull(alone.single().voice)
+    val plain = TranscriptParagraphs.split(listOf(spoken(0, null), spoken(1_000, null)))
+    assertEquals(1, plain.size)
+    assertNull(plain.single().voice)
+  }
+
+  @Test
+  fun `la stessa etichetta in due registrazioni sono due voci`() {
+    val voices = TranscriptParagraphs.voices(
+      listOf(spoken(0, "SPEAKER_00"), spoken(1_000, "SPEAKER_01"), spoken(5_000, "SPEAKER_00", partId = "p2")),
+    )
+    assertEquals(listOf(1, 2, 3), voices.values.toList())
+  }
 }

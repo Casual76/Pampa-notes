@@ -49,6 +49,7 @@ export function pageHtml(): string {
   .para { display: flex; gap: 12px; margin: 0 0 12px; }
   .para .t { flex: 0 0 52px; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; padding-top: 4px; cursor: pointer; }
   .para .x { flex: 1; }
+  .para .t .v { display: block; font-size: 11px; padding-top: 2px; }
   .w { opacity: var(--veil); transition: opacity .12s; border-radius: 4px; cursor: pointer; }
   .w.done, .w.now { opacity: 1; }
   .w.now { background: var(--hl); }
@@ -117,16 +118,29 @@ export function pageHtml(): string {
     if (!out.length) out.push({ s: seg.sessionStartMs, e: seg.sessionEndMs, t: seg.text });
     return out;
   }
-  // Paragrafi: si spezza su una pausa lunga o quando il testo si fa lungo, come nell'app.
+  // «Chi parla», come TranscriptParagraphs.voices nell'app: SPEAKER_00 diventa «Voce 1» nell'ordine
+  // in cui le voci compaiono, parte per parte (ogni registrazione si separa per conto suo). Con meno
+  // di due voci non si dice niente.
+  function voices(segments) {
+    var map = {}, count = 0;
+    for (var i = 0; i < segments.length; i++) {
+      var s = segments[i]; if (!s.speaker) continue;
+      var key = s.partId + '\\u0000' + s.speaker;
+      if (!(key in map)) map[key] = ++count;
+    }
+    return count < 2 ? {} : map;
+  }
+  // Paragrafi: si spezza su una pausa lunga, quando il testo si fa lungo o cambia la voce, come nell'app.
   function paragraphs(segments) {
-    var out = [], cur = null, chars = 0;
+    var out = [], cur = null, chars = 0, numbers = voices(segments);
     for (var i = 0; i < segments.length; i++) {
       var seg = segments[i];
       var gap = cur ? seg.sessionStartMs - cur.end : 0;
-      if (!cur || gap > 2000 || chars > 600) {
+      var voice = seg.speaker ? (numbers[seg.partId + '\\u0000' + seg.speaker] || 0) : 0;
+      if (!cur || gap > 2000 || chars > 600 || (seg.speaker || null) !== cur.speaker) {
         // Un minuto o piu' senza parlato si dice, come nell'app: sedici minuti di silenzio non sono
         // la pausa fra due frasi.
-        cur = { start: seg.sessionStartMs, end: seg.sessionEndMs, segs: [], silence: gap >= 60000 ? gap : 0 };
+        cur = { start: seg.sessionStartMs, end: seg.sessionEndMs, segs: [], silence: gap >= 60000 ? gap : 0, speaker: seg.speaker || null, voice: voice };
         out.push(cur); chars = 0;
       }
       cur.segs.push(seg); cur.end = seg.sessionEndMs; chars += seg.text.length;
@@ -228,6 +242,8 @@ export function pageHtml(): string {
           rawView.appendChild(quiet);
         }
         (function (start) { t.addEventListener('click', function () { seek(start); }); })(para.start);
+        // La voce, piccola sotto il tempo, solo dove cambia.
+        if (para.voice && (p === 0 || paras[p - 1].voice !== para.voice)) t.appendChild(el('span', 'v', 'Voce ' + para.voice));
         for (var s = 0; s < para.segs.length; s++) {
           var ws = wordsOf(para.segs[s]);
           for (var k = 0; k < ws.length; k++) {

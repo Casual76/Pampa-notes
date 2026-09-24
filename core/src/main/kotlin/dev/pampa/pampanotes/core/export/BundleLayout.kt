@@ -21,6 +21,8 @@ data class TranscriptBlock(
    * se', e non conta nelle parole — non e' testo della lezione.
    */
   val silenceBeforeMs: Long? = null,
+  /** «Chi parla»: il numero della voce ([TranscriptParagraphs.Paragraph.voice]), da scrivere davanti. */
+  val voice: Int? = null,
 ) {
   val words: Int get() = text.wordCount()
 }
@@ -52,7 +54,7 @@ object TranscriptPieces {
     if (options.timestamps && session.hasTimings) {
       val paragraphs = TranscriptParagraphs.split(session.segments, TranscriptParagraphs.MAX_SEGMENTS_IN_DOCUMENT)
       if (paragraphs.isNotEmpty()) {
-        return paragraphs.map { TranscriptBlock(it.text, it.startMs, it.endMs, it.partId, it.silenceBeforeMs) }
+        return paragraphs.map { TranscriptBlock(it.text, it.startMs, it.endMs, it.partId, it.silenceBeforeMs, it.voice) }
       }
     }
     return textBlocks(transcript.text)

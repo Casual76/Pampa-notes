@@ -863,7 +863,8 @@ con `-ss`/`-t`, 0,5 GB; un pezzo puo' cominciare fino a 30 ms dopo il taglio, ch
 **A che punto e', mentre trascrive.** Una richiesta al computer e' una sola `POST` che torna quando
 ha finito, e per un'ora il telefono non sapeva niente. Ora l'app manda `X-Pampa-Job: <uuid>` e, finito
 l'invio, chiede `GET /v1/jobs/<uuid>` ogni secondo (`RemoteJobPoller`): `state` fra `received`,
-`queued` (con `position`), `decoding`, `loading_model`, `transcribing`, `aligning`, `done`, `failed`,
+`queued` (con `position`), `decoding`, `loading_model`, `transcribing`, `aligning`, `diarizing` (solo
+con «chi parla»), `done`, `failed`,
 e `fraction` dentro la fase, che viene dal `progress_callback` di WhisperX — vero, non stimato dal
 tempo, ma a scatti di un lotto. Il companion registra il lavoro appena le intestazioni passano
 l'autenticazione, **prima** di leggere il corpo, o una domanda durante l'invio avrebbe un 404; il
@@ -923,6 +924,47 @@ da qualunque punto la si prenda, il titolo come `stateDescription` per TalkBack)
 ultime lezioni senza il caricamento del modello (`auto_piece_minutes`: circa quattro minuti di lavoro
 per pezzo, fra 15 e 120 minuti di audio — sulla scheda le lezioni vanno intere, sul processore a
 pezzi), e risponde `max_minutes_used`, che lo slider fermo mostra come «Ultima lezione: …».
+
+**Chi parla.** Il computer di casa sa separare le voci (pyannote, che arriva con WhisperX:
+`pyannote/speaker-diarization-community-1`), e ogni segmento torna con `speaker` («SPEAKER_00»).
+**Quello che l'utente deve fare, una volta**: un account gratuito su huggingface.co, accettare le
+condizioni sulla pagina del modello, creare un token di tipo *Read* e incollarlo dal menu dell'icona,
+«Separazione delle voci…» (`tray.voices_dialog`: salva `hf_token` in `config.json` col writer atomico
+di `config.py`, e chiede subito a Hugging Face se il token apre il modello — `check_diarization_access`
+dice se mancano le condizioni o il token e' sbagliato). Vale anche `HF_TOKEN`. Il token non si stampa
+mai (registro, `/health`, `/v1/admin/settings`). **Senza token non cambia niente**: `/health` non
+dichiara `diarize` fra le `features`, `diarize=1` si ignora, e la trascrizione e' quella di sempre.
+Con il token, `diarize=1` (piu' `min_speakers`/`max_speakers`, facoltativi) entra nella chiave del
+lavoro condiviso, e `diarize_segments` gira **dopo l'allineamento di tutti i pezzi e sull'audio
+intero** — le etichette valgono solo dentro la stessa separazione, quindi separare pezzo per pezzo
+darebbe SPEAKER_00 diversi con lo stesso nome — con la fase `diarizing` e la sua percentuale. Il
+modello si carica per la lezione e se ne va alla fine con la sua riserva (`DIARIZE_GB`, 1,5: non
+entra nel piano della VRAM perche' arriva quando il lotto di Whisper e' gia' restituito, ma si guarda
+il driver prima di cominciare, e senza posto — o con la memoria finita a meta' — si fa sul
+processore). Oltre `DIARIZE_WINDOW_S` (due ore: il raggruppamento di pyannote cresce col quadrato)
+si separa a finestre tagliate nei silenzi, e le voci di ogni finestra sono sue (`2:SPEAKER_00`).
+**Le voci non fanno mai fallire una lezione**: qualunque errore (token, condizioni, pyannote) lascia
+i segmenti senza `speaker`, e l'esito sta in `/health` (`diarization.last`) come quello
+dell'allineamento. `assign_speakers` e' la regola di `whisperx.assign_word_speakers` (vince chi parla
+piu' a lungo nell'intervallo) senza pandas: un segmento che non tocca nessun turno prende il turno
+piu' vicino, una parola resta senza.
+
+Nell'app: **Impostazioni → Trascrizione → «Chi parla»** (`SpeakerSeparation`: Registrazioni, di
+serie — una lezione ha una voce sola —, Sempre, Mai; la nota sotto dice se il computer lo sa fare).
+`TranscriptionRepository.requestFor` lo mette nella richiesta, e `TranscriptionRunner` lo manda solo
+sulla strada del computer che lavora da se' e solo se `/health` dichiara `diarize`: mai a Groq, mai
+a un companion vecchio, mai a pezzi tagliati sul telefono. `SegmentEntity.speaker` (database 10,
+nullable) viaggia coi segmenti dentro la trascrizione, e **vuoto non entra nell'impronta**
+(`SyncCodec.canonicalSegments`, provato byte per byte contro la forma di prima in
+`SegmentPayloadTest`): l'aggiornamento non sporca nessuna trascrizione. Un'app di prima che riceve
+una trascrizione con le voci le perde e, se la riscrive, la rimanda senza: si aggiornano tutti.
+L'etichetta e' una chiave, non un nome: `TranscriptParagraphs.voices` la traduce in «Voce 1», «Voce 2»
+nell'ordine in cui compaiono, **parte per parte** (ogni registrazione si separa per conto suo: la
+stessa persona in due parti e' due voci), e con meno di due voci non dice niente. `split` va a capo
+anche dove cambia la voce. A schermo la voce sta nella riga del tempo della card, solo dove cambia
+(«0:42 · Voce 2»); nell'export coi tempi ogni paragrafo comincia con `**Voce 1:**` (non conta nelle
+parole); la pagina di una condivisione la scrive piccola sotto il tempo. Rinominare le voci («Voce 1»
+→ «Marco») non c'e': vorrebbe una mappa per sessione da sincronizzare.
 
 **Annullare, perdersi, ripetersi.** Ogni trascrizione sul companion e' un lavoro condiviso
 (`SharedWork`) con chi lo aspetta: due richieste uguali (stessa impronta, lingua, vocabolario,

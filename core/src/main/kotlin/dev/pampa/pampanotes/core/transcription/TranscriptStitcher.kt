@@ -32,6 +32,8 @@ data class StitchedSegment(
   val chunkIndex: Int,
   /** Le parole, gia' traslate come il segmento. Vuota quando il servizio non le da'. */
   val words: List<RawWord> = emptyList(),
+  /** La voce («SPEAKER_00»), quando il computer le ha separate. Vedi [TranscriptStitcher.stitch]. */
+  val speaker: String? = null,
 ) : TimedText
 
 data class StitchedTranscript(
@@ -102,6 +104,10 @@ object TranscriptStitcher {
                 endMs = chunk.spec.startMs + word.endMs,
               )
             },
+            // Le voci di due pezzi mandati separatamente non si parlano: SPEAKER_00 del secondo non e'
+            // per forza SPEAKER_00 del primo. Con piu' pezzi l'etichetta porta il pezzo, e diventano
+            // voci diverse — meglio due numeri per una persona che un numero per due persone.
+            speaker = segment.speaker?.let { if (ordered.size > 1) "${chunk.spec.index}:$it" else it },
           )
         }
         .filter { it.text.isNotEmpty() }

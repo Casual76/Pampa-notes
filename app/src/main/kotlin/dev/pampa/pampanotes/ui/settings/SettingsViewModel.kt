@@ -392,6 +392,9 @@ class SettingsViewModel @Inject constructor(
   }
   fun setAutoTranscribe(enabled: Boolean) = viewModelScope.launch { settingsStore.setAutoTranscribeOnImport(enabled) }
 
+  fun setSpeakerSeparation(mode: dev.pampa.pampanotes.core.settings.SpeakerSeparation) =
+    viewModelScope.launch { settingsStore.setSpeakerSeparation(mode) }
+
   /** La cartella dove finiscono backup ed export. La sceglie anche il primo avvio. */
   fun setBackupFolder(uri: android.net.Uri) = viewModelScope.launch {
     settingsStore.setBackupFolderUri(uri.toString())

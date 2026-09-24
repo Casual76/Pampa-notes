@@ -7,7 +7,8 @@ import dev.pampa.pampanotes.core.db.SegmentEntity
  *
  * Whisper restituisce frasi di cinque secondi. Trecento frasi in fila non sono una trascrizione, sono
  * un elenco: si va a capo dove c'era una pausa lunga, che quasi sempre e' un cambio di argomento, e
- * al confine fra due registrazioni, che e' un fatto e non un'interpretazione.
+ * al confine fra due registrazioni, che e' un fatto e non un'interpretazione. Quando il computer ha
+ * separato le voci, anche dove cambia chi parla, e il paragrafo sa di chi e' ([Paragraph.voice]).
  *
  * Sta qui e non nella schermata perche' la stessa divisione serve due volte, e due copie della regola
  * sono due regole destinate a divergere: la pagina la usa per fare le card, l'export per andare a
@@ -50,6 +51,12 @@ object TranscriptParagraphs {
      * audio registrato in cui nessuno ha parlato.
      */
     val silenceBeforeMs: Long? = null,
+    /**
+     * «Chi parla»: il numero della voce di questo paragrafo, da 1, nell'ordine in cui le voci
+     * compaiono. Null quando le voci non sono state separate, o quando in tutta la trascrizione ce
+     * n'e' una sola — «Voce 1» su ogni paragrafo di una lezione non direbbe niente. Vedi [voices].
+     */
+    val voice: Int? = null,
   ) {
     val startMs: Long get() = segments.first().sessionStartMs
     val endMs: Long get() = segments.last().sessionEndMs
@@ -77,9 +84,14 @@ object TranscriptParagraphs {
 
   fun split(segments: List<SegmentEntity>, maxSegments: Int = Int.MAX_VALUE): List<Paragraph> {
     if (segments.isEmpty()) return emptyList()
+    val voices = voices(segments)
     val result = mutableListOf<Paragraph>()
     var current = mutableListOf<SegmentEntity>()
     var silence: Long? = null
+
+    fun close() {
+      result += Paragraph(current.toList(), silence, voiceKey(current.first())?.let { voices[it] })
+    }
 
     segments.forEachIndexed { index, segment ->
       val previous = segments.getOrNull(index - 1)
@@ -87,18 +99,41 @@ object TranscriptParagraphs {
       val breaks = previous != null && (
         segment.partId != previous.partId ||
           gap >= GAP_MS ||
-          current.size >= maxSegments
+          current.size >= maxSegments ||
+          // Un'altra voce e' un altro paragrafo: una risposta attaccata alla domanda sembra detta da
+          // chi ha fatto la domanda.
+          segment.speaker != previous.speaker
         )
       if (breaks && current.isNotEmpty()) {
-        result += Paragraph(current.toList(), silence)
+        close()
         current = mutableListOf()
         silence = gap.takeIf { it >= SILENCE_MS }
       }
       current += segment
     }
-    if (current.isNotEmpty()) result += Paragraph(current.toList(), silence)
+    if (current.isNotEmpty()) close()
     return result
   }
+
+  /**
+   * Da etichette del computer («SPEAKER_00») a numeri, «Voce 1», «Voce 2», nell'ordine in cui le
+   * voci compaiono nella sessione.
+   *
+   * La chiave e' la parte **e** l'etichetta: ogni registrazione si separa per conto suo, e
+   * SPEAKER_00 della seconda non e' per forza SPEAKER_00 della prima. Meglio una «Voce 3» che e' la
+   * stessa persona della «Voce 1» che un numero solo dato a due persone. Vuota quando le voci
+   * diverse sono meno di due: una voce sola non si dice.
+   */
+  fun voices(segments: List<SegmentEntity>): Map<String, Int> {
+    val numbers = LinkedHashMap<String, Int>()
+    segments.forEach { segment ->
+      val key = voiceKey(segment) ?: return@forEach
+      if (key !in numbers) numbers[key] = numbers.size + 1
+    }
+    return if (numbers.size < 2) emptyMap() else numbers
+  }
+
+  private fun voiceKey(segment: SegmentEntity): String? = segment.speaker?.let { "${segment.partId}\u0000$it" }
 
   /**
    * «16 min», «1 h 20 min», «2 h»: quanto e' durato un silenzio, arrotondato al minuto.

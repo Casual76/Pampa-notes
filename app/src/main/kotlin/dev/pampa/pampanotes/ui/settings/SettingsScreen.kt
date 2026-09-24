@@ -64,6 +64,7 @@ import dev.pampa.pampanotes.update.UpdateUiState
 import dev.pampa.pampanotes.core.export.ExportOptions
 import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.RefinementPreset
+import dev.pampa.pampanotes.core.settings.SpeakerSeparation
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
 import dev.pampa.pampanotes.ui.common.RowIcon
 import dev.pampa.pampanotes.ui.common.jobErrorText
@@ -503,6 +504,34 @@ private fun LazyListScope.transcriptionSection(settings: PampaSettings, companio
   item { FluidSectionHeader(title = stringResource(R.string.provider_custom), detail = stringResource(R.string.settings_custom_chunk_detail)) }
   item { CustomChunkPicker(settings = settings, viewModel = viewModel) }
   item { FluidSectionFootnote(text = stringResource(R.string.settings_custom_chunk_on_computer)) }
+
+  // «Chi parla»: quando chiedere al computer di separare le voci. Di serie solo le Registrazioni —
+  // una lezione ha una voce sola — e sempre e solo col computer di casa: Groq non lo fa.
+  item { FluidSectionHeader(title = stringResource(R.string.settings_speakers_header), detail = stringResource(R.string.settings_speakers_detail)) }
+  item {
+    val labels = mapOf(
+      SpeakerSeparation.PERSONAL to stringResource(R.string.settings_speakers_personal),
+      SpeakerSeparation.ALWAYS to stringResource(R.string.settings_speakers_always),
+      SpeakerSeparation.NEVER to stringResource(R.string.settings_speakers_never),
+    )
+    FluidSegmentedControl(
+      options = SpeakerSeparation.entries.toList(),
+      selected = settings.speakerSeparation,
+      onSelect = viewModel::setSpeakerSeparation,
+      label = { labels.getValue(it) },
+    )
+  }
+  item {
+    // Se il computer ha risposto si sa se puo' farlo (il token di Hugging Face c'e'); se no si dice
+    // cosa serve, senza promettere niente.
+    val ready = companion.status as? CompanionStatus.Ready
+    val note = when {
+      ready?.diarize == true -> R.string.settings_speakers_ready
+      ready != null -> R.string.settings_speakers_needs_token
+      else -> R.string.settings_speakers_unknown
+    }
+    FluidSectionFootnote(text = stringResource(note))
+  }
 
   if (settings.hasEndpoint) vramSection(companion, viewModel)
 

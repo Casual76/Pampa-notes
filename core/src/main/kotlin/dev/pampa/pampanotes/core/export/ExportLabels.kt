@@ -50,6 +50,8 @@ data class ExportLabels(
    * modello e non una parola sola perche' la durata non sta nello stesso punto in tutte le lingue.
    */
   val silence: String = "— %1\$s di silenzio —",
+  /** «Chi parla»: la voce di un paragrafo, con `%1$d` al posto del numero («Voce 2»). */
+  val voice: String = "Voce %1\$d",
   val words: String = "parole",
   val note: String = "nota",
   val notesPlural: String = "note",

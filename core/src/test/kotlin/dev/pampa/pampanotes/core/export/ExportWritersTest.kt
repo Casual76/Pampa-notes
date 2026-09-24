@@ -171,6 +171,25 @@ class ExportWritersTest {
   }
 
   @Test
+  fun `con le voci separate ogni paragrafo dice chi parla`() {
+    val session = session(
+      parts = listOf(part("p1", "riunione.m4a", 60_000L, 0)),
+      segments = listOf(
+        segment("p1", 1_000, 3_000, "Cominciamo?").copy(speaker = "SPEAKER_01"),
+        segment("p1", 3_500, 5_000, "Si', cominciamo.").copy(speaker = "SPEAKER_00"),
+        segment("p1", 5_500, 7_000, "Allora.").copy(speaker = "SPEAKER_01"),
+      ),
+    )
+    val note = note(sessions = listOf(session))
+    val layout = layout(listOf(note))
+    val piece = layout.of(note).transcripts.values.single().single()
+    val text = writer.transcriptFile(note, piece, layout)
+
+    assertTrue(text, text.contains("[00:01] **Voce 1:** Cominciamo?\n\n[00:03] **Voce 2:** Si', cominciamo.\n\n[00:05] **Voce 1:** Allora."))
+    assertTrue("l'etichetta non conta come parole", piece.blocks.none { it.text.contains("Voce") })
+  }
+
+  @Test
   fun `una versione raffinata non ha i tempi e lo dice`() {
     val raw = transcript(TranscriptKind.RAW, "Testo grezzo.")
     val refined = transcript(TranscriptKind.REFINED, "Testo ripulito.", model = "gpt-oss-120b", parentId = raw.id)
