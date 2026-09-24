@@ -14,6 +14,10 @@ scopre come succede: si scrive un file e si guarda dove e' finito. Se e' finito 
 si rilancia attraverso WMI — il processo lo crea il servizio di Windows, fuori da ogni contenitore —
 e si esce.
 
+Chi si rilancia lo dice con [RELAUNCHED] (`--fuori`), e chi lo riceve non guarda piu': se il
+processo nuovo finisse di nuovo in un contenitore, rilanciarsi ancora sarebbe un giro senza fine. E
+un contenitore da cui non si esce ([inescapable]) si dice nel registro e basta.
+
 Solo libreria standard: lo usa anche `avvio.pyw`, che deve partire quando il resto non puo'.
 """
 
@@ -24,12 +28,22 @@ import subprocess
 import sys
 from pathlib import Path
 
+# L'argomento con cui ci si rilancia fuori: chi lo riceve e' gia' il processo rilanciato.
+RELAUNCHED = "--fuori"
+# Il Python del Microsoft Store e' lui stesso un'app a pacchetto: tutto quello che lancia, WMI o no,
+# nasce nel suo contenitore. Rilanciarsi non serve, e senza [RELAUNCHED] non smetterebbe mai.
+STORE_PYTHON = "PythonSoftwareFoundation."
+
 
 def redirected_to() -> str | None:
     """Il nome del contenitore in cui finiscono le scritture in `%LOCALAPPDATA%`, o None."""
     if sys.platform != "win32":
         return None
-    base = Path(os.environ.get("LOCALAPPDATA", ""))
+    # Vuota o mancante non e' «la cartella corrente»: `Path("")` e' `.`, e la sonda finiva li'.
+    raw = os.environ.get("LOCALAPPDATA") or ""
+    if not raw.strip():
+        return None
+    base = Path(raw)
     if not base.is_dir():
         return None
     probe = base / "PampaNotes" / f".sonda-{os.getpid()}"
@@ -51,6 +65,27 @@ def redirected_to() -> str | None:
             probe.unlink()
         except OSError:
             pass
+
+
+def inescapable(package: str) -> bool:
+    """Un contenitore da cui un rilancio non esce: quello del Python dello Store ([STORE_PYTHON])."""
+    return package.startswith(STORE_PYTHON)
+
+
+def container_to_leave(argv: list[str]) -> tuple[str | None, bool]:
+    """
+    Il contenitore in cui si e', e se vale la pena rilanciarsi per uscirne.
+
+    (None, False) fuori da ogni contenitore, o se questo processo e' gia' il rilancio ([RELAUNCHED]
+    fra gli argomenti: non si guarda neanche). (nome, False) dentro un contenitore da cui non si
+    esce ([inescapable]): chi chiama lo scrive nel registro e va avanti. (nome, True): si rilanci.
+    """
+    if RELAUNCHED in argv:
+        return None, False
+    boxed = redirected_to()
+    if not boxed:
+        return None, False
+    return boxed, not inescapable(boxed)
 
 
 def relaunch_outside(args: list[str], cwd: Path) -> bool:

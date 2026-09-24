@@ -2671,6 +2671,346 @@ class SentenceSplitterTest(unittest.TestCase):
         self.assertEqual(len(spans), 2)
 
 
+# --- la lingua sul rumore, l'allineatore, i titoli di coda, l'eco (24/09) ---------------------------
+
+
+class Voter(FakeEngine):
+    """Risponde a ogni finestra con la lingua e la probabilita' della lista, nell'ordine."""
+
+    def __init__(self, answers: list[tuple[str, float | None]]) -> None:
+        super().__init__(None)
+        self.answers = list(answers)
+
+    def needs_load(self) -> bool:
+        return False
+
+    def language_vote(self, audio) -> tuple[str | None, float | None]:
+        return self.answers.pop(0)
+
+
+class NoisyLanguageTest(StateMixin, unittest.TestCase):
+    """Sul rumore la lingua e' un tiro a caso: vota solo chi e' sicuro."""
+
+    def vote(self, answers: list[tuple[str, float | None]]) -> str | None:
+        import numpy
+
+        energies = numpy.full(int(300 / 0.02), 0.01, dtype=numpy.float32)
+        source = server.LoadedAudio(numpy.zeros(300 * RATE, dtype=numpy.float32), RATE)
+        source._energies = energies
+        with self.assertLogs("pampa", level="INFO"):
+            return server.spoken_language(source, 0.02, Voter(answers), RecordingProgress())
+
+    def test_no_confident_vote_means_no_language(self) -> None:
+        # Il registro vero delle ore mute di «Napoli 18h»: `lingua: nn (nn, nn, haw)`.
+        self.assertIsNone(self.vote([("nn", 0.47), ("nn", 0.52), ("haw", 0.21)]))
+
+    def test_only_confident_votes_count(self) -> None:
+        self.assertEqual(self.vote([("nn", 0.4), ("it", 0.95), ("nn", 0.45)]), "it")
+        self.assertEqual(self.vote([("nn", 0.3), ("it", 0.9), ("en", 0.8)]), "it", "a pari merito, la finestra piu' parlata")
+
+    def test_a_model_without_probabilities_votes_as_before(self) -> None:
+        self.assertEqual(self.vote([("de", None), ("it", None), ("it", None)]), "it")
+
+    def test_the_probability_comes_from_the_encoder(self) -> None:
+        import sys
+        import types
+
+        import numpy
+
+        seen: dict[str, object] = {}
+
+        def log_mel_spectrogram(audio, n_mels, padding):
+            seen.update(samples=len(audio), n_mels=n_mels, padding=padding)
+            return "mel"
+
+        native = types.SimpleNamespace(detect_language=lambda encoded: [[("<|it|>", 0.93), ("<|en|>", 0.02)]])
+        whisper = types.SimpleNamespace(feat_kwargs={"feature_size": 128}, encode=lambda mel: f"enc({mel})", model=native)
+        engine = server.Engine()
+        engine.main_model = lambda: types.SimpleNamespace(model=whisper)
+        audio_module = types.SimpleNamespace(N_SAMPLES=480000, log_mel_spectrogram=log_mel_spectrogram)
+        with mock.patch.dict(sys.modules, {"whisperx": types.SimpleNamespace(audio=audio_module), "whisperx.audio": audio_module}):
+            language, probability = engine.language_vote(numpy.zeros(16000 * 10, dtype=numpy.float32))
+        self.assertEqual((language, probability), ("it", 0.93))
+        self.assertEqual(seen, {"samples": 160000, "n_mels": 128, "padding": 320000})
+
+
+class EmptyModel(FakeModel):
+    """Whisper che sul rumore non trova niente, e tira a indovinare la lingua."""
+
+    def transcribe(self, audio: object, batch_size: int, language: str | None, progress_callback=None) -> dict:
+        return {"language": language or "nn", "segments": []}
+
+
+class RealAligner(FakeEngine):
+    """Allinea passando da [server.align_model_for] vero, con WhisperX finto."""
+
+    def align(self, segments, language, audio, device, progress_callback=None):
+        self.align_devices.append(device)
+        server.align_model_for(language, device)
+        return segments
+
+
+class AlignmentLanguagesTest(StateMixin, unittest.TestCase):
+    """Nessun allineatore per niente, e mai un allineatore da un miliardo di parametri per il rumore."""
+
+    def setUp(self) -> None:
+        # numpy si importa prima di fingere WhisperX, e torch non si importa affatto ([is_oom] lo
+        # farebbe): `patch.dict(sys.modules)` all'uscita toglie quello che si e' importato dentro, e
+        # numpy e torch non si lasciano caricare due volte nello stesso processo.
+        import numpy  # noqa: F401
+
+        oom = mock.patch.object(server, "is_oom", lambda error: "out of memory" in str(error).lower())
+        oom.start()
+        self.addCleanup(oom.stop)
+        super().setUp()
+        self.addCleanup(server.STATE.update, align_gb=0.0)
+        self.addCleanup(server.STATE["align"].clear)
+        server.STATE["align"].clear()
+        server.STATE.update(device="cuda", align_gb=0.0)
+
+    def whisperx(self, loads: list[str], broken: tuple[str, ...] = ()):
+        import types
+
+        def load_align_model(language_code, device):
+            loads.append(language_code)
+            if language_code in broken:
+                raise OSError(f"impossibile scaricare il modello per {language_code}")
+            return f"model-{language_code}", {}
+
+        return types.SimpleNamespace(load_align_model=load_align_model)
+
+    def test_no_segments_no_alignment(self) -> None:
+        engine = FakeEngine(EmptyModel(fits=99))
+        job = server.run_job(None, None, engine, 8, "cuda")
+        self.assertEqual(job["segments"], [])
+        self.assertEqual(engine.align_devices, [], "niente da allineare: nessun modello da caricare")
+        self.assertIsNone(job["alignment"], "e niente da dire su come va l'allineamento in nynorsk")
+
+    def test_a_language_off_the_list_keeps_whisper_times(self) -> None:
+        import sys
+
+        class Nynorsk(FakeModel):
+            def transcribe(self, audio, batch_size, language, progress_callback=None):
+                return {"language": "nn", "segments": [{"start": 0.0, "end": 1.0, "text": "Takk for oss."}]}
+
+        loads: list[str] = []
+        with mock.patch.dict(sys.modules, {"whisperx": self.whisperx(loads)}), mock.patch.object(server, "trust_sentence_splitter"):
+            job = server.run_job(None, None, RealAligner(Nynorsk(fits=99)), 8, "cuda")
+        self.assertEqual(loads, [], "nessun download da 3,6 GB")
+        self.assertEqual(job["alignment"], server.ALIGN_UNAVAILABLE)
+        self.assertEqual(job["segments"], [{"start": 0.0, "end": 1.0, "text": "Takk for oss."}])
+
+    def test_the_old_aligner_stays_until_the_new_one_loads(self) -> None:
+        import sys
+
+        loads: list[str] = []
+        with mock.patch.dict(sys.modules, {"whisperx": self.whisperx(loads, broken=("pt",))}), \
+                mock.patch.object(server, "trust_sentence_splitter"), \
+                mock.patch.object(server, "vram_gb", return_value=2.0), \
+                mock.patch.object(server, "empty_cuda_cache") as emptied, self.assertLogs("pampa", level="INFO"):
+            self.assertEqual(server.align_model_for("it")[0], "model-it")
+            with self.assertRaises(server.AlignmentUnavailable):
+                server.align_model_for("pt")
+            with self.assertRaises(server.AlignmentUnavailable):
+                server.align_model_for("nn")
+            self.assertEqual(server.align_model_for("it")[0], "model-it")
+        self.assertEqual(loads, ["it", "pt"], "nn non si prova neanche; l'italiano non si ricarica")
+        self.assertEqual(list(server.STATE["align"]), ["it"])
+        emptied.assert_not_called()
+
+    def test_health_keeps_word_timestamps_for_the_languages_that_work(self) -> None:
+        server.STATE.update(gpu=None, alignment={"it": "ok", "nn": server.ALIGN_UNAVAILABLE})
+        self.assertTrue(server.health()["word_timestamps"])
+        server.STATE.update(alignment={"it": "errore: PermissionError: Security Violation"})
+        self.assertFalse(server.health()["word_timestamps"], "un errore vero si vede ancora")
+
+    def test_a_silent_piece_says_nothing_about_alignment(self) -> None:
+        answers = iter([
+            {"segments": [], "language": "it", "alignment": None},
+            {"segments": [{"start": 0.0, "end": 1.0, "text": "ciao"}], "language": "it", "alignment": "ok"},
+        ])
+        with mock.patch.object(server, "run_job", lambda *a, **k: next(answers)):
+            # 45 minuti con un tetto di 30: due pezzi, il primo muto.
+            result = server.transcribe_audio(lecture(45), RATE, "it", RecordingProgress(), FakeEngine(None), max_minutes=30)
+        self.assertEqual(result["alignment"], "ok")
+        with mock.patch.object(server, "run_job", lambda *a, **k: {"segments": [], "language": "it", "alignment": None}):
+            result = server.transcribe_audio(lecture(5), RATE, "it", RecordingProgress(), FakeEngine(None))
+        self.assertIsNone(result["alignment"])
+
+        def fake_transcribe_audio(audio, *args, **kwargs):
+            return {"segments": [], "language": "nn", "device_used": "cuda", "batch_size": 8,
+                    "alignment": None, "chunks": 1, "dropped": {}}
+
+        server.STATE["alignment"] = {"it": "ok"}
+        with mock.patch.object(server, "load_audio", return_value=[0.0] * 16000), \
+                mock.patch.object(server, "probe_duration", return_value=1.0), \
+                mock.patch.object(server, "transcribe_audio", fake_transcribe_audio), \
+                mock.patch.object(server, "replan_for_job"):
+            server._transcribe("x.m4a", None, server.JobProgress())
+        self.assertEqual(server.STATE["alignment"], {"it": "ok"}, "una lingua tirata a indovinare sul silenzio non entra")
+
+
+class CreditsAndEchoTest(unittest.TestCase):
+    FRAME = 0.02
+
+    def test_real_sentences_about_media_and_subtitles_stay(self) -> None:
+        segments = [
+            seg(10.0, 14.0, " Il ministro ha poi parlato ai media della crisi economica del paese."),
+            seg(15.0, 16.0, " Ha parlato ai media."),
+            seg(17.0, 21.0, " Sottotitoli di un film in lingua originale aiutano molto a imparare."),
+            seg(22.0, 23.0, " Sottotitoli di un film."),
+            seg(24.0, 25.0, " Subtítulos de la película."),
+            seg(26.0, 32.0, " Sottotitoli creati dal professore, con la comunità della classe, per tutte le lezioni dell'anno."),
+        ]
+        kept, dropped = server.drop_hallucinations(segments, None, self.FRAME)
+        self.assertEqual(kept, [dict(s) for s in segments])
+        self.assertEqual(dropped, {})
+
+    def test_whole_credit_lines_go(self) -> None:
+        lines = [
+            "Sottotitoli creati dalla comunità Amara.org",
+            "Sottotitoli e revisione a cura di QTSS",
+            "Sottotitoli a cura di Marco Rossi",
+            "Teksting av Nicolai Winther",
+            "Captions by AI-Media",
+            "Subtitles by the Amara.org community",
+            "Sous-titres réalisés par la communauté d'Amara.org",
+            "Subtítulos realizados por la comunidad de Amara.org",
+            "Untertitel im Auftrag des ZDF, 2017",
+        ]
+        segments = [seg(10.0 * i, 10.0 * i + 2.0, line) for i, line in enumerate(lines)]
+        kept, dropped = server.drop_hallucinations(segments, None, self.FRAME)
+        self.assertEqual(kept, [])
+        self.assertEqual(dropped, {"crediti": len(lines)})
+
+    def test_a_one_word_answer_from_the_vocabulary_stays(self) -> None:
+        import numpy
+
+        energies = numpy.full(int(60 / self.FRAME), 0.01, dtype=numpy.float32)
+        energies[int(10 / self.FRAME) : int(12 / self.FRAME)] = 0.2  # qualcuno risponde, chiaro
+        prompt = "Fichte, Schelling, Hegel"
+        answer = [seg(10.0, 10.5, " Fichte.")]
+        self.assertEqual(server.drop_hallucinations(answer, energies, self.FRAME, prompt=prompt), (answer, {}))
+        self.assertEqual(server.drop_hallucinations([seg(10.0, 10.8, " Fichte.")], None, self.FRAME, prompt=prompt)[1], {})
+        # Un soffio (meno di [ECHO_MIN_S]), o sopra la stanza vuota: eco.
+        self.assertEqual(server.drop_hallucinations([seg(10.0, 10.2, " Fichte.")], energies, self.FRAME, prompt=prompt)[1], {"eco": 1})
+        self.assertEqual(server.drop_hallucinations([seg(30.0, 30.5, " Fichte.")], energies, self.FRAME, prompt=prompt)[1], {"eco": 1})
+
+
+class ArchiveMissingFileTest(unittest.TestCase):
+    """Una riga il cui file non c'e': [get] dice «non c'e'», ma una DELETE la toglie e le statistiche non la contano."""
+
+    def test_remove_and_stats_of_a_row_without_its_file(self) -> None:
+        present = b"una registrazione che c'e'"
+        gone = b"una registrazione sparita"
+        with tempfile.TemporaryDirectory() as folder:
+            store = archive.Archive(Path(folder))
+            try:
+                store.store(hashlib.sha256(present).hexdigest(), "a.m4a", "audio/mp4", [present])
+                sha = hashlib.sha256(gone).hexdigest()
+                store.store(sha, "b.m4a", "audio/mp4", [gone])["path"].unlink()
+                with self.assertLogs("pampa", level="WARNING"):
+                    self.assertIsNone(store.get(sha))
+                self.assertEqual(store.stats(), (1, len(present)))
+                self.assertEqual(store.inventory(), (1, len(present), 1))
+                self.assertTrue(store.remove(sha), "prima rispondeva 404 e la riga restava per sempre")
+                self.assertEqual(store.inventory(), (1, len(present), 0))
+                self.assertFalse(store.remove(sha))
+            finally:
+                store.db.close()
+
+
+class ExactPiecesTest(unittest.TestCase):
+    """Un pezzo decodificato da solo comincia al campione giusto, anche su un formato compresso."""
+
+    RATE = 16000
+
+    def setUp(self) -> None:
+        import shutil
+        import subprocess
+        import wave
+
+        import numpy
+
+        if shutil.which("ffmpeg") is None:
+            self.skipTest("ffmpeg non installato")
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        wav = Path(folder.name) / "rumore.wav"
+        # Rumore: ogni tratto e' diverso da tutti gli altri, e uno spostamento anche di un campione si vede.
+        signal = (0.3 * numpy.random.default_rng(7).standard_normal(8 * self.RATE)).clip(-0.99, 0.99)
+        with wave.open(str(wav), "wb") as out:
+            out.setnchannels(1)
+            out.setsampwidth(2)
+            out.setframerate(self.RATE)
+            out.writeframes((signal * 32767).astype(numpy.int16).tobytes())
+        self.path = Path(folder.name) / "rumore.m4a"
+        subprocess.run(
+            ["ffmpeg", "-nostdin", "-loglevel", "error", "-i", str(wav), "-c:a", "aac", "-b:a", "128k", str(self.path)],
+            check=True, capture_output=True,
+        )
+
+    def offset(self, whole, piece, start: int) -> int:
+        import numpy
+
+        window = piece[4000:12000]
+        best = min(
+            range(-800, 801),
+            key=lambda shift: float(numpy.mean(numpy.abs(whole[start + 4000 + shift : start + 12000 + shift] - window))),
+        )
+        return best
+
+    def test_streamed_pieces_start_on_the_sample(self) -> None:
+        whole = server.load_audio(self.path, self.RATE)
+        streamed = server.StreamedAudio(self.path, self.RATE)
+        for start_s, end_s in ((0.0, 2.5), (2.5, 5.13), (5.13, 8.0)):
+            piece = streamed.piece(start_s, end_s)
+            start = int(round(start_s * self.RATE))
+            self.assertEqual(self.offset(whole, piece, start), 0, (start_s, end_s))
+            self.assertLessEqual(abs(len(piece) - (int(round(end_s * self.RATE)) - start)), 1)
+
+    def test_the_command_seeks_coarse_then_fine(self) -> None:
+        command = server._decode_command("x.m4a", 16000, start_s=100.0, duration_s=30.0)
+        at = command.index("-i")
+        self.assertEqual(command[at - 2 : at], ["-ss", "98.000"])
+        self.assertEqual(command[at + 2 : at + 6], ["-ss", "2.000000", "-t", "30.000000"])
+        near = server._decode_command("x.m4a", 16000, start_s=1.5, duration_s=1.0)
+        self.assertLess(near.index("-i"), near.index("-ss"), "vicino all'inizio niente salto nel contenitore")
+        self.assertNotIn("-ss", server._decode_command("x.m4a", 16000))
+
+
+class PreallocationTest(unittest.TestCase):
+    """La durata dichiarata non si prende in parola oltre [PREALLOCATE_MAX_S]."""
+
+    RATE = DecodeTest.RATE
+    setUp = DecodeTest.setUp  # lo stesso tono da tre secondi
+
+    def sizes(self, expected_s: float) -> tuple[list[int], object]:
+        import numpy
+
+        real_empty = numpy.empty
+        sizes: list[int] = []
+
+        def recording(shape, dtype=float):
+            sizes.append(int(shape))
+            return real_empty(shape, dtype=dtype)
+
+        with mock.patch.object(server, "PREALLOCATE_MAX_S", 1.0), mock.patch.object(numpy, "empty", recording):
+            audio = server.load_audio(self.path, self.RATE, expected_s=expected_s)
+        return sizes, audio
+
+    def test_an_unfinished_wav_does_not_ask_for_hours(self) -> None:
+        sizes, audio = self.sizes(37 * 3600.0)  # un WAV mai chiuso: 37 ore dichiarate
+        self.assertEqual(sizes[0], self.RATE, "al massimo il tetto, non 8,5 GB")
+        self.assertLess(max(sizes), 11 * 60 * self.RATE, "e poi cresce a passi, non fino alle 37 ore")
+        self.assertEqual(len(audio), len(self.expected))
+
+    def test_growth_never_passes_the_declared_duration(self) -> None:
+        sizes, audio = self.sizes(3.0)
+        self.assertEqual(sizes, [self.RATE, 5 * self.RATE], "il tetto, poi fino alla durata dichiarata e non oltre")
+        self.assertEqual(len(audio), len(self.expected))
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -2703,3 +3043,65 @@ class FuoriTest(unittest.TestCase):
             with mock.patch.dict(os.environ, {"LOCALAPPDATA": root}), mock.patch.object(fuori.sys, "platform", "win32"):
                 self.assertIsNone(REAL_REDIRECTED())
             self.assertEqual(list((Path(root) / "PampaNotes").iterdir()), [], "la sonda resta in giro")
+
+
+class FuoriLoopTest(unittest.TestCase):
+    """Rilanciarsi fuori una volta sola, e mai da un contenitore da cui non si esce."""
+
+    STORE = "PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0"
+
+    def test_empty_localappdata_is_not_the_current_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            here = os.getcwd()
+            os.chdir(root)
+            try:
+                with mock.patch.dict(os.environ, {"LOCALAPPDATA": ""}), mock.patch.object(fuori.sys, "platform", "win32"):
+                    self.assertIsNone(REAL_REDIRECTED())
+            finally:
+                os.chdir(here)
+            self.assertEqual(list(Path(root).iterdir()), [], "Path('') e' '.': la sonda finiva nella cartella corrente")
+
+    def test_the_relaunched_process_does_not_look_again(self) -> None:
+        with mock.patch.object(fuori, "redirected_to", side_effect=AssertionError("non si guarda")):
+            self.assertEqual(fuori.container_to_leave(["tray.py", fuori.RELAUNCHED]), (None, False))
+        with mock.patch.object(fuori, "redirected_to", return_value="Claude_pzs8sxrjxfjjc"):
+            self.assertEqual(fuori.container_to_leave(["tray.py"]), ("Claude_pzs8sxrjxfjjc", True))
+        with mock.patch.object(fuori, "redirected_to", return_value=self.STORE):
+            self.assertEqual(fuori.container_to_leave(["tray.py"]), (self.STORE, False))
+
+    def run_avvio(self, argv: list[str], boxed: str | None) -> tuple[list[list[str]], list[str]]:
+        avvio = load_avvio()
+        relaunches: list[list[str]] = []
+        lines: list[str] = []
+        with mock.patch.object(avvio.sys, "argv", argv), \
+                mock.patch.object(fuori, "redirected_to", return_value=boxed), \
+                mock.patch.object(fuori, "relaunch_outside", side_effect=lambda args, cwd: relaunches.append(args) or True), \
+                mock.patch.object(avvio, "healthy", return_value=True), mock.patch.object(avvio, "log", lines.append):
+            avvio.main()
+        return relaunches, lines
+
+    def test_avvio_relaunches_once_with_the_flag(self) -> None:
+        relaunches, _ = self.run_avvio(["avvio.pyw", "--dopo"], "Claude_pzs8sxrjxfjjc")
+        self.assertEqual(len(relaunches), 1)
+        self.assertEqual(relaunches[0][-2:], ["--dopo", fuori.RELAUNCHED])
+        # Il rilancio arriva con `--fuori` e non guarda piu', anche se fosse ancora dentro.
+        relaunches, _ = self.run_avvio(["avvio.pyw", fuori.RELAUNCHED], "Claude_pzs8sxrjxfjjc")
+        self.assertEqual(relaunches, [])
+
+    def test_avvio_inside_store_python_goes_on(self) -> None:
+        relaunches, lines = self.run_avvio(["avvio.pyw"], self.STORE)
+        self.assertEqual(relaunches, [], "dallo Store non si esce: rilanciarsi sarebbe un giro senza fine")
+        self.assertTrue(any(self.STORE in line for line in lines))
+
+    def test_avvio_passes_the_flag_on_to_tray(self) -> None:
+        avvio = load_avvio()
+        with tempfile.TemporaryDirectory() as logs:
+            for argv, expected in ((["avvio.pyw", fuori.RELAUNCHED], [fuori.RELAUNCHED]), (["avvio.pyw"], [])):
+                with mock.patch.object(avvio.sys, "argv", argv), mock.patch.object(avvio, "LOGS", Path(logs)), \
+                        mock.patch.object(avvio.subprocess, "Popen") as popen:
+                    avvio.launch()
+                command = popen.call_args.args[0]
+                self.assertTrue(command[1].endswith("tray.py"))
+                self.assertEqual(command[2:], expected)
+                for handle in {call.kwargs["stdout"] for call in popen.call_args_list}:
+                    handle.close()

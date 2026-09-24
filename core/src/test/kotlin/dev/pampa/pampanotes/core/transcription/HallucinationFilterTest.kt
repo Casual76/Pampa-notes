@@ -105,6 +105,45 @@ class HallucinationFilterTest {
   }
 
   @Test
+  fun `una risposta di una parola del vocabolario resta`() {
+    // «Chi ha scritto la Dottrina della scienza?» «Fichte.»: fatta solo di parole del vocabolario, e
+    // detta davvero. Prima se ne andava: bastava che tutte le parole fossero nel prompt.
+    val segments = listOf(
+      seg(0, 5_000, "Chi ha scritto la Dottrina della scienza?"),
+      seg(5_600, 6_100, "Fichte."),
+      seg(6_500, 10_000, "Esatto, nel 1794."),
+    )
+    assertEquals(segments, HallucinationFilter.clean(segments, prompt = "Fichte, Schelling, Hegel"))
+  }
+
+  @Test
+  fun `un'eco sola nel silenzio se ne va`() {
+    val segments = listOf(
+      seg(0, 5_000, "Facciamo una pausa."),
+      seg(60_000, 60_500, "Fichte."),
+      seg(120_000, 125_000, "Riprendiamo."),
+    )
+    assertEquals(listOf(segments[0], segments[2]), HallucinationFilter.clean(segments, prompt = "Fichte, Schelling, Hegel"))
+    // In fondo alla registrazione la pausa dopo si misura dalla fine, come per i saluti.
+    val last = listOf(seg(0, 5_000, "Ultima frase."), seg(20_000, 20_500, "Hegel."))
+    assertEquals(last, HallucinationFilter.clean(last, prompt = "Hegel", upperMs = 21_000))
+    assertEquals(listOf(last[0]), HallucinationFilter.clean(last, prompt = "Hegel", upperMs = 60_000))
+  }
+
+  @Test
+  fun `un'eco che si ripete se ne va anche in mezzo al discorso`() {
+    val segments = listOf(
+      seg(0, 5_000, "E allora chi viene dopo?"),
+      seg(5_300, 5_800, "Hegel."),
+      seg(6_000, 6_500, "Hegel."),
+      seg(6_800, 10_000, "Andiamo avanti con il programma."),
+    )
+    assertEquals(listOf(segments[0], segments[3]), HallucinationFilter.clean(segments, prompt = "Fichte, Schelling, Hegel"))
+    val twice = listOf(seg(0, 5_000, "Siamo arrivati."), seg(5_300, 6_000, "18h 18h"), seg(6_500, 9_000, "Si cena."))
+    assertEquals(listOf(twice[0], twice[2]), HallucinationFilter.clean(twice, prompt = "Napoli 18h"))
+  }
+
+  @Test
   fun `senza prompt non si toglie niente per eco`() {
     val segments = listOf(seg(0, 2_000, "18h"))
     assertEquals(segments, HallucinationFilter.clean(segments, prompt = null))

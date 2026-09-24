@@ -12,8 +12,10 @@ package dev.pampa.pampanotes.core.transcription
  *     sola occorrenza — quello che c'era prima e dopo il giro resta.
  *  2. **L'eco del prompt.** 407 segmenti che dicevano solo «18h»: Whisper legge il prompt come il
  *     testo appena detto, e quando l'audio non gli da' niente lo ripete. Un segmento fatto soltanto
- *     di parole del prompt, e non piu' lungo del prompt, e' un'eco. (Il prompt adesso e' il solo
- *     vocabolario — vedi [TranscriptionPrompt] — ma un vocabolario si puo' ripetere anche lui.)
+ *     di parole del prompt, e non piu' lungo del prompt, e' un'eco — ma si toglie solo se e' isolato
+ *     (come i saluti qui sotto) o se si ripete, perche' «Chi l'ha scritto?» «Fichte.» e' fatto delle
+ *     stesse parole ed e' una risposta vera. (Il prompt adesso e' il solo vocabolario — vedi
+ *     [TranscriptionPrompt] — ma un vocabolario si puo' ripetere anche lui.)
  *  3. **I saluti nel silenzio.** Un centinaio di «Grazie.» e «Buonanotte.» sparsi nelle pause: sono
  *     le ultime parole di migliaia di video su cui il modello e' stato addestrato. Si tolgono solo
  *     quando sono isolati — almeno [ISOLATION_GAP_MS] di pausa prima e dopo — perche' un «grazie»
@@ -27,7 +29,7 @@ package dev.pampa.pampanotes.core.transcription
  */
 object HallucinationFilter {
 
-  /** Quanta pausa deve esserci prima e dopo perche' un «Grazie.» sia silenzio e non lezione. */
+  /** Quanta pausa deve esserci prima e dopo perche' un «Grazie.» (o un'eco) sia silenzio e non lezione. */
   const val ISOLATION_GAP_MS = 3_000L
 
   /** Quante volte di fila deve tornare la stessa unita' perche' sia un giro a vuoto. */
@@ -73,7 +75,7 @@ object HallucinationFilter {
     if (segments.isEmpty()) return segments
     val collapsed = collapseRepeatedSegments(segments.map(::collapseLoops).filter { it.text.isNotBlank() })
     val promptTokens = tokensOf(prompt.orEmpty())
-    val withoutEchoes = if (promptTokens.isEmpty()) collapsed else collapsed.filterNot { isPromptEcho(it.text, promptTokens) }
+    val withoutEchoes = if (promptTokens.isEmpty()) collapsed else dropEchoes(collapsed, promptTokens, lowerMs, upperMs)
     return dropSilencePhrases(withoutEchoes, lowerMs, upperMs)
   }
 
@@ -175,6 +177,48 @@ object HallucinationFilter {
     if (tokens.size > promptTokens.size) return false
     val vocabulary = promptTokens.toSet()
     return tokens.all { it in vocabulary }
+  }
+
+  /**
+   * Toglie le eco del prompt ([isPromptEcho]), ma non tutte: solo quelle che nessuno ha detto.
+   *
+   * Prima bastava essere fatti di parole del vocabolario, e se ne andava la risposta di una parola
+   * sola — il vocabolario sono proprio le parole che a lezione si dicono. Un'eco vera si riconosce
+   * da una di due cose: e' **isolata** (almeno [ISOLATION_GAP_MS] di niente prima e dopo, come i
+   * saluti nel silenzio, misurati sul gruppo di eco di fila) oppure **si ripete** — due eco uguali
+   * una dopo l'altra, o le stesse parole due volte nello stesso segmento («18h 18h»). Il gruppo che
+   * ha l'una o l'altra se ne va intero.
+   */
+  fun dropEchoes(
+    segments: List<StitchedSegment>,
+    promptTokens: List<String>,
+    lowerMs: Long = 0L,
+    upperMs: Long = Long.MAX_VALUE,
+  ): List<StitchedSegment> {
+    if (segments.isEmpty() || promptTokens.isEmpty()) return segments
+    val keys = segments.map { tokensOf(it.text) }
+    val echo = segments.map { isPromptEcho(it.text, promptTokens) }
+    val drop = BooleanArray(segments.size)
+
+    var index = 0
+    while (index < segments.size) {
+      if (!echo[index]) {
+        index++
+        continue
+      }
+      var end = index
+      while (end + 1 < segments.size && echo[end + 1]) end++
+
+      val before = segments.getOrNull(index - 1)?.endMs ?: lowerMs
+      val after = segments.getOrNull(end + 1)?.startMs ?: upperMs
+      val isolated = segments[index].startMs - before >= ISOLATION_GAP_MS &&
+        after - segments[end].endMs >= ISOLATION_GAP_MS
+      val repeated = (index until end).any { keys[it] == keys[it + 1] } ||
+        (index..end).any { keys[it].size > keys[it].toSet().size }
+      if (isolated || repeated) for (member in index..end) drop[member] = true
+      index = end + 1
+    }
+    return segments.filterIndexed { position, _ -> !drop[position] }
   }
 
   // -----------------------------------------------------------------------------------------------

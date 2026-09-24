@@ -844,10 +844,21 @@ parlata restano le stesse); `repetition_penalty` e `no_repeat_ngram_size` sono s
 ripetuto da chi parlava, diventava «vuoi rifare festa… vuol fa festa». La **lingua**, se l'app non la
 dice, si riconosce a maggioranza sulle tre finestre da trenta secondi piu' parlate del file
 (`spoken_language`), non sui primi trenta secondi: su quel file erano rumore, e WhisperX sceglieva
-inglese e *traduceva* la gita. Dopo l'allineamento **`drop_hallucinations`** toglie quello che non e'
+inglese e *traduceva* la gita. Votano solo le finestre di cui il modello e' sicuro almeno 0,6
+(`Engine.language_vote` rifa' spettrogramma, encoder e `detect_language` di ctranslate2 per avere la
+probabilita', che WhisperX butta): su un file tutto rumore anche le finestre «piu' parlate» sono
+rumore, e `nn, nn, haw` faceva trascrivere in norvegese e scaricare un allineatore da 3,6 GB
+(rumore bianco: «nn» a 0,47–0,52). Nessun voto sicuro: la lingua la dice il primo pezzo, come prima.
+**L'allineatore** si carica solo per le lingue di `ALIGN_LANGUAGES` (le cinque di torchaudio piu'
+ja, zh, nl, uk, pt, ru, pl, ca: niente modelli da un miliardo di parametri), mai per un pezzo senza
+segmenti, e quello vecchio se ne va solo quando il nuovo si e' caricato — prima usciva per primo, e
+un caricamento fallito lasciava senza parole allineate anche l'italiano fino al riavvio. Una lingua
+senza allineatore (o col suo che non si carica: `AlignmentUnavailable`) tiene i tempi di Whisper e in
+`/health` e' `"non disponibile"`, che non spegne `word_timestamps` per le altre. Dopo l'allineamento **`drop_hallucinations`** toglie quello che non e'
 stato detto: segmenti senza parole, titoli di coda dei sottotitoli (in piu' lingue: sul rumore anche la
-lingua e' a caso), eco del vocabolario (tutte le parole nel prompt, e ripetute, corte, veloci o
-quiete), «Grazie»/«Buonanotte» corti e soli o quieti, segmenti corti o veloci sopra un audio quieto, e
+lingua e' a caso; solo le formule intere su un segmento di dieci parole al massimo — «ha parlato ai
+media», «Sottotitoli di un film…» restano), eco del vocabolario (tutte le parole nel prompt, e
+ripetute, sotto 0,3 s, veloci o quiete: «Fichte.» detto in mezzo secondo resta), «Grazie»/«Buonanotte» corti e soli o quieti, segmenti corti o veloci sopra un audio quieto, e
 tutto quello che sta 40 dB sotto la voce; i giri (rapporto di compressione vero oltre 2,4) si
 accorciano a una volta sola, coi tempi della prima. «Quieto» vuol dire 2 dB sul fondo del blocco da
 dieci minuti **o** 24 dB sotto la voce del file (`sound_levels`): quel telefono toglieva il rumore da
@@ -858,7 +869,11 @@ e nella risposta (`dropped`); `compression_ratio` e' quello vero e `no_speech_pr
 0,0, che spegneva il filtro dell'app). La **memoria**: l'audio si decodifica in float32 direttamente
 in un array della misura giusta (`load_audio`: 11,75 → 4,65 GB per quel file), e oltre le quattro ore,
 se va comunque in pezzi, non si tiene affatto (`StreamedAudio`: un giro per le energie, poi ogni pezzo
-con `-ss`/`-t`, 0,5 GB; un pezzo puo' cominciare fino a 30 ms dopo il taglio, che cade in un silenzio).
+con `-ss`/`-t`, 0,5 GB). Il pezzo comincia al campione giusto: un salto nel contenitore fino a due
+secondi prima e il resto decodificato e buttato (`_decode_command`; col solo salto un m4a cominciava
+11–18 ms dopo). La durata dichiarata vale al massimo quattro ore di array preparato
+(`PREALLOCATE_MAX_S`): un WAV mai chiuso dichiara 37 ore, 8,5 GB chiesti in un colpo; oltre, l'array
+cresce di meta' alla volta fino alla durata dichiarata.
 
 **A che punto e', mentre trascrive.** Una richiesta al computer e' una sola `POST` che torna quando
 ha finito, e per un'ora il telefono non sapeva niente. Ora l'app manda `X-Pampa-Job: <uuid>` e, finito
@@ -941,7 +956,13 @@ registrazioni li' dentro, e il companion ripartito normale rispondeva `blob_miss
 ricaricava da fuori casa file che il computer aveva. Non c'e' un'API che lo dica (il processo non ha
 identita' di pacchetto): `fuori.redirected_to` scrive una sonda e guarda dove finisce, e `tray.py` e
 `avvio.pyw` in quel caso si rilanciano con WMI (`Win32_Process.Create`, fuori da ogni contenitore).
-`Archive.get` non cancella piu' una riga il cui file non si vede: risponde «non c'e'» e lo scrive.
+Il rilancio porta `--fuori`, e chi lo riceve (e il `tray.py` che `avvio.pyw` lancia dopo) non guarda
+piu': il Python dello Store (`PythonSoftwareFoundation.*`) e' un contenitore da cui WMI non fa
+uscire, e senza il segno si rilanciava per sempre; li' si scrive nel registro e si va avanti. Un
+`%LOCALAPPDATA%` vuoto non e' la cartella corrente. `Archive.get` non cancella piu' una riga il cui
+file non si vede: risponde «non c'e'» e lo scrive. La `DELETE` invece legge la riga da se' e la
+toglie anche senza file (prima rispondeva 404 e la riga restava per sempre), e le statistiche
+contano solo i file che ci sono (`inventory`: `missing` a parte in `GET /v1/files`).
 
 **Il companion non taglia chi e' a meta'.** `AuthGate` conta le richieste in volo dall'ingresso
 all'ultimo byte della risposta (`inflight` in `/health`): il riavvio da se' aspetta che non ci sia
@@ -965,7 +986,9 @@ vuoto (`TranscriptionPrompt`). Il resto lo toglie `HallucinationFilter` dentro
 `TranscriptStitcher.stitch`, sulle due strade (Groq a pezzi e il computer di casa, che risponde con
 un pezzo solo), prima della cucitura dei confini: un giro a vuoto (la stessa unita' almeno tre volte
 di fila e almeno sei parole in tutto, anche fatto di segmenti uguali) resta una volta; un segmento
-fatto solo di parole del prompt e non piu' lungo del prompt e' un'eco; «Grazie.», «Grazie mille»,
+fatto solo di parole del prompt e non piu' lungo del prompt e' un'eco, e si toglie se e' isolato (tre
+secondi di niente prima e dopo, come i saluti) o se si ripete — due uguali di fila, o «18h 18h»:
+«Fichte.» come risposta a una domanda e' fatto delle stesse parole ed e' vero (`dropEchoes`); «Grazie.», «Grazie mille»,
 «Buonanotte», «Sottotitoli» si tolgono solo se il gruppo che formano ha almeno tre secondi di pausa
 prima e dopo (i bordi della registrazione valgono come pausa), i titoli di coda («…Amara.org»)
 sempre. Conservativo per costruzione: nessuna regola tocca un discorso lungo. Le parole allineate
@@ -1024,7 +1047,11 @@ una raffinata) piu' recente o da un lavoro dello stesso tipo partito dopo — la
 «Superata», in grigio —, non le registrazioni mute (`no_speech`), non i lavori di una sessione che
 non c'e' piu'. La stessa regola decide se la sessione mostra ancora il fallimento; la scheda del
 fallimento ha «Nascondi» (cancella la riga del lavoro), e una ripulitura non riuscita con la grezza
-li' sotto e' una scheda quieta, non l'allarme in cima alla pagina.
+li' sotto e' una scheda quieta, non l'allarme in cima alla pagina. Una trascrizione finita
+`no_speech` lascia nella cartella del lavoro i suoi pezzi vuoti (`computer.json`), e «Riprova» usa lo
+stesso id: li rileggeva e falliva all'istante senza chiamare nessuno. Adesso il worker butta la
+cartella quando fallisce `no_speech`, e `retry` la butta per quelle di prima
+(`FailedJobs.discardsWorkOnRetry`).
 
 ## Il companion per tutti
 

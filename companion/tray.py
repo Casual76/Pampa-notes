@@ -438,12 +438,18 @@ def main() -> None:
     log_path = server.setup_file_logging()
     # Mai dentro il contenitore di un'altra app (vedi fuori.py): l'archivio finirebbe in una
     # cartella che il companion avviato da Windows non vede. Si riparte da avvio.pyw, fuori.
-    boxed = fuori.redirected_to()
-    if boxed:
+    # Con `--fuori` questo e' gia' il rilancio, e non si guarda piu': un contenitore da cui non si esce
+    # (il Python dello Store) lo farebbe ripartire per sempre.
+    boxed, leave = fuori.container_to_leave(sys.argv)
+    if boxed and not leave:
+        server.log.warning(
+            "avviato dentro il contenitore di %s, da cui non si esce: parto lo stesso (l'archivio andra' li' dentro)", boxed,
+        )
+    elif boxed:
         here = Path(__file__).resolve().parent
         pythonw = Path(sys.prefix) / "Scripts" / "pythonw.exe"
         runner = pythonw if pythonw.exists() else Path(sys.executable)
-        again = fuori.relaunch_outside([str(runner), str(here / "avvio.pyw"), "--dopo"], here)
+        again = fuori.relaunch_outside([str(runner), str(here / "avvio.pyw"), "--dopo", fuori.RELAUNCHED], here)
         server.log.warning(
             "avviato dentro il contenitore di %s: %s", boxed,
             "mi rilancio fuori con WMI" if again else "WMI ha rifiutato, parto lo stesso (l'archivio andra' nel contenitore)",

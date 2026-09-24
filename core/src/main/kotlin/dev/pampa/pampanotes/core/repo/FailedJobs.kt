@@ -56,4 +56,15 @@ object FailedJobs {
     if (job.errorCode == NO_SPEECH) return FailureStanding.NO_SPEECH
     return FailureStanding.RETRYABLE
   }
+
+  /**
+   * «Riprova» deve buttare quello che il lavoro aveva messo da parte in `filesDir/jobs/<id>/`?
+   *
+   * Di solito no: sono i pezzi gia' trascritti, e riprendere da li' e' il motivo per cui ci sono. Ma
+   * una trascrizione finita in `no_speech` ha lasciato per ogni parte il suo risultato vuoto
+   * (`computer.json`, `chunk-N.json`), e «Riprova» riusa lo stesso id: rileggeva quei vuoti, non
+   * chiamava nessuno e falliva di nuovo `no_speech` all'istante — anche dopo aver cambiato
+   * computer, modello o vocabolario, che e' proprio quando uno riprova una registrazione muta.
+   */
+  fun discardsWorkOnRetry(job: JobEntity): Boolean = job.type == JobType.TRANSCRIBE && job.errorCode == NO_SPEECH
 }

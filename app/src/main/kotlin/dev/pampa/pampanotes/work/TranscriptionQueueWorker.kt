@@ -624,8 +624,12 @@ class TranscriptionQueueWorker @AssistedInject constructor(
    */
   private suspend fun fail(job: JobEntity, error: TranscriptionError) {
     when (withContext(NonCancellable) { repository.fail(job.id, error) }) {
-      TranscriptionRepository.FailOutcome.FAILED ->
+      TranscriptionRepository.FailOutcome.FAILED -> {
+        // Muta: i pezzi messi da parte sono tutti vuoti, e tenerli farebbe fallire «Riprova» senza
+        // chiedere niente a nessuno. Gli altri fallimenti li tengono, per riprendere da li'.
+        if (error is TranscriptionError.NoSpeech) runner.cleanUp(job.id)
         AppNotifications.notifyFailed(applicationContext, job.id, error.code, job.provider)
+      }
       TranscriptionRepository.FailOutcome.CANCELLED,
       TranscriptionRepository.FailOutcome.GONE,
       -> runner.cleanUp(job.id)
