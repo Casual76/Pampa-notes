@@ -1,5 +1,6 @@
 package dev.pampa.pampanotes.ui.session
 
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -35,6 +36,8 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
@@ -75,6 +78,8 @@ fun PlayerBar(
   onSeek: (Long) -> Unit,
   onCycleSpeed: () -> Unit,
   modifier: Modifier = Modifier,
+  /** «Saltati 16 min», per un attimo al posto del cronometro: vedi [TimeOrNotice]. */
+  notice: String? = null,
 ) {
   Column(
     // L'overlay non passa dalla lista, quindi la misura di lettura se la da' da solo: lo scrubber
@@ -105,12 +110,7 @@ fun PlayerBar(
       horizontalArrangement = Arrangement.spacedBy(2.dp),
       verticalAlignment = Alignment.CenterVertically,
     ) {
-      Text(
-        text = Formats.timestamp(state.positionMs),
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onSurface,
-        modifier = Modifier.padding(start = 8.dp, end = 6.dp),
-      )
+      TimeOrNotice(positionMs = state.positionMs, notice = notice)
       // Tenuti premuti saltano cinque minuti: in una registrazione di ore quindici secondi alla volta
       // non portano da nessuna parte, e un altro tasto nella capsula non ci sta.
       PlayerButton(
@@ -140,6 +140,29 @@ fun PlayerBar(
           .padding(horizontal = 10.dp, vertical = 10.dp),
       )
     }
+  }
+}
+
+/**
+ * Il cronometro, o per due secondi e mezzo quanto silenzio si e' appena saltato.
+ *
+ * Nel posto del tempo perche' e' il tempo che e' appena cambiato: chi guarda il lettore vede il
+ * minuto saltare avanti e, nello stesso punto, perche'. Niente pannelli ne' notifiche — un salto ogni
+ * dieci minuti di ascolto non merita di coprire il testo — e nel colore della materia, cosi' non si
+ * scambia per un orario. TalkBack lo legge da se' (regione viva).
+ */
+@Composable
+private fun TimeOrNotice(positionMs: Long, notice: String?) {
+  Crossfade(targetState = notice, label = "skip-notice") { shown ->
+    Text(
+      text = shown ?: Formats.timestamp(positionMs),
+      style = MaterialTheme.typography.labelLarge,
+      color = if (shown != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+      maxLines = 1,
+      modifier = Modifier
+        .padding(start = 8.dp, end = 6.dp)
+        .then(if (shown != null) Modifier.semantics { liveRegion = LiveRegionMode.Polite } else Modifier),
+    )
   }
 }
 

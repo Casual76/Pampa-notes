@@ -599,6 +599,17 @@
   <string name="player_time_remaining">Mancano %1$s</string>
   <string name="player_time_total">Dura %1$s</string>
   <string name="player_time_toggle">Mostra quanto manca o quanto dura</string>
+  <string name="player_skipped">Saltati %1$s</string>
+  <string name="player_skipped_seconds">Saltati %1$d s</string>
+  <string name="session_skip_silence_on">Salta i silenzi</string>
+  <string name="session_skip_silence_off">Non saltare i silenzi</string>
+  <string name="session_search">Cerca nella trascrizione</string>
+  <string name="session_search_placeholder">Cerca una parola</string>
+  <string name="session_search_count">%1$d di %2$d</string>
+  <string name="session_search_none">Nessuna</string>
+  <string name="session_search_previous">Occorrenza precedente</string>
+  <string name="session_search_next">Occorrenza successiva</string>
+  <string name="session_search_close">Chiudi la ricerca</string>
   <string name="player_speed">%1$s×</string>
   <string name="player_scrubber">Punto della registrazione</string>
   <string name="note_open_session">Ascolta e leggi</string>

@@ -569,6 +569,17 @@
   <string name="player_time_remaining">%1$s left</string>
   <string name="player_time_total">%1$s long</string>
   <string name="player_time_toggle">Show time left or total length</string>
+  <string name="player_skipped">Skipped %1$s</string>
+  <string name="player_skipped_seconds">Skipped %1$d s</string>
+  <string name="session_skip_silence_on">Skip silences</string>
+  <string name="session_skip_silence_off">Stop skipping silences</string>
+  <string name="session_search">Search the transcript</string>
+  <string name="session_search_placeholder">Find a word</string>
+  <string name="session_search_count">%1$d of %2$d</string>
+  <string name="session_search_none">None</string>
+  <string name="session_search_previous">Previous match</string>
+  <string name="session_search_next">Next match</string>
+  <string name="session_search_close">Close search</string>
   <string name="player_speed">%1$s×</string>
   <string name="player_scrubber">Position in the recording</string>
   <string name="note_open_session">Listen and read</string>

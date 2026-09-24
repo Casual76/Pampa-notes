@@ -578,6 +578,32 @@ salvato della grezza **non** ha il segno, solo l'a capo: va nella ricerca, nel c
 nel sync, nel raffinamento e nell'export senza tempi, dove una frase scritta dall'app sembrerebbe
 detta dal professore, nella lingua del telefono che ha trascritto. Durate con
 `TranscriptParagraphs.silenceDuration` («16 min», «1 h 20 min»).
+
+**Salta i silenzi** (menu della sessione, per dispositivo: `PampaSettingsStore.skipSilence`, spento
+di serie; c'e' solo con la grezza coi segmenti e l'audio qui). I silenzi vengono dalla trascrizione,
+non dall'audio (`SilenceSkipper.gapsOf`, puro, in `core/playback/`): dentro le parti che hanno
+segmenti, tutto quello che nessun segmento copre e dura almeno 12 s (`MIN_GAP_MS`), compreso
+l'inizio muto e la fine muta, anche a cavallo fra due parti; una parte senza segmenti e' sconosciuta,
+non muta, e non si salta mai. A ogni battito del lettore `SessionViewModel` chiede `onTick`: dopo il
+primo secondo di silenzio si salta a un secondo prima della voce, in tempo di sessione (quindi anche
+fra un file e l'altro), e il cronometro della capsula dice per due secondi e mezzo «Saltati 16 min».
+**Il dito vince**: un salto scelto dall'utente (scrubber, frecce, tocchi) che finisce dentro un
+silenzio lo fa ascoltare (`onUserSeek`), finche' la posizione non ne esce; la ripresa dal punto
+salvato e l'arrivarci suonando no. In pausa non si salta. La capsula del lettore non aveva posto per
+un tasto in piu' su un telefono, per questo sta nel menu.
+
+**Cerca dentro una registrazione** (la lente nella barra della sessione): una barra di vetro sopra
+il lettore — sopra la tastiera quando c'e' — con il campo, «3 di 12», precedente, successiva e
+chiudi; indietro la chiude, e chiuderla la cancella. Il confronto e' `TranscriptSearch` (puro):
+maiuscole, accenti (`Normalizer` NFD), apostrofi tipografici e spazi in fila non contano, e le
+posizioni tornano nel testo originale grazie a una mappa carattere per carattere; l'indice si
+prepara una volta per trascrizione fuori dal thread della UI, e sotto i due caratteri non si cerca.
+Sulla grezza si cerca nei paragrafi di `TranscriptParagraphs` e le occorrenze si dipingono **dietro**
+il testo (`searchHighlights`, dal `TextLayoutResult` di `FluidSpokenText`, che resta quello che
+accende le parole); scrivere porta la lista alla prima senza toccare il lettore, precedente e
+successiva portano anche il lettore alla parola (`TranscriptSearch.timeOf`: il tempo della parola, o
+l'inizio del segmento). Sulla raffinata, che e' Markdown reso da una libreria, mentre la ricerca e'
+aperta il testo si mostra a blocchi di testo semplice (`plainBlocks`) e non si salta da nessuna parte.
 ## Raffinamento
 
 L'unico posto in cui l'app manda del testo a un modello di chat, e fa una cosa sola: riscrivere
