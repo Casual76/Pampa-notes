@@ -1015,8 +1015,25 @@ dell'allineamento. `assign_speakers` e' la regola di `whisperx.assign_word_speak
 piu' a lungo nell'intervallo) senza pandas: un segmento che non tocca nessun turno prende il turno
 piu' vicino, una parola resta senza.
 
-Nell'app: **Impostazioni → Trascrizione → «Chi parla»** (`SpeakerSeparation`: «Solo in
-Registrazioni», di serie — una lezione ha una voce sola —, Sempre, Mai). Senza un computer collegato
+Cinque cose sistemate per la 1.0.2 del companion: **la telemetria di pyannote e' spenta**
+(`PYANNOTE_METRICS_ENABLED=false` in cima a `whisperx_server.py` e a `fetch_model.py`, prima di ogni
+import: pyannote 4.0.7 la legge a ogni pipeline e senza variabile la accende); **serve pyannote 4**
+(`_pyannote_installed` guarda la versione nei metadati, e `requirements.txt` fissa `whisperx==3.8.6`,
+`pyannote.audio>=4.0,<5`, `huggingface_hub>=0.24,<1.0`); **un token rifiutato non si offre**: un 401,
+un 403 o le condizioni non accettate (`denial_message`, dal controllo del menu o da una lezione:
+`DiarizerAccessDenied` quando pyannote torna None) mettono `diarization_denied`, `/health` toglie
+`diarize` dalle `features` e dice `denied`, e un controllo riuscito (anche quello che la finestra fa
+da se' aprendosi) o una separazione riuscita lo tolgono; un errore di rete no. **Il tempo delle voci
+non e' velocita'**: `diarize_segments` torna anche i suoi secondi, che escono da `record_speed` e da
+`processing_s` (`transcription_work_s`) e vanno in `diarize_s` — dentro, `auto_piece_minutes`
+cominciava a tagliare lezioni che andavano intere. **Il ripiego sul processore restituisce la
+scheda**: dentro l'`except` c'e' solo il segno, e modello nuovo e seconda passata vengono dopo, quando
+il traceback coi tensori non c'e' piu'. Nel menu, il controllo del token gira su un thread
+(`tray.check_in_background`, la finestra lo guarda con `after`: senza rete restava bianca), e
+«Togli il token» scrive `hf_token_disabled`, che spegne anche `HF_TOKEN` dell'ambiente dopo un
+riavvio (`resolve_hf_token`); salvare un token lo rimette falso.
+
+Nell'app: **Impostazioni → Trascrizione → «Chi parla»** (`SpeakerSeparation`: Registrazioni, di serie — una lezione ha una voce sola —, Sempre, Mai). Senza un computer collegato
 la scelta e' spenta e una riga porta a Servizi; con il computer la nota sotto dice lo stato vero, uno
 per volta: sto chiedendo, non risponde, il programma sul computer e' vecchio (`/health` senza
 `diarization`: `CompanionStatus.Ready.speakersKnown`), pronto, lo decide il proprietario (chi non
@@ -1181,7 +1198,37 @@ WhisperX). Adesso c'e' un installer per Windows in `companion/installer/`:
   `owner` e `index_url`. Un PC gia' di un altro account risponde 409.
 - **Si aggiorna da se'**: il tray guarda una volta al giorno l'ultima release `companion-v*` di
   GitHub e offre «Aggiorna a vX», che scarica il setup e lo lancia in modalita' aggiornamento, solo a
-  companion fermo e solo per le copie installate dal setup (quella di sviluppo mai).
+  companion fermo e solo per le copie installate dal setup (quella di sviluppo mai). Fino alla 1.0.1
+  **l'aggiornamento si uccideva da solo**: il setup era figlio dell'icona e `install.py` la fermava
+  con `taskkill /T`, che porta via l'albero intero — setup e `install.py` compresi. Adesso
+  `updater.launch_setup` passa da WMI (`fuori.relaunch_outside`: il setup non e' figlio di nessuno;
+  se WMI rifiuta, come prima), `stop_running` ferma solo quel processo (niente `/T`: l'attesa di
+  `restart_allowed` garantisce che non ci sia un ffmpeg figlio) e mai uno da cui discende
+  (`process_ancestors`: fotografia di toolhelp con ctypes, e un «padre» nato dopo il figlio e' un
+  numero riciclato); un antenato resta acceso e l'installazione dice di riaprirlo. Provato da capo
+  a fondo su una copia di prova (porta 8799): aggiornamento lanciato da `launch_setup` → icona
+  fermata e riavviata, `/health` con un `instance` nuovo; setup figlio del processo in ascolto →
+  lasciato vivo, setup finito con 0.
+- **Mai dentro il contenitore di un'altra app** (vedi «Il companion non gira mai dentro un'altra
+  app»): lanciato da li', il setup copierebbe tutto nella copia privata di `%LOCALAPPDATA%`.
+  `InitializeSetup` scrive una sonda come `fuori.redirected_to` e, se e' finita in un contenitore, si
+  rilancia con WMI con gli stessi parametri piu' `/FUORI` (che non guarda piu'); `install.py`
+  rifiuta con un messaggio (uscita 4) se ci arriva lo stesso con la cartella sotto `%LOCALAPPDATA%`.
+  Per provare un setup da una sessione dell'app di Claude: build e setup con
+  `Invoke-CimMethod Win32_Process Create`, in una cartella fuori da `%LOCALAPPDATA%` e da Drive, con
+  `/DIR=` e `/INSTALLARGS="--port 8799 --no-autostart --no-firewall --no-browser --no-start --skip-model --cpu"`,
+  e `archive_root` della copia spostato prima di avviarla (di serie e' l'archivio vero).
+- **`pythonw tray.py` senza niente attaccato** (il collegamento del menu Start, «Collega il
+  telefono») moriva subito: `sys.stdout` None, e uvicorn chiede `isatty()`. `tray.ensure_std_streams`,
+  prima degli import, manda tutto in `logs/tray-stderr.log`. E un'icona riscrive il collegamento
+  dell'avvio automatico solo se e' della sua cartella (`shortcut_mentions`): una seconda copia si
+  prendeva quello della prima, e disinstallandola lo cancellava.
+- **La disinstallazione** chiede (di serie No) se togliere i modelli dalla cache di Hugging Face —
+  solo `models--Systran--faster-whisper-*`, `models--pyannote--*`,
+  `models--jonatasgrosman--wav2vec2-*` (`uninstall-helper.ps1 purge-models`, che segue
+  `HF_HUB_CACHE`/`HF_HOME`) — e toglie `%LOCALAPPDATA%\PampaNotes` solo se e' rimasta vuota.
+  `test_install` controlla anche che ogni modulo importato da `avvio.pyw`, `tray.py` e dal server
+  entri nei `Source:` del setup.
 - Nell'app: Impostazioni → Servizi → «Installa sul tuo computer» (e una riga nel primo avvio), con
   il link alle release, «Condividi il link» e «Cerca il computer».
 

@@ -11,7 +11,11 @@
     firewall-off   toglie la regola "Pampa Notes <porta>", chiedendo l'amministratore a Windows;
     purge-archive  cancella l'archivio dei file, ma solo se e' davvero un archivio del companion
                    (ci sono archive.db o blobs/): un archive_root scritto male non deve portarsi via
-                   una cartella qualunque.
+                   una cartella qualunque;
+    purge-models   cancella dalla cache di Hugging Face i modelli che il companion scarica, e solo
+                   quelli: Whisper (Systran/faster-whisper-*), le voci (pyannote/*) e l'allineamento
+                   delle parole (jonatasgrosman/wav2vec2-*). Sono gigabyte, e senza il companion non
+                   li usa nessuno; il resto della cache e' di altri programmi e resta.
 
 .PARAMETER App
   La cartella del companion installato.
@@ -19,8 +23,20 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)][string]$App,
-  [Parameter(Mandatory = $true)][ValidateSet("stop", "autostart-off", "firewall-off", "purge-archive")][string]$Action
+  [Parameter(Mandatory = $true)][ValidateSet("stop", "autostart-off", "firewall-off", "purge-archive", "purge-models")][string]$Action
 )
+
+# I modelli che il companion scarica nella cache di Hugging Face (install.py, fetch_model.py e le
+# lezioni). Una cartella per repository, "models--<autore>--<nome>": si toglie solo quello che
+# corrisponde qui, mai la cache intera.
+$ModelPatterns = @("models--Systran--faster-whisper-*", "models--pyannote--*", "models--jonatasgrosman--wav2vec2-*")
+
+function Get-HubCache {
+  # Lo stesso ordine di huggingface_hub: HF_HUB_CACHE, poi HF_HOME\hub, poi ~\.cache\huggingface\hub.
+  if ($env:HF_HUB_CACHE) { return $env:HF_HUB_CACHE }
+  if ($env:HF_HOME) { return (Join-Path $env:HF_HOME "hub") }
+  return (Join-Path $env:USERPROFILE ".cache\huggingface\hub")
+}
 
 $ErrorActionPreference = "SilentlyContinue"
 $App = (Resolve-Path -LiteralPath $App).Path.TrimEnd("\")
@@ -69,6 +85,21 @@ switch ($Action) {
     if ($settings -and $settings.archive_root) { $root = [string]$settings.archive_root }
     $looksOurs = (Test-Path -LiteralPath (Join-Path $root "archive.db")) -or (Test-Path -LiteralPath (Join-Path $root "blobs"))
     if ($looksOurs) { Remove-Item -LiteralPath $root -Recurse -Force }
+  }
+  "purge-models" {
+    $hub = Get-HubCache
+    if (Test-Path -LiteralPath $hub) {
+      foreach ($pattern in $ModelPatterns) {
+        # Le cartelle dei modelli, e i loro lucchetti in .locks, che hanno lo stesso nome.
+        foreach ($folder in @($hub, (Join-Path $hub ".locks"))) {
+          if (Test-Path -LiteralPath $folder) {
+            Get-ChildItem -LiteralPath $folder -Directory -Filter $pattern | ForEach-Object {
+              Remove-Item -LiteralPath $_.FullName -Recurse -Force
+            }
+          }
+        }
+      }
+    }
   }
 }
 exit 0

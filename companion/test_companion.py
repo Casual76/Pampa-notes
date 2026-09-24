@@ -124,6 +124,7 @@ class StateMixin:
     SAVED = (
         "token", "index_url", "owner", "accept_anonymous", "alignment", "device", "name", "compute_type",
         "batch_size", "idle_seconds", "tunables", "vram", "gpu", "config_path", "hf_token", "diarization",
+        "diarization_denied",
     )
 
     def setUp(self) -> None:  # noqa: D401
@@ -2674,14 +2675,77 @@ class TrayTest(unittest.TestCase):
     def test_the_voices_token_goes_to_config_and_to_the_server(self) -> None:
         import tray
 
-        with mock.patch.object(tray.config, "set_value") as written, mock.patch.dict(server.STATE, {"hf_token": None}):
+        with mock.patch.object(tray.config, "set_values") as written, \
+                mock.patch.dict(server.STATE, {"hf_token": None, "diarization_denied": True}):
             tray.save_hf_token("hf_nuovo")
-            written.assert_called_once_with("hf_token", "hf_nuovo")
+            written.assert_called_once_with({"hf_token": "hf_nuovo", "hf_token_disabled": False})
             self.assertEqual(server.STATE["hf_token"], "hf_nuovo")
+            self.assertFalse(server.STATE["diarization_denied"], "il rifiuto era del token di prima")
             self.assertIn("accesa", tray.voices_label())
             tray.save_hf_token("")
             self.assertIsNone(server.STATE["hf_token"], "un token vuoto spegne la separazione")
+            # «Togli il token» resta tolto anche dopo il riavvio, con HF_TOKEN nell'ambiente.
+            self.assertEqual(written.call_args.args[0], {"hf_token": "", "hf_token_disabled": True})
             self.assertNotIn("accesa", tray.voices_label())
+
+    @unittest.skipUnless(os.name == "nt", "i collegamenti .lnk sono di Windows")
+    def test_the_startup_link_of_another_copy_is_not_taken(self) -> None:
+        import subprocess
+
+        import tray
+
+        with tempfile.TemporaryDirectory() as root:
+            mine = Path(root) / "Pampa notes" / "companion"
+            other = Path(root) / "Pampa notes" / "companion-prova"
+            link = Path(root) / "Pampa Notes companion.lnk"
+            command = tray.shortcut_command(link, mine / ".venv" / "Scripts" / "pythonw.exe", mine / "avvio.pyw")
+            done = subprocess.run(["powershell", "-NoProfile", "-Command", command], capture_output=True, timeout=60)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertTrue(tray.shortcut_mentions(link, mine))
+            self.assertFalse(tray.shortcut_mentions(link, other), "una copia accanto non se lo prende")
+            self.assertFalse(tray.shortcut_mentions(Path(root) / "non-ce.lnk", mine))
+
+    def test_pythonw_without_a_console_gets_a_log_instead_of_nothing(self) -> None:
+        import sys as _sys
+
+        import tray
+
+        with tempfile.TemporaryDirectory() as root, mock.patch.object(_sys, "stdout", None), \
+                mock.patch.object(_sys, "stderr", None):
+            tray.ensure_std_streams(Path(root) / "logs")
+            # Quello che uvicorn chiede configurando il suo registro: prima era None.isatty().
+            self.assertFalse(_sys.stdout.isatty())
+            print("una riga", file=_sys.stderr)
+            _sys.stdout.close()
+            self.assertIn("una riga", (Path(root) / "logs" / "tray-stderr.log").read_text(encoding="utf-8"))
+
+    def test_the_token_check_runs_off_the_window_thread(self) -> None:
+        import tray
+
+        release = threading.Event()
+        seen: list[str] = []
+
+        def slow(token: str) -> tuple[bool, str]:
+            seen.append(threading.current_thread().name)
+            release.wait(5)
+            return True, "Tutto pronto"
+
+        box = tray.check_in_background("hf_x", check=slow)
+        # Torna subito, con la risposta ancora da arrivare: la finestra intanto disegna.
+        self.assertFalse(box["done"])
+        release.set()
+        for _ in range(100):
+            if box["done"]:
+                break
+            time.sleep(0.02)
+        self.assertEqual((box["done"], box["message"]), (True, "Tutto pronto"))
+        self.assertEqual(seen, ["controllo-hf"])
+        broken = tray.check_in_background("hf_x", check=lambda token: 1 / 0)
+        for _ in range(100):
+            if broken["done"]:
+                break
+            time.sleep(0.02)
+        self.assertIn("Non riesco a controllare", broken["message"])
 
 
 class AddressTest(unittest.TestCase):
@@ -3297,6 +3361,118 @@ class DiarizationTest(StateMixin, unittest.TestCase):
             with mock.patch.object(huggingface_hub, "auth_check", side_effect=error):
                 self.assertEqual(server.check_diarization_access("hf_x")[0], ok)
                 self.assertIn(words, server.check_diarization_access("hf_x")[1])
+
+    @staticmethod
+    def http_error(status: int) -> BaseException:
+        import requests
+        from huggingface_hub.utils import HfHubHTTPError
+
+        response = requests.models.Response()
+        response.status_code = status
+        return HfHubHTTPError(f"{status} Client Error", response=response)
+
+    def test_a_refused_token_is_said_and_takes_the_voices_off_health(self) -> None:
+        import huggingface_hub
+
+        cases = [(401, "Token non valido"), (403, "condizioni del modello")]
+        with mock.patch.object(server, "_pyannote_installed", return_value=True):
+            for status, words in cases:
+                server.STATE["diarization_denied"] = False
+                with mock.patch.object(huggingface_hub, "auth_check", side_effect=self.http_error(status)):
+                    ok, message = server.check_diarization_access("hf_x")
+                self.assertFalse(ok)
+                self.assertIn(words, message)
+                self.assertNotIn("Non riesco", message, "un rifiuto non e' «riprova piu' tardi»")
+                self.assertTrue(server.STATE["diarization_denied"])
+                self.assertFalse(server.diarization_available(), "un token rifiutato non si offre")
+                self.assertTrue(server.diarization_status()["denied"])
+                self.assertIsNone(server.diarize_request("1"))
+            # Un errore di rete non dice niente del token: il rifiuto resta com'era.
+            with mock.patch.object(huggingface_hub, "auth_check", side_effect=self.http_error(503)):
+                self.assertIn("Non riesco", server.check_diarization_access("hf_x")[1])
+            self.assertTrue(server.STATE["diarization_denied"])
+            # Un controllo riuscito le riaccende.
+            with mock.patch.object(huggingface_hub, "auth_check", return_value=None):
+                self.assertTrue(server.check_diarization_access("hf_x")[0])
+            self.assertTrue(server.diarization_available())
+
+    def test_a_lesson_refused_by_hugging_face_takes_the_voices_off(self) -> None:
+        def refused(_device: str):
+            raise server.DiarizerAccessDenied("il modello non si scarica con questo token")
+
+        with self.assertLogs("pampa", level="WARNING"):
+            result, _ = self.run_with(refused)
+        self.assertTrue(result["diarization"].startswith("errore: DiarizerAccessDenied"))
+        self.assertTrue(server.STATE["diarization_denied"])
+        # Un'altra lezione, dopo che le condizioni sono state accettate e il controllo e' andato: torna.
+        server.STATE["diarization_denied"] = False
+        result, _ = self.run_with(FakeDiarizer([(0.0, 30.0, "SPEAKER_00")]))
+        self.assertEqual(result["diarization"], "ok")
+        self.assertFalse(server.STATE["diarization_denied"])
+
+    def test_any_other_failure_keeps_the_voices_offered(self) -> None:
+        def broken(_device: str):
+            raise RuntimeError("pyannote si e' rotto")
+
+        with self.assertLogs("pampa", level="WARNING"):
+            self.run_with(broken)
+        self.assertFalse(server.STATE["diarization_denied"])
+
+    def test_voices_time_is_not_transcription_time(self) -> None:
+        class Slow(FakeDiarizer):
+            def __call__(self, *args, **kwargs):  # noqa: ANN002, ANN003
+                # L'orologio di Windows va a scatti di 15 ms: si dorme il doppio di quello che si chiede.
+                time.sleep(0.1)
+                return super().__call__(*args, **kwargs)
+
+        result, _ = self.run_with(Slow([(0.0, 30.0, "SPEAKER_00")]))
+        self.assertGreaterEqual(result["diarize_s"], 0.05)
+        # Il caricamento del modello e la separazione escono dal tempo di trascrizione, mai sotto zero.
+        self.assertEqual(server.transcription_work_s(100.0, 10.0, 30.0), 60.0)
+        self.assertEqual(server.transcription_work_s(5.0, 0.0, 9.0), 0.0)
+        # Una lezione di un'ora trascritta in 100 s con 900 s di voci sul processore: 36 volte, non 3,6.
+        with mock.patch.dict(server.STATE, {"speeds": {}}):
+            server.record_speed("cuda", 3600.0, server.transcription_work_s(1000.0, 0.0, 900.0))
+            self.assertEqual(server.recent_speed("cuda"), 36.0)
+
+    def test_the_processor_retry_starts_after_the_card_is_given_back(self) -> None:
+        import sys as _sys
+
+        full = FakeDiarizer([], error=FakeOOM())
+        fine = FakeDiarizer([(0.0, 30.0, "SPEAKER_00")])
+        order: list[str] = []
+
+        def load(device: str):
+            # Fuori dall'`except`: l'errore della scheda (e i suoi frame coi tensori) non c'e' piu'.
+            order.append(f"load {device} dentro un except={_sys.exc_info()[0] is not None}")
+            return full if device == "cuda" else fine
+
+        with mock.patch.object(server, "empty_cuda_cache", side_effect=lambda: order.append("svuota")):
+            result, _ = self.run_with(load)
+        on_card = order.index("load cuda dentro un except=False")
+        on_cpu = order.index("load cpu dentro un except=False")
+        self.assertIn("svuota", order[on_card + 1:on_cpu], "la scheda si svuota prima di caricare sul processore")
+        self.assertEqual(result["segments"][0]["speaker"], "SPEAKER_00")
+
+    def test_old_pyannote_is_not_offered(self) -> None:
+        self.assertTrue(server.pyannote_version_ok("4.0.7"))
+        self.assertTrue(server.pyannote_version_ok("5.1"))
+        self.assertFalse(server.pyannote_version_ok("3.3.2"))
+        self.assertFalse(server.pyannote_version_ok("sviluppo"))
+
+    def test_pyannote_does_not_phone_home(self) -> None:
+        # Scritta all'import del server, prima di qualunque pyannote; chi l'ha accesa la trova accesa.
+        self.assertIn("PYANNOTE_METRICS_ENABLED", os.environ)
+        if os.environ["PYANNOTE_METRICS_ENABLED"].lower() not in ("true", "1"):
+            self.assertEqual(os.environ["PYANNOTE_METRICS_ENABLED"], "false")
+
+    def test_removing_the_token_holds_across_restarts(self) -> None:
+        env = {"HF_TOKEN": " hf_ambiente "}
+        self.assertEqual(server.resolve_hf_token({"hf_token": ""}, env), "hf_ambiente")
+        self.assertIsNone(server.resolve_hf_token({"hf_token": "", "hf_token_disabled": True}, env))
+        self.assertEqual(server.resolve_hf_token({"hf_token": "hf_file", "hf_token_disabled": True}, env), "hf_file")
+        self.assertIsNone(server.resolve_hf_token({}, {}))
+        self.assertIn("hf_token_disabled", config.DEFAULTS)
 
     def test_configure_reads_the_token_from_the_environment_too(self) -> None:
         settings = dict(config.DEFAULTS, device="cpu")

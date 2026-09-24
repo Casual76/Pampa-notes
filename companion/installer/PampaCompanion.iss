@@ -43,7 +43,7 @@ DefaultGroupName=Pampa Notes companion
 PrivilegesRequired=lowest
 ; Inno 6.5 accende RedirectionGuard, che i processi figli ereditano: blocca l'attraversamento delle
 ; giunzioni create senza amministratore, e uv ne crea una (cpython-3.11 -> cpython-3.11.x) appena
-; scaricato Python — «Failed to create Python minor version link directory», os error 448. La
+; scaricato Python - "Failed to create Python minor version link directory", os error 448. La
 ; protezione serve agli installer che girano da amministratore; questo installa per utente, senza
 ; privilegi, in una cartella dell'utente.
 RedirectionGuard=no
@@ -100,6 +100,10 @@ Type: filesandordirs; Name: "{app}\__pycache__"
 Type: filesandordirs; Name: "{app}\installer\__pycache__"
 
 [Code]
+const
+  { Il setup rilanciato fuori da un contenitore lo dice cosi', e non guarda piu': vedi fuori.py. }
+  FuoriParam = '/FUORI';
+
 var
   UpgradeMode: Boolean;
 
@@ -114,6 +118,93 @@ begin
       Result := True;
       Exit;
     end;
+end;
+
+{ Il setup non deve mai girare dentro il contenitore di un'altra app (vedi fuori.py e
+  install.installer_container). Lanciato da un'app che virtualizza %LOCALAPPDATA% (l'app di Claude
+  sul PC, e tutto quello che lancia), i file che copia finirebbero nella copia privata di quell'app,
+  e il companion avviato da Windows non li vedrebbe. Nessuna API lo dice: si scrive una sonda e si
+  guarda dove e' finita. Torna il nome del contenitore, o ''. }
+function RedirectedTo: String;
+var
+  Base, Name, Probe: String;
+  Found: TFindRec;
+begin
+  Result := '';
+  Base := ExpandConstant('{localappdata}');
+  if (Base = '') or not DirExists(Base) then
+    Exit;
+  Name := '.sonda-setup-' + GetDateTimeString('yyyymmddhhnnsszzz', #0, #0);
+  Probe := Base + '\PampaNotes\' + Name;
+  if not ForceDirectories(Base + '\PampaNotes') then
+    Exit;
+  if not SaveStringToFile(Probe, 'x', False) then
+    Exit;
+  try
+    if FindFirst(Base + '\Packages\*', Found) then
+    try
+      repeat
+        if ((Found.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0) and (Found.Name <> '.') and (Found.Name <> '..') and
+          FileExists(Base + '\Packages\' + Found.Name + '\LocalCache\Local\PampaNotes\' + Name) then
+        begin
+          Result := Found.Name;
+          Break;
+        end;
+      until not FindNext(Found);
+    finally
+      FindClose(Found);
+    end;
+  finally
+    DeleteFile(Probe);
+    { Solo se e' vuota: su un PC nuovo la cartella l'ha creata la sonda. }
+    RemoveDir(Base + '\PampaNotes');
+  end;
+end;
+
+{ Rilancia questo setup, con gli stessi parametri piu' /FUORI, attraverso WMI (Win32_Process.Create):
+  il processo lo crea il servizio di Windows, fuori da ogni contenitore. Lo script passa da un file
+  perche' la riga di comando ha virgolette che non sopravvivono a due interpreti. }
+function RelaunchOutside: Boolean;
+var
+  I, Code: Integer;
+  Command, Folder, Script, ScriptPath: String;
+begin
+  Command := '"' + ExpandConstant('{srcexe}') + '"';
+  for I := 1 to ParamCount do
+    { /SL5= e' il parametro interno fra setup.exe e il suo .tmp: al setup.exe nuovo non serve. }
+    if CompareText(Copy(ParamStr(I), 1, 3), '/SL') <> 0 then
+      Command := Command + ' "' + ParamStr(I) + '"';
+  Command := Command + ' ' + FuoriParam;
+  Folder := ExtractFileDir(ExpandConstant('{srcexe}'));
+  { Dentro gli apici singoli di PowerShell l'apice si scrive due volte. }
+  StringChangeEx(Command, '''', '''''', True);
+  StringChangeEx(Folder, '''', '''''', True);
+  Script := '$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ''' +
+    Command + '''; CurrentDirectory = ''' + Folder + ''' }; exit $r.ReturnValue';
+  ScriptPath := ExpandConstant('{tmp}\fuori.ps1');
+  Result := SaveStringToFile(ScriptPath, Script, False) and
+    Exec('powershell.exe', '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ScriptPath + '"', '', SW_HIDE,
+      ewWaitUntilTerminated, Code) and (Code = 0);
+end;
+
+function InitializeSetup: Boolean;
+var
+  Boxed: String;
+begin
+  Result := True;
+  if HasParam(FuoriParam) then
+    Exit;
+  Boxed := RedirectedTo;
+  if Boxed = '' then
+    Exit;
+  { Questa copia esce in ogni caso: o ne e' partita una fuori, o dentro non si installa. }
+  Result := False;
+  if RelaunchOutside then
+    Log('Partito dentro il contenitore di ' + Boxed + ': rilanciato fuori con WMI.')
+  else if not WizardSilent then
+    MsgBox('Il setup e'' partito dentro un''altra app (' + Boxed + '): Windows metterebbe il companion nella sua copia ' +
+      'privata delle cartelle, dove il computer non lo trova.' + #13#10 + #13#10 +
+      'Chiudi e lancia il setup con un doppio clic da Esplora file.', mbError, MB_OK);
 end;
 
 function AppPath(const Relative: String): String;
@@ -211,11 +302,23 @@ begin
       if MsgBox('Tenere le impostazioni (config.json: account, codice, modello)?' + #13#10 +
         'Servono se lo reinstalli.', mbConfirmation, MB_YESNO or MB_DEFBUTTON1) = IDNO then
         DeleteFile(AppPath('config.json'));
+      { I modelli stanno nella cache di Hugging Face, fuori da questa cartella: sono gigabyte, e la
+        disinstallazione li lasciava li'. Si tolgono solo quelli che il companion scarica (Whisper,
+        le voci, l'allineamento), e solo a chi dice di si': li userebbe anche un altro companion
+        di questo computer, per esempio una copia per le prove. }
+      if MsgBox('Cancellare anche i modelli scaricati per la trascrizione (Whisper, la separazione delle voci, ' +
+        'l''allineamento delle parole)? Sono qualche gigabyte nella cache di Hugging Face.' + #13#10 + #13#10 +
+        'Rispondi No se sul computer c''e'' un''altra copia del companion, o se pensi di reinstallarlo.',
+        mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+        RunHelper('purge-models');
     end;
   end;
   if CurUninstallStep = usPostUninstall then
   begin
     RemoveDir(AppPath('installer'));
     RemoveDir(ExpandConstant('{app}'));
+    { La cartella dei dati del companion (l'archivio sta li' di serie), solo se e' rimasta vuota:
+      RemoveDir non cancella mai una cartella che ha qualcosa dentro. }
+    RemoveDir(ExpandConstant('{localappdata}\PampaNotes'));
   end;
 end;

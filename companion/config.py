@@ -117,6 +117,10 @@ DEFAULTS: dict[str, Any] = {
     # non la offre. Si scrive dal menu dell'icona («Separazione delle voci...») e non si stampa mai:
     # ne' nel registro, ne' in /health, ne' in /v1/admin/settings. Vale anche la variabile HF_TOKEN.
     "hf_token": "",
+    # «Togli il token» dal menu: vero, e la variabile HF_TOKEN dell'ambiente non vale piu' (vedi
+    # `resolve_hf_token` nel server). Senza, toglierlo durava fino al riavvio. Salvare un token lo
+    # rimette falso.
+    "hf_token_disabled": False,
 }
 
 

@@ -25,6 +25,15 @@ Avvio:
 
 from __future__ import annotations
 
+import os
+
+# pyannote 4 manda di serie statistiche d'uso ai suoi server: `pyannote/audio/telemetry/metrics.py`
+# (4.0.7) legge PYANNOTE_METRICS_ENABLED a ogni pipeline, e se la variabile non c'e' la accende dal
+# suo config.yaml. Le lezioni non escono di casa, e non ne escono neanche i numeri su quando e quanto
+# si separano le voci. Qui in cima, prima di qualunque import che possa portarsi dietro pyannote;
+# `setdefault`, cosi' chi l'ha accesa di proposito nell'ambiente la trova accesa.
+os.environ.setdefault("PYANNOTE_METRICS_ENABLED", "false")
+
 import argparse
 import asyncio
 import contextlib
@@ -35,7 +44,6 @@ import hashlib
 import json
 import logging
 import math
-import os
 import re
 import secrets
 import shutil
@@ -105,6 +113,10 @@ STATE: dict[str, Any] = {
     # l'errore), che /health mostra per la stessa ragione di `alignment`.
     "hf_token": None,
     "diarization": None,
+    # Hugging Face ha detto di no al token (401, 403, condizioni del modello non accettate), al
+    # controllo dal menu o a una lezione: finche' un controllo non va bene, «chi parla» non si offre
+    # (vedi [diarization_available]). Si azzera con un token nuovo e a ogni avvio.
+    "diarization_denied": False,
     "busy": False,
     # Quando e' finita l'ultima trascrizione. Da qui parte il conto per lo sfratto.
     "last_used": 0.0,
@@ -2185,8 +2197,12 @@ async def transcriptions(
         asyncio.get_running_loop().run_in_executor(None, report_usage, caller.bearer, duration)
 
     # Quanto ha lavorato il computer (senza la fila) e quanto era lungo l'audio: l'app ne fa le
-    # statistiche («un'ora di lezione in quattro minuti»). I nomi restano questi.
-    result["processing_s"] = round(work.progress.processing_s(), 2)
+    # statistiche («un'ora di lezione in quattro minuti»). I nomi restano questi. La separazione
+    # delle voci sta a parte, in `diarize_s`: dentro, una lezione con le voci sembrava una lezione
+    # trascritta piu' lentamente.
+    diarize_s = float(result.get("diarize_s") or 0.0)
+    result["diarize_s"] = round(diarize_s, 2)
+    result["processing_s"] = round(transcription_work_s(work.progress.processing_s(), 0.0, diarize_s), 2)
     result["audio_s"] = round(float(result.get("audio_s") or duration), 2)
     # Se il file ora sta nell'archivio (c'era gia', o e' entrato adesso: l'app marca la parte come
     # archiviata), da dove si e' trascritto, e in quanti pezzi.
@@ -2271,8 +2287,10 @@ async def _run_work(
     duration = result["segments"][-1]["end"] if result["segments"] else 0.0
     speed = duration / elapsed if elapsed > 0 else 0
     # La velocita' per la scelta automatica dei pezzi: senza il caricamento del modello, se c'e'
-    # stato, che si paga una volta e non dice niente di quanto va veloce la trascrizione.
-    work_s = elapsed - (STATE.get("last_load_s", 0.0) if STATE.get("loads", 0) != loads else 0.0)
+    # stato, che si paga una volta e non dice niente di quanto va veloce la trascrizione, e senza la
+    # separazione delle voci, che non e' trascrizione ([diarize_segments]).
+    load_s = STATE.get("last_load_s", 0.0) if STATE.get("loads", 0) != loads else 0.0
+    work_s = transcription_work_s(elapsed, load_s, float(result.get("diarize_s") or 0.0))
     record_speed(result.get("device_used") or STATE["device"], float(result.get("audio_s") or duration), work_s)
     on_cpu = " sul processore" if result.get("device_used") == "cpu" and STATE["device"] != "cpu" else ""
     log.info("%sfatto%s: %.1f min in %.0f s (%.0f volte il tempo reale)", who, on_cpu, duration / 60, elapsed, speed)
@@ -2670,6 +2688,14 @@ def recent_speed(device: str) -> float:
     if not samples:
         return DEFAULT_SPEED.get(device, 1.5)
     return samples[len(samples) // 2]
+
+
+def transcription_work_s(elapsed_s: float, load_s: float = 0.0, diarize_s: float = 0.0) -> float:
+    """
+    Il tempo di trascrizione vera dentro [elapsed_s]: senza il caricamento del modello e senza la
+    separazione delle voci. Mai sotto zero (gli orologi sono due, e i conti possono sbordare di poco).
+    """
+    return max(0.0, float(elapsed_s) - max(0.0, float(load_s)) - max(0.0, float(diarize_s)))
 
 
 def record_speed(device: str, audio_s: float, work_s: float) -> None:
@@ -3475,8 +3501,9 @@ def transcribe_audio(
     # «Chi parla», dopo l'allineamento di tutti i pezzi e sull'audio intero: una voce si riconosce
     # solo dentro la stessa separazione, quindi non si separa pezzo per pezzo ([diarize_segments]).
     diarization = None
+    diarize_s = 0.0
     if diarize is not None and segments:
-        segments, diarization = diarize_segments(segments, source, diarize, progress, device)
+        segments, diarization, diarize_s = diarize_segments(segments, source, diarize, progress, device)
     # Niente di grande resta nel frame: se qualcuno lo conserva (una libreria che tiene da parte un
     # errore d'import col suo traceback, vedi [warm_imports]) si porterebbe dietro il modello e
     # l'audio, e scaricare il modello non restituirebbe piu' la scheda.
@@ -3494,6 +3521,7 @@ def transcribe_audio(
         "chunks": len(bounds),
         "dropped": dropped,
         "diarization": diarization,
+        "diarize_s": diarize_s,
     }
 
 
@@ -3597,6 +3625,9 @@ def _transcribe(
         # trascrizione esce senza voci. `speakers` e' quante voci diverse ci sono.
         "diarization": job.get("diarization"),
         "speakers": len({s["speaker"] for s in out if s.get("speaker")}),
+        # Quanto e' costata la separazione delle voci, a parte: non e' trascrizione, e fuori da
+        # `processing_s` e dalla velocita' misurata (vedi [diarize_segments]).
+        "diarize_s": round(float(job.get("diarize_s") or 0.0), 2),
     }
 
 
@@ -3697,20 +3728,42 @@ class DiarizeRequest:
     max_speakers: int | None = None
 
 
+# La separazione e' scritta per pyannote 4: `Pipeline.from_pretrained(..., token=)` (il 3 voleva
+# `use_auth_token`) e il modello community-1, che col 3 non si carica. requirements.txt lo fissa.
+PYANNOTE_MIN_MAJOR = 4
+
+
+def pyannote_version_ok(version: str | None) -> bool:
+    """`4.0.7` si', `3.3.2` no, e una versione che non si legge no."""
+    match = re.match(r"^\s*(\d+)", version or "")
+    return bool(match) and int(match.group(1)) >= PYANNOTE_MIN_MAJOR
+
+
 @functools.lru_cache(maxsize=1)
 def _pyannote_installed() -> bool:
-    """pyannote arriva con WhisperX, ma un'installazione a mano puo' non averlo: si guarda una volta."""
+    """
+    pyannote arriva con WhisperX, ma un'installazione a mano puo' non averlo, o averne uno vecchio:
+    un pyannote 3 fallirebbe a ogni lezione, e `/health` offrirebbe una cosa che non sa fare. Si
+    guarda una volta, dai metadati del pacchetto, senza importarlo.
+    """
     try:
+        import importlib.metadata
         import importlib.util
 
-        return importlib.util.find_spec("pyannote.audio") is not None
-    except Exception:  # noqa: BLE001 — un pacchetto rotto vale come assente
+        if importlib.util.find_spec("pyannote.audio") is None:
+            return False
+        return pyannote_version_ok(importlib.metadata.version("pyannote.audio"))
+    except Exception:  # noqa: BLE001 — un pacchetto rotto (o senza metadati) vale come assente
         return False
 
 
 def diarization_available() -> bool:
-    """Si possono separare le voci? Serve il token, e serve pyannote."""
-    return bool(STATE.get("hf_token")) and _pyannote_installed()
+    """
+    Si possono separare le voci? Serve il token, serve pyannote 4, e Hugging Face non deve aver
+    appena rifiutato il token: offrire `diarize` con un token che non apre il modello vorrebbe dire
+    un errore a ogni registrazione, e un telefono convinto che le voci arriveranno.
+    """
+    return bool(STATE.get("hf_token")) and not STATE.get("diarization_denied") and _pyannote_installed()
 
 
 def diarization_status() -> dict[str, Any]:
@@ -3718,6 +3771,8 @@ def diarization_status() -> dict[str, Any]:
     return {
         "available": diarization_available(),
         "configured": bool(STATE.get("hf_token")),
+        # Il token c'e' ma Hugging Face l'ha rifiutato: «configured» senza «available» per questo.
+        "denied": bool(STATE.get("diarization_denied")),
         "model": DIARIZE_MODEL,
         # "ok", l'errore dell'ultima volta, o None se non e' mai stata chiesta da quando il server e' su.
         "last": STATE.get("diarization"),
@@ -3743,28 +3798,89 @@ def diarize_request(flag: str, min_speakers: str = "", max_speakers: str = "") -
     return DiarizeRequest(low, high)
 
 
+def resolve_hf_token(settings: dict[str, Any], environ: Any = None) -> str | None:
+    """
+    Il token di Hugging Face da usare: quello di config.json, o la variabile HF_TOKEN.
+
+    La variabile non vale quando dal menu dell'icona si e' scelto «Togli il token»
+    (`hf_token_disabled`): prima lo toglieva solo fino al riavvio, e al riavvio il token
+    dell'ambiente tornava a separare le voci senza che nessuno l'avesse chiesto. Un token salvato
+    dal menu toglie il segno.
+    """
+    environ = os.environ if environ is None else environ
+    stored = str(settings.get("hf_token") or "").strip()
+    if stored:
+        return stored
+    if settings.get("hf_token_disabled"):
+        return None
+    return str(environ.get("HF_TOKEN", "") or "").strip() or None
+
+
 def check_diarization_access(token: str) -> tuple[bool, str]:
     """
     Il token apre il modello? Lo chiede il menu dell'icona appena si salva un token, cosi' quello che
     manca si scopre adesso e non alla prima riunione registrata.
 
-    Una domanda sola a Hugging Face (`auth_check`), senza scaricare niente. Le tre risposte che contano
-    sono tre cose diverse da fare: accettare le condizioni, rifare il token, o riprovare piu' tardi.
+    Una domanda sola a Hugging Face (`auth_check`), senza scaricare niente. Le risposte che contano
+    sono cose diverse da fare: accettare le condizioni, rifare il token, o riprovare piu' tardi. Un
+    rifiuto ([denial_message]) spegne `diarize` in `/health` finche' un controllo non va bene; un
+    errore di rete non cambia niente, perche' non dice niente del token.
     """
     try:
         from huggingface_hub import auth_check
-        from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
-
-        auth_check(DIARIZE_MODEL, token=token)
     except ImportError:
         return False, "Manca huggingface_hub: reinstalla il companion."
-    except GatedRepoError:
-        return False, "Il token funziona, ma le condizioni del modello non sono ancora accettate: aprile dalla pagina del modello."
-    except RepositoryNotFoundError:
-        return False, "Hugging Face non riconosce questo token: controlla di averlo copiato tutto."
+    try:
+        auth_check(DIARIZE_MODEL, token=token)
     except Exception as error:  # noqa: BLE001 — rete assente, Hugging Face giu': non e' colpa del token
+        denied = denial_message(error)
+        if denied is not None:
+            STATE["diarization_denied"] = True
+            return False, denied
         return False, _scrub(f"Non riesco a controllare adesso ({type(error).__name__}): il token e' salvato, si provera' alla prima registrazione.")
+    STATE["diarization_denied"] = False
     return True, "Tutto pronto: le registrazioni che l'app manda torneranno con le voci separate."
+
+
+class DiarizerAccessDenied(RuntimeError):
+    """pyannote non ha potuto leggere il modello con questo token ([load_diarizer])."""
+
+
+def http_status(error: BaseException) -> int | None:
+    """Il codice HTTP di un errore di huggingface_hub (`HfHubHTTPError.response`), se ce l'ha."""
+    response = getattr(error, "response", None)
+    status = getattr(response, "status_code", None)
+    return status if isinstance(status, int) else None
+
+
+def denial_message(error: BaseException) -> str | None:
+    """
+    Se l'errore e' Hugging Face che rifiuta il token, cosa dire all'utente; None se e' altro.
+
+    Prima un 401 o un 403 finivano in «non riesco a controllare adesso», come la rete assente: il
+    token sbagliato restava, `/health` continuava a offrire le voci, e ogni registrazione tornava
+    senza. Gli errori di huggingface_hub hanno la risposta dentro: 401 e' il token (sbagliato,
+    revocato), 403 le condizioni del modello o un token a grana fine senza i modelli con condizioni.
+    `GatedRepoError` viene prima di `RepositoryNotFoundError`, che e' sua madre.
+    """
+    try:
+        from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
+    except ImportError:  # un huggingface_hub vecchissimo: si guarda solo il codice
+        GatedRepoError = RepositoryNotFoundError = ()  # type: ignore[assignment,misc]  # noqa: N806
+    status = http_status(error)
+    if isinstance(error, DiarizerAccessDenied):
+        return str(error)
+    if GatedRepoError and isinstance(error, GatedRepoError):
+        return "Il token funziona, ma le condizioni del modello non sono ancora accettate: aprile dalla pagina del modello."
+    if status == 401 or (RepositoryNotFoundError and isinstance(error, RepositoryNotFoundError) and status in (None, 401, 404)):
+        return "Token non valido: Hugging Face non riconosce questo token. Controlla di averlo copiato tutto, o creane uno nuovo di tipo «Read»."
+    if status == 403:
+        return (
+            "Hugging Face nega l'accesso: non hai ancora accettato le condizioni del modello, oppure il token "
+            "(a grana fine) non ha il permesso di leggere i modelli con condizioni. Accettale dalla pagina del "
+            "modello, o crea un token di tipo «Read»."
+        )
+    return None
 
 
 def _scrub(text: str) -> str:
@@ -3793,7 +3909,7 @@ def load_diarizer(device: str) -> Any:
         target = device
     pipeline = Pipeline.from_pretrained(DIARIZE_MODEL, token=STATE.get("hf_token"))
     if pipeline is None:
-        raise RuntimeError(
+        raise DiarizerAccessDenied(
             f"il modello {DIARIZE_MODEL} non si scarica con questo token: accetta le condizioni sulla sua "
             "pagina di Hugging Face con lo stesso account del token"
         )
@@ -3873,9 +3989,10 @@ def diarize_segments(
     request: DiarizeRequest,
     progress: JobProgress,
     device: str,
-) -> tuple[list[dict], str]:
+) -> tuple[list[dict], str, float]:
     """
-    Separa le voci di [source] e le mette sui segmenti (e sulle parole): torna i segmenti e l'esito.
+    Separa le voci di [source] e le mette sui segmenti (e sulle parole): torna i segmenti, l'esito e
+    quanti secondi ci sono voluti.
 
     [source] e' la stessa sorgente dei pezzi ([LoadedAudio] o [StreamedAudio]): l'audio che e' gia' in
     memoria si separa da li', senza decodificarlo di nuovo. Il modello si carica adesso — dopo
@@ -3883,12 +4000,18 @@ def diarize_segments(
     sua riserva. Se la scheda finisce la memoria a meta' si rifa' sul processore. Qualunque altro
     errore lascia i segmenti come sono e lo dice nell'esito: la trascrizione non si perde per le voci.
     Solo un annullamento esce, perche' e' un annullamento della lezione.
+
+    I secondi tornano a parte perche' non sono trascrizione: la prima volta c'e' lo scaricamento del
+    modello, sul processore sono minuti, e il raggruppamento cresce col quadrato. Contati dentro la
+    velocita' ([record_speed]) facevano sembrare il computer piu' lento, e [auto_piece_minutes]
+    cominciava a tagliare in pezzi lezioni che andavano intere.
     """
     windows = diarize_windows(source, source.duration_s)
     turns: list[tuple[float, float, str]] = []
     diarizer = None
+    piece = None
     where = diarize_device(device)
-    started = time.time()
+    started = time.monotonic()
     try:
         progress.check_cancelled()
         progress.set("diarizing", detail=None if where == device else where)
@@ -3898,11 +4021,18 @@ def diarize_segments(
             piece = source.piece(start_s, end_s)
             step = _diarize_step(progress, index, len(windows))
             options = {"min_speakers": request.min_speakers, "max_speakers": request.max_speakers, "progress_callback": step}
+            full_card = False
             try:
                 found = diarizer(piece, **options)
             except Exception as error:
                 if where != "cuda" or not is_oom(error):
                     raise
+                # Solo il segno, qui dentro. Finche' si e' dentro l'`except`, l'errore tiene il suo
+                # traceback, e il traceback i frame di pyannote coi loro tensori sulla scheda: il
+                # modello sul processore si caricava e girava con la memoria della scheda ancora
+                # presa. Fuori dall'`except` l'errore non c'e' piu', e la scheda si puo' svuotare.
+                full_card = True
+            if full_card:
                 diarizer = None
                 gc.collect()
                 empty_cuda_cache()
@@ -3917,14 +4047,20 @@ def diarize_segments(
             turns.extend((start_s + begin, start_s + end, prefix + label) for begin, end, label in found)
         labelled = assign_speakers(segments, turns)
         voices = len({label for _, _, label in turns})
-        log.info("voci separate: %d in %.0f s%s", voices, time.time() - started, " (sul processore)" if where == "cpu" and device == "cuda" else "")
-        return labelled, "ok"
+        elapsed = time.monotonic() - started
+        log.info("voci separate: %d in %.0f s%s", voices, elapsed, " (sul processore)" if where == "cpu" and device == "cuda" else "")
+        # Il token ha aperto il modello: se un controllo l'aveva dato per rifiutato, non lo e' piu'.
+        STATE["diarization_denied"] = False
+        return labelled, "ok", elapsed
     except JobCancelled:
         raise
     except Exception as error:  # noqa: BLE001 — le voci non fanno mai fallire una trascrizione
         outcome = _scrub(f"errore: {type(error).__name__}: {error}")[:300]
+        if denial_message(error) is not None:
+            # Hugging Face ha rifiutato il token: fino a un controllo riuscito le voci non si offrono.
+            STATE["diarization_denied"] = True
         log.warning("separazione delle voci non riuscita, la trascrizione esce senza: %s", outcome)
-        return segments, outcome
+        return segments, outcome, time.monotonic() - started
     finally:
         # Come in [run_job]: niente di grande resta nel frame, e la riserva torna alla scheda.
         diarizer = piece = None
@@ -4123,7 +4259,9 @@ def configure(settings: dict[str, Any], path: Path | None = None) -> dict[str, A
     STATE["accept_anonymous"] = bool(resolved.get("accept_anonymous"))
     # «Chi parla»: il token di config.json, o quello dell'ambiente (HF_TOKEN, la variabile che
     # Hugging Face stesso legge). Mai nel registro: si dice solo se c'e'.
-    STATE["hf_token"] = str(resolved.get("hf_token") or "").strip() or os.environ.get("HF_TOKEN", "").strip() or None
+    STATE["hf_token"] = resolve_hf_token(resolved)
+    # Un avvio e' un controllo nuovo: il rifiuto di prima valeva forse per un token che non c'e' piu'.
+    STATE["diarization_denied"] = False
     log.info("separazione delle voci: %s", "disponibile" if diarization_available() else "spenta (serve un token di Hugging Face)")
     # Le verifiche tenute da parte valevano per l'account di prima.
     GUEST_CACHE.clear()
