@@ -18,6 +18,7 @@ import dev.pampa.pampanotes.core.archive.ComputerOnlyScope
 import dev.pampa.pampanotes.core.repo.ComputerOnlyPreview
 import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.repo.NoteRepository
+import dev.pampa.pampanotes.core.repo.PersonalScope
 import dev.pampa.pampanotes.core.repo.StorageRepository
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.work.WorkScheduler
@@ -38,13 +39,15 @@ import kotlinx.coroutines.launch
  * Le regole «solo sul computer» di questo dispositivo, come le guardano menu e righe.
  *
  * [folders] e [notes] sono le regole scritte; [coveredFolders] le cartelle che ne sono coperte,
- * sottocartelle comprese. Senza un computer collegato ([available] falso) la regola non avrebbe dove
- * tenere i file, e la voce e' spenta.
+ * sottocartelle comprese, e fra queste [personalFolders], le Registrazioni, che lo sono di serie
+ * finche' questo dispositivo non chiede di tenerle qui. Senza un computer collegato ([available]
+ * falso) la regola non avrebbe dove tenere i file, e la voce e' spenta.
  */
 data class ComputerOnlyUi(
   val folders: Set<String> = emptySet(),
   val notes: Set<String> = emptySet(),
   val coveredFolders: Set<String> = emptySet(),
+  val personalFolders: Set<String> = emptySet(),
   val available: Boolean = false,
 ) {
   fun folderCovered(id: String): Boolean = id in coveredFolders
@@ -92,11 +95,15 @@ class ComputerOnlyViewModel @Inject constructor(
     settingsStore.computerOnlyNotes,
     folders.observeAll(),
     settingsStore.settings.map { it.hasEndpoint }.distinctUntilChanged(),
-  ) { folderRules, noteRules, all, available ->
+    settingsStore.keepPersonalHere,
+  ) { folderRules, noteRules, all, available, keepPersonal ->
+    // Le Registrazioni come le vede `ComputerOnlyScope.current`: sul computer di serie.
+    val personal = if (keepPersonal) emptySet() else PersonalScope.folderIds(all)
     ComputerOnlyUi(
       folders = folderRules,
       notes = noteRules,
-      coveredFolders = if (folderRules.isEmpty()) emptySet() else ComputerOnlyScope.closure(folderRules, all),
+      coveredFolders = (if (folderRules.isEmpty()) emptySet() else ComputerOnlyScope.closure(folderRules, all)) + personal,
+      personalFolders = personal,
       available = available,
     )
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ComputerOnlyUi())
@@ -183,7 +190,7 @@ class ComputerOnlyControls internal constructor(
   private val viewModel: ComputerOnlyViewModel,
   private val labels: Labels,
 ) {
-  internal class Labels(val on: String, val off: String, val unavailable: String, val inherited: String, val marker: String)
+  internal class Labels(val on: String, val off: String, val unavailable: String, val inherited: String, val marker: String, val personal: String)
 
   /** «sul computer», per il sottotitolo di una tessera o di una riga. */
   val marker: String get() = labels.marker
@@ -197,6 +204,8 @@ class ComputerOnlyControls internal constructor(
 
   fun folderAction(id: String, name: String): FluidContextAction = when {
     id in ui.folders -> FluidContextAction(label = labels.off) { viewModel.keepHere(ComputerOnlyTarget.Folder(id, name)) }
+    // Registrazioni: la regola e' della sezione, e si cambia dalla sua scheda.
+    id in ui.personalFolders -> FluidContextAction(label = labels.personal, enabled = false) {}
     // Una cartella dentro una esclusa: la regola e' quella di sopra, e si toglie da li'.
     ui.folderCovered(id) -> FluidContextAction(label = labels.inherited, enabled = false) {}
     !ui.available -> FluidContextAction(label = labels.unavailable, enabled = false) {}
@@ -205,6 +214,7 @@ class ComputerOnlyControls internal constructor(
 
   fun noteAction(id: String, folderId: String?, title: String): FluidContextAction = when {
     id in ui.notes -> FluidContextAction(label = labels.off) { viewModel.keepHere(ComputerOnlyTarget.Notes(setOf(id), title)) }
+    folderId != null && folderId in ui.personalFolders -> FluidContextAction(label = labels.personal, enabled = false) {}
     folderId != null && ui.folderCovered(folderId) -> FluidContextAction(label = labels.inherited, enabled = false) {}
     !ui.available -> FluidContextAction(label = labels.unavailable, enabled = false) {}
     else -> FluidContextAction(label = labels.on) { viewModel.ask(ComputerOnlyTarget.Notes(setOf(id), title)) }
@@ -244,6 +254,7 @@ fun rememberComputerOnly(viewModel: ComputerOnlyViewModel = hiltViewModel()): Co
     unavailable = stringResource(R.string.computer_only_unavailable),
     inherited = stringResource(R.string.computer_only_inherited),
     marker = stringResource(R.string.computer_only_marker),
+    personal = stringResource(R.string.recordings_computer_only_inherited),
   )
   asking?.let { ComputerOnlyConfirm(it, onConfirm = viewModel::confirm, onDismiss = viewModel::dismiss) }
   return ComputerOnlyControls(ui, viewModel, labels)

@@ -6,6 +6,7 @@ import dev.pampa.pampanotes.core.db.FolderEntity
 import dev.pampa.pampanotes.core.db.SourceEntity
 import dev.pampa.pampanotes.core.db.SyncDao
 import dev.pampa.pampanotes.core.repo.FolderRepository
+import dev.pampa.pampanotes.core.repo.PersonalScope
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -50,7 +51,8 @@ class ComputerOnlyItems(
  * La regola sta nelle impostazioni di questo dispositivo (`computerOnlyFolders`, `computerOnlyNotes`)
  * e qui si risolve ogni volta che serve, invece di scriverla sulle righe: una nota spostata dentro
  * una cartella esclusa e' esclusa da quel momento, una registrazione arrivata dal sync pure, senza
- * che nessuno debba ricordarsi di marcarla. Due posti la leggono: «tieni tutto anche qui», che salta
+ * che nessuno debba ricordarsi di marcarla. Le cartelle della sezione Registrazioni ci stanno di
+ * serie, come se avessero la regola (vedi [current]). Due posti la leggono: «tieni tutto anche qui», che salta
  * quello che copre, e `StorageRepository.evictComputerOnly`, che lo toglie una volta archiviato.
  * Chi chiede un file per usarlo — il lettore, l'export, la trascrizione, una fonte toccata — lo
  * scarica lo stesso: la regola dice dove stanno i file, non che non si possono avere.
@@ -61,14 +63,30 @@ class ComputerOnlyScope @Inject constructor(
   private val folders: FolderDao,
   private val sync: SyncDao,
 ) {
-  /** Quello che coprono le regole di adesso. */
+  /**
+   * Quello che coprono le regole di adesso: quelle scritte e, se questo dispositivo non ha chiesto di
+   * tenerle qui, le Registrazioni ([PampaSettingsStore.keepPersonalHere]).
+   */
   suspend fun current(): ComputerOnlyItems =
-    resolve(settingsStore.computerOnlyFolders.first(), settingsStore.computerOnlyNotes.first())
+    resolve(
+      settingsStore.computerOnlyFolders.first(),
+      settingsStore.computerOnlyNotes.first(),
+      includePersonal = !settingsStore.keepPersonalHere.first(),
+    )
 
-  /** Quello che coprirebbero queste regole: serve anche alla conferma, prima di accenderne una. */
-  suspend fun resolve(folderRules: Set<String>, noteRules: Set<String>): ComputerOnlyItems = withContext(Dispatchers.IO) {
-    if (folderRules.isEmpty() && noteRules.isEmpty()) return@withContext ComputerOnlyItems.NONE
-    val folderIds = if (folderRules.isEmpty()) emptySet() else closure(folderRules, folders.all())
+  /**
+   * Quello che coprirebbero queste regole: serve anche alla conferma, prima di accenderne una.
+   *
+   * @param includePersonal le cartelle della sezione Registrazioni come se avessero la regola: e'
+   *   quello che valgono di serie. Non nella conferma di una regola nuova, che conta solo quello che
+   *   quella regola toglierebbe.
+   */
+  suspend fun resolve(folderRules: Set<String>, noteRules: Set<String>, includePersonal: Boolean = false): ComputerOnlyItems = withContext(Dispatchers.IO) {
+    if (folderRules.isEmpty() && noteRules.isEmpty() && !includePersonal) return@withContext ComputerOnlyItems.NONE
+    val all = if (folderRules.isEmpty() && !includePersonal) emptyList() else folders.all()
+    val rules = if (includePersonal) folderRules + PersonalScope.rootIds(all) else folderRules
+    if (rules.isEmpty() && noteRules.isEmpty()) return@withContext ComputerOnlyItems.NONE
+    val folderIds = if (rules.isEmpty()) emptySet() else closure(rules, all)
     val noteIds = inChunks(folderIds.toList()) { sync.noteIdsInFolders(it) }.toSet() + noteRules
     val sessionIds = inChunks(noteIds.toList()) { sync.sessionIdsOfNotes(it) }.toSet()
     ComputerOnlyItems(

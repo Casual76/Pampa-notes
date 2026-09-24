@@ -354,23 +354,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.samsungStep(
       )
     }
   } else {
-    item {
-      FluidListGroup {
-        state.folders.forEachIndexed { index, folder ->
-          if (index > 0) FluidListDivider()
-          FluidListRow(
-            title = folder.name,
-            subtitle = state.folderPaths[folder.id]?.takeIf { it.isNotBlank() } ?: stringResource(R.string.import_folder_root),
-            onClick = { onSelectFolder(folder.id) },
-            badge = if (folder.id == state.selectedFolderId) {
-              { FluidStatusBadge(label = stringResource(R.string.import_chosen), tone = FluidTone.Primary) }
-            } else {
-              null
-            },
-          )
-        }
-      }
-    }
+    folderChoices(state, onSelectFolder)
   }
   if (!updating) item {
     FluidButton(
@@ -407,6 +391,50 @@ private fun samsungSummary(doc: dev.pampa.pampanotes.core.importing.SdocxDocumen
   return pieces.ifEmpty { listOf(stringResource(R.string.import_samsung_empty)) }.joinToString(" · ")
 }
 
+/**
+ * Le cartelle fra cui scegliere: prima le materie, poi — con un titolo loro — quelle di
+ * Registrazioni. Un audio che non e' una lezione ha dove andare a colpo d'occhio, e una lezione non
+ * ci finisce per sbaglio in mezzo a Storia e Filosofia.
+ */
+private fun androidx.compose.foundation.lazy.LazyListScope.folderChoices(
+  state: ImportUiState,
+  onSelectFolder: (String) -> Unit,
+) {
+  val school = state.schoolFolders
+  val personal = state.personalFolders
+  if (school.isNotEmpty()) item { FolderChoiceGroup(school, state, onSelectFolder) }
+  if (personal.isNotEmpty()) {
+    item { FluidSectionHeader(title = stringResource(R.string.tab_recordings)) }
+    item { FolderChoiceGroup(personal, state, onSelectFolder) }
+  }
+}
+
+@Composable
+private fun FolderChoiceGroup(
+  folders: List<dev.pampa.pampanotes.core.db.FolderEntity>,
+  state: ImportUiState,
+  onSelectFolder: (String) -> Unit,
+) {
+  FluidListGroup {
+    folders.forEachIndexed { index, folder ->
+      if (index > 0) FluidListDivider()
+      FluidListRow(
+        title = folder.name,
+        // Il percorso dei soli genitori: una riga che ripete il proprio titolo nel sottotitolo
+        // si legge come un difetto. Per una cartella di primo livello si dice che lo e'.
+        subtitle = state.folderPaths[folder.id]?.takeIf { it.isNotBlank() }
+          ?: stringResource(R.string.import_folder_root),
+        onClick = { onSelectFolder(folder.id) },
+        badge = if (folder.id == state.selectedFolderId) {
+          { FluidStatusBadge(label = stringResource(R.string.import_chosen), tone = FluidTone.Primary) }
+        } else {
+          null
+        },
+      )
+    }
+  }
+}
+
 private fun androidx.compose.foundation.lazy.LazyListScope.destinationStep(
   state: ImportUiState,
   onSelectFolder: (String) -> Unit,
@@ -425,26 +453,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.destinationStep(
       )
     }
   } else {
-    item {
-      FluidListGroup {
-        state.folders.forEachIndexed { index, folder ->
-          if (index > 0) FluidListDivider()
-          FluidListRow(
-            title = folder.name,
-            // Il percorso dei soli genitori: una riga che ripete il proprio titolo nel sottotitolo
-            // si legge come un difetto. Per una cartella di primo livello si dice che lo e'.
-            subtitle = state.folderPaths[folder.id]?.takeIf { it.isNotBlank() }
-              ?: stringResource(R.string.import_folder_root),
-            onClick = { onSelectFolder(folder.id) },
-            badge = if (folder.id == state.selectedFolderId) {
-              { FluidStatusBadge(label = stringResource(R.string.import_chosen), tone = FluidTone.Primary) }
-            } else {
-              null
-            },
-          )
-        }
-      }
-    }
+    folderChoices(state, onSelectFolder)
   }
 
   item {

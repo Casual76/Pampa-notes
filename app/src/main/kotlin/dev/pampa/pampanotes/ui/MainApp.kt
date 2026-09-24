@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.MoreHoriz
@@ -151,6 +152,7 @@ fun MainApp(
                   onIntent = viewModel::onIntent,
                   linkApplied = viewModel.linkApplied,
                   onPickFiles = viewModel::onFilesPicked,
+                  onPickIntoFolder = viewModel::onPickIntoFolder,
                   onPickerCancelled = viewModel::onPickerCancelled,
                 )
                 // Il permesso delle notifiche si chiede la prima volta che c'e' un lavoro in coda:
@@ -262,6 +264,7 @@ private fun AppShell(
   onIntent: (Intent) -> IntentOutcome,
   linkApplied: Flow<IntentOutcome>,
   onPickFiles: (List<android.net.Uri>, String?) -> Unit,
+  onPickIntoFolder: (String) -> Unit,
   onPickerCancelled: () -> Unit,
 ) {
   val listNav = rememberNavController()
@@ -300,6 +303,11 @@ private fun AppShell(
         pickFilesInto = { noteId ->
           pickingInto.value = true
           onPickFiles(emptyList(), noteId)
+          launchPicker.value()
+        },
+        pickFilesIntoFolder = { folderId ->
+          pickingInto.value = false
+          onPickIntoFolder(folderId)
           launchPicker.value()
         },
       )
@@ -369,6 +377,7 @@ private fun AppShell(
     val tabItems = listOf(
       FluidTabItem(Routes.HOME, stringResource(R.string.tab_home), Icons.Rounded.Home),
       FluidTabItem(Routes.FOLDERS, stringResource(R.string.tab_folders), Icons.Rounded.GridView),
+      FluidTabItem(Routes.RECORDINGS, stringResource(R.string.tab_recordings), Icons.Rounded.GraphicEq),
       FluidTabItem(Routes.MORE, stringResource(R.string.tab_more), Icons.Rounded.MoreHoriz),
     )
 
@@ -412,6 +421,7 @@ private fun AppShell(
               onHome = { actions.switchTopLevel(Routes.HOME) },
               onFolder = actions::showFolder,
               onAllFolders = { actions.switchTopLevel(Routes.FOLDERS) },
+              onRecordings = { actions.switchTopLevel(Routes.RECORDINGS) },
               onSearch = actions::openSearch,
               onMore = { actions.switchTopLevel(Routes.MORE) },
             )

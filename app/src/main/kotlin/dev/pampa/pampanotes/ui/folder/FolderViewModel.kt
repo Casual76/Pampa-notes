@@ -10,6 +10,7 @@ import dev.pampa.pampanotes.core.db.FolderRow
 import dev.pampa.pampanotes.core.db.NoteRow
 import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.repo.NoteRepository
+import dev.pampa.pampanotes.core.repo.PersonalScope
 import dev.pampa.pampanotes.core.repo.SessionRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
@@ -39,8 +40,16 @@ data class FolderUiState(
   val elsewhere: Map<String, NoteTranscribingElsewhere> = emptyMap(),
   /** I lavori di qui, per nota: il badge dice «In coda» o a che punto e', come nella home. */
   val jobs: Map<String, JobEntity> = emptyMap(),
+  /**
+   * La cartella sta in Registrazioni (lei o la sua radice): non e' una materia, e la schermata non
+   * ne prende il colore; «Importa» porta dentro di lei.
+   */
+  val personal: Boolean = false,
   val loading: Boolean = true,
 ) {
+  /** Solo una cartella di primo livello cambia sezione: le sottocartelle seguono lei. */
+  val canChangeSection: Boolean get() = folder != null && folder.parentId == null
+
   /** Le sessioni senza trascrizione che nessun altro dispositivo sta gia' trascrivendo. */
   fun toTranscribe(row: NoteRow): Int = row.untranscribedSessions - (elsewhere[row.note.id]?.untranscribed ?: 0)
 
@@ -91,6 +100,7 @@ class FolderViewModel @Inject constructor(
       allFolders = values[5] as List<FolderEntity>,
       elsewhere = values[6] as Map<String, NoteTranscribingElsewhere>,
       jobs = values[7] as Map<String, JobEntity>,
+      personal = PersonalScope.isPersonal(folderId, values[5] as List<FolderEntity>),
       loading = false,
     )
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FolderUiState())
@@ -112,6 +122,11 @@ class FolderViewModel @Inject constructor(
 
   fun updateFolder(id: String, name: String, tone: String?, icon: String?) {
     viewModelScope.launch { folders.update(id, name, tone, icon) }
+  }
+
+  /** «Sposta in Registrazioni» / «Sposta fra le materie», per la cartella che si sta guardando. */
+  fun setPersonal(personal: Boolean) {
+    viewModelScope.launch { folders.setKind(folderId, if (personal) FolderEntity.KIND_PERSONAL else FolderEntity.KIND_SCHOOL) }
   }
 
   fun deleteFolder(id: String) {

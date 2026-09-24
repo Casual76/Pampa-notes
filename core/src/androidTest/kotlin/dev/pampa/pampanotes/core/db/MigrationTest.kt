@@ -200,6 +200,32 @@ class MigrationTest {
     }
   }
 
+  @Test
+  fun migrazione8a9_le_cartelle_di_prima_sono_materie() {
+    helper.createDatabase(NAME, 8).use { db ->
+      db.execSQL("INSERT INTO folders (id, name, sortOrder, createdAt, updatedAt) VALUES ('f', 'Storia', 0, 1, 2)")
+      db.execSQL("INSERT INTO folders (id, name, parentId, sortOrder, createdAt, updatedAt) VALUES ('g', 'Novecento', 'f', 0, 1, 2)")
+    }
+
+    helper.runMigrationsAndValidate(NAME, 9, true).use { db ->
+      db.query("SELECT id, name, updatedAt, kind FROM folders ORDER BY id").use { cursor ->
+        assertEquals(2, cursor.count)
+        cursor.moveToFirst()
+        assertEquals("Storia", cursor.getString(1))
+        assertEquals(2L, cursor.getLong(2))
+        // Tutto quello che c'era era scuola: la sezione Registrazioni nasce vuota.
+        assertEquals("school", cursor.getString(3))
+        cursor.moveToNext()
+        assertEquals("school", cursor.getString(3))
+      }
+      db.execSQL("UPDATE folders SET kind = 'personal' WHERE id = 'f'")
+      db.query("SELECT kind FROM folders WHERE id = 'f'").use { cursor ->
+        cursor.moveToFirst()
+        assertEquals("personal", cursor.getString(0))
+      }
+    }
+  }
+
   private companion object {
     const val NAME = "migration-test.db"
   }

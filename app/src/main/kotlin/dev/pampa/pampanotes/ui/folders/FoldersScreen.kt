@@ -48,6 +48,7 @@ import dev.pampa.pampanotes.ui.common.folderVividColors
 import dev.pampa.pampanotes.ui.common.toneFromName
 import dev.pampa.pampanotes.core.export.ExportScope
 import dev.pampa.pampanotes.ui.export.ExportSheet
+import dev.pampa.pampanotes.ui.folder.SectionMoveAlert
 import androidx.compose.foundation.layout.BoxWithConstraints
 import dev.antigravity.fluidengine.ui.fluid.FluidScreenDefaults
 import dev.antigravity.fluidengine.ui.fluid.fluidGridColumns
@@ -70,6 +71,7 @@ fun FoldersRoute(
   var editing by remember { mutableStateOf<FolderEdit?>(null) }
   var pendingDelete by remember { mutableStateOf<FolderRow?>(null) }
   var exporting by remember { mutableStateOf<FolderRow?>(null) }
+  var movingToRecordings by remember { mutableStateOf<FolderRow?>(null) }
   val computerOnly = rememberComputerOnly()
   // Tirando giu' la griglia si sincronizza: vedi PullToSync.
   val pull = rememberPullToSync()
@@ -78,6 +80,7 @@ fun FoldersRoute(
   val editLabel = stringResource(R.string.action_edit)
   val deleteLabel = stringResource(R.string.action_delete)
   val exportLabel = stringResource(R.string.action_export)
+  val toRecordingsLabel = stringResource(R.string.recordings_move_in)
 
   // Le colonne dalla misura, non dal tipo di schermo: una tessera vale 180 dp, e quante ne stanno
   // nella colonna di lettura lo dice la larghezza.
@@ -131,6 +134,9 @@ fun FoldersRoute(
                   // Dove uno lo cerca: tenendo premuta la materia da dare all'assistente.
                   FluidContextAction(label = exportLabel) { exporting = row },
                   computerOnly.folderAction(row.folder.id, row.folder.name),
+                  // Una cartella che non e' una materia — un viaggio, delle interviste — va nella
+                  // scheda Registrazioni, con tutto quello che ha dentro.
+                  FluidContextAction(label = toRecordingsLabel) { movingToRecordings = row },
                   FluidContextAction(label = deleteLabel, destructive = true) { pendingDelete = row },
                 )
               },
@@ -143,6 +149,18 @@ fun FoldersRoute(
       }
     }
   }
+  }
+
+  movingToRecordings?.let { row ->
+    SectionMoveAlert(
+      name = row.folder.name,
+      toPersonal = true,
+      onConfirm = {
+        viewModel.moveToRecordings(row.folder.id)
+        movingToRecordings = null
+      },
+      onDismiss = { movingToRecordings = null },
+    )
   }
 
   exporting?.let { row ->

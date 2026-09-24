@@ -2,6 +2,7 @@ package dev.pampa.pampanotes.ui.nav
 
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.MoreHoriz
@@ -24,11 +25,13 @@ import dev.pampa.pampanotes.ui.common.toneFromName
 import dev.pampa.pampanotes.ui.folders.FoldersViewModel
 
 /**
- * La barra laterale del tablet: la Home, le materie, e in fondo quello che stava dietro «Altro».
+ * La barra laterale del tablet: la Home, le materie, Registrazioni, e in fondo quello che stava
+ * dietro «Altro».
  *
  * Le materie sono la ragione per cui esiste: su una pagina larga si passa da Storia a Filosofia
  * con un tocco, senza tornare all'indice. Ogni materia porta il suo colore sulla piastrella, e la
- * riga scelta e' quella della pagina che si sta guardando.
+ * riga scelta e' quella della pagina che si sta guardando. Registrazioni sta sotto le materie, una
+ * riga sola e senza colore: e' un'altra sezione, non un'altra materia (vedi `FoldersViewModel`).
  */
 @Composable
 fun PampaSidebar(
@@ -38,6 +41,7 @@ fun PampaSidebar(
   onHome: () -> Unit,
   onFolder: (String) -> Unit,
   onAllFolders: () -> Unit,
+  onRecordings: () -> Unit,
   onSearch: () -> Unit,
   onMore: () -> Unit,
   viewModel: FoldersViewModel = hiltViewModel(),
@@ -93,6 +97,14 @@ fun PampaSidebar(
         selected = selectedRoute == Routes.FOLDERS,
         icon = Icons.Rounded.GridView,
         onClick = onAllFolders,
+      )
+    }
+    item {
+      FluidSidebarRow(
+        label = stringResource(R.string.tab_recordings),
+        selected = selectedRoute == Routes.RECORDINGS,
+        icon = Icons.Rounded.GraphicEq,
+        onClick = onRecordings,
       )
     }
   }

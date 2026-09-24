@@ -65,6 +65,8 @@ fun FolderRoute(
   onOpenNote: (String) -> Unit,
   onImport: () -> Unit,
   onOpenEditor: (String) -> Unit = {},
+  /** Importa dentro questa cartella: e' quello che fa «Importa» in una cartella di Registrazioni. */
+  onImportInto: (String) -> Unit = {},
   viewModel: FolderViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -73,7 +75,9 @@ fun FolderRoute(
     onBack = onBack,
     onOpenFolder = onOpenFolder,
     onOpenNote = onOpenNote,
-    onImport = onImport,
+    // In Registrazioni si importa dove si e': il wizard non propone le materie, e un audio lungo
+    // finito in Storia per un tocco distratto sarebbe da ritrovare e spostare.
+    onImport = if (state.personal) ({ onImportInto(folderId) }) else onImport,
     onQueryChange = viewModel::setQuery,
     onCreateSubfolder = viewModel::createSubfolder,
     // Una nota nuova e' vuota: si apre per scriverci, con la nota sotto per quando si torna indietro.
@@ -90,6 +94,7 @@ fun FolderRoute(
     onDeleteNotes = viewModel::deleteNotes,
     onMoveNotes = viewModel::moveNotes,
     onTranscribePending = viewModel::transcribePending,
+    onSetPersonal = viewModel::setPersonal,
   )
 }
 
@@ -110,8 +115,11 @@ private fun FolderScreen(
   onDeleteNotes: (Collection<String>) -> Unit,
   onMoveNotes: (Collection<String>, String) -> Unit,
   onTranscribePending: (Collection<String>) -> Unit,
+  onSetPersonal: (Boolean) -> Unit,
 ) {
   var creatingFolder by remember { mutableStateOf(false) }
+  // «Sposta in Registrazioni» / «Sposta fra le materie»: il valore e' la sezione di arrivo.
+  var movingSection by remember { mutableStateOf<Boolean?>(null) }
   // La selezione delle note: la barra in alto diventa quella della selezione, le sottocartelle e
   // la ricerca spariscono, ogni nota e' una riga con il suo segno. Indietro la chiude.
   var selecting by remember { mutableStateOf(false) }
@@ -149,11 +157,14 @@ private fun FolderScreen(
   val selectLabel = stringResource(R.string.action_select)
   val moveLabel = stringResource(R.string.selection_move)
   val transcribeLabel = stringResource(R.string.selection_transcribe)
+  val toRecordingsLabel = stringResource(R.string.recordings_move_in)
+  val toSchoolLabel = stringResource(R.string.recordings_move_out)
 
   val folderTone = toneFromName(state.folder?.tone)
   val folderIcon = FolderIcon.fromKey(state.folder?.icon)
-  // Entrando in Storia l'app diventa del colore di Storia.
-  ReportSubject(state.folder?.asSubject())
+  // Entrando in Storia l'app diventa del colore di Storia. Una cartella di Registrazioni non e' una
+  // materia: la schermata resta dell'accento dell'app, come la sua scheda.
+  ReportSubject(state.folder?.takeUnless { state.personal }?.asSubject())
 
   val selectedRows = state.notes.filter { it.note.id in selected }
   // Quelle che un altro dispositivo sta gia' trascrivendo non contano: «Trascrivi» le salterebbe.
@@ -195,6 +206,9 @@ private fun FolderScreen(
               add(FluidContextAction(label = exportLabel) { exporting = true })
               state.folder?.let { folder ->
                 add(computerOnly.folderAction(folder.id, folder.name))
+                if (state.canChangeSection) {
+                  add(FluidContextAction(label = if (state.personal) toSchoolLabel else toRecordingsLabel) { movingSection = !state.personal })
+                }
                 add(FluidContextAction(label = editFolderLabel) { renaming = FolderRow(folder, 0, 0) })
                 add(FluidContextAction(label = deleteFolderLabel, destructive = true) { pendingFolderDelete = FolderRow(folder, 0, 0) })
               }
@@ -315,6 +329,18 @@ private fun FolderScreen(
         )
       }
     }
+  }
+
+  movingSection?.let { toPersonal ->
+    SectionMoveAlert(
+      name = state.folder?.name.orEmpty(),
+      toPersonal = toPersonal,
+      onConfirm = {
+        onSetPersonal(toPersonal)
+        movingSection = null
+      },
+      onDismiss = { movingSection = null },
+    )
   }
 
   if (creatingFolder) {
@@ -448,6 +474,27 @@ private fun FolderScreen(
       ),
     )
   }
+}
+
+/**
+ * La conferma di un cambio di sezione: dice dove va la cartella e cosa cambia per i suoi file, che
+ * in Registrazioni stanno di serie solo sul computer. Anche da `FoldersScreen` e dalla scheda.
+ */
+@Composable
+internal fun SectionMoveAlert(name: String, toPersonal: Boolean, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+  FluidAlert(
+    onDismissRequest = onDismiss,
+    title = stringResource(if (toPersonal) R.string.recordings_move_in_title else R.string.recordings_move_out_title, name),
+    message = stringResource(if (toPersonal) R.string.recordings_move_in_message else R.string.recordings_move_out_message),
+    actions = listOf(
+      FluidAlertAction(
+        label = stringResource(if (toPersonal) R.string.recordings_move_in else R.string.recordings_move_out),
+        emphasis = FluidAlertAction.Emphasis.Preferred,
+        onClick = onConfirm,
+      ),
+      FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = onDismiss),
+    ),
+  )
 }
 
 /** Sopra questa soglia la cartella si cerca invece di scorrerla. */

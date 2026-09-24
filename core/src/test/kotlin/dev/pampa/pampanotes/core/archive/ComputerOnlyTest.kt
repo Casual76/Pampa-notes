@@ -47,7 +47,7 @@ class ComputerOnlyTest {
   private lateinit var files: AppFiles
 
   // Storia (f1) > Novecento (f2) > Guerre (f3); Filosofia (f4) a parte.
-  private val folders = listOf(
+  private var folders = listOf(
     folder("f1", null), folder("f2", "f1"), folder("f3", "f2"), folder("f4", null),
   )
   private val notesByFolder = mapOf("f1" to listOf("n1"), "f3" to listOf("n3"), "f4" to listOf("n4", "n5"))
@@ -57,6 +57,7 @@ class ComputerOnlyTest {
 
   private var folderRules = emptySet<String>()
   private var noteRules = emptySet<String>()
+  private var keepPersonalHere = false
   private val jobs = mutableListOf<JobEntity>()
 
   // Quello che il computer di casa risponde al `HEAD` di ogni file: di serie ce li ha tutti.
@@ -79,10 +80,11 @@ class ComputerOnlyTest {
     settings = mockk()
     every { settings.computerOnlyFolders } answers { flowOf(folderRules) }
     every { settings.computerOnlyNotes } answers { flowOf(noteRules) }
+    every { settings.keepPersonalHere } answers { flowOf(keepPersonalHere) }
     coEvery { settings.current() } returns PampaSettings()
 
     val folderDao = mockk<FolderDao>()
-    coEvery { folderDao.all() } returns folders
+    coEvery { folderDao.all() } answers { folders }
 
     val sync = mockk<SyncDao>()
     coEvery { sync.noteIdsInFolders(any()) } answers { firstArg<List<String>>().flatMap { notesByFolder[it].orEmpty() } }
@@ -144,6 +146,51 @@ class ComputerOnlyTest {
   @Test
   fun `nessuna regola, niente`() = runBlocking {
     assertTrue(scope.current().isEmpty)
+  }
+
+  // --- le Registrazioni ---
+
+  @Test
+  fun `le Registrazioni stanno sul computer di serie, sottocartelle comprese`() = runBlocking {
+    // Filosofia (f4) diventa una cartella di Registrazioni, con una sottocartella che si dice
+    // «scuola»: conta la radice.
+    folders = folders.map { if (it.id == "f4") it.copy(kind = FolderEntity.KIND_PERSONAL) else it } +
+      folder("f5", "f4")
+    val items = scope.current()
+    assertEquals(setOf("f4", "f5"), items.folderIds)
+    assertEquals(setOf("n4", "n5"), items.noteIds)
+    assertEquals(setOf("p4", "p5"), items.parts.map { it.id }.toSet())
+    // La conferma di una regola nuova conta solo quello che la regola toglierebbe.
+    assertTrue(scope.resolve(emptySet(), emptySet()).isEmpty)
+  }
+
+  @Test
+  fun `un dispositivo che le tiene qui non le copre`() = runBlocking {
+    folders = folders.map { if (it.id == "f4") it.copy(kind = FolderEntity.KIND_PERSONAL) else it }
+    keepPersonalHere = true
+    assertTrue(scope.current().isEmpty)
+    // Le regole scritte a mano valgono lo stesso.
+    noteRules = setOf("n4")
+    assertEquals(setOf("n4"), scope.current().noteIds)
+  }
+
+  @Test
+  fun `una sottocartella personale dentro una materia non conta`() = runBlocking {
+    folders = folders.map { if (it.id == "f2") it.copy(kind = FolderEntity.KIND_PERSONAL) else it }
+    assertTrue(scope.current().isEmpty)
+  }
+
+  @Test
+  fun `le Registrazioni archiviate se ne vanno da qui`() = runBlocking {
+    allHere()
+    folders = folders.map { if (it.id == "f4") it.copy(kind = FolderEntity.KIND_PERSONAL) else it }
+    storage().evictComputerOnly()
+    assertFalse(audioHere("p4"))
+    assertFalse(audioHere("p5"))
+    assertFalse(sourceHere("pdf4"))
+    // Le materie restano.
+    assertTrue(audioHere("p1"))
+    assertTrue(audioHere("p3"))
   }
 
   // --- il mirror ---

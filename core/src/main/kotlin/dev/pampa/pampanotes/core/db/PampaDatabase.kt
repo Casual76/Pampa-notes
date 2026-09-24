@@ -16,7 +16,7 @@ import javax.inject.Singleton
 /**
  * Il database: entita', DAO e l'indice di ricerca.
  *
- * Versione 8. Le aggiunte di colonna e di tabella passano da `@AutoMigration`; tutto il resto si
+ * Versione 9. Le aggiunte di colonna e di tabella passano da `@AutoMigration`; tutto il resto si
  * scrive a mano in [Migrations] e si prova con `MigrationTest` sugli schemi esportati in
  * `core/schemas`.
  *
@@ -39,6 +39,8 @@ import javax.inject.Singleton
  * 7 -> 8: `transcribingOn` e `transcribingSince` sulle sessioni: chi la sta trascrivendo adesso, e
  * da quando, perche' gli altri dispositivi non la offrano da trascrivere una seconda volta. Due
  * colonne che possono essere nulle, e nulle per tutte le righe di prima: nessuno ci stava lavorando.
+ * 8 -> 9: `kind` sulle cartelle, per la sezione Registrazioni (`"personal"`) accanto alle materie
+ * (`"school"`). Una colonna col suo default: le cartelle di prima sono tutte materie, ed e' giusto.
  */
 @Database(
   entities = [
@@ -61,9 +63,9 @@ import javax.inject.Singleton
     SyncOriginEntity::class,
     TranscriptionRunEntity::class,
   ],
-  version = 8,
+  version = 9,
   exportSchema = true,
-  autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7), AutoMigration(from = 7, to = 8)],
+  autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7), AutoMigration(from = 7, to = 8), AutoMigration(from = 8, to = 9)],
 )
 abstract class PampaDatabase : RoomDatabase() {
   abstract fun folders(): FolderDao

@@ -17,6 +17,7 @@ import dev.pampa.pampanotes.core.importing.ImportTarget
 import dev.pampa.pampanotes.core.model.Dates
 import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.repo.NoteRepository
+import dev.pampa.pampanotes.core.repo.PersonalScope
 import dev.pampa.pampanotes.ui.common.FolderIcon
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +35,8 @@ data class ImportUiState(
   val excluded: Set<String> = emptySet(),
   val folders: List<FolderEntity> = emptyList(),
   val folderPaths: Map<String, String> = emptyMap(),
+  /** Le cartelle della sezione Registrazioni: l'elenco le mostra a parte, sotto le materie. */
+  val personalFolderIds: Set<String> = emptySet(),
   val notesInFolder: List<NoteEntity> = emptyList(),
   val selectedFolderId: String? = null,
   val selectedNoteId: String? = null,
@@ -60,6 +63,12 @@ data class ImportUiState(
   val grouping: AudioGrouping? = null,
 ) {
   val included: List<ImportCandidate> get() = candidates.filterNot { it.id in excluded }
+
+  /** Le materie, nell'ordine di sempre. */
+  val schoolFolders: List<FolderEntity> get() = folders.filterNot { it.id in personalFolderIds }
+
+  /** Le cartelle di Registrazioni: un gruppo loro, cosi' un audio che non e' una lezione ha dove andare. */
+  val personalFolders: List<FolderEntity> get() = folders.filter { it.id in personalFolderIds }
   val hasAudio: Boolean get() = included.any { it.isAudio || (it.sdocx?.recordings?.isNotEmpty() == true) }
 
   /** Le registrazioni nell'ordine in cui [AudioImporter] le importa: per nome, come le numera un registratore. */
@@ -158,7 +167,7 @@ class ImportViewModel @Inject constructor(
     if (request == null) {
       _uiState.value = ImportUiState(step = ImportStep.REVIEW)
     } else {
-      start(request.uris, request.text, request.intoNoteId)
+      start(request.uris, request.text, request.intoNoteId, request.intoFolderId)
     }
   }
 
@@ -167,8 +176,10 @@ class ImportViewModel @Inject constructor(
    *
    * @param intoNoteId quando si importa da dentro una nota: la destinazione e' gia' quella e il
    *   wizard salta il passo che la chiede.
+   * @param intoFolderId quando si importa da dentro una cartella di Registrazioni: la cartella e'
+   *   gia' scelta, e resta da dire solo in quale nota.
    */
-  private fun start(uris: List<Uri>, sharedText: String?, intoNoteId: String? = null) {
+  private fun start(uris: List<Uri>, sharedText: String?, intoNoteId: String? = null, intoFolderId: String? = null) {
     viewModelScope.launch {
       _uiState.value = ImportUiState(step = ImportStep.INSPECTING, selectedNoteId = intoNoteId)
       val fromFiles = coordinator.inspect(uris)
@@ -179,9 +190,11 @@ class ImportViewModel @Inject constructor(
 
       val allFolders = folders.all()
       val paths = allFolders.associate { it.id to folders.parentPathString(it.id) }
+      val personal = PersonalScope.folderIds(allFolders)
+      val startFolder = intoFolderId?.takeIf { id -> allFolders.any { it.id == id } }
 
       if (all.isEmpty()) {
-        _uiState.update { it.copy(step = ImportStep.REVIEW, candidates = emptyList(), folders = allFolders, folderPaths = paths) }
+        _uiState.update { it.copy(step = ImportStep.REVIEW, candidates = emptyList(), folders = allFolders, folderPaths = paths, personalFolderIds = personal) }
         return@launch
       }
 
@@ -194,7 +207,8 @@ class ImportViewModel @Inject constructor(
       // nel titolo o nelle prime righe si'. Quando non si indovina resta la prima cartella.
       val guessedFolder = samsung?.let { doc ->
         val hint = FolderIcon.guessFrom(listOfNotNull(doc.title, doc.body.take(400)).joinToString(" "))
-        if (hint == FolderIcon.Folder) null else allFolders.firstOrNull { FolderIcon.guessFrom(it.name) == hint }
+        // Solo fra le materie: una nota di scuola non si indovina dentro Registrazioni.
+        if (hint == FolderIcon.Folder) null else allFolders.firstOrNull { it.id !in personal && FolderIcon.guessFrom(it.name) == hint }
       }
 
       _uiState.update {
@@ -208,11 +222,22 @@ class ImportViewModel @Inject constructor(
           excluded = if (samsung != null) emptySet() else all.filter { candidate -> candidate.isDuplicate }.map { candidate -> candidate.id }.toSet(),
           folders = allFolders,
           folderPaths = paths,
-          selectedFolderId = if (intoNoteId != null) null else (guessedFolder ?: allFolders.firstOrNull())?.id,
+          personalFolderIds = personal,
+          // Di ripiego la prima materia, non la prima cartella qualsiasi: una lezione finita per
+          // caso in Registrazioni sparirebbe dalla home e dalle statistiche della scuola.
+          selectedFolderId = when {
+            intoNoteId != null -> null
+            startFolder != null -> startFolder
+            else -> (guessedFolder ?: allFolders.firstOrNull { it.id !in personal } ?: allFolders.firstOrNull())?.id
+          },
           newNoteTitle = defaultTitle,
         )
       }
       if (intoNoteId != null) loadSessions(intoNoteId)
+      if (intoNoteId == null && startFolder != null) {
+        val inFolder = notes.byFolder(startFolder)
+        _uiState.update { it.copy(notesInFolder = inFolder) }
+      }
     }
   }
 
@@ -264,7 +289,15 @@ class ImportViewModel @Inject constructor(
       val folder = folders.create(name, tone = tone, icon = icon, untitled = context.getString(dev.pampa.pampanotes.R.string.import_folder))
       val allFolders = folders.all()
       val paths = allFolders.associate { it.id to folders.parentPathString(it.id) }
-      _uiState.update { it.copy(folders = allFolders, folderPaths = paths, selectedFolderId = folder.id, notesInFolder = emptyList()) }
+      _uiState.update {
+        it.copy(
+          folders = allFolders,
+          folderPaths = paths,
+          personalFolderIds = PersonalScope.folderIds(allFolders),
+          selectedFolderId = folder.id,
+          notesInFolder = emptyList(),
+        )
+      }
     }
   }
 
