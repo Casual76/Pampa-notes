@@ -146,6 +146,58 @@ class TranscriptStitcherTest {
   }
 
   @Test
+  fun `senza no_speech_prob non si decide niente`() {
+    // WhisperX non lo calcola: il companion manda null (prima 0.0). «Non lo so» non toglie niente.
+    assertFalse(TranscriptStitcher.isHallucination(segment(0, 1_000, "Sottotitoli", noSpeech = null, logProb = -3f)))
+    assertFalse(TranscriptStitcher.isHallucination(segment(0, 1_000, "Frase", noSpeech = 0f, logProb = -3f)))
+  }
+
+  @Test
+  fun `al confine le parole tolte si portano via i loro tempi`() {
+    fun words(text: String, startMs: Long) =
+      text.split(" ").mapIndexed { index, word -> RawWord(startMs + index * 500L, startMs + index * 500L + 400, word) }
+    val nextText = "costituente decise di sciogliersi."
+    val chunks = listOf(
+      ChunkTranscript(
+        ChunkSpec(0, 0, 65_000),
+        listOf(RawSegment(55_000, 59_000, "e quindi l'assemblea costituente decise", words = words("e quindi l'assemblea costituente decise", 55_000))),
+      ),
+      ChunkTranscript(
+        ChunkSpec(1, 60_000, 125_000),
+        listOf(RawSegment(0, 2_000, nextText, words = words(nextText, 0))),
+      ),
+    )
+
+    val second = TranscriptStitcher.stitch(chunks).segments[1]
+
+    assertEquals("di sciogliersi.", second.text)
+    // Una parola per token, e sono quelle giuste: «di» cominciava a 60 s + 1 s.
+    assertEquals(listOf("di", "sciogliersi."), second.words.map { it.text })
+    assertEquals(61_000L, second.words.first().startMs)
+  }
+
+  @Test
+  fun `il computer di casa, un pezzo solo, passa dalle stesse difese`() {
+    val text = "Allora allora allora allora allora allora allora"
+    val words = text.split(" ").mapIndexed { index, word -> RawWord(index * 1_000L, index * 1_000L + 800, word) }
+    val result = TranscriptStitcher.stitch(
+      listOf(
+        ChunkTranscript(
+          ChunkSpec(0, 0, 3_600_000),
+          listOf(
+            RawSegment(0, 7_000, text, noSpeechProb = null, words = words),
+            RawSegment(600_000, 601_000, "Grazie.", noSpeechProb = null),
+            RawSegment(1_200_000, 1_205_000, "Riprendiamo.", noSpeechProb = null),
+          ),
+        ),
+      ),
+    )
+
+    assertEquals(listOf("Allora", "Riprendiamo."), result.segments.map { it.text })
+    assertEquals(1, result.segments.first().words.size)
+  }
+
+  @Test
   fun `nessun pezzo produce un testo vuoto invece di un errore`() {
     val result = TranscriptStitcher.stitch(emptyList())
 

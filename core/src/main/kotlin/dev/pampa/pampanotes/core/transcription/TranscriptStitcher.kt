@@ -43,7 +43,9 @@ data class StitchedTranscript(
  * Da N risposte a un testo solo.
  *
  * Tre cose, in quest'ordine, e ognuna risolve un modo concreto in cui una trascrizione a pezzi si
- * rompe:
+ * rompe (e prima del punto 3 se ne va quello che il modello ha inventato nei silenzi: giri a vuoto,
+ * eco del prompt, «Grazie.» isolati — vedi [HallucinationFilter]; vale anche per il computer di
+ * casa, che risponde con un pezzo solo):
  *
  *  1. **I tempi si traslano.** Ogni pezzo risponde con tempi che partono da zero; qui tornano dove
  *     stavano nel file originale.
@@ -68,7 +70,11 @@ object TranscriptStitcher {
   /** Il salto oltre il quale si va a capo: in una lezione due secondi di silenzio sono un paragrafo. */
   private const val PARAGRAPH_GAP_MS = 2_000L
 
-  fun stitch(chunks: List<ChunkTranscript>): StitchedTranscript {
+  /**
+   * @param prompt quello che si e' mandato al modello come vocabolario: un segmento che lo ripete e
+   *   basta e' un'eco, e se ne va (vedi [HallucinationFilter]).
+   */
+  fun stitch(chunks: List<ChunkTranscript>, prompt: String? = null): StitchedTranscript {
     if (chunks.isEmpty()) return StitchedTranscript("", emptyList())
 
     val ordered = chunks.sortedBy { it.spec.index }
@@ -107,7 +113,13 @@ object TranscriptStitcher {
     }
 
     val sorted = placed.sortedBy { it.startMs }
-    val cleaned = removeBoundaryRepeats(sorted)
+    // Prima quello che il modello ha inventato, poi le cuciture: un giro a vuoto in coda a un pezzo
+    // confonderebbe il confronto delle parole al confine. I bordi servono all'isolamento di un
+    // «Grazie.»: all'inizio e in fondo alla registrazione la pausa si misura da li'.
+    val lowerMs = ordered.first().spec.startMs
+    val upperMs = ordered.last().spec.endMs.takeIf { it > lowerMs } ?: Long.MAX_VALUE
+    val filtered = HallucinationFilter.clean(sorted, prompt, lowerMs, upperMs)
+    val cleaned = removeBoundaryRepeats(filtered)
     return StitchedTranscript(text = joinIntoParagraphs(cleaned), segments = cleaned)
   }
 
@@ -117,6 +129,11 @@ object TranscriptStitcher {
    * Whisper, messo davanti a qualche secondo di silenzio o di rumore, produce il testo che ha visto
    * piu' spesso in coda ai video: "Sottotitoli e revisione a cura di...". I due numeri che lo
    * distinguono da una frase vera li dice il modello stesso.
+   *
+   * Solo quando li dice tutti e due. Un `no_speech_prob` che manca (`null`) e' «non lo so», non
+   * «c'era voce»: WhisperX non lo calcola, e il companion ha mandato a lungo uno `0.0` che voleva
+   * dire la stessa cosa. In quel caso decidono le difese sul testo ([HallucinationFilter]), che non
+   * hanno bisogno dei numeri del modello.
    */
   fun isHallucination(segment: RawSegment): Boolean {
     val noSpeech = segment.noSpeechProb ?: return false
@@ -144,7 +161,17 @@ object TranscriptStitcher {
       }
       val trimmed = dropRepeatedPrefix(previous.text, current.text)
       if (trimmed.isBlank()) continue
-      result += current.copy(text = trimmed)
+      if (trimmed == current.text) {
+        result += current
+        continue
+      }
+      // Le parole allineate seguono il testo: via le prime, quante erano le parole tolte, se erano
+      // una per token. Lasciate tutte, la schermata le avrebbe appaiate al testo accorciato e ogni
+      // parola si sarebbe accesa coi tempi di quella prima.
+      val before = current.text.split(WHITESPACE).count { it.isNotEmpty() }
+      val after = trimmed.split(WHITESPACE).count { it.isNotEmpty() }
+      val words = if (current.words.size == before) current.words.drop(before - after) else emptyList()
+      result += current.copy(text = trimmed, words = words)
     }
     return result
   }
@@ -175,6 +202,13 @@ object TranscriptStitcher {
    *
    * Senza, la trascrizione di un'ora e' un muro di tremila parole che nessuno — ne' una persona ne'
    * un assistente — legge volentieri.
+   *
+   * Un silenzio lungo ([TranscriptParagraphs.SILENCE_MS]) qui e' un a capo come gli altri, e non
+   * «— 16 min di silenzio —»: questo testo va nella ricerca, nel conto delle parole, nel sync, nel
+   * raffinamento e nell'export senza tempi, e una frase scritta dall'app in mezzo alle parole della
+   * lezione sarebbe trovata, contata, riscritta da un modello e letta come detta dal professore —
+   * nella lingua del telefono che ha trascritto, per sempre. Il segno si ricava dai tempi dei
+   * segmenti al momento di mostrarli (schermata, export coi tempi), dove e' chiaro chi lo dice.
    */
   fun joinIntoParagraphs(segments: List<TimedText>): String {
     if (segments.isEmpty()) return ""
@@ -197,5 +231,6 @@ object TranscriptStitcher {
   private val WHITESPACE = Regex("\\s+")
   private val PUNCTUATION = Regex("[\\p{Punct}\\u00AB\\u00BB\\u2018\\u2019\\u201C\\u201D\\u2026]")
 
-  private fun normalize(word: String): String = word.lowercase().replace(PUNCTUATION, "")
+  /** Una parola senza maiuscole e senza punteggiatura: e' la forma in cui si confrontano. */
+  internal fun normalize(word: String): String = word.lowercase().replace(PUNCTUATION, "")
 }

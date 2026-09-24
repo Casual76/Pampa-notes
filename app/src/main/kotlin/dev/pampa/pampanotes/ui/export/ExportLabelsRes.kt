@@ -42,6 +42,9 @@ fun exportLabels(): ExportLabels = ExportLabels(
   recording = stringResource(R.string.export_label_recording),
   recordings = stringResource(R.string.export_label_recordings),
   minutes = stringResource(R.string.export_label_minutes),
+  hours = stringResource(R.string.session_silence_hours),
+  // La stessa riga della schermata: il segnaposto resta, lo riempie il writer con la durata.
+  silence = stringResource(R.string.session_silence),
   words = stringResource(R.string.export_label_words),
   note = stringResource(R.string.export_label_note),
   notesPlural = stringResource(R.string.export_label_notes_plural),

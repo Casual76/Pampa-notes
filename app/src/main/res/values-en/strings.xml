@@ -533,6 +533,9 @@
   <string name="session_no_transcript_title">Not transcribed yet</string>
   <string name="session_no_transcript_detail">The audio is here. What is missing is the text you can search, export, and hand to an assistant.</string>
   <string name="session_no_transcript_elsewhere">It can be transcribed on the device that has the recording, or from here once it reaches the home computer.</string>
+  <string name="session_silence">— %1$s of silence —</string>
+  <string name="session_silence_hours">h</string>
+  <string name="session_silence_resume">%1$s. Tap to resume at %2$s</string>
 
   <!-- The parts of a session -->
   <string name="part_starts_at">Starts at %1$s</string>

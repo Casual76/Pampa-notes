@@ -42,6 +42,12 @@ data class ExportLabels(
   val recording: String = "registrazione",
   val recordings: String = "registrazioni",
   val minutes: String = "min",
+  val hours: String = "h",
+  /**
+   * La riga di un silenzio lungo, con `%1$s` al posto della durata («16 min», «1 h 20 min»). Un
+   * modello e non una parola sola perche' la durata non sta nello stesso punto in tutte le lingue.
+   */
+  val silence: String = "— %1\$s di silenzio —",
   val words: String = "parole",
   val note: String = "nota",
   val notesPlural: String = "note",

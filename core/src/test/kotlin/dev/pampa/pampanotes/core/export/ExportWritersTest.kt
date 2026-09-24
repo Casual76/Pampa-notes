@@ -142,6 +142,35 @@ class ExportWritersTest {
   }
 
   @Test
+  fun `un silenzio lungo si dice prima di dove si riprende`() {
+    // Sedici minuti di niente non sono il respiro fra due frasi: chi legge — e un assistente — deve
+    // sapere che la frase dopo non risponde a quella prima.
+    val session = session(
+      parts = listOf(part("p1", "napoli.m4a", 3 * 3_600_000L, 0)),
+      segments = listOf(
+        segment("p1", 1_000, 3_000, "Prima del silenzio."),
+        segment("p1", 5_000, 7_000, "Dopo un respiro."),
+        segment("p1", 967_000, 970_000, "Dopo un quarto d'ora."),
+        segment("p1", 970_000 + 80 * 60_000, 975_000 + 80 * 60_000, "Dopo un'ora e venti."),
+      ),
+    )
+    val note = note(sessions = listOf(session))
+    val layout = layout(listOf(note))
+    val piece = layout.of(note).transcripts.values.single().single()
+    val text = writer.transcriptFile(note, piece, layout)
+
+    assertTrue(text, text.contains("*[— 16 min di silenzio —]*\n\n[16:07] Dopo un quarto d'ora."))
+    assertTrue(text, text.contains("*[— 1 h 20 min di silenzio —]*\n\n[1:36:10] Dopo un'ora e venti."))
+    // Due secondi sono un a capo e basta, e il segno non conta come parole della lezione.
+    assertTrue(text.contains("[00:01] Prima del silenzio.\n\n[00:05] Dopo un respiro."))
+    assertTrue(piece.blocks.none { it.text.contains("silenzio —") })
+
+    // In inglese, con le parole dell'app.
+    val english = MarkdownWriter(ExportLabels(silence = "— %1\$s of silence —")).transcriptFile(note, piece, layout)
+    assertTrue(english.contains("*[— 16 min of silence —]*"))
+  }
+
+  @Test
   fun `una versione raffinata non ha i tempi e lo dice`() {
     val raw = transcript(TranscriptKind.RAW, "Testo grezzo.")
     val refined = transcript(TranscriptKind.REFINED, "Testo ripulito.", model = "gpt-oss-120b", parentId = raw.id)

@@ -462,6 +462,19 @@ salvare, e si chiude in silenzio.
 Il lettore (`SessionPlayer`) parla solo in tempo di sessione: dentro ci sono N file e un indice di
 playlist, ma chi tocca la frase del minuto quaranta sente il minuto quaranta della lezione, non
 della terza registrazione. La traduzione la fa `SessionAssembler.locate`.
+
+**I paragrafi e i silenzi hanno una regola sola**, `TranscriptParagraphs.split` in `:core`: a capo
+dopo due secondi di pausa, al confine fra registrazioni e oltre un tetto di frasi (10 a schermo, 8
+nell'export). La schermata della sessione ne aveva una copia sua e adesso usa quella. Da un minuto
+in su (`SILENCE_MS`) la pausa non e' piu' solo un a capo: il paragrafo dopo porta `silenceBeforeMs`,
+misurato nel tempo della sessione (anche a cavallo fra due parti, che si mettono in fila senza
+buchi). A schermo e' una riga quieta sopra la card, «— 16 min di silenzio —», nello stesso elemento
+della lista del paragrafo (`ScrollFollower` conta un elemento per paragrafo), e un tocco salta dove
+si riprende; nell'export coi tempi e' `*[— 16 min di silenzio —]*` prima del `[mm:ss]`. Il testo
+salvato della grezza **non** ha il segno, solo l'a capo: va nella ricerca, nel conto delle parole,
+nel sync, nel raffinamento e nell'export senza tempi, dove una frase scritta dall'app sembrerebbe
+detta dal professore, nella lingua del telefono che ha trascritto. Durate con
+`TranscriptParagraphs.silenceDuration` («16 min», «1 h 20 min»).
 ## Raffinamento
 
 L'unico posto in cui l'app manda del testo a un modello di chat, e fa una cosa sola: riscrivere
@@ -511,6 +524,9 @@ cartella di chi lo apre. Dentro, in ordine d'importanza:
   confini di paragrafo, `--1di3`, `--2di3`: in un file solo una lezione di due ore un agente la legge
   troncata. Ogni pezzo si legge da solo: front-matter con nota, giorno, pezzo e tratto, una riga che
   ricorda che e' testo di una macchina e dove stanno gli appunti, i collegamenti al pezzo prima e dopo.
+  Un silenzio di un minuto o piu' e' una riga sua, `*[— 16 min di silenzio —]*`, prima del paragrafo
+  in cui si riprende (vedi «Sessioni, parti, segmenti»): senza, la frase dopo sembrava la risposta a
+  quella prima. Non conta nelle parole.
   Appunti e trascrizione in **file diversi** e' la distinzione da cui dipende tutto: un modello che
   non sa quale dei due sta leggendo tratta un errore di Whisper come una cosa che l'autore ha scritto.
 - `images/<nota>/pagina-N.png` — le pagine scritte a mano. Entrano sempre, anche con gli originali
@@ -796,6 +812,25 @@ precaricamento passa dalla stessa fila, l'allineatore resta uno (quello della li
 la sua memoria non finisce fra «gli altri». `config.json` si scrive tutto o niente, sotto un
 lucchetto. Un file dell'archivio aperto (un download, ffmpeg) non si cancella: la riga resta e la
 `DELETE` risponde 503 `file_in_use`.
+
+**Quello che Whisper inventa nei silenzi.** Una registrazione di venti ore («Napoli 18h») e' tornata
+con 407 segmenti che dicevano solo «18h», un centinaio di «Grazie.» e «Buonanotte» sparsi nelle
+pause e 78 segmenti in cui la stessa parola girava a vuoto. Il primo lo causava l'app: il prompt
+portava il titolo della nota e della sessione, e Whisper legge il prompt come il testo appena
+detto — davanti al silenzio lo ripete. Adesso il prompt e' **solo il «Vocabolario»**, e niente se e'
+vuoto (`TranscriptionPrompt`). Il resto lo toglie `HallucinationFilter` dentro
+`TranscriptStitcher.stitch`, sulle due strade (Groq a pezzi e il computer di casa, che risponde con
+un pezzo solo), prima della cucitura dei confini: un giro a vuoto (la stessa unita' almeno tre volte
+di fila e almeno sei parole in tutto, anche fatto di segmenti uguali) resta una volta; un segmento
+fatto solo di parole del prompt e non piu' lungo del prompt e' un'eco; «Grazie.», «Grazie mille»,
+«Buonanotte», «Sottotitoli» si tolgono solo se il gruppo che formano ha almeno tre secondi di pausa
+prima e dopo (i bordi della registrazione valgono come pausa), i titoli di coda («…Amara.org»)
+sempre. Conservativo per costruzione: nessuna regola tocca un discorso lungo. Le parole allineate
+seguono il testo (tagliate allo stesso punto se erano una per token, altrimenti stimate), anche al
+confine fra pezzi, dove prima restavano tutte. Un `no_speech_prob` nullo e' «non lo so»: WhisperX
+non lo calcola, e `isHallucination` decide solo coi due numeri veri. Se le difese tolgono tutti i
+segmenti di una parte, il `text` del server non si rimette al loro posto: sarebbe l'allucinazione
+stessa. Le trascrizioni gia' salvate restano come sono; «Ritrascrivi» le ripulisce.
 
 Il raffinamento passa da `ChatProvider.complete` di `engine-ai` su Groq. Non è un assistente: è un
 passaggio che toglie intercalari e rimette la punteggiatura senza cambiare il contenuto.
