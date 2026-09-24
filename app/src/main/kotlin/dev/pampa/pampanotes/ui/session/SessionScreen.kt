@@ -85,8 +85,11 @@ import dev.pampa.pampanotes.ui.common.asSubject
 import dev.antigravity.fluidengine.ui.fluid.FluidSectionFootnote
 import dev.antigravity.fluidengine.ui.fluid.FluidSpokenText
 import dev.antigravity.fluidengine.ui.fluid.FluidSpokenWord
+import dev.pampa.pampanotes.core.transcription.TranscriptParagraphs
 import dev.pampa.pampanotes.core.transcription.WordSource
 import dev.pampa.pampanotes.core.transcription.WordTimings
+import dev.antigravity.fluidengine.ui.fluid.fluidRowPressable
+import androidx.compose.ui.text.style.TextAlign
 
 @Composable
 fun SessionRoute(
@@ -650,15 +653,52 @@ private fun LazyListScope.transcriptBody(
 
   itemsIndexed(items = paragraphs, key = { index, _ -> "$PARAGRAPH_KEY$index" }) { index, paragraph ->
     val isActive = index == activeParagraph
-    ParagraphCard(
-      paragraph = paragraph,
-      isActive = isActive,
-      // Una lambda e non un valore: la posizione cambia cinque volte al secondo, e passandola come
-      // parametro ogni battito rimisurerebbe il paragrafo. Cosi' cambia solo il disegno.
-      positionMs = { if (isActive) positionMs() else 0L },
-      onSeek = onSeek,
-    )
+    // Il silenzio sta nello stesso elemento della lista del paragrafo che viene dopo, non in uno
+    // suo: ScrollFollower ritrova i paragrafi per chiave e conta su un elemento per paragrafo.
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      paragraph.silenceBeforeMs?.let { silence ->
+        SilenceRow(silenceMs = silence, resumeMs = paragraph.startMs, onSeek = onSeek)
+      }
+      ParagraphCard(
+        paragraph = paragraph,
+        isActive = isActive,
+        // Una lambda e non un valore: la posizione cambia cinque volte al secondo, e passandola come
+        // parametro ogni battito rimisurerebbe il paragrafo. Cosi' cambia solo il disegno.
+        positionMs = { if (isActive) positionMs() else 0L },
+        onSeek = onSeek,
+      )
+    }
   }
+}
+
+/**
+ * «— 16 min di silenzio —» fra due paragrafi.
+ *
+ * Senza, una pausa di sedici minuti e una di due secondi si vedevano uguali: un paragrafo nuovo e
+ * basta, e la frase dopo sembrava la risposta a quella prima. E' una riga quieta — piccola, nel
+ * colore secondario, senza card — perche' non e' testo della lezione; un tocco porta dove si
+ * ricomincia a parlare, che e' quello che si vuole fare davanti a un quarto d'ora di niente.
+ */
+@Composable
+private fun SilenceRow(silenceMs: Long, resumeMs: Long, onSeek: (Long) -> Unit) {
+  val duration = TranscriptParagraphs.silenceDuration(
+    silenceMs,
+    hours = stringResource(R.string.session_silence_hours),
+    minutes = stringResource(R.string.export_label_minutes),
+  )
+  val label = stringResource(R.string.session_silence, duration)
+  val description = stringResource(R.string.session_silence_resume, label, Formats.timestamp(resumeMs))
+  Text(
+    text = label,
+    style = MaterialTheme.typography.labelMedium,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    textAlign = TextAlign.Center,
+    modifier = Modifier
+      .fillMaxWidth()
+      .fluidRowPressable(onClick = { onSeek(resumeMs) })
+      .padding(vertical = 6.dp)
+      .semantics { contentDescription = description },
+  )
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -715,15 +755,20 @@ private fun ParagraphCard(
   }
 }
 
-/** Un blocco di frasi senza pause lunghe in mezzo, tutte della stessa parte. */
-private class Paragraph(
-  val segments: List<SegmentEntity>,
-  /** Dove comincia e finisce ogni segmento dentro il testo del paragrafo. */
-  private val ranges: List<IntRange>,
-  val text: String,
-) {
-  val startMs: Long get() = segments.first().sessionStartMs
-  val endMs: Long get() = segments.last().sessionEndMs
+/**
+ * Un paragrafo di [TranscriptParagraphs], con quello che serve solo alla schermata: le parole da
+ * accendere e il segmento sotto un tocco. La divisione e' quella del core, la stessa dell'export:
+ * prima la pagina ne aveva una copia sua, e una regola in due copie e' due regole.
+ */
+private class Paragraph(private val base: TranscriptParagraphs.Paragraph) {
+  val segments: List<SegmentEntity> get() = base.segments
+  val text: String get() = base.text
+  private val ranges: List<IntRange> get() = base.ranges
+  val startMs: Long get() = base.startMs
+  val endMs: Long get() = base.endMs
+
+  /** Il silenzio lungo che lo precede, da dire in una riga sua; null se non c'e'. */
+  val silenceBeforeMs: Long? get() = base.silenceBeforeMs
 
   /**
    * Le parole con i loro tempi, nel tempo della sessione.
@@ -751,48 +796,12 @@ private class Paragraph(
 }
 
 /**
- * Da segmenti a paragrafi.
- *
- * Si va a capo per due motivi: una pausa lunga, che e' quasi sempre un cambio di argomento, e il
- * confine fra due registrazioni, che e' un fatto e non un'interpretazione. C'e' anche un tetto al
- * numero di frasi, perche' chi parla senza mai fermarsi produrrebbe altrimenti una card alta come
- * dieci schermi, e una card alta dieci schermi non si scorre: si subisce.
+ * Da segmenti a paragrafi, con la regola del core: a capo a una pausa, al confine fra due
+ * registrazioni, e dopo [TranscriptParagraphs.MAX_SEGMENTS_ON_SCREEN] frasi, perche' una card alta
+ * dieci schermi non si scorre: si subisce.
  */
-private fun paragraphsOf(segments: List<SegmentEntity>): List<Paragraph> {
-  if (segments.isEmpty()) return emptyList()
-  val result = mutableListOf<Paragraph>()
-  var current = mutableListOf<SegmentEntity>()
-
-  fun flush() {
-    if (current.isEmpty()) return
-    val builder = StringBuilder()
-    val ranges = mutableListOf<IntRange>()
-    current.forEachIndexed { index, segment ->
-      if (index > 0) builder.append(' ')
-      val start = builder.length
-      builder.append(segment.text.trim())
-      ranges += start until builder.length
-    }
-    result += Paragraph(current.toList(), ranges, builder.toString())
-    current = mutableListOf()
-  }
-
-  segments.forEachIndexed { index, segment ->
-    val previous = segments.getOrNull(index - 1)
-    val breaks = previous != null && (
-      segment.partId != previous.partId ||
-        segment.sessionStartMs - previous.sessionEndMs >= PARAGRAPH_GAP_MS ||
-        current.size >= MAX_SEGMENTS_PER_PARAGRAPH
-      )
-    if (breaks) flush()
-    current += segment
-  }
-  flush()
-  return result
-}
-
-private const val PARAGRAPH_GAP_MS = 2_000L
-private const val MAX_SEGMENTS_PER_PARAGRAPH = 10
+private fun paragraphsOf(segments: List<SegmentEntity>): List<Paragraph> =
+  TranscriptParagraphs.split(segments, TranscriptParagraphs.MAX_SEGMENTS_ON_SCREEN).map(::Paragraph)
 
 // -------------------------------------------------------------------------------------------------
 

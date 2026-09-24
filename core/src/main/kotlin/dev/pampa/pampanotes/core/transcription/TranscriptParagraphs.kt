@@ -31,34 +31,89 @@ object TranscriptParagraphs {
    */
   const val MAX_SEGMENTS_IN_DOCUMENT = 8
 
-  data class Paragraph(val segments: List<SegmentEntity>) {
+  /**
+   * Da qui in su una pausa non e' piu' un a capo: e' un fatto da dire.
+   *
+   * Un paragrafo nuovo dopo due secondi e uno dopo sedici minuti si vedevano identici, e in una
+   * registrazione di venti ore i minuti in cui non succede niente sono la meta' della storia: chi
+   * legge crede che la frase dopo sia la risposta a quella prima, e un assistente anche. Un minuto e'
+   * gia' molto piu' di qualunque pausa di chi parla, e molto meno di un intervallo.
+   */
+  const val SILENCE_MS = 60_000L
+
+  data class Paragraph(
+    val segments: List<SegmentEntity>,
+    /**
+     * Quanto silenzio c'e' stato prima, quando e' almeno [SILENCE_MS]; null altrimenti, e sempre
+     * per il primo paragrafo. Misurato nel tempo della sessione, quindi anche a cavallo fra due
+     * registrazioni: le parti si mettono in fila senza buchi, e ogni millisecondo del cronometro e'
+     * audio registrato in cui nessuno ha parlato.
+     */
+    val silenceBeforeMs: Long? = null,
+  ) {
     val startMs: Long get() = segments.first().sessionStartMs
     val endMs: Long get() = segments.last().sessionEndMs
     val partId: String get() = segments.first().partId
 
     /** Le frasi una dopo l'altra, separate da uno spazio. */
-    val text: String get() = segments.joinToString(" ") { it.text.trim() }
+    val text: String by lazy { segments.joinToString(" ") { it.text.trim() } }
+
+    /**
+     * Dove comincia e finisce ogni segmento dentro [text], nello stesso ordine: la schermata ci
+     * traduce un tocco in un segmento e le parole in caratteri. Sta accanto al testo perche' deve
+     * seguirne la stessa regola di composizione, uno spazio fra una frase e l'altra.
+     */
+    val ranges: List<IntRange> by lazy {
+      var offset = 0
+      segments.mapIndexed { index, segment ->
+        if (index > 0) offset += 1
+        val length = segment.text.trim().length
+        val range = offset until offset + length
+        offset += length
+        range
+      }
+    }
   }
 
   fun split(segments: List<SegmentEntity>, maxSegments: Int = Int.MAX_VALUE): List<Paragraph> {
     if (segments.isEmpty()) return emptyList()
     val result = mutableListOf<Paragraph>()
     var current = mutableListOf<SegmentEntity>()
+    var silence: Long? = null
 
     segments.forEachIndexed { index, segment ->
       val previous = segments.getOrNull(index - 1)
+      val gap = previous?.let { segment.sessionStartMs - it.sessionEndMs } ?: 0L
       val breaks = previous != null && (
         segment.partId != previous.partId ||
-          segment.sessionStartMs - previous.sessionEndMs >= GAP_MS ||
+          gap >= GAP_MS ||
           current.size >= maxSegments
         )
       if (breaks && current.isNotEmpty()) {
-        result += Paragraph(current.toList())
+        result += Paragraph(current.toList(), silence)
         current = mutableListOf()
+        silence = gap.takeIf { it >= SILENCE_MS }
       }
       current += segment
     }
-    if (current.isNotEmpty()) result += Paragraph(current.toList())
+    if (current.isNotEmpty()) result += Paragraph(current.toList(), silence)
     return result
+  }
+
+  /**
+   * «16 min», «1 h 20 min», «2 h»: quanto e' durato un silenzio, arrotondato al minuto.
+   *
+   * Le unita' si passano da fuori perche' questo e' `:core` e le parole stanno nell'app; quelle di
+   * ripiego sono le stesse in italiano e in inglese. Mai «0 min»: sotto il minuto non si chiama.
+   */
+  fun silenceDuration(millis: Long, hours: String = "h", minutes: String = "min"): String {
+    val total = ((millis + 30_000) / 60_000).coerceAtLeast(1)
+    val h = total / 60
+    val m = total % 60
+    return when {
+      h == 0L -> "$m $minutes"
+      m == 0L -> "$h $hours"
+      else -> "$h $hours $m $minutes"
+    }
   }
 }

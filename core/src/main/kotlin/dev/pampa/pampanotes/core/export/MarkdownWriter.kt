@@ -3,6 +3,7 @@ package dev.pampa.pampanotes.core.export
 import dev.pampa.pampanotes.core.db.TranscriptKind
 import dev.pampa.pampanotes.core.model.Dates
 import dev.pampa.pampanotes.core.model.slugify
+import dev.pampa.pampanotes.core.transcription.TranscriptParagraphs
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -215,6 +216,12 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
     var currentPart: String? = if (announceFirst) null else blocks.firstOrNull()?.partId
     blocks.forEachIndexed { index, block ->
       if (index > 0) append(NL).append(NL)
+      // Un silenzio lungo si dice, su una riga sua, in corsivo e fra parentesi quadre: senza, sedici
+      // minuti di niente sembravano la pausa di un respiro, e la frase dopo la risposta a quella
+      // prima. Le parentesi dicono a chi legge — e a un assistente — che non l'ha detto nessuno.
+      block.silenceBeforeMs?.let { silence ->
+        append("*[").append(silenceLine(silence)).append("]*").append(NL).append(NL)
+      }
       if (block.partId != null && block.partId != currentPart && session.parts.size > 1) {
         currentPart = block.partId
         val position = session.parts.indexOfFirst { it.id == block.partId }
@@ -227,6 +234,10 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
       append(block.text)
     }
   }
+
+  /** «— 16 min di silenzio —», nella lingua del pacchetto. */
+  internal fun silenceLine(millis: Long): String =
+    labels.silence.replace("%1\$s", TranscriptParagraphs.silenceDuration(millis, labels.hours, labels.minutes))
 
   private fun sourcesSection(note: ExportNote, options: ExportOptions): String? {
     if (!options.includeSources || note.sources.isEmpty()) return null

@@ -16,6 +16,11 @@ data class TranscriptBlock(
   val endMs: Long? = null,
   /** La registrazione da cui viene, quando lo si sa: al cambio si scrive quale comincia. */
   val partId: String? = null,
+  /**
+   * Il silenzio lungo che lo precede (vedi [TranscriptParagraphs.SILENCE_MS]): si stampa come riga a
+   * se', e non conta nelle parole — non e' testo della lezione.
+   */
+  val silenceBeforeMs: Long? = null,
 ) {
   val words: Int get() = text.wordCount()
 }
@@ -47,7 +52,7 @@ object TranscriptPieces {
     if (options.timestamps && session.hasTimings) {
       val paragraphs = TranscriptParagraphs.split(session.segments, TranscriptParagraphs.MAX_SEGMENTS_IN_DOCUMENT)
       if (paragraphs.isNotEmpty()) {
-        return paragraphs.map { TranscriptBlock(it.text, it.startMs, it.endMs, it.partId) }
+        return paragraphs.map { TranscriptBlock(it.text, it.startMs, it.endMs, it.partId, it.silenceBeforeMs) }
       }
     }
     return textBlocks(transcript.text)

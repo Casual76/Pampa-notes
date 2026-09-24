@@ -40,6 +40,27 @@ class VerboseJsonTest {
   }
 
   @Test
+  fun `no_speech_prob nullo o assente e' un non so, e 0 resta 0`() {
+    // Il companion mandava 0.0 perche' WhisperX non lo calcola; adesso manda null. Tutti e due si leggono.
+    val result = parse(
+      """
+      {
+        "segments": [
+          {"start":0.0,"end":1.0,"text":"Uno.","no_speech_prob":null,"avg_logprob":null},
+          {"start":1.0,"end":2.0,"text":"Due.","no_speech_prob":0.0},
+          {"start":2.0,"end":3.0,"text":"Tre."}
+        ]
+      }
+      """.trimIndent(),
+    )
+
+    assertNull(result.segments[0].noSpeechProb)
+    assertNull(result.segments[0].avgLogProb)
+    assertEquals(0f, result.segments[1].noSpeechProb!!, 0f)
+    assertNull(result.segments[2].noSpeechProb)
+  }
+
+  @Test
   fun `il testo si ricompone dai segmenti, non dal campo text`() {
     // I due devono raccontare la stessa cosa: se si prendesse il campo `text` grezzo, i segmenti
     // scartati piu' avanti resterebbero comunque nel testo, e il lettore evidenzierebbe la riga

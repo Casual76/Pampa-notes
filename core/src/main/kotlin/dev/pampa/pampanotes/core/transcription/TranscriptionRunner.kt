@@ -373,7 +373,9 @@ class TranscriptionRunner @Inject constructor(
     )
 
     fun transcript(chunk: ChunkTranscript, language: String?): PartTranscript {
-      val stitched = TranscriptStitcher.stitch(listOf(chunk))
+      // Un pezzo solo, ma le stesse difese della strada a pezzi: il computer di casa sente gli
+      // stessi silenzi e ci inventa le stesse cose.
+      val stitched = TranscriptStitcher.stitch(listOf(chunk), request.prompt)
       return PartTranscript(part, stitched.text, stitched.segments, language)
     }
 
@@ -463,7 +465,11 @@ class TranscriptionRunner @Inject constructor(
     writeStored(stored, chunk)
     finished(result.serverChunks ?: 1)
     // Un server che risponde col solo testo, senza segmenti: mezzo risultato vale piu' di niente.
-    return transcript(chunk, result.language).let { if (it.text.isBlank()) it.copy(text = result.text.trim()) else it }
+    // Solo senza segmenti, pero': se c'erano e le difese li hanno tolti tutti, il testo del server
+    // e' quello stesso «Grazie.» inventato, e rimetterlo vorrebbe dire rimettere l'allucinazione.
+    return transcript(chunk, result.language).let {
+      if (it.text.isBlank() && result.segments.isEmpty()) it.copy(text = result.text.trim()) else it
+    }
   }
 
   private suspend fun transcribePart(
@@ -530,9 +536,11 @@ class TranscriptionRunner @Inject constructor(
       finished(1, 1)
       val stitched = TranscriptStitcher.stitch(
         listOf(ChunkTranscript(ChunkSpec(0, 0, part.durationMs), result.segments)),
+        request.prompt,
       )
       // Un server che risponde col solo testo, senza segmenti: mezzo risultato vale piu' di niente.
-      val text = stitched.text.ifBlank { result.text.trim() }
+      // Con segmenti tutti tolti dalle difese, invece, il testo del server e' l'allucinazione stessa.
+      val text = if (stitched.text.isBlank() && result.segments.isEmpty()) result.text.trim() else stitched.text
       return PartTranscript(part, text, stitched.segments, result.language)
     }
 
@@ -585,7 +593,7 @@ class TranscriptionRunner @Inject constructor(
     // Il PCM non serve piu': su un'ora sono centoquindici megabyte che non hanno motivo di restare.
     pcm.delete()
 
-    val stitched = TranscriptStitcher.stitch(chunkTranscripts)
+    val stitched = TranscriptStitcher.stitch(chunkTranscripts, request.prompt)
     return PartTranscript(part, stitched.text, stitched.segments, request.language)
   }
 

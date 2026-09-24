@@ -563,6 +563,9 @@
   <string name="session_no_transcript_title">Non ancora trascritta</string>
   <string name="session_no_transcript_detail">L\'audio c\'è. Manca il testo su cui cercare, che si esporta e che un assistente può leggere.</string>
   <string name="session_no_transcript_elsewhere">Si trascrive dal dispositivo che ha la registrazione, o da qui quando sarà arrivata al computer di casa.</string>
+  <string name="session_silence">— %1$s di silenzio —</string>
+  <string name="session_silence_hours">h</string>
+  <string name="session_silence_resume">%1$s. Tocca per riprendere dal minuto %2$s</string>
 
   <!-- Le parti di una sessione -->
   <string name="part_starts_at">Comincia al minuto %1$s</string>

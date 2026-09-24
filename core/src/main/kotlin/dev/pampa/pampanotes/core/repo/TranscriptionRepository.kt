@@ -28,6 +28,7 @@ import dev.pampa.pampanotes.core.transcription.EndpointResolver
 import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
 import dev.pampa.pampanotes.core.transcription.SessionTranscript
 import dev.pampa.pampanotes.core.transcription.TranscribeRequest
+import dev.pampa.pampanotes.core.transcription.TranscriptionPrompt
 import dev.pampa.pampanotes.core.transcription.TranscriptionError
 import dev.pampa.pampanotes.core.transcription.TranscriptionHttp
 import dev.pampa.pampanotes.core.transcription.TranscriptionProvider
@@ -406,24 +407,6 @@ class TranscriptionRepository @Inject constructor(
    */
   suspend fun markPartArchived(partId: String, at: Long) = parts.markArchived(partId, at)
 
-  /**
-   * Il vocabolario da passare al modello.
-   *
-   * Il titolo della nota e le sue parole entrano nel prompt di Whisper insieme al vocabolario delle
-   * impostazioni: su una lezione di storia la differenza fra "Termidoro" e "term e d'oro" la fa
-   * l'aver visto la parola prima.
-   */
-  suspend fun promptFor(sessionId: String, settings: PampaSettings): String? {
-    val session = sessions.get(sessionId) ?: return settings.vocabulary.takeIf { it.isNotBlank() }
-    val note = notes.get(session.noteId)
-    val pieces = buildList {
-      note?.title?.takeIf { it.isNotBlank() }?.let(::add)
-      session.title.takeIf { it.isNotBlank() }?.let(::add)
-      settings.vocabulary.takeIf { it.isNotBlank() }?.let(::add)
-    }
-    return pieces.joinToString(". ").takeIf { it.isNotBlank() }?.take(GroqWhisperProvider.PROMPT_MAX_CHARS)
-  }
-
   suspend fun requestFor(sessionId: String, model: String, settings: PampaSettings): TranscribeRequest {
     val session = sessions.get(sessionId)
     val note = session?.let { notes.get(it.noteId) }
@@ -432,7 +415,8 @@ class TranscriptionRepository @Inject constructor(
       // La lingua della nota vince su quella generale: un quaderno di inglese in mezzo a note
       // italiane non deve essere trascritto come italiano storpiato.
       language = note?.language ?: settings.languageOrNull,
-      prompt = promptFor(sessionId, settings),
+      // Solo il vocabolario: il titolo della nota, messo qui, Whisper lo ripeteva nei silenzi.
+      prompt = TranscriptionPrompt.of(settings.vocabulary),
     )
   }
 
