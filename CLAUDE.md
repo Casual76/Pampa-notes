@@ -1021,6 +1021,29 @@ accese (un tocco porta il lettore li'), sopra la trascrizione vecchia se si sta 
 intera e dalla separazione delle voci, e vince lei. Un companion vecchio non riceve nessuna domanda
 in piu'.
 
+**I pezzi non si confondono.** Il 28/09 mancavano tratti lunghi anche per colpa dell'app: i pezzi gia'
+trascritti (`chunk-N.json` nella cartella del lavoro) si rileggevano per posizione, e un «Riprova» sul
+computer dopo un tentativo con Groq metteva il pezzo 0–10 min di prima al posto di quello 0–30 di
+adesso — venti minuti spariti senza un errore. Adesso ogni pezzo porta indice, inizio, fine e la firma
+del piano (provider e tetto, `StoredChunks`), la cartella ha `work.json` e si svuota se la firma cambia,
+«Riprova» su un fallimento la butta sempre (`FailedJobs.discardsWorkOnRetry`), e un risultato vuoto
+non si salva in `computer.json`. Una parte con audio tornata senza parole mentre le altre ne hanno
+(oltre 30 s) non passa zitta: la sessione mostra «Una registrazione è tornata senza testo» con
+«Ritrascrivi» (`SessionTranscript.emptyPartIds`, salvati nel lavoro). La cucitura fra pezzi sta a meta'
+della sovrapposizione, non all'inizio del pezzo dopo (`TranscriptStitcher.seam`), e sulla strada del
+computer l'app non rifa' l'eco del vocabolario che il companion ha gia' filtrato
+(`stitchFromComputer`). **Una grezza per sessione**: la schermata e l'export leggevano la piu'
+vecchia; adesso vince la piu' recente (poi l'id, uguale su ogni dispositivo: `RawTranscripts`),
+`saveTranscription` toglie tutte le precedenti e il sync, dopo una pagina, toglie quelle che la piu'
+recente copre gia' (`SyncApplier.settleRaws`, tombstone scritti a mano sotto la guardia).
+
+**«Ritrascrivi le lezioni del filtro vecchio».** Le lezioni trascritte dal computer dal 24/09 fino al
+primo `/health` che dichiara `holes` (`holesSince`, salvato una volta) hanno avuto il VAD severo e
+niente seconda passata: `RetranscribeOffer.candidates` (puro) le trova — la grezza piu' recente
+`custom` in quell'intervallo, senza le mute, quelle in lavoro e quelle in trascrizione altrove — e una
+scheda in cima a Lavori e sotto «Da fare» nella home lo propone con le ore; parte solo col tocco e
+solo verso il computer, mai Groq; «Non ora» la nasconde.
+
 **Le statistiche.** `transcription_runs` (schema 6) tiene una riga per trascrizione finita: durata
 dell'audio, tempo sul telefono dal primo passo alla fine (la coda esclusa), parole, dispositivo
 (`cuda`, `cpu`, `groq`) e i `processing_s`/`audio_s` che il companion rimanda. Dallo schema 7 **si
