@@ -60,11 +60,13 @@ object FailedJobs {
   /**
    * «Riprova» deve buttare quello che il lavoro aveva messo da parte in `filesDir/jobs/<id>/`?
    *
-   * Di solito no: sono i pezzi gia' trascritti, e riprendere da li' e' il motivo per cui ci sono. Ma
-   * una trascrizione finita in `no_speech` ha lasciato per ogni parte il suo risultato vuoto
-   * (`computer.json`, `chunk-N.json`), e «Riprova» riusa lo stesso id: rileggeva quei vuoti, non
-   * chiamava nessuno e falliva di nuovo `no_speech` all'istante — anche dopo aver cambiato
-   * computer, modello o vocabolario, che e' proprio quando uno riprova una registrazione muta.
+   * Per una trascrizione si': «Riprova» riusa lo stesso id, e quei pezzi vengono dal tentativo che e'
+   * fallito. Una trascrizione finita in `no_speech` lasciava i suoi vuoti (`computer.json`,
+   * `chunk-N.json`) e ci ricadeva all'istante senza chiamare nessuno; un tentativo con Groq a pezzi
+   * da dieci minuti, rifatto sul computer con un tetto di trenta, rimetteva il vecchio 0–10 al posto
+   * del nuovo 0–30, e venti minuti di lezione sparivano. Chi riprova di solito ha cambiato qualcosa
+   * — computer, modello, vocabolario — e si riparte da capo: i pezzi di un giro fermato dal sistema a
+   * meta' invece restano, perche' quello non passa da qui ma torna in fila con i suoi.
    */
-  fun discardsWorkOnRetry(job: JobEntity): Boolean = job.type == JobType.TRANSCRIBE && job.errorCode == NO_SPEECH
+  fun discardsWorkOnRetry(job: JobEntity): Boolean = job.type == JobType.TRANSCRIBE
 }

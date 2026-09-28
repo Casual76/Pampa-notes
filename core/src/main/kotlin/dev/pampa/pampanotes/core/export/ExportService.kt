@@ -487,7 +487,8 @@ class ExportService @Inject constructor(
       }
 
       val versions = transcripts.bySession(row.session.id)
-      val raw = versions.firstOrNull { it.kind == TranscriptKind.RAW }
+      // La piu' recente: con due grezze (due dispositivi insieme) la prima dell'elenco era la piu' vecchia.
+      val raw = dev.pampa.pampanotes.core.repo.RawTranscripts.newest(versions)
       val chosen = when (options.transcript) {
         TranscriptChoice.RAW -> raw
         // La migliore: quella che l'utente sta guardando nell'app, altrimenti la grezza. Esportare

@@ -290,9 +290,7 @@ class TranscriptionRepository @Inject constructor(
     return true
   }
 
-  private fun transcribeOptions(job: JobEntity): TranscribeOptions =
-    job.optionsJson?.let { runCatching { json.decodeFromString(TranscribeOptions.serializer(), it) }.getOrNull() }
-      ?: TranscribeOptions()
+  private fun transcribeOptions(job: JobEntity): TranscribeOptions = TranscribeOptions.decode(job.optionsJson)
 
   /**
    * Il sistema ha fermato il worker a meta' lavoro (vincoli, quota, un aggiornamento): il lavoro non
@@ -388,8 +386,8 @@ class TranscriptionRepository @Inject constructor(
    */
   suspend fun retry(jobId: String): JobEntity? {
     val job = jobs.get(jobId) ?: return null
-    // Una registrazione muta ha lasciato i suoi risultati vuoti nella cartella del lavoro, e con lo
-    // stesso id «Riprova» li rileggerebbe invece di chiedere di nuovo ([FailedJobs.discardsWorkOnRetry]).
+    // Con lo stesso id «Riprova» rileggerebbe i pezzi del tentativo fallito — vuoti, o di un altro
+    // piano — invece di chiedere di nuovo ([FailedJobs.discardsWorkOnRetry]).
     if (FailedJobs.discardsWorkOnRetry(job)) runCatching { java.io.File(files.jobs, job.id).deleteRecursively() }
     // Il conto delle volte che il computer e' sparito riparte: chi riprova ha di solito rimesso a
     // posto il computer. Le opzioni di un raffinamento (il preset) invece restano.
@@ -699,9 +697,30 @@ class TranscriptionRepository @Inject constructor(
   /** Un giro alla volta: il cambio di un lavoro e il rinnovo a orologio possono arrivare insieme. */
   private val markersLock = Mutex()
 
-  /** Le opzioni di una trascrizione, in `optionsJson`: per ora solo quante volte il computer e' sparito. */
-  @Serializable
-  private data class TranscribeOptions(val endpointLosses: Int = 0)
+  /**
+   * La trascrizione e' finita, ma qualche registrazione e' tornata senza parole mentre le altre ce
+   * l'hanno ([SessionTranscript.emptyPartIds]): lo si scrive nel lavoro, e la sessione lo dice finche'
+   * quelle parti restano senza testo. Nelle opzioni e non in una colonna: e' un fatto di questo
+   * lavoro, non della trascrizione, e non deve viaggiare col sync.
+   */
+  suspend fun recordEmptyParts(jobId: String, partIds: List<String>) {
+    if (partIds.isEmpty()) return
+    val job = jobs.get(jobId) ?: return
+    val options = TranscribeOptions.decode(job.optionsJson).copy(emptyParts = partIds.distinct())
+    jobs.setOptions(jobId, json.encodeToString(TranscribeOptions.serializer(), options), System.currentTimeMillis())
+  }
+
+  /**
+   * Il computer di casa ha detto cosa sa fare: se e' la prima volta che dichiara «holes» (il
+   * companion che non perde piu' pezzi di parlato, 1.0.4), da adesso le lezioni trascritte prima si
+   * possono offrire da rifare (vedi [RetranscribeOffer]). Solo la prima volta: e' il confine fra prima
+   * e dopo, e non deve spostarsi a ogni `/health`.
+   */
+  suspend fun noteCompanionFeatures(features: Set<String>) {
+    if (dev.pampa.pampanotes.core.transcription.CompanionFeatures.HOLES in features) {
+      settingsStore.markHolesSince(System.currentTimeMillis())
+    }
+  }
 
   private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -723,5 +742,22 @@ class TranscriptionRepository @Inject constructor(
     private val requeueLock = Mutex()
     /** Quello che WhisperX usa quando nessuno dice altro. */
     const val DEFAULT_LOCAL_MODEL = "large-v3"
+  }
+}
+
+/** Le opzioni di una trascrizione, in `optionsJson` del lavoro. «Riprova» le azzera. */
+@Serializable
+data class TranscribeOptions(
+  /** Quante volte il computer di casa e' sparito a meta' (vedi `TranscriptionRepository.requeueForEndpoint`). */
+  val endpointLosses: Int = 0,
+  /** Le registrazioni tornate senza parole in una sessione che le parole le ha (vedi `recordEmptyParts`). */
+  val emptyParts: List<String> = emptyList(),
+) {
+  companion object {
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    /** Tollerante: un raffinamento ha altre opzioni (il preset), e un testo rotto vale «niente». */
+    fun decode(optionsJson: String?): TranscribeOptions =
+      optionsJson?.let { runCatching { json.decodeFromString(serializer(), it) }.getOrNull() } ?: TranscribeOptions()
   }
 }

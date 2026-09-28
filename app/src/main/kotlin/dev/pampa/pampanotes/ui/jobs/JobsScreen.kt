@@ -28,6 +28,8 @@ import dev.pampa.pampanotes.core.db.JobState
 import dev.pampa.pampanotes.core.model.Dates
 import dev.pampa.pampanotes.core.repo.FailureStanding
 import dev.pampa.pampanotes.ui.common.Formats
+import dev.pampa.pampanotes.ui.common.HolesOfferCard
+import dev.pampa.pampanotes.ui.common.HolesOfferViewModel
 import dev.pampa.pampanotes.ui.common.JobProgressBars
 import dev.pampa.pampanotes.ui.common.jobErrorText
 import dev.pampa.pampanotes.ui.common.jobPhaseText
@@ -41,6 +43,8 @@ fun JobsRoute(
   viewModel: JobsViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
+  val holes: HolesOfferViewModel = hiltViewModel()
+  val offer by holes.offer.collectAsStateWithLifecycle()
 
   val cancelLabel = stringResource(R.string.action_cancel)
   val retryLabel = stringResource(R.string.action_retry)
@@ -52,7 +56,16 @@ fun JobsRoute(
     onBack = onBack,
     ambient = FluidAmbient(tone = FluidHeroTone.Tertiary, motif = FluidHeroMotif.Ticks),
   ) {
+    // Le lezioni da rifare dopo la correzione dei buchi: in cima, anche con la coda vuota — e' qui
+    // che si viene a vedere cosa fa il computer.
+    offer?.let { found ->
+      item(key = "holes") {
+        HolesOfferCard(offer = found, onRetranscribe = { holes.retranscribe(found) }, onDismiss = holes::dismiss)
+      }
+    }
+
     if (state.isEmpty) {
+      if (offer != null) return@FluidScreen
       item {
         FluidEmptyState(
           title = stringResource(R.string.jobs_empty_title),

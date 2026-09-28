@@ -448,7 +448,9 @@ class SessionRepository @Inject constructor(
       // Le parole delle altre parti, da qualunque trascrizione vengano: vanno sotto la grezza nuova
       // prima che quella vecchia se ne vada, o la cascata le porterebbe via con lei.
       val kept = if (others.isEmpty()) emptyList() else segments.byParts(others.map { it.id })
-      val previous = transcripts.rawForSession(target.sessionId)
+      // Tutte le grezze di prima, non solo la piu' recente: due dispositivi che l'hanno trascritta
+      // insieme ne lasciavano due, e la schermata mostrava la piu' vecchia (vedi [RawTranscripts]).
+      val previous = transcripts.bySession(target.sessionId).filter { it.kind == TranscriptKind.RAW }
 
       val transcript = TranscriptEntity(
         id = Ids.newId(),
@@ -484,7 +486,7 @@ class SessionRepository @Inject constructor(
             )
           },
       )
-      previous?.let {
+      previous.forEach {
         transcripts.deleteChildren(it.id)
         transcripts.delete(it.id)
       }

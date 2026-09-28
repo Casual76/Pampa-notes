@@ -56,6 +56,8 @@ import dev.pampa.pampanotes.core.stats.TranscriptionStats
 import dev.pampa.pampanotes.core.stats.displayTitle
 import dev.pampa.pampanotes.core.stats.lessonMs
 import dev.pampa.pampanotes.ui.common.Formats
+import dev.pampa.pampanotes.ui.common.HolesOfferCard
+import dev.pampa.pampanotes.ui.common.HolesOfferViewModel
 import dev.pampa.pampanotes.ui.common.folderIconOf
 import dev.pampa.pampanotes.ui.common.jobStateLabel
 import dev.pampa.pampanotes.ui.common.UpdateHomeCard
@@ -97,6 +99,8 @@ fun HomeRoute(
   val state by viewModel.uiState.collectAsStateWithLifecycle()
   val updates: UpdateViewModel = hiltViewModel()
   val update by updates.state.collectAsStateWithLifecycle()
+  val holes: HolesOfferViewModel = hiltViewModel()
+  val holesOffer by holes.offer.collectAsStateWithLifecycle()
   var pendingDelete by remember { mutableStateOf<RecentNote?>(null) }
   val computerOnly = rememberComputerOnly()
   var exporting by remember { mutableStateOf<RecentNote?>(null) }
@@ -280,6 +284,17 @@ fun HomeRoute(
               )
             }
           }
+        }
+      }
+
+      // Le lezioni da rifare dopo la correzione dei buchi sono cose da fare anche loro: sotto «Da
+      // fare», o al suo posto quando non c'e' altro.
+      holesOffer?.takeUnless { selecting }?.let { found ->
+        if (state.todo.isEmpty()) {
+          item(key = "holes-header") { FluidSectionHeader(title = stringResource(R.string.home_section_todo)) }
+        }
+        item(key = "holes") {
+          HolesOfferCard(offer = found, onRetranscribe = { holes.retranscribe(found) }, onDismiss = holes::dismiss)
         }
       }
 
