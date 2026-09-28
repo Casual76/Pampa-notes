@@ -784,7 +784,7 @@ Gli URI di una condivisione si copiano subito (vedi sopra) e poi si legge la cop
 registrazione** e' quella in cui e' stata fatta, non quella dell'import (`RecordingDate`): prima la
 data dei metadati del contenitore, poi una data nel nome del file (Registratore Samsung, WhatsApp,
 `20250922_101500`…), poi la data del file dal provider, e solo alla fine oggi; date nel futuro o
-prima del 2000 si scartano. Registrazioni di giorni diversi fanno una sessione per giorno, e il
+prima del 2000 si scartano, e cosi' un'ora riscritta alla condivisione (`rewrittenAtShare`: piu' tarda di adesso meno la durata, con un quarto d'ora di margine). Un file senza data va con gli altri. Registrazioni di giorni diversi fanno una sessione per giorno, e il
 wizard dice da dove ha preso la data e la lascia cambiare. Un tipo per
 lettore: `TextExtractor` per testo, PDF (PdfBox) e DOCX (`DocxParser`, SAX su `word/document.xml`,
 puro e provato in JVM). `MimeSniffer` non si fida del MIME dichiarato: guarda l'estensione, poi i
@@ -806,8 +806,13 @@ Il formato, decodificato da un file vero (`core/src/test/resources/sdocx/fichte.
   sono coppie di byte che `isLetter` accetta;
 - i nomi delle registrazioni ("Voce 001", "HH:MM:SS") hanno il prefisso **int16**;
 - `media/mediaInfo.dat`: un record per file, int32 tag `0x79`, int32 indice, **int16** lunghezza
-  del nome, nome UTF-16LE, sha256 in esadecimale, 2 byte, int64 timestamp in microsecondi. L'ordine
-  dei record e' l'ordine cronologico delle parti.
+  del nome, nome UTF-16LE, sha256 in esadecimale, 2 byte, int64 timestamp in microsecondi. **Ne'
+  l'ordine dei record ne' l'ora sono della registrazione** (Impressionismo, 28/09: record 0, 1, 3, 2,
+  tutti con l'ora della condivisione): l'inizio vero sta nel nome della voce ZIP,
+  `media/<slot>@<secondi hex>_….m4a`, e da li' vengono ordine e data (`SdocxPairing`); i nomi di
+  `note.note` si ricontrollano con la durata misurata (`SdocxPairing.assign`). Le note importate prima
+  le ripara `SdocxRepairer` (all'avvio dopo il pull, o «Ripara registrazioni» nel menu della nota):
+  nome giusto e sessione del giorno giusto per ogni parte, id deterministici, niente ritrascrizione.
 
 `SdocxParser` e' tarato su questo file: se non riconosce niente, l'archivio resta come fonte e lo
 dice, invece di importare una nota vuota.
@@ -1224,7 +1229,7 @@ corta). Il companion ora li trova dall'audio (`speech_holes`: almeno 10 s non co
 parole, allargati di un secondo, in cui meta' dei secondi e' voce — sopra il fondo come in
 `sound_levels` ed entro 20 dB dalla voce del file) e li ritrascrive da se' per pezzo, prima dei pezzi
 provvisori (`fill_holes`: VAD 0,3/0,2 con `vad_params`, finestre da 15 s, niente vocabolario, solo il
-testo col centro nel buco, di nuovo `drop_hallucinations`, al massimo un quarto del pezzo); la
+testo col centro nel buco, di nuovo `drop_hallucinations`, al massimo il 40% del pezzo: un buco che non ci sta si salta e si provano i piu' corti); la
 risposta dice `holes` e `/health` dichiara `holes`. Chi li crea lo dice `companion/tools/holes.py`
 (col companion fermo: rifiuta se `/health` risponde), che trascrive lo stesso file con le manopole
 cambiate una per volta. Col file mandato **e** lo sha di un blob, il companion ne fa l'impronta e,
