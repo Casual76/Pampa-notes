@@ -77,6 +77,9 @@ class ImportCoordinatorTest {
       audioImporter = audio,
       archive = archive,
       handwriting = HandwritingPages(db.sources(), files, fetcher, archive),
+      // La riparazione ha i suoi test (SdocxRepairPlanTest, SessionRepositoryTest): qui un
+      // aggiornamento che la chiede la trova assente, e l'import non se ne accorge.
+      repairer = { error("nessuna riparazione in questi test") },
     )
   }
 
