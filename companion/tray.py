@@ -158,7 +158,7 @@ def archive_line(_: Any = None) -> str:
         count, size = archive.current().stats()
     except Exception:  # noqa: BLE001 — un archivio che non risponde non deve rompere il menu
         return "Archivio: non disponibile"
-    return f"Archivio: {count} file, {size / 1e9:.1f} GB"
+    return f"Archivio: {count} file, {archive.gib(size)}"
 
 
 def on_archive(_: pystray.Icon = None, __: Any = None) -> None:

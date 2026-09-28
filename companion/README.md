@@ -276,7 +276,9 @@ quindi `POST /v1/audio/transcriptions` accetta, oltre ai campi di OpenAI:
 
 - `source_sha256`: se il file è nell'archivio si trascrive da lì, e `file` non serve (e non si
   cancella mai: è la copia dell'archivio). Senza blob e senza `file`: 404 `{"detail":"blob_missing"}`,
-  e l'app manda il file. Se arrivano tutti e due, il blob vince;
+  e l'app manda il file. Se arrivano tutti e due, il file mandato si legge facendone l'impronta:
+  se è quella dichiarata vince il blob, se no si trascrive il file mandato e il registro lo dice
+  (prima il file si ignorava, e uno sha sbagliato faceva trascrivere un'altra registrazione);
 - `archive=1`, con `file` e `source_sha256`: il file mandato entra nell'archivio (impronta
   verificata, come un `PUT`; se non torna, 400 `sha_mismatch`) e si trascrive da lì. `name` è il
   nome originale. Senza `archive` il file resta un temporaneo che se ne va a fine lavoro: è la
@@ -291,8 +293,21 @@ quindi `POST /v1/audio/transcriptions` accetta, oltre ai campi di OpenAI:
 `source_sha256` e `archive` sono **solo del proprietario** (403 `owner_only` a un ospite): uno sha
 direbbe cosa c'è nell'archivio di un altro. La risposta dice `archived` (il file ora sta
 nell'archivio), `source` (`archive` o `upload`) e `chunks`. `/health` elenca in `features` quello
-che questo companion sa fare (`by_ref`, `archive_upload`, `server_chunks`, `file_meta`, `prompt`):
-senza la lista, l'app fa come prima.
+che questo companion sa fare (`by_ref`, `archive_upload`, `server_chunks`, `file_meta`, `prompt`,
+`auto_chunks`, `partial`, `holes`, `sdocx_index`): senza la lista, l'app fa come prima.
+
+Il registro dice per ogni richiesta da dove viene il file, l'inizio della sua impronta e quanto pesa,
+sempre in MiB: `dall'archivio Voce 001.m4a [39d2a3f1] (54.2 MiB)` (`—` al posto dell'impronta per un
+file mandato senza).
+
+**I buchi** (`holes`): dopo ogni pezzo il companion cerca i tratti di almeno dieci secondi in cui
+l'audio è voce (sopra il fondo, e non più di 20 dB sotto la voce del file, per almeno metà dei
+secondi) ma nessun testo li copre, e li ritrascrive da solo con un VAD più largo (0,3/0,2) e
+finestre da 15 secondi, senza vocabolario, al massimo per un quarto del pezzo. Quello che ne esce
+passa dallo stesso filtro delle allucinazioni. La risposta dice `holes: {found, filled, seconds,
+words}`, e il registro «buchi riempiti: 2 di 3 (1.4 min, 212 parole)». Per capire chi li crea (il
+VAD, le finestre da 30 s o il vocabolario) c'è `tools/holes.py`, che trascrive la stessa
+registrazione in più modi e li conta: si lancia col companion fermo, e il suo docstring dice come.
 
 ## Quanta VRAM
 
@@ -424,6 +439,13 @@ microsecondi o `null`. Di un `.sdocx` la creazione e l'ultima modifica della not
 `end_tag.bin` (o da `note.note`) e scartate se non sono plausibili; di una registrazione il
 `creation_time` del contenitore, letto con `ffprobe`. Serve all'app per le note importate prima,
 il cui originale ora sta solo qui.
+
+`GET /v1/files/<sha>/sdocx` (solo il proprietario) apre un `.sdocx` al posto del telefono e gli dà
+solo le voci piccole: `{"sha256", "entries": [{"name", "size"}], "note_b64", "media_info_b64",
+"end_tag_b64"}` — `note.note`, `media/mediaInfo.dat` e `end_tag.bin` in base64 (`null` quelle che
+mancano), e di tutte le altre (registrazioni, miniature) solo nome e misura. 415 se il file non è
+un `.sdocx` (non è uno zip, o è uno zip senza `note.note` né `end_tag.bin`), 413 se una delle tre
+voci supera i 16 MiB.
 
 I caricamenti scrivono su quattro thread loro, separati da quelli della trascrizione, e un blocco
 che non arriva per due minuti chiude il caricamento (408): un tablet che perde la rete a metà file
