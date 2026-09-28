@@ -61,17 +61,82 @@ class SdocxParserTest {
   }
 
   @Test
-  fun `ogni registrazione porta il suo sha256 e la sua ora`() {
+  fun `ogni registrazione porta il suo sha256, il suo peso e l'ora in cui e' cominciata`() {
     val doc = SdocxParser.parse(fixture())
 
     assertEquals("26d05f809b6635cc9b35f0b6a7ca35de1a054cea606f15f025f63234ca2ad5e0", doc.recordings[0].sha256)
     assertEquals("6b8b39134b4a4e1a2cdc28f3daed0085992223802c4d2d8706962581fe2be5f3", doc.recordings[1].sha256)
-    // Le ore confermano l'ordine: la seconda e' stata fatta dopo la prima.
-    val first = doc.recordings[0].createdAtMillis!!
-    val second = doc.recordings[1].createdAtMillis!!
-    assertTrue(second > first)
-    // Ed e' un'ora vera, nel 2026, non un numero qualsiasi letto come data.
-    assertTrue(first in 1_767_225_600_000L..1_798_761_600_000L)
+    // L'ora e' quella nel nome della voce (`3@6aabb551`: 17/09 09:39:29 UTC), non quella di
+    // mediaInfo.dat, che per «Voce 002» e' l'inizio piu' la durata: quando il file e' stato chiuso.
+    assertEquals(1_789_637_969_000L, doc.recordings[0].createdAtMillis)
+    assertEquals(1_789_720_316_000L, doc.recordings[1].createdAtMillis)
+    assertTrue(doc.recordings.all { it.sizeBytes >= 0 })
+    assertEquals(listOf("Voce 001", "Voce 002"), doc.voices.map { it.title })
+  }
+
+  /**
+   * Un `.sdocx` come quello di «Impressionismo» del 28/09: quattro registrazioni di quattro giorni,
+   * i record di mediaInfo.dat nell'ordine 0, 1, 3, 2, tutti con l'ora della condivisione.
+   */
+  private fun impressionismo(names: List<String> = IMPRESSIONISMO_ENTRIES): File {
+    val file = temp.newFile("impressionismo.sdocx")
+    val shared = 1_790_589_697_603_000L // 28/09/2026 10:01:37 UTC, in microsecondi
+    val mediaInfo = java.io.ByteArrayOutputStream()
+    listOf(0, 1, 3, 2).forEach { slot ->
+      val name = names[slot].substringAfter("media/")
+      val buffer = java.nio.ByteBuffer.allocate(10 + name.length * 2 + 64 + 2 + 8).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+      buffer.putInt(0x79).putInt(slot).putShort(name.length.toShort())
+      buffer.put(name.toByteArray(Charsets.UTF_16LE))
+      buffer.put(slot.toString().repeat(64).toByteArray(Charsets.US_ASCII))
+      buffer.putShort(0).putLong(shared + slot)
+      mediaInfo.write(buffer.array())
+    }
+    val note = java.io.ByteArrayOutputStream()
+    listOf("Voce 001" to "00:35:15", "Voce 002" to "00:51:22", "Voce 003" to "00:48:30", "Voce 004" to "00:44:10").forEach { (title, duration) ->
+      note.write(byteArrayOf(0, 0, 0, 0))
+      note.write(byteArrayOf(title.length.toByte(), 0))
+      note.write(title.toByteArray(Charsets.UTF_16LE))
+      note.write(byteArrayOf(8, 0))
+      note.write(duration.toByteArray(Charsets.UTF_16LE))
+    }
+    java.util.zip.ZipOutputStream(file.outputStream()).use { zip ->
+      zip.putNextEntry(java.util.zip.ZipEntry("note.note"))
+      zip.write(note.toByteArray())
+      zip.closeEntry()
+      zip.putNextEntry(java.util.zip.ZipEntry("media/mediaInfo.dat"))
+      zip.write(mediaInfo.toByteArray())
+      zip.closeEntry()
+      listOf(0, 1, 3, 2).forEach { slot ->
+        zip.putNextEntry(java.util.zip.ZipEntry(names[slot]))
+        zip.write(ByteArray(slot + 1))
+        zip.closeEntry()
+      }
+    }
+    return file
+  }
+
+  @Test
+  fun `le registrazioni vanno in fila per quando sono state fatte, non per mediaInfo`() {
+    val doc = SdocxParser.parse(impressionismo())
+
+    assertEquals(IMPRESSIONISMO_ENTRIES, doc.recordings.map { it.entryName })
+    assertEquals(listOf("Voce 001", "Voce 002", "Voce 003", "Voce 004"), doc.recordings.map { it.title })
+    assertEquals(listOf(2_910_000L, 2_650_000L), doc.recordings.drop(2).map { it.durationMs })
+    // 19/09, 21/09, 24/09, 28/09: le ore dei nomi, non il 28/09 della condivisione per tutte.
+    assertEquals(
+      listOf(1_789_802_739_000L, 1_789_974_894_000L, 1_790_230_557_000L, 1_790_586_899_000L),
+      doc.recordings.map { it.createdAtMillis },
+    )
+  }
+
+  @Test
+  fun `senza l'ora nel nome, le ore della condivisione non sono una data`() {
+    val names = listOf("media/a.m4a", "media/b.m4a", "media/c.m4a", "media/d.m4a")
+    val doc = SdocxParser.parse(impressionismo(names))
+
+    // L'ordine resta quello dei record, e nessuna registrazione finisce datata al giorno della condivisione.
+    assertEquals(listOf("media/a.m4a", "media/b.m4a", "media/d.m4a", "media/c.m4a"), doc.recordings.map { it.entryName })
+    assertTrue(doc.recordings.all { it.createdAtMillis == null })
   }
 
   @Test
@@ -206,6 +271,15 @@ class SdocxParserTest {
     // Un'ora fa: vale. L'anno prossimo (prima si accettava fino al 2100): no.
     assertEquals(now - 3_600_000, SdocxParser.readMediaInfo(record(now - 3_600_000), now).single().createdAtMillis)
     assertNull(SdocxParser.readMediaInfo(record(now + 365L * 24 * 3_600_000), now).single().createdAtMillis)
+  }
+
+  private companion object {
+    val IMPRESSIONISMO_ENTRIES = listOf(
+      "media/0@6aae38f3_bd0c8.m4a",
+      "media/1@6ab0d96e_7ef25.m4a",
+      "media/2@6ab4c01d_d9379.m4a",
+      "media/3@6aba3013_63dbb.m4a",
+    )
   }
 
   private fun utf16Record(text: String): ByteArray {

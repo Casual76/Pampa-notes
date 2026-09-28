@@ -187,7 +187,7 @@ class ImportCoordinator @Inject constructor(
     // chiede adesso al provider: dopo, l'unico file che resta e' la copia nostra, che e' di oggi.
     val probe = if (kind == SourceKind.AUDIO) audioImporter.probe(temp) else null
     val lastModified = if (probe != null) queryLastModified(uri) else null
-    val recordedOn = probe?.let { RecordingDate.resolve(it.metadataDate, displayName, lastModified) }
+    val recordedOn = probe?.let { RecordingDate.resolve(it.metadataDate, displayName, lastModified, durationMs = it.durationMs) }
     val recordedAt = recordedOn?.let { RecordingDate.momentOf(it, probe?.metadataDate, lastModified) }
 
     return ImportCandidate(
@@ -441,44 +441,62 @@ class ImportCoordinator @Inject constructor(
 
     // 3. Le registrazioni. In un aggiornamento quelle che c'erano gia' — stessa impronta — restano
     //    con le loro trascrizioni; entrano solo le nuove, una sessione per giorno di registrazione.
+    //    Due passate: prima si estraggono e si misurano tutte, poi si danno i nomi, perche' il nome
+    //    giusto di una registrazione lo dice la sua durata ([SdocxPairing.assign]) e non il posto in
+    //    cui Samsung Notes l'ha elencata.
     val existingParts = if (replace) sessions.byNote(noteId).flatMap { it.parts } else emptyList()
     val known: Set<String> = existingParts.map { it.sha256 }.toSet()
     var alreadyThere = 0
     val extracted = mutableListOf<ImportCandidate>()
+    data class Unpacked(val recording: SdocxRecording, val file: java.io.File, val sha: String, val size: Long, val probed: Long)
+    val unpacked = mutableListOf<Unpacked>()
     java.util.zip.ZipFile(stored).use { zip ->
-      doc.recordings.forEachIndexed { index, recording ->
-        val entry = zip.getEntry(recording.entryName) ?: return@forEachIndexed
+      doc.recordings.forEach { recording ->
+        val entry = zip.getEntry(recording.entryName) ?: return@forEach
         val extension = recording.entryName.substringAfterLast('.', "m4a")
         val audioTemp = files.tempFile(prefix = "sdocx", suffix = ".$extension")
         val (sha, size) = zip.getInputStream(entry).use { input -> Hashing.copyHashing(input, audioTemp) }
-        // Un nome che ordina come Samsung Notes: «Voce 001» viene prima di «Voce 002» anche
-        // quando i file dentro lo ZIP si chiamano al contrario.
-        val name = recording.title ?: "Registrazione ${"%02d".format(index + 1)}"
-        val probed = audioImporter.probeDuration(audioTemp).takeIf { it > 0 } ?: recording.durationMs
-        // La stessa impronta, o la stessa registrazione con l'intestazione riscritta da Samsung Notes
-        // ([SdocxUpdate.sameRecording]): resta quella che c'e', con la sua trascrizione.
-        if (sha in known || (replace && SdocxUpdate.sameRecording(existingParts, "$name.$extension", probed, size) != null)) {
-          audioTemp.delete()
-          alreadyThere++
-          return@forEachIndexed
-        }
-        extracted += ImportCandidate(
-          id = Ids.newId(),
-          uri = null,
-          file = audioTemp,
-          displayName = "$name.$extension",
-          kind = SourceKind.AUDIO,
-          mime = MimeSniffer.mimeFor(SourceKind.AUDIO, null),
-          sizeBytes = size,
-          sha256 = sha,
-          durationMs = probed,
-          // Il giorno in cui e' stata fatta, dal record di `mediaInfo.dat`: e' quello che divide le
-          // registrazioni in lezioni ([RecordingDate.groupByDay]).
-          recordedOn = recording.createdAtMillis
-            ?.let { Dates.parseOrNull(Dates.fromMillis(it)) }
-            ?.let { RecordedOn(it, RecordingDateSource.METADATA) },
-        )
+        unpacked += Unpacked(recording, audioTemp, sha, size, audioImporter.probeDuration(audioTemp))
       }
+    }
+    val voiceOf = SdocxPairing.assign(doc.voices.map { it.durationMs }, unpacked.map { it.probed.takeIf { d -> d > 0 } })
+    // Una parte che c'era gia' vale per una registrazione sola: due lezioni della stessa durata al
+    // secondo sono rare, ma una parte presa due volte ne lascerebbe fuori una.
+    val claimed = mutableSetOf<String>()
+    unpacked.forEachIndexed { index, item ->
+      val extension = item.recording.entryName.substringAfterLast('.', "m4a")
+      val voice = voiceOf.getOrNull(index)?.let { doc.voices.getOrNull(it) }
+      // Un nome che ordina come Samsung Notes: «Voce 001» viene prima di «Voce 002». Senza un nome
+      // di cui essere sicuri, il posto nella fila delle registrazioni.
+      val name = voice?.title?.takeIf { it.isNotBlank() } ?: "Registrazione ${"%02d".format(index + 1)}"
+      val probed = item.probed.takeIf { it > 0 } ?: voice?.durationMs ?: 0L
+      // La stessa impronta, o la stessa registrazione con l'intestazione riscritta da Samsung Notes
+      // ([SdocxUpdate.sameRecording]): resta quella che c'e', con la sua trascrizione.
+      val same = if (item.sha in known) existingParts.firstOrNull { it.sha256 == item.sha } else if (replace) SdocxUpdate.sameRecording(existingParts, probed, item.size, claimed) else null
+      if (same != null) {
+        claimed += same.id
+        item.file.delete()
+        alreadyThere++
+        return@forEachIndexed
+      }
+      extracted += ImportCandidate(
+        id = Ids.newId(),
+        uri = null,
+        file = item.file,
+        displayName = "$name.$extension",
+        kind = SourceKind.AUDIO,
+        mime = MimeSniffer.mimeFor(SourceKind.AUDIO, null),
+        sizeBytes = item.size,
+        sha256 = item.sha,
+        durationMs = probed,
+        // Il giorno in cui e' stata fatta, dall'ora nel nome della voce: e' quello che divide le
+        // registrazioni in lezioni ([RecordingDate.groupByDay]).
+        recordedOn = item.recording.createdAtMillis
+          ?.let { Dates.parseOrNull(Dates.fromMillis(it)) }
+          ?.let { RecordedOn(it, RecordingDateSource.METADATA) },
+        recordedAtMillis = item.recording.createdAtMillis,
+        sequence = index,
+      )
     }
 
     if (extracted.isNotEmpty() && replace) {
@@ -486,7 +504,7 @@ class ImportCoordinator @Inject constructor(
       // la nota ha gia' e' la stessa lezione, ripresa dopo l'ultima condivisione: la registrazione
       // va in coda a quella sessione, non in una seconda con la stessa data.
       val existing = sessions.byNote(noteId).map { it.session }
-      RecordingDate.groupByDay(extracted, { it.recordedOn?.date }).forEach { (day, group) ->
+      RecordingDate.groupByDay(extracted, { it.recordedOn?.knownDate }).forEach { (day, group) ->
         val sameDay = existing.filter { it.date == day.toString() }.maxByOrNull { it.position }
         val where = sameDay?.let { AudioPlacement.Append(it.id) } ?: AudioPlacement.NewSession(date = day.toString())
         results += audioImporter.importAll(group, noteId, where)

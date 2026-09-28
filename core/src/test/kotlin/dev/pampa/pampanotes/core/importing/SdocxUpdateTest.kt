@@ -101,27 +101,40 @@ class SdocxUpdateTest {
   )
 
   @Test
-  fun `stesso nome e stessa durata con quattordici byte di differenza e' la stessa registrazione`() {
+  fun `stessa durata con quattordici byte di differenza e' la stessa registrazione`() {
     // I numeri veri di «Impressionismo», 24/09.
     val old = part("Voce 002.m4a", 3_082_981, 49_944_368)
-    assertEquals(old, SdocxUpdate.sameRecording(listOf(old), "Voce 002.m4a", 3_082_981, 49_944_354))
+    assertEquals(old, SdocxUpdate.sameRecording(listOf(old), 3_082_981, 49_944_354))
   }
 
   @Test
-  fun `una registrazione nuova col nome di una vecchia ma un'altra durata resta nuova`() {
+  fun `un'altra durata e' un'altra registrazione`() {
     val old = part("Voce 002.m4a", 3_082_981, 49_944_368)
-    assertNull(SdocxUpdate.sameRecording(listOf(old), "Voce 002.m4a", 2_910_675, 47_153_042))
+    assertNull(SdocxUpdate.sameRecording(listOf(old), 2_910_675, 47_153_042))
+    assertNull(SdocxUpdate.sameRecording(listOf(old), 3_080_500, 49_944_300))
   }
 
   @Test
-  fun `la durata identica al millesimo vale anche con un nome cambiato`() {
-    val old = part("Voce 002.m4a", 3_082_981, 49_944_368)
-    assertEquals(old, SdocxUpdate.sameRecording(listOf(old), "Lezione.m4a", 3_082_981, 49_944_300))
-    assertNull(SdocxUpdate.sameRecording(listOf(old), "Lezione.m4a", 3_082_500, 49_944_300))
+  fun `il nome non conta, perche' poteva essere quello di un'altra`() {
+    // 28/09: «Voce 003» aveva preso la durata di «Voce 004». Riconoscere per nome l'avrebbe
+    // reimportata; per durata e peso resta quella che c'e'.
+    val third = part("Voce 004.m4a", 2_910_675, 47_153_042)
+    val fourth = part("Voce 003.m4a", 2_650_049, 42_930_972)
+    assertEquals(third, SdocxUpdate.sameRecording(listOf(fourth, third), 2_910_674, 47_153_050))
+    assertEquals(fourth, SdocxUpdate.sameRecording(listOf(fourth, third), 2_650_000, 42_930_980))
+  }
+
+  @Test
+  fun `vince la piu' vicina, e una gia' presa non vale due volte`() {
+    val a = part("a", 1_000_000, 10_000_000)
+    val b = part("b", 1_000_400, 10_000_000)
+    assertEquals(b, SdocxUpdate.sameRecording(listOf(a, b), 1_000_350, 10_000_000))
+    assertEquals(a, SdocxUpdate.sameRecording(listOf(a, b), 1_000_350, 10_000_000, exclude = setOf("b")))
+    assertNull(SdocxUpdate.sameRecording(listOf(a, b), 1_000_350, 10_000_000, exclude = setOf("a", "b")))
   }
 
   @Test
   fun `senza una durata non si indovina niente`() {
-    assertNull(SdocxUpdate.sameRecording(listOf(part("Voce 001.m4a", 0, 10)), "Voce 001.m4a", 0, 10))
+    assertNull(SdocxUpdate.sameRecording(listOf(part("Voce 001.m4a", 0, 10)), 0, 10))
   }
 }

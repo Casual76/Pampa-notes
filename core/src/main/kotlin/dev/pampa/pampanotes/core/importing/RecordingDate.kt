@@ -25,6 +25,13 @@ enum class RecordingDateSource {
 /** Il giorno di una registrazione, con la sua provenienza: la schermata dice l'una e l'altra. */
 data class RecordedOn(val date: LocalDate, val source: RecordingDateSource) {
   val isoDate: String get() = date.format(DateTimeFormatter.ISO_LOCAL_DATE)
+
+  /**
+   * Il giorno se lo si sa davvero, null se e' solo quello dell'import. E' questo che divide le
+   * registrazioni in sessioni: un file di cui non si sa niente va con gli altri
+   * ([RecordingDate.groupByDay]), non in una sessione sua datata oggi.
+   */
+  val knownDate: LocalDate? get() = date.takeUnless { source == RecordingDateSource.TODAY }
 }
 
 /**
@@ -39,7 +46,9 @@ data class RecordedOn(val date: LocalDate, val source: RecordingDateSource) {
  *
  * Una data impossibile — nel futuro, o prima del 2000 — si scarta e si passa alla fonte dopo: un
  * m4a senza data scrive spesso il 1904 (lo zero di MP4) o il 1970 (lo zero di Unix), e un orologio
- * sbagliato del telefono scrive l'anno prossimo.
+ * sbagliato del telefono scrive l'anno prossimo. Si scarta anche un'ora **riscritta alla
+ * condivisione** ([rewrittenAtShare]): Samsung Notes, condividendo, riscrive l'intestazione di ogni
+ * audio, e il file di una lezione del 19 arrivava datato adesso — cioe' l'import, di nuovo.
  *
  * Puro, senza Android: si prova in JVM.
  */
@@ -53,6 +62,9 @@ object RecordingDate {
    * @param metadataDate il valore grezzo di `METADATA_KEY_DATE`, se c'e'.
    * @param fileName il nome del file come l'ha dato chi lo condivide.
    * @param lastModifiedMillis l'ultima modifica secondo il provider, letta all'ispezione.
+   * @param durationMs quanto dura la registrazione: un'ora di inizio a meno di una durata da adesso
+   *   non e' un inizio ([rewrittenAtShare]). Zero se non si sa.
+   * @param now l'istante dell'import.
    * @param zone il fuso del telefono: `20250922T231500.000Z` in Italia e' gia' il 23.
    */
   fun resolve(
@@ -61,15 +73,37 @@ object RecordingDate {
     lastModifiedMillis: Long?,
     today: LocalDate = LocalDate.now(),
     zone: ZoneId = ZoneId.systemDefault(),
+    durationMs: Long = 0L,
+    now: Long = System.currentTimeMillis(),
   ): RecordedOn {
-    parseMetadata(metadataDate, zone)?.takeIf { plausible(it, today) }?.let { return RecordedOn(it, RecordingDateSource.METADATA) }
-    fromFileName(fileName)?.takeIf { plausible(it, today) }?.let { return RecordedOn(it, RecordingDateSource.FILE_NAME) }
-    lastModifiedMillis?.takeIf { it > 0 }
+    val named = fromFileName(fileName)?.takeIf { plausible(it, today) }
+    val metadata = parseMetadata(metadataDate, zone)?.takeIf { plausible(it, today) }?.takeUnless { day ->
+      val instant = parseMetadataInstant(metadataDate, zone)
+      // Con l'ora: si butta se e' quella della condivisione. Solo il giorno, ed e' oggi: vince una
+      // data nel nome, se c'e', perche' «oggi» e' proprio quello che una riscrittura direbbe.
+      if (instant != null) rewrittenAtShare(instant, durationMs, now) else day == today && named != null
+    }
+    metadata?.let { return RecordedOn(it, RecordingDateSource.METADATA) }
+    named?.let { return RecordedOn(it, RecordingDateSource.FILE_NAME) }
+    lastModifiedMillis?.takeIf { it > 0 && !rewrittenAtShare(it, durationMs, now) }
       ?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
       ?.takeIf { plausible(it, today) }
       ?.let { return RecordedOn(it, RecordingDateSource.FILE_MODIFIED) }
     return RecordedOn(today, RecordingDateSource.TODAY)
   }
+
+  /**
+   * Un'ora scritta da chi ha condiviso il file, non da chi l'ha registrato: cade cosi' vicino a
+   * [referenceMs] (l'import, o quando il file e' arrivato) che la registrazione, cominciata li',
+   * non sarebbe ancora finita — con un quarto d'ora di margine per chi condivide appena finito.
+   *
+   * Una registrazione fatta davvero adesso finisce lo stesso nel giorno giusto, perche' la fonte
+   * dopo e' oggi: si perde solo l'ora.
+   */
+  fun rewrittenAtShare(momentMs: Long, durationMs: Long, referenceMs: Long): Boolean =
+    momentMs > referenceMs - durationMs.coerceAtLeast(0L) - SHARE_SLACK_MS
+
+  private const val SHARE_SLACK_MS = 15 * 60_000L
 
   /** Dal 2000 a oggi compreso. */
   fun plausible(date: LocalDate, today: LocalDate): Boolean = !date.isBefore(EARLIEST) && !date.isAfter(today)

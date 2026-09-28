@@ -150,4 +150,53 @@ class RecordingDateTest {
 
   private fun millis(year: Int, month: Int, day: Int): Long =
     LocalDate.of(year, month, day).atTime(12, 0).atZone(rome).toInstant().toEpochMilli()
+
+  // --- l'ora riscritta alla condivisione ---
+
+  /** 23/09/2026 alle 12:00 a Roma: l'import. */
+  private val importAt = java.time.ZonedDateTime.of(2026, 9, 23, 12, 0, 0, 0, rome).toInstant().toEpochMilli()
+
+  @Test
+  fun `un metadato di cinque minuti fa su una lezione di mezz'ora e' la condivisione, e vince il nome`() {
+    val recorded = RecordingDate.resolve(
+      metadataDate = "20260923T095500.000Z", // 11:55 a Roma
+      fileName = "Voce 001_250922_1015.m4a",
+      lastModifiedMillis = null,
+      today = today,
+      zone = rome,
+      durationMs = 35 * 60_000L,
+      now = importAt,
+    )
+    assertEquals(RecordedOn(sept22, RecordingDateSource.FILE_NAME), recorded)
+  }
+
+  @Test
+  fun `senza un nome datato resta oggi, ma non e' un giorno che si sa`() {
+    val recorded = RecordingDate.resolve("20260923T095500.000Z", "Voce 001.m4a", importAt - 60_000L, today, rome, 35 * 60_000L, importAt)
+    assertEquals(RecordingDateSource.TODAY, recorded.source)
+    assertNull(recorded.knownDate)
+  }
+
+  @Test
+  fun `un metadato di ieri resta buono`() {
+    val recorded = RecordingDate.resolve("20260922T080000.000Z", "Voce 001.m4a", null, today, rome, 35 * 60_000L, importAt)
+    assertEquals(RecordedOn(LocalDate.of(2026, 9, 22), RecordingDateSource.METADATA), recorded)
+  }
+
+  @Test
+  fun `la data del file riscritta adesso non vale`() {
+    assertEquals(RecordingDateSource.TODAY, RecordingDate.resolve(null, "a.m4a", importAt - 120_000L, today, rome, 3_600_000L, importAt).source)
+    assertEquals(RecordingDateSource.FILE_MODIFIED, RecordingDate.resolve(null, "a.m4a", importAt - 86_400_000L, today, rome, 3_600_000L, importAt).source)
+  }
+
+  @Test
+  fun `una parte di cui non si sa il giorno va con le altre, non in una sessione di oggi`() {
+    val items = listOf(
+      RecordedOn(sept22, RecordingDateSource.METADATA),
+      RecordedOn(today, RecordingDateSource.TODAY),
+    )
+    val groups = RecordingDate.groupByDay(items, { it.knownDate }, today)
+    assertEquals(listOf(sept22), groups.map { it.first })
+    assertEquals(2, groups.single().second.size)
+  }
 }
