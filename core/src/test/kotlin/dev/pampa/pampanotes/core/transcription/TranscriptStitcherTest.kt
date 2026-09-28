@@ -55,7 +55,7 @@ class TranscriptStitcherTest {
   }
 
   @Test
-  fun `il segmento nella sovrapposizione resta al pezzo che lo contiene per primo`() {
+  fun `il segmento nella sovrapposizione va al pezzo dalla parte del suo punto medio`() {
     val chunks = listOf(
       ChunkTranscript(ChunkSpec(0, 0, 65_000), listOf(segment(61_000, 63_000, "A cavallo."))),
       ChunkTranscript(ChunkSpec(1, 60_000, 125_000), listOf(segment(1_000, 3_000, "A cavallo."))),
@@ -63,9 +63,47 @@ class TranscriptStitcherTest {
 
     val result = TranscriptStitcher.stitch(chunks)
 
-    // Il punto medio e' a 62s, che sta dopo il confine (60s): vince il secondo pezzo.
+    // Il confine sta a meta' della sovrapposizione (62,5 s) e il punto medio e' a 62 s: vince il primo.
     assertEquals(1, result.segments.size)
-    assertEquals(1, result.segments.first().chunkIndex)
+    assertEquals(0, result.segments.first().chunkIndex)
+  }
+
+  @Test
+  fun `il confine sta a meta' della sovrapposizione`() {
+    assertEquals(62_500L, TranscriptStitcher.seam(ChunkSpec(0, 0, 65_000), ChunkSpec(1, 60_000, 125_000)))
+    // Senza sovrapposizione e' l'inizio del secondo, come sempre.
+    assertEquals(60_000L, TranscriptStitcher.seam(ChunkSpec(0, 0, 60_000), ChunkSpec(1, 60_000, 120_000)))
+  }
+
+  @Test
+  fun `una frase a cavallo del taglio resta intera, senza doppioni`() {
+    // Il taglio e' a 600 s, il primo pezzo va avanti fino a 605 s (`ChunkPlanner`). La frase va da
+    // 597 s a 605 s: il primo pezzo l'ha sentita tutta, il secondo solo dal taglio in poi. Col confine
+    // al taglio il punto medio (601 s) la dava al secondo, che aveva solo la coda: tre secondi persi.
+    val chunks = listOf(
+      ChunkTranscript(
+        ChunkSpec(0, 0, 605_000),
+        listOf(
+          segment(590_000, 596_000, "Prima del taglio."),
+          segment(597_000, 605_000, "e allora Kant scrive la critica della ragion pura"),
+        ),
+      ),
+      ChunkTranscript(
+        ChunkSpec(1, 600_000, 1_200_000),
+        listOf(
+          // Lo stesso tratto visto dal secondo: solo quello che viene dopo il taglio.
+          segment(0, 5_000, "la critica della ragion pura"),
+          segment(8_000, 12_000, "nel milleottocentottantuno."),
+        ),
+      ),
+    )
+
+    val result = TranscriptStitcher.stitch(chunks)
+
+    assertEquals(
+      listOf("Prima del taglio.", "e allora Kant scrive la critica della ragion pura", "nel milleottocentottantuno."),
+      result.segments.map { it.text },
+    )
   }
 
   @Test
@@ -164,16 +202,43 @@ class TranscriptStitcherTest {
       ),
       ChunkTranscript(
         ChunkSpec(1, 60_000, 125_000),
-        listOf(RawSegment(0, 2_000, nextText, words = words(nextText, 0))),
+        // Dopo il confine (a meta' della sovrapposizione, 62,5 s): e' il pezzo dopo che lo dice.
+        listOf(RawSegment(2_000, 5_000, nextText, words = words(nextText, 2_000))),
       ),
     )
 
     val second = TranscriptStitcher.stitch(chunks).segments[1]
 
     assertEquals("di sciogliersi.", second.text)
-    // Una parola per token, e sono quelle giuste: «di» cominciava a 60 s + 1 s.
+    // Una parola per token, e sono quelle giuste: «di» cominciava a 60 s + 3 s.
     assertEquals(listOf("di", "sciogliersi."), second.words.map { it.text })
-    assertEquals(61_000L, second.words.first().startMs)
+    assertEquals(63_000L, second.words.first().startMs)
+  }
+
+  @Test
+  fun `dal computer le eco del vocabolario restano, i giri e i titoli di coda no`() {
+    // Il computer le ha gia' giudicate sentendo l'audio: «Fichte.» detto due volte di fila e' una
+    // risposta vera che lui ha tenuto, e qui la regola sul solo testo la toglieva.
+    val chunk = ChunkTranscript(
+      ChunkSpec(0, 0, 3_600_000),
+      listOf(
+        RawSegment(0, 4_000, "Chi ha scritto la Dottrina della scienza?"),
+        RawSegment(4_500, 5_000, "Fichte."),
+        RawSegment(5_200, 5_700, "Fichte."),
+        RawSegment(6_000, 13_000, "Allora allora allora allora allora allora allora"),
+        RawSegment(600_000, 603_000, "Sottotitoli creati dalla comunità Amara.org"),
+      ),
+    )
+
+    val fromComputer = TranscriptStitcher.stitchFromComputer(chunk)
+    val onPhone = TranscriptStitcher.stitch(listOf(chunk), prompt = "Fichte")
+
+    assertEquals(
+      listOf("Chi ha scritto la Dottrina della scienza?", "Fichte.", "Fichte.", "Allora"),
+      fromComputer.segments.map { it.text },
+    )
+    // Sulla strada del telefono (Groq) la regola di sempre: le due eco uguali se ne vanno.
+    assertEquals(listOf("Chi ha scritto la Dottrina della scienza?", "Allora"), onPhone.segments.map { it.text })
   }
 
   @Test

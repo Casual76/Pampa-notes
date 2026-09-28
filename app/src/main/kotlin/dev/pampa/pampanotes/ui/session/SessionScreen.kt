@@ -807,7 +807,7 @@ private fun LazyListScope.partsSection(
             // Il tempo a cui comincia nella sessione: e' cosi' che due registrazioni separate si
             // leggono come un nastro solo.
             meta = stringResource(R.string.part_starts_at, Formats.timestamp(start)),
-            tone = if (part in state.untranscribed) FluidTone.Warning else FluidTone.Neutral,
+            tone = if (part in state.missingText) FluidTone.Warning else FluidTone.Neutral,
             onClick = { onSeek(start) },
             contextActions = {
               buildList {
@@ -826,20 +826,39 @@ private fun LazyListScope.partsSection(
     }
   }
 
-  if (state.untranscribed.isNotEmpty()) {
+  // Tornate vuote e arrivate dopo sono due cose diverse: una registrazione che il servizio ha
+  // riportato senza parole — mentre le altre le avevano — non e' «un pezzo che manca», e l'avviso
+  // giallo la faceva sembrare un errore dell'app. E' una scheda quieta, col tasto per rifarla.
+  val returnedEmpty = state.returnedEmpty
+  val missingText = state.missingText
+  if (returnedEmpty.isNotEmpty() || missingText.isNotEmpty()) {
     item(key = "untranscribed") {
       // L'avviso dice «ritrascrivi la sessione», e il tasto sta qui sotto: prima stava solo nel menu
       // in alto, e chi leggeva l'avviso doveva andarlo a cercare. Stessa conferma del menu.
       Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        FluidInlineMessage(
-          title = stringResource(R.string.session_partial_title),
-          message = pluralStringResource(
-            R.plurals.session_partial_message,
-            state.untranscribed.size,
-            state.untranscribed.size,
-          ),
-          tone = FluidTone.Warning,
-        )
+        if (returnedEmpty.isNotEmpty()) {
+          FluidInlineMessage(
+            title = stringResource(R.string.session_empty_part_title),
+            message = pluralStringResource(
+              R.plurals.session_empty_part_message,
+              returnedEmpty.size,
+              returnedEmpty.size,
+              returnedEmpty.first().originalName,
+            ),
+            tone = FluidTone.Neutral,
+          )
+        }
+        if (missingText.isNotEmpty()) {
+          FluidInlineMessage(
+            title = stringResource(R.string.session_partial_title),
+            message = pluralStringResource(
+              R.plurals.session_partial_message,
+              missingText.size,
+              missingText.size,
+            ),
+            tone = FluidTone.Warning,
+          )
+        }
         if (state.canRetranscribe) {
           FluidButton(
             text = stringResource(R.string.session_retranscribe),

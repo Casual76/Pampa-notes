@@ -15,9 +15,6 @@ import javax.inject.Singleton
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 
 /**
  * A che punto siamo, nelle parole che la notifica e la schermata Lavori mostrano.
@@ -184,6 +181,12 @@ data class SessionTranscript(
   val language: String?,
   val model: String,
   val provider: String,
+  /**
+   * Le parti con dell'audio tornate senza nessuna parola mentre le altre il testo ce l'hanno. Prima
+   * passavano in silenzio: la lezione si salvava, e il buco si scopriva ascoltando. Il lavoro se le
+   * segna ([dev.pampa.pampanotes.core.repo.TranscribeOptions.emptyParts]) e la sessione lo dice.
+   */
+  val emptyPartIds: List<String> = emptyList(),
 )
 
 data class SessionSegment(
@@ -210,30 +213,6 @@ data class SessionSegment(
   val speaker: String? = null,
 )
 
-/** Il risultato di un pezzo, salvato su disco appena arriva. */
-@Serializable
-private data class StoredChunk(
-  val index: Int,
-  val startMs: Long,
-  val endMs: Long,
-  val segments: List<StoredSegment>,
-)
-
-@Serializable
-private data class StoredSegment(
-  val startMs: Long,
-  val endMs: Long,
-  val text: String,
-  val noSpeechProb: Float? = null,
-  val avgLogProb: Float? = null,
-  /** Con il default vuoto, un lavoro a meta' della versione precedente si rilegge ancora. */
-  val words: List<StoredWord> = emptyList(),
-  val speaker: String? = null,
-)
-
-@Serializable
-private data class StoredWord(val startMs: Long, val endMs: Long, val text: String)
-
 /**
  * Da un elenco di file audio a una trascrizione sola.
  *
@@ -244,15 +223,14 @@ private data class StoredWord(val startMs: Long, val endMs: Long, val text: Stri
  * **Riprende da dove era rimasto.** Il risultato di ogni pezzo finisce su disco appena arriva, in
  * `filesDir/jobs/<id>/`. Una lezione da un'ora sono sei richieste e qualche minuto: se il sistema
  * ferma il processo a meta', ricominciare da capo vuol dire rifare richieste gia' pagate e far
- * aspettare di nuovo. Al riavvio i pezzi gia' fatti si rileggono dal disco e si saltano.
+ * aspettare di nuovo. Al riavvio i pezzi gia' fatti si rileggono dal disco e si saltano — solo se
+ * sono del piano di adesso ([StoredChunks]): un pezzo di un altro piano al posto giusto e' un buco.
  */
 @Singleton
 class TranscriptionRunner @Inject constructor(
   private val files: AppFiles,
   private val fetcher: dev.pampa.pampanotes.core.archive.ArchiveFetcher,
 ) {
-
-  private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
   /**
    * @param jobId la cartella di lavoro, e la chiave con cui si riprende.
@@ -277,6 +255,10 @@ class TranscriptionRunner @Inject constructor(
   ): SessionTranscript {
     require(parts.isNotEmpty()) { "una sessione senza parti non si trascrive" }
     val workDir = files.jobDir(jobId)
+    // Lo stesso id puo' tornare con un altro servizio o un altro tetto («Riprova», «solo il computer
+    // di casa» acceso dopo): i pezzi lasciati da quel giro non sono di questo, e se ne vanno.
+    val signature = StoredChunks.signature(provider.id, provider.capabilities, chunkMinutes)
+    prepareWorkDir(workDir, signature)
     val transcripts = mutableListOf<PartTranscript>()
     val sorted = parts.sortedBy { it.position }
     val scale = ProgressScale(
@@ -298,7 +280,7 @@ class TranscriptionRunner @Inject constructor(
       currentCoroutineContext().ensureActive()
       val partDir = File(workDir, "part-${part.id}").apply { mkdirs() }
       computer?.let { mode ->
-        transcribeOnComputer(part, index, parts.size, partDir, mode, onComputer, scale, onArchived, onProgress, partials, onPartial)
+        transcribeOnComputer(part, index, parts.size, partDir, signature, mode, onComputer, scale, onArchived, onProgress, partials, onPartial)
           ?.let {
             transcripts += it
             return@forEachIndexed
@@ -309,6 +291,7 @@ class TranscriptionRunner @Inject constructor(
         partIndex = index,
         partCount = parts.size,
         workDir = partDir,
+        signature = signature,
         provider = provider,
         request = plain,
         chunkMinutes = chunkMinutes,
@@ -323,6 +306,19 @@ class TranscriptionRunner @Inject constructor(
 
     onProgress(TranscriptionProgress.Stitching)
     return SessionAssembler.assemble(transcripts, provider.id, request.model)
+      .copy(emptyPartIds = emptyParts(transcripts))
+  }
+
+  /**
+   * La cartella del lavoro e' di questo piano: se il file che lo dice manca (una cartella di una
+   * versione di prima) o parla d'altro, quello che c'e' dentro si butta. Rifare un pezzo costa una
+   * richiesta; rileggerne uno sbagliato costa un pezzo di lezione.
+   */
+  private fun prepareWorkDir(workDir: File, signature: String) {
+    val stamp = File(workDir, StoredChunks.WORK_FILE)
+    if (runCatching { stamp.readText() }.getOrNull() == signature) return
+    workDir.listFiles()?.forEach { it.deleteRecursively() }
+    runCatching { stamp.writeText(signature) }
   }
 
   /** Il computer di casa che lavora da se', per un lavoro: con cosa, e fino a quando. */
@@ -378,6 +374,7 @@ class TranscriptionRunner @Inject constructor(
     partIndex: Int,
     partCount: Int,
     workDir: File,
+    signature: String,
     mode: ComputerMode,
     request: TranscribeRequest,
     scale: ProgressScale,
@@ -395,9 +392,9 @@ class TranscriptionRunner @Inject constructor(
     )
 
     fun transcript(chunk: ChunkTranscript, language: String?): PartTranscript {
-      // Un pezzo solo, ma le stesse difese della strada a pezzi: il computer di casa sente gli
-      // stessi silenzi e ci inventa le stesse cose.
-      val stitched = TranscriptStitcher.stitch(listOf(chunk), request.prompt)
+      // Il computer ha gia' passato la lezione dal suo filtro, che l'audio lo sente: qui si tolgono
+      // i giri e i titoli di coda, non le eco del vocabolario ([TranscriptStitcher.stitchFromComputer]).
+      val stitched = TranscriptStitcher.stitchFromComputer(chunk)
       return PartTranscript(part, stitched.text, stitched.segments, language)
     }
 
@@ -420,7 +417,7 @@ class TranscriptionRunner @Inject constructor(
     }
 
     // Gia' fatta in un giro precedente: si rilegge e si va avanti.
-    readStored(stored)?.let {
+    readStored(stored, spec, signature)?.let {
       finished(1)
       return shown(transcript(it, request.language))
     }
@@ -483,8 +480,9 @@ class TranscriptionRunner @Inject constructor(
       mode.ownerOnly = true
       return null
     } catch (silent: TranscriptionError.NoSpeech) {
-      // Come sulla strada di sempre: una parte muta e' una parte vuota, non una lezione fallita.
-      writeStored(stored, ChunkTranscript(spec, emptyList()))
+      // Come sulla strada di sempre: una parte muta e' una parte vuota, non una lezione fallita. Ma
+      // non si mette da parte: un vuoto riletto al giro dopo non chiede piu' niente a nessuno, e se
+      // il vuoto era un guasto del computer resterebbe per sempre.
       finished(1)
       return PartTranscript(part, "", emptyList(), null)
     }
@@ -503,7 +501,8 @@ class TranscriptionRunner @Inject constructor(
     }
 
     val chunk = ChunkTranscript(spec, result.segments)
-    writeStored(stored, chunk)
+    // Senza segmenti non c'e' niente che valga la pena rileggere (il testo nudo non si salva).
+    if (chunk.segments.isNotEmpty()) writeStored(stored, chunk, signature)
     finished(result.serverChunks ?: 1)
     // Un server che risponde col solo testo, senza segmenti: mezzo risultato vale piu' di niente.
     // Solo senza segmenti, pero': se c'erano e le difese li hanno tolti tutti, il testo del server
@@ -520,6 +519,7 @@ class TranscriptionRunner @Inject constructor(
     partIndex: Int,
     partCount: Int,
     workDir: File,
+    signature: String,
     provider: TranscriptionProvider,
     request: TranscribeRequest,
     chunkMinutes: Int,
@@ -604,7 +604,7 @@ class TranscriptionRunner @Inject constructor(
       val chunkIndex = spec.index + 1
 
       // Gia' fatto in un giro precedente: si rilegge e si va avanti.
-      readStoredChunk(workDir, spec)?.let {
+      readStoredChunk(workDir, spec, signature)?.let {
         chunkTranscripts += it
         finished(chunkIndex, chunkCount)
         return@forEach
@@ -626,7 +626,7 @@ class TranscriptionRunner @Inject constructor(
         val chunk = ChunkTranscript(spec, segments)
         // Prima su disco, poi in memoria: un processo ucciso fra le due cose deve poter ripartire
         // da qui, non dal pezzo precedente.
-        writeStoredChunk(workDir, chunk)
+        writeStoredChunk(workDir, chunk, signature)
         chunkTranscripts += chunk
       } finally {
         encoded.file.delete()
@@ -650,17 +650,10 @@ class TranscriptionRunner @Inject constructor(
   ): ChunkPlan {
     val planFile = File(workDir, "plan.json")
     if (pcm.exists() && pcm.length() > 0 && planFile.exists()) {
-      runCatching { json.decodeFromString<List<StoredChunk>>(planFile.readText()) }
-        .getOrNull()
-        ?.takeIf { it.isNotEmpty() }
-        ?.let { stored ->
-          onProgress(1f)
-          return ChunkPlan(
-            chunks = stored.map { ChunkSpec(it.index, it.startMs, it.endMs) },
-            overlapMs = ChunkPlanner.DEFAULT_OVERLAP_MS,
-            totalDurationMs = stored.last().endMs,
-          )
-        }
+      runCatching { planFile.readText() }.getOrNull()?.let(StoredChunks::decodePlan)?.let { stored ->
+        onProgress(1f)
+        return ChunkPlan(chunks = stored, overlapMs = ChunkPlanner.DEFAULT_OVERLAP_MS, totalDurationMs = stored.last().endMs)
+      }
     }
 
     val decoded = PcmDecoder.decodeToPcm(source, pcm, onProgress)
@@ -670,9 +663,7 @@ class TranscriptionRunner @Inject constructor(
       frameMs = decoded.frameMs,
       pieces = piecesFor(totalMs),
     )
-    planFile.writeText(
-      json.encodeToString(plan.chunks.map { StoredChunk(it.index, it.startMs, it.endMs, emptyList()) }),
-    )
+    planFile.writeText(StoredChunks.encodePlan(plan.chunks))
     return plan
   }
 
@@ -741,50 +732,25 @@ class TranscriptionRunner @Inject constructor(
    */
   private fun computerFile(workDir: File) = File(workDir, "computer.json")
 
-  private fun readStoredChunk(workDir: File, spec: ChunkSpec): ChunkTranscript? =
-    readStored(chunkFile(workDir, spec.index))
+  /** Il pezzo gia' fatto in un giro precedente, se e' proprio questo pezzo di questo piano. */
+  private fun readStoredChunk(workDir: File, spec: ChunkSpec, signature: String): ChunkTranscript? =
+    readStored(chunkFile(workDir, spec.index), spec, signature)
 
-  private fun readStored(file: File): ChunkTranscript? {
+  private fun readStored(file: File, spec: ChunkSpec, signature: String): ChunkTranscript? {
     if (!file.exists()) return null
-    return runCatching {
-      val stored = json.decodeFromString<StoredChunk>(file.readText())
-      ChunkTranscript(
-        spec = ChunkSpec(stored.index, stored.startMs, stored.endMs),
-        segments = stored.segments.map { segment ->
-          RawSegment(
-            startMs = segment.startMs,
-            endMs = segment.endMs,
-            text = segment.text,
-            noSpeechProb = segment.noSpeechProb,
-            avgLogProb = segment.avgLogProb,
-            words = segment.words.map { RawWord(it.startMs, it.endMs, it.text) },
-            speaker = segment.speaker,
-          )
-        },
-      )
-    }.getOrNull()
+    val text = runCatching { file.readText() }.getOrNull() ?: return null
+    // Di un altro piano (o di una versione che non lo scriveva): si butta, e il pezzo si rifa'.
+    return StoredChunks.decode(text, spec, signature) ?: run {
+      file.delete()
+      null
+    }
   }
 
-  private fun writeStoredChunk(workDir: File, chunk: ChunkTranscript) = writeStored(chunkFile(workDir, chunk.spec.index), chunk)
+  private fun writeStoredChunk(workDir: File, chunk: ChunkTranscript, signature: String) =
+    writeStored(chunkFile(workDir, chunk.spec.index), chunk, signature)
 
-  private fun writeStored(file: File, chunk: ChunkTranscript) {
-    val stored = StoredChunk(
-      index = chunk.spec.index,
-      startMs = chunk.spec.startMs,
-      endMs = chunk.spec.endMs,
-      segments = chunk.segments.map { segment ->
-        StoredSegment(
-          startMs = segment.startMs,
-          endMs = segment.endMs,
-          text = segment.text,
-          noSpeechProb = segment.noSpeechProb,
-          avgLogProb = segment.avgLogProb,
-          words = segment.words.map { StoredWord(it.startMs, it.endMs, it.text) },
-          speaker = segment.speaker,
-        )
-      },
-    )
-    runCatching { file.writeText(json.encodeToString(stored)) }
+  private fun writeStored(file: File, chunk: ChunkTranscript, signature: String) {
+    runCatching { file.writeText(StoredChunks.encode(chunk, signature)) }
   }
 
   /** Butta tutto quello che il lavoro aveva lasciato in giro: si chiama quando finisce, in bene o in male. */
@@ -794,6 +760,24 @@ class TranscriptionRunner @Inject constructor(
 
   companion object {
     const val MAX_ATTEMPTS = 5
+
+    /**
+     * Sotto questa durata una registrazione tornata muta e' partita per sbaglio (una tasca, un
+     * «registra» toccato due volte): non vale un avviso. Sopra, in mezzo a parti che parlano, e' un
+     * buco da dire.
+     */
+    const val EMPTY_PART_NOTICE_MS = 30_000L
+
+    /**
+     * Le parti con dell'audio che sono tornate senza parole, quando le altre ne hanno. Una durata
+     * sconosciuta (0: una riga arrivata dal sync senza metadati) conta: meglio un avviso di troppo.
+     */
+    fun emptyParts(transcripts: List<PartTranscript>): List<String> {
+      if (transcripts.all { it.isEmpty }) return emptyList()
+      return transcripts
+        .filter { it.isEmpty && (it.part.durationMs <= 0 || it.part.durationMs >= EMPTY_PART_NOTICE_MS) }
+        .map { it.part.id }
+    }
     const val BASE_BACKOFF_MS = 2_000L
     const val MAX_BACKOFF_MS = 32_000L
 

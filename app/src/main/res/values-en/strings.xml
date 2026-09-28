@@ -49,6 +49,19 @@
   </plurals>
   <string name="note_transcribed">Transcribed</string>
   <string name="jobs_retry_failed">Retry all failed</string>
+  <string name="holes_offer_eyebrow">Gap fix</string>
+  <plurals name="holes_offer_title">
+    <item quantity="one">%1$d lesson transcribed before the gap fix</item>
+    <item quantity="other">%1$d lessons transcribed before the gap fix</item>
+  </plurals>
+  <string name="holes_offer_detail">%1$s of audio. The home computer no longer drops stretches of speech: transcribing them again fills the gaps.</string>
+  <string name="holes_offer_later">Not now</string>
+  <plurals name="holes_confirm_title">
+    <item quantity="one">Transcribe %1$d lesson again?</item>
+    <item quantity="other">Transcribe %1$d lessons again?</item>
+  </plurals>
+  <string name="holes_confirm_message">%1$s of audio, redone by the home computer, never by Groq. The current text stays until the new one arrives; the cleaned-up versions go with it.</string>
+  <string name="holes_confirm_message_named">%1$s of audio, redone by the home computer (%2$s), never by Groq. The current text stays until the new one arrives; the cleaned-up versions go with it.</string>
   <string name="action_rename">Rename</string>
   <string name="action_import">Import</string>
   <string name="action_export">Export</string>
@@ -555,6 +568,11 @@
   <plurals name="session_partial_message">
     <item quantity="one">One recording has not been transcribed yet. Transcribe the session again to get all of it.</item>
     <item quantity="other">%d recordings have not been transcribed yet. Transcribe the session again to get all of it.</item>
+  </plurals>
+  <string name="session_empty_part_title">A recording came back without text</string>
+  <plurals name="session_empty_part_message">
+    <item quantity="one">“%2$s” came back without a single word, while the other recordings have their text. If there is speech in it, transcribe the session again.</item>
+    <item quantity="other">%1$d recordings came back without a single word, while the others have their text. If there is speech in them, transcribe the session again.</item>
   </plurals>
   <string name="session_no_audio_title">No recording</string>
   <string name="session_no_audio_detail">A session with no audio has nothing to play. Import a file from the note.</string>

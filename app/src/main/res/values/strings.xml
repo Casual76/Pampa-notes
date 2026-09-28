@@ -443,6 +443,20 @@
   <string name="jobs_section_finished">Finiti</string>
   <string name="jobs_clear_finished">Svuota i finiti</string>
   <string name="jobs_retry_failed">Riprova tutti i falliti</string>
+  <!-- Le lezioni trascritte dal computer di casa prima della correzione dei buchi (companion 1.0.4). -->
+  <string name="holes_offer_eyebrow">Correzione dei buchi</string>
+  <plurals name="holes_offer_title">
+    <item quantity="one">%1$d lezione trascritta prima della correzione dei buchi</item>
+    <item quantity="other">%1$d lezioni trascritte prima della correzione dei buchi</item>
+  </plurals>
+  <string name="holes_offer_detail">%1$s di audio. Il computer di casa adesso non perde più pezzi di parlato: rifarle riempie i buchi.</string>
+  <string name="holes_offer_later">Non ora</string>
+  <plurals name="holes_confirm_title">
+    <item quantity="one">Ritrascrivere %1$d lezione?</item>
+    <item quantity="other">Ritrascrivere %1$d lezioni?</item>
+  </plurals>
+  <string name="holes_confirm_message">%1$s di audio, rifatte dal computer di casa, mai da Groq. Il testo di adesso resta finché non arriva quello nuovo; le versioni ripulite se ne vanno con lui.</string>
+  <string name="holes_confirm_message_named">%1$s di audio, rifatte dal computer di casa (%2$s), mai da Groq. Il testo di adesso resta finché non arriva quello nuovo; le versioni ripulite se ne vanno con lui.</string>
   <string name="jobs_unknown_note">Nota rimossa</string>
 
   <!-- Nota: trascrizione -->
@@ -587,6 +601,12 @@
   <plurals name="session_partial_message">
     <item quantity="one">Una registrazione non è ancora trascritta. Ritrascrivi la sessione per averla tutta.</item>
     <item quantity="other">%d registrazioni non sono ancora trascritte. Ritrascrivi la sessione per averla tutta.</item>
+  </plurals>
+  <!-- Una registrazione tornata senza parole mentre le altre le hanno: una scheda quieta, non un errore. -->
+  <string name="session_empty_part_title">Una registrazione è tornata senza testo</string>
+  <plurals name="session_empty_part_message">
+    <item quantity="one">«%2$s» è tornata senza nessuna parola, mentre le altre registrazioni il testo ce l\'hanno. Se dentro si parla, ritrascrivi la sessione.</item>
+    <item quantity="other">%1$d registrazioni sono tornate senza nessuna parola, mentre le altre il testo ce l\'hanno. Se dentro si parla, ritrascrivi la sessione.</item>
   </plurals>
   <string name="session_no_audio_title">Nessuna registrazione</string>
   <string name="session_no_audio_detail">Una sessione senza audio non ha niente da far sentire. Importa un file dalla nota.</string>

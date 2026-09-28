@@ -494,6 +494,22 @@ class PampaSettingsStore(
   suspend fun setNotificationPermissionAsked() = edit { it[NotificationPermissionAsked] = true }
 
   /**
+   * Da quando il computer di casa dichiara «holes» (il companion che non perde piu' pezzi di parlato):
+   * 0 finche' non lo si e' mai visto. Le lezioni trascritte dal computer prima di questo momento si
+   * possono offrire da rifare (`RetranscribeOffer`). Si scrive una volta sola, la prima.
+   */
+  val holesSince: Flow<Long> = store.data.map { it[HolesSince] ?: 0L }
+
+  suspend fun markHolesSince(at: Long) = edit { prefs ->
+    if ((prefs[HolesSince] ?: 0L) <= 0L) prefs[HolesSince] = at
+  }
+
+  /** «Non ora» sull'offerta di ritrascrivere le lezioni di prima: non si ripropone. */
+  val holesOfferDismissed: Flow<Boolean> = store.data.map { it[HolesOfferDismissed] ?: false }
+
+  suspend fun setHolesOfferDismissed() = edit { it[HolesOfferDismissed] = true }
+
+  /**
    * I file che il computer di casa ha rifiutato, con quante volte e l'ultima quando.
    *
    * Un file che il server rifiuta sempre (troppo grande, un nome che non gli piace) veniva
@@ -661,6 +677,8 @@ class PampaSettingsStore(
     val CustomLastMaxMinutes = intPreferencesKey("custom_last_max_minutes")
     val NotificationPermissionAsked = booleanPreferencesKey("notification_permission_asked")
     val ArchiveFailures = stringSetPreferencesKey("archive_failures")
+    val HolesSince = longPreferencesKey("holes_since")
+    val HolesOfferDismissed = booleanPreferencesKey("holes_offer_dismissed")
 
     // «Solo sul computer», per dispositivo.
     val ComputerOnlyFolders = stringSetPreferencesKey("computer_only_folders")

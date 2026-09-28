@@ -341,6 +341,11 @@ class TranscriptionQueueWorker @AssistedInject constructor(
 
     val model = repository.resolveModel(provider, settings)
     val request = repository.requestFor(job.sessionId, model, settings)
+    // Cosa sa fare il computer: il provider se lo ricorda per il lavoro, quindi il runner non lo
+    // richiede. Qui serve a segnare la prima volta che dice «holes» (vedi `RetranscribeOffer`).
+    (provider as? dev.pampa.pampanotes.core.transcription.CompanionTranscription)?.let { companion ->
+      repository.noteCompanionFeatures(companion.features())
+    }
     // Annullato o tolto mentre si sceglieva il modello: non si parte. Il passaggio e' condizionato,
     // cosi' un «Annulla» che arriva proprio adesso non viene riscritto da una copia vecchia.
     if (!repository.start(job.id, JobState.PREPARING, model)) return Step.Next
@@ -403,6 +408,8 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       // La riga puo' non esserci piu' (la sessione e' stata unita a un'altra, e la riga se n'e'
       // andata con lei): il risultato e' salvato lo stesso, e lo si dice.
       repository.markDone(job.id)
+      // Una registrazione tornata muta in mezzo a parti che parlano: la sessione lo dira'.
+      repository.recordEmptyParts(job.id, result.emptyPartIds)
       runner.cleanUp(job.id)
       val transcript = saved.transcript
       val run = transcript?.let { repository.recordRun(job.copy(sessionId = saved.sessionId, model = model), startedAt, it) }

@@ -54,7 +54,11 @@ data class StitchedTranscript(
  *  2. **La sovrapposizione si risolve con il confine, non con il testo.** Due pezzi contigui si
  *     sovrappongono di qualche secondo, e in quel margine le stesse parole compaiono due volte. Il
  *     criterio e' geometrico: un segmento appartiene al pezzo nel cui intervallo cade il suo punto
- *     medio. Confrontare le stringhe avrebbe voluto dire decidere quale delle due versioni di
+ *     medio, e il confine fra due pezzi sta **a meta' della sovrapposizione** ([seam]). Prima stava
+ *     all'inizio del pezzo dopo, cioe' al taglio: ma il pezzo prima e' quello che va oltre il taglio
+ *     (vedi `ChunkPlanner`), e una frase detta a cavallo — da tre secondi prima a cinque dopo — aveva
+ *     il punto medio oltre il confine e se ne andava, mentre il pezzo dopo ne aveva sentita solo la
+ *     coda. Confrontare le stringhe avrebbe voluto dire decidere quale delle due versioni di
  *     "l'assemblea costituente" e' quella giusta, che e' una domanda senza risposta.
  *  3. **Il confine si ripulisce lo stesso.** Anche dopo il punto 2 capita che l'ultima frase di un
  *     pezzo e la prima del successivo condividano qualche parola, perche' i due modelli hanno messo
@@ -83,9 +87,10 @@ object TranscriptStitcher {
     val placed = mutableListOf<StitchedSegment>()
 
     ordered.forEachIndexed { position, chunk ->
-      // Il confine: fin dove questo pezzo ha l'ultima parola. L'ultimo arriva in fondo.
-      val upperBound = ordered.getOrNull(position + 1)?.spec?.startMs ?: Long.MAX_VALUE
-      val lowerBound = chunk.spec.startMs
+      // I confini: da dove a dove questo pezzo ha l'ultima parola. Il primo parte dal suo inizio,
+      // l'ultimo arriva in fondo; in mezzo, a meta' di ogni sovrapposizione.
+      val upperBound = ordered.getOrNull(position + 1)?.let { seam(chunk.spec, it.spec) } ?: Long.MAX_VALUE
+      val lowerBound = ordered.getOrNull(position - 1)?.let { seam(it.spec, chunk.spec) } ?: chunk.spec.startMs
 
       chunk.segments.asSequence()
         .filterNot { isHallucination(it) }
@@ -128,6 +133,25 @@ object TranscriptStitcher {
     val cleaned = removeBoundaryRepeats(filtered)
     return StitchedTranscript(text = joinIntoParagraphs(cleaned), segments = cleaned)
   }
+
+  /**
+   * Il risultato del computer di casa che lavora da se': un pezzo solo, ricucito come gli altri ma
+   * **senza togliere le eco del vocabolario**.
+   *
+   * Il computer quelle le toglie gia', e meglio: sente l'audio, e sa se «Fichte.» e' stato detto in
+   * mezzo secondo di voce o inventato sopra il silenzio. Qui c'e' solo il testo, e la regola di
+   * [HallucinationFilter.dropEchoes] toglieva anche quello che il computer aveva tenuto apposta — una
+   * risposta di una parola, se si ripeteva. I giri a vuoto e i titoli di coda restano: sono parole
+   * che non si dicono comunque, e un companion di prima non li toglieva.
+   */
+  fun stitchFromComputer(chunk: ChunkTranscript): StitchedTranscript = stitch(listOf(chunk), prompt = null)
+
+  /**
+   * Dove finisce [earlier] e comincia [later]: a meta' del tratto che hanno sentito tutti e due. Senza
+   * sovrapposizione (due pezzi che si toccano e basta) e' l'inizio del secondo, come prima.
+   */
+  fun seam(earlier: ChunkSpec, later: ChunkSpec): Long =
+    if (earlier.endMs > later.startMs) later.startMs + (earlier.endMs - later.startMs) / 2 else later.startMs
 
   /**
    * Un segmento che il modello ha prodotto dal nulla.

@@ -3,6 +3,7 @@ package dev.pampa.pampanotes.core.transcription
 import android.content.Context
 import dev.pampa.pampanotes.core.archive.ArchiveFetcher
 import dev.pampa.pampanotes.core.audio.ChunkDecision
+import dev.pampa.pampanotes.core.audio.ChunkSpec
 import dev.pampa.pampanotes.core.db.AudioPartEntity
 import dev.pampa.pampanotes.core.files.AppFiles
 import io.mockk.coVerify
@@ -453,5 +454,78 @@ class TranscriptionRunnerTest {
     // Il delegato risponde ai metodi, ma l'id e' quello di Groq: la strada e' quella di sempre.
     val result = runner.transcribeSession("job", listOf(part("a", 0)), groqLike, TranscribeRequest("m"), chunkMinutes = 10)
     assertEquals("strada di sempre", result.text)
+  }
+
+  // --- i pezzi messi da parte, e le parti tornate vuote ---
+
+  @Test
+  fun `una parte tornata muta fra parti che parlano si dice, e non si mette da parte`() = runBlocking {
+    val companion = FakeCompanion(
+      allFeatures,
+      byRef = { sha -> if (sha == "abca") throw TranscriptionError.NoSpeech("niente") else FakeCompanion.spokenResult("La seconda parla.") },
+    )
+
+    val result = runner.transcribeSession("job", listOf(archivedPart("a", 0), archivedPart("b", 1)), companion, TranscribeRequest("m"), chunkMinutes = 10)
+
+    assertEquals(listOf("a"), result.emptyPartIds)
+    // Un vuoto messo da parte sarebbe riletto al giro dopo senza chiedere piu' niente a nessuno.
+    assertEquals(false, File(files.jobDir("job"), "part-a/computer.json").exists())
+    assertEquals(true, File(files.jobDir("job"), "part-b/computer.json").exists())
+  }
+
+  @Test
+  fun `una registrazione corta tornata muta non vale un avviso`() {
+    val short = PartTranscript(part("a", 0).copy(durationMs = 4_000), "", emptyList(), null)
+    val spoken = PartTranscript(part("b", 1), "Si parla.", emptyList(), "it")
+    assertEquals(emptyList<String>(), TranscriptionRunner.emptyParts(listOf(short, spoken)))
+    val long = short.copy(part = short.part.copy(durationMs = 20 * 60_000L))
+    assertEquals(listOf("a"), TranscriptionRunner.emptyParts(listOf(long, spoken)))
+  }
+
+  @Test
+  fun `una parte gia' fatta dallo stesso piano si rilegge senza chiedere`() = runBlocking {
+    val companion = FakeCompanion(allFeatures)
+    runner.transcribeSession("job", listOf(archivedPart("a")), companion, TranscribeRequest("m"), chunkMinutes = 10)
+    runner.transcribeSession("job", listOf(archivedPart("a")), companion, TranscribeRequest("m"), chunkMinutes = 10)
+    assertEquals(1, companion.byRefCalls.size)
+  }
+
+  @Test
+  fun `i pezzi di un altro servizio nella stessa cartella non si rileggono`() = runBlocking {
+    // Lo stesso lavoro, prima con Groq (spostato poi sul computer, o riprovato): la cartella ha il
+    // piano di Groq e un risultato che al computer non appartiene.
+    val workDir = files.jobDir("job")
+    val groqPlan = StoredChunks.signature(GroqWhisperProvider.ID, groq, groqChunkMinutes = 10)
+    File(workDir, StoredChunks.WORK_FILE).writeText(groqPlan)
+    File(workDir, "part-a").mkdirs()
+    File(workDir, "part-a/computer.json").writeText(
+      StoredChunks.encode(ChunkTranscript(ChunkSpec(0, 0, 60_000), listOf(RawSegment(0, 1_000, "Vecchio."))), groqPlan),
+    )
+    val companion = FakeCompanion(allFeatures)
+
+    val result = runner.transcribeSession("job", listOf(archivedPart("a")), companion, TranscribeRequest("m"), chunkMinutes = 10)
+
+    assertEquals("dall'archivio", result.text)
+    assertEquals(1, companion.byRefCalls.size)
+  }
+
+  @Test
+  fun `dal computer le eco del vocabolario restano`() = runBlocking {
+    val companion = FakeCompanion(
+      allFeatures,
+      byRef = {
+        TranscriptResult(
+          "Chi? Fichte. Fichte.",
+          listOf(RawSegment(0, 2_000, "Chi l'ha scritta?"), RawSegment(2_500, 3_000, "Fichte."), RawSegment(3_200, 3_700, "Fichte.")),
+          "it",
+          60_000,
+        )
+      },
+    )
+
+    val result = runner.transcribeSession("job", listOf(archivedPart("a")), companion, TranscribeRequest("m", prompt = "Fichte"), chunkMinutes = 10)
+
+    // Il computer le ha tenute sentendo l'audio: la regola sul solo testo non le toglie piu'.
+    assertEquals(listOf("Chi l'ha scritta?", "Fichte.", "Fichte."), result.segments.map { it.text })
   }
 }

@@ -237,6 +237,13 @@ object CompanionFeatures {
    * lo mostra «in arrivo» invece di aspettare la fine di una lezione lunga. Vedi [RemotePartial].
    */
   const val PARTIAL = "partial"
+
+  /**
+   * Il companion che non perde piu' pezzi di parlato in mezzo alla lezione (1.0.4). Le lezioni
+   * trascritte prima si possono rifare: la prima volta che lo si vede, l'app lo segna
+   * (`PampaSettingsStore.markHolesSince`) e le offre in Lavori e nella home.
+   */
+  const val HOLES = "holes"
 }
 
 /** Come caricare un file al companion quando sa fare di piu' di un server qualsiasi. */
