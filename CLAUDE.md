@@ -932,9 +932,10 @@ l'ultimo allineamento (`"alignment": {"it": "ok"}`).
 **Il silenzio non si trascrive.** «Napoli 18h» (19,8 ore, una gita registrata di notte) tornava con
 le ore 0–3 e 13–18 tutte inventate: 407 eco del titolo mandato come vocabolario («18h 18h 18h»:
 WhisperX rilegge il prompt a ogni finestra da trenta secondi), un centinaio di «Grazie.», 78 giri a
-vuoto. Il companion ora si difende da se', su quattro fronti. Il **VAD** e' piu' severo
-(`VAD_OPTIONS`, 0,6/0,45: nelle ore mute i tratti mandati a Whisper si dimezzano, le parole dell'ora
-parlata restano le stesse); `repetition_penalty` e `no_repeat_ngram_size` sono stati provati e
+vuoto. Il companion ora si difende da se', su quattro fronti. Il **VAD** era stato reso piu'
+severo (0,6/0,45) e il 28/09 e' tornato ai valori di serie (`VAD_OPTIONS`, 0,5/0,363): su una
+lezione perdeva tratti di voce vera (vedi i buchi, piu' sotto), e nelle ore mute le frasi inventate
+le toglie comunque `drop_hallucinations`; `repetition_penalty` e `no_repeat_ngram_size` sono stati provati e
 **lasciati spenti** (`ASR_OPTIONS`): vietano al modello le ripetizioni vere — «vorrei fare festa»,
 ripetuto da chi parlava, diventava «vuoi rifare festa… vuol fa festa». La **lingua**, se l'app non la
 dice, si riconosce a maggioranza sulle tre finestre da trenta secondi piu' parlate del file

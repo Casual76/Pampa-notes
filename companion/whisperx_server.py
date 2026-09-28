@@ -1067,14 +1067,14 @@ def apply_plan(plan: dict[str, Any]) -> None:
     STATE["batch_size"] = plan["batch_size"]
 
 
-# Il VAD di WhisperX (pyannote) decide quali tratti vanno a Whisper. Coi valori di serie (0,5 per
-# aprire, 0,363 per chiudere) passava anche il rumore di fondo di una registrazione lasciata accesa:
-# «Napoli 18h», venti ore di cui dieci di stanza vuota, tornava con le ore 0–3 e 13–18 quasi tutte
-# inventate. Un po' piu' severo per aprire e per restare aperto: un tratto di voce vera supera 0,6
-# senza fatica, un fruscio no. Misurato su tre ore di quel file: nelle due di stanza vuota i tratti
-# mandati a Whisper scendono da 41 a 19 e da 23 a 8; in quella in cui si parla le parole restano le
-# stesse (1231 contro 1233). Le allucinazioni che passano lo stesso le toglie [drop_hallucinations].
-VAD_OPTIONS = {"vad_onset": 0.6, "vad_offset": 0.45}
+# Il VAD di WhisperX (pyannote) decide quali tratti vanno a Whisper. Dal 24/09 al 28/09 era piu'
+# severo (0,6 per aprire, 0,45 per restare aperto), tarato su «Napoli 18h», venti ore di cui dieci di
+# stanza vuota. Su una lezione pero' lasciava fuori tratti di voce vera: Impressionismo del 28/09,
+# 44 minuti, 19 buchi per 7 minuti col VAD severo e 14 per 4,7 con quello di serie (e piu' parole),
+# misurati con `tools/holes.py` — col modello piccolo, perche' la scheda era occupata, ma i buchi
+# erano Degas e le ballerine, non silenzio. Si torna ai valori di serie: le frasi inventate nelle ore
+# mute le toglie [drop_hallucinations], e quello che il VAD perde lo riprende [fill_holes].
+VAD_OPTIONS = {"vad_onset": 0.5, "vad_offset": 0.363}
 # Le opzioni di decodifica della pipeline a lotti (`generate_segment_batched` le passa a ctranslate2).
 # Vuote di proposito. `repetition_penalty` 1,1 con `no_repeat_ngram_size` 3 toglie i giri a vuoto, ma
 # vieta al modello di ripetere tre parole in trenta secondi anche quando le ripete chi parla: sull'ora
