@@ -2212,7 +2212,10 @@ class ServerTest(StateMixin, unittest.TestCase):
 
     def test_health_lists_the_features(self) -> None:
         data = json.loads(self.call("GET", "/health")[2])
-        self.assertEqual(set(data["features"]), {"by_ref", "archive_upload", "server_chunks", "file_meta", "prompt", "auto_chunks", "partial"})
+        self.assertEqual(
+            set(data["features"]),
+            {"by_ref", "archive_upload", "server_chunks", "file_meta", "prompt", "auto_chunks", "partial", "holes", "sdocx_index"},
+        )
 
     def test_diarize_is_a_feature_only_with_a_token_and_the_token_never_shows(self) -> None:
         server.STATE["hf_token"] = None
@@ -2249,9 +2252,23 @@ class ServerTest(StateMixin, unittest.TestCase):
         self.assertTrue(seen["existed"])
         self.assertTrue(blob.exists(), "un blob dell'archivio non si cancella mai")
         self.assertEqual((answer["source"], answer["archived"], answer["chunks"]), ("archive", True, 1))
-        # Mandato anche il file, vince il blob.
-        status, answer, seen = self.transcribe_with({"source_sha256": sha}, audio=b"altro")
+        # Mandato anche il file, e il file e' quello: vince il blob, e il temporaneo non resta.
+        before = set(Path(tempfile.gettempdir()).glob("tmp*.m4a"))
+        with self.assertLogs("pampa", level="INFO") as logs:
+            status, answer, seen = self.transcribe_with({"source_sha256": sha}, audio=data)
         self.assertEqual((status, seen["path"], answer["source"]), (200, blob, "archive"))
+        self.assertEqual(set(Path(tempfile.gettempdir()).glob("tmp*.m4a")) - before, set())
+        self.assertTrue(any(f"dall'archivio Voce 001.m4a [{sha[:8]}] ({archive.mib(len(data))})" in line for line in logs.output), logs.output)
+        # Un file diverso dallo sha: non si ignora piu' in silenzio. Si trascrive quello mandato, e lo si dice.
+        with self.assertLogs("pampa", level="INFO") as logs:
+            status, answer, seen = self.transcribe_with({"source_sha256": sha}, audio=b"altro")
+        self.assertEqual(status, 200, answer)
+        self.assertNotEqual(seen["path"], blob)
+        self.assertEqual((seen["content"], answer["source"], answer["archived"]), (b"altro", "upload", False))
+        other = hashlib.sha256(b"altro").hexdigest()
+        self.assertTrue(any("WARNING" in line and sha[:8] in line and other[:8] in line for line in logs.output), logs.output)
+        self.assertTrue(any(f"ricevuto voce.m4a [{other[:8]}]" in line for line in logs.output), logs.output)
+        self.assertFalse(seen["path"].exists(), "il temporaneo se ne va a fine lavoro")
         self.assertTrue(blob.exists())
 
     def test_missing_blob_is_a_404_the_app_understands(self) -> None:
@@ -2328,6 +2345,60 @@ class ServerTest(StateMixin, unittest.TestCase):
         )
         self.assertEqual(self.call("GET", f"/v1/files/{sha}/meta", bearer="pg_friend")[0], 401)
         self.assertEqual(self.call("GET", f"/v1/files/{'0' * 64}/meta", bearer="pt_good")[0], 404)
+
+    def store_zip(self, entries: dict[str, bytes], name: str = "nota.sdocx") -> str:
+        """Uno zip fatto qui, con queste voci, nell'archivio: torna il suo sha."""
+        import io
+        import zipfile
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as bundle:
+            for entry, data in entries.items():
+                bundle.writestr(entry, data)
+        data = buffer.getvalue()
+        sha = hashlib.sha256(data).hexdigest()
+        archive.ARCHIVE.store(sha, name, "application/sdoc", [data])
+        return sha
+
+    def test_sdocx_index_gives_the_small_entries_without_the_file(self) -> None:
+        import base64
+
+        note, media, end = "Fichte\u0000".encode("utf-16-le") * 40, b"\x79\x00\x00\x00media", b"\x01" * 148
+        audio = os.urandom(4096)
+        sha = self.store_zip({"note.note": note, "media/mediaInfo.dat": media, "end_tag.bin": end, "media/voce.m4a": audio})
+        status, _, raw = self.call("GET", f"/v1/files/{sha}/sdocx", bearer="pt_good")
+        self.assertEqual(status, 200, raw)
+        data = json.loads(raw)
+        self.assertEqual(data["sha256"], sha)
+        self.assertEqual(
+            {(entry["name"], entry["size"]) for entry in data["entries"]},
+            {("note.note", len(note)), ("media/mediaInfo.dat", len(media)), ("end_tag.bin", len(end)), ("media/voce.m4a", len(audio))},
+        )
+        self.assertEqual(base64.b64decode(data["note_b64"]), note)
+        self.assertEqual(base64.b64decode(data["media_info_b64"]), media)
+        self.assertEqual(base64.b64decode(data["end_tag_b64"]), end)
+        self.assertLess(len(raw), len(audio), "le registrazioni non viaggiano: solo il loro nome e la misura")
+        # Senza mediaInfo.dat: null, non un errore.
+        bare = self.store_zip({"note.note": b"solo il testo"})
+        data = json.loads(self.call("GET", f"/v1/files/{bare}/sdocx", bearer="pt_good")[2])
+        self.assertEqual((data["media_info_b64"], data["end_tag_b64"]), (None, None))
+        # Solo il proprietario; uno sha che non c'e' e' un 404.
+        self.assertEqual(self.call("GET", f"/v1/files/{sha}/sdocx", bearer="pg_friend")[0], 401)
+        self.assertEqual(self.call("GET", f"/v1/files/{'0' * 64}/sdocx", bearer="pt_good")[0], 404)
+
+    def test_sdocx_index_refuses_what_is_not_a_note(self) -> None:
+        docx = self.store_zip({"word/document.xml": b"<w:document/>"}, name="tema.docx")
+        self.assertEqual(self.call("GET", f"/v1/files/{docx}/sdocx", bearer="pt_good")[0], 415)
+        data = b"non sono uno zip" * 10
+        plain = hashlib.sha256(data).hexdigest()
+        archive.ARCHIVE.store(plain, "voce.m4a", "audio/mp4", [data])
+        status, _, raw = self.call("GET", f"/v1/files/{plain}/sdocx", bearer="pt_good")
+        self.assertEqual((status, json.loads(raw)["detail"]), (415, "not_sdocx"))
+        # Una note.note oltre il tetto: 413, senza leggerla.
+        big = self.store_zip({"note.note": b"x" * 64, "end_tag.bin": b"\x00" * 8})
+        with mock.patch.object(archive, "SDOCX_ENTRY_MAX", 32):
+            self.assertEqual(self.call("GET", f"/v1/files/{big}/sdocx", bearer="pt_good")[0], 413)
+        self.assertEqual(self.call("GET", f"/v1/files/{big}/sdocx", bearer="pt_good")[0], 200)
 
     def use_config(self, stored: dict) -> Path:
         """Un config.json temporaneo, letto e messo in uso come farebbe `main`, su una scheda da 12 GB finta."""
@@ -3719,3 +3790,338 @@ class DiarizationTest(StateMixin, unittest.TestCase):
             self.assertEqual(server.STATE["hf_token"], "hf_ambiente")
             server.configure(dict(settings, archive_root=root, hf_token=" hf_file "))
             self.assertEqual(server.STATE["hf_token"], "hf_file")
+
+
+# --- i buchi: voce vera senza testo sopra -------------------------------------------------------------
+
+
+HOLE_FRAME = server.FRAME_MS / 1000
+
+
+def voiced_energies(total_s: float, silent: tuple[tuple[float, float], ...] = ()) -> "numpy.ndarray":
+    """Energie da voce (0,1) dappertutto tranne i tratti [silent], a 0,001: 40 dB sotto."""
+    import numpy
+
+    energies = numpy.full(int(round(total_s / HOLE_FRAME)), 0.1, dtype=numpy.float32)
+    for start, end in silent:
+        energies[int(round(start / HOLE_FRAME)) : int(round(end / HOLE_FRAME))] = 0.001
+    return energies
+
+
+def spoken(start: int, end: int, skip: tuple[tuple[int, int], ...] = (), length: float = 4.0) -> list[dict]:
+    """Un segmento di [length] secondi ogni cinque fra [start] e [end], tranne dove cominciano dentro [skip]."""
+    return [
+        seg(float(s), s + length, f"frase detta al secondo {s}")
+        for s in range(start, end, 5)
+        if not any(low <= s < high for low, high in skip)
+    ]
+
+
+class SpeechHolesTest(unittest.TestCase):
+    """[speech_holes]: dove c'e' voce e nessun testo, e solo li'."""
+
+    def test_a_covered_lecture_has_no_holes(self) -> None:
+        # Cinque minuti di voce tutti coperti, poi un minuto di silenzio (che non e' un buco).
+        energies = voiced_energies(360, silent=((300, 360),))
+        self.assertEqual(server.speech_holes(spoken(0, 300), energies, HOLE_FRAME, 360.0), [])
+
+    def test_twenty_seconds_of_uncovered_speech_are_one_hole(self) -> None:
+        energies = voiced_energies(360, silent=((300, 360),))
+        holes = server.speech_holes(spoken(0, 300, skip=((100, 120),)), energies, HOLE_FRAME, 360.0)
+        # Il testo copre fino a 99 (+1) e riprende a 120 (-1).
+        self.assertEqual(holes, [(100.0, 119.0, 1.0)])
+
+    def test_silence_and_short_gaps_are_not_holes(self) -> None:
+        energies = voiced_energies(360, silent=((200, 230), (300, 360)))
+        segments = spoken(0, 300, skip=((100, 105), (200, 230)))
+        self.assertEqual(server.speech_holes(segments, energies, HOLE_FRAME, 360.0), [], "6 s di pausa, e 30 s di silenzio")
+        # Una soglia piu' bassa vede la pausa: e' la durata minima a tenerla fuori, non il caso.
+        self.assertEqual(len(server.speech_holes(segments, energies, HOLE_FRAME, 360.0, min_hole_s=3.0)), 1)
+
+    def test_a_file_without_a_voice_has_no_holes(self) -> None:
+        import numpy
+
+        flat = numpy.full(int(360 / HOLE_FRAME), 0.05, dtype=numpy.float32)
+        self.assertEqual(server.speech_holes([], flat, HOLE_FRAME, 360.0), [], "senza un livello della voce non si giudica")
+        self.assertEqual(server.speech_holes([], None, HOLE_FRAME, 360.0), [])
+
+    def test_words_count_as_coverage(self) -> None:
+        energies = voiced_energies(360, silent=((300, 360),))
+        segments = spoken(0, 300, skip=((100, 120),))
+        # Un segmento coi tempi rotti, ma con le parole allineate sopra i venti secondi.
+        broken = {"start": None, "end": float("nan"), "text": "parole con i loro tempi"}
+        self.assertEqual(len(server.speech_holes([*segments, broken], energies, HOLE_FRAME, 360.0)), 1)
+        broken["words"] = [{"word": "parola", "start": float(t), "end": t + 0.8} for t in range(100, 120)]
+        self.assertEqual(server.speech_holes([*segments, broken], energies, HOLE_FRAME, 360.0), [])
+
+    def test_clock_reads_like_the_app(self) -> None:
+        self.assertEqual(server.clock(2470), "41:10")
+        self.assertEqual(server.clock(4925), "1:22:05")
+        self.assertEqual(server.clock(-3), "00:00")
+
+
+class VadParamsTest(unittest.TestCase):
+    class VadModel(FakeModel):
+        """Come la pipeline di WhisperX: le soglie del VAD in `_vad_params`, `chunk_size` in `transcribe`."""
+
+        def __init__(self, error: BaseException | None = None) -> None:
+            super().__init__(fits=99, error=error)
+            self._vad_params = {"chunk_size": 30, "vad_onset": 0.6, "vad_offset": 0.45}
+            self.seen: list[tuple[dict, int]] = []
+
+        def transcribe(self, audio, batch_size, language, progress_callback=None, chunk_size=30) -> dict:  # noqa: ANN001
+            self.seen.append((dict(self._vad_params), chunk_size))
+            return super().transcribe(audio, batch_size, language, progress_callback)
+
+    def test_the_fill_settings_last_one_call(self) -> None:
+        model = self.VadModel()
+        server.run_job(None, "it", FakeEngine(model), 16, "cuda", vad=server.FILL_VAD, chunk_size=server.FILL_CHUNK_S)
+        self.assertEqual(model.seen, [({"chunk_size": 30, "vad_onset": 0.3, "vad_offset": 0.2}, 15)])
+        self.assertEqual(model._vad_params, {"chunk_size": 30, "vad_onset": 0.6, "vad_offset": 0.45})
+        server.run_job(None, "it", FakeEngine(model), 16, "cuda")
+        self.assertEqual(model.seen[-1], ({"chunk_size": 30, "vad_onset": 0.6, "vad_offset": 0.45}, 30))
+
+    def test_restored_even_when_the_call_fails(self) -> None:
+        model = self.VadModel(error=ValueError("file rotto"))
+        with self.assertRaises(ValueError):
+            server.run_job(None, "it", FakeEngine(model), 16, "cuda", vad={"vad_onset": 0.1})
+        self.assertEqual(model.seen[0][0]["vad_onset"], 0.1)
+        self.assertEqual(model._vad_params["vad_onset"], 0.6, "la lezione dopo trova le soglie di sempre")
+        with self.assertRaises(RuntimeError), server.vad_params(model, {"vad_offset": 0.1}):
+            self.assertEqual(model._vad_params["vad_offset"], 0.1)
+            raise RuntimeError("dentro")
+        self.assertEqual(model._vad_params["vad_offset"], 0.45)
+
+    def test_a_model_without_vad_params_is_left_alone(self) -> None:
+        plain = FakeModel(fits=99)
+        with server.vad_params(plain, server.FILL_VAD):
+            self.assertFalse(hasattr(plain, "_vad_params"))
+
+    def test_the_detail_says_what_is_being_done(self) -> None:
+        progress = RecordingProgress()
+        server.run_job(None, "it", FakeEngine(FakeModel(fits=0)), 2, "cuda", progress, detail="buchi 1/3")
+        self.assertIn(("transcribing", "buchi 1/3"), progress.trail)
+        self.assertIn(("transcribing", "buchi 1/3 · cpu"), progress.trail)
+        self.assertIn(("aligning", "buchi 1/3"), progress.trail)
+
+
+class FillHolesTest(StateMixin, unittest.TestCase):
+    """[fill_holes] con un Whisper finto: dove va il testo ritrovato, e cosa non ci va."""
+
+    def lesson(self):  # noqa: ANN201
+        """Dieci minuti a RATE: voce fino a 8:00 (con 3 s quieti a 2:00), poi silenzio. Buchi a 1:40 e 3:20."""
+        import numpy
+
+        audio = numpy.full(600 * RATE, 0.1, dtype=numpy.float32)
+        audio[480 * RATE :] = 0.001
+        audio[120 * RATE : 123 * RATE] = 0.001
+        segments = spoken(0, 480, skip=((100, 130), (200, 215)))
+        return server.LoadedAudio(audio, RATE), segments
+
+    def fake(self, calls: list[dict], on_call=None):  # noqa: ANN001, ANN201
+        def fake_run_job(piece, language, engine, batch_size, device, progress=None, prompt=None, vad=None, chunk_size=None, detail=None):  # noqa: ANN001
+            length = len(piece) / RATE
+            calls.append({"length": length, "vad": vad, "chunk_size": chunk_size, "detail": detail, "prompt": prompt})
+            if on_call is not None:
+                on_call(progress, length)
+            if length > 20:  # il buco da 1:40, decodificato da 1:39 a 2:10
+                segments = [
+                    {"start": 0.0, "end": 0.9, "text": "coda della frase prima"},  # nel margine: c'era gia'
+                    {"start": 1.5, "end": 12.0, "text": "e allora Fichte dice che l'io pone se stesso",
+                     "words": [{"word": "e", "start": 1.5, "end": 1.7, "score": 0.9}]},
+                    {"start": 21.6, "end": 22.4, "text": "Grazie."},  # sopra i tre secondi quieti
+                    {"start": 25.0, "end": 29.5, "text": "e non l'oggetto"},
+                ]
+            else:  # quello da 3:20, da 3:19 a 3:35
+                segments = [{"start": 2.0, "end": 14.0, "text": "il non io si oppone all'io"}]
+            return {"segments": segments, "language": language, "device_used": device, "batch_size": batch_size, "alignment": "ok"}
+
+        return fake_run_job
+
+    def fill(self, fake_run_job, progress=None):  # noqa: ANN001, ANN201
+        source, segments = self.lesson()
+        with mock.patch.object(server, "run_job", fake_run_job):
+            return server.fill_holes(source, segments, "it", FakeEngine(None), 16, "cuda", progress or RecordingProgress(), prompt="Fichte")
+
+    def test_found_text_lands_in_its_hole_in_order(self) -> None:
+        source, segments = self.lesson()
+        self.assertEqual(
+            [hole[:2] for hole in server.speech_holes(segments, source.energies(), HOLE_FRAME, 600.0)],
+            [(100.0, 129.0), (200.0, 214.0)],
+        )
+        calls: list[dict] = []
+        merged, stats = self.fill(self.fake(calls))
+        # Dal piu' lungo, con un secondo in piu' per parte, VAD largo, finestre corte e senza vocabolario.
+        self.assertEqual([round(call["length"]) for call in calls], [31, 16])
+        self.assertEqual(
+            {(str(call["vad"]), call["chunk_size"], call["prompt"]) for call in calls},
+            {(str(server.FILL_VAD), server.FILL_CHUNK_S, None)},
+        )
+        self.assertEqual([call["detail"] for call in calls], ["buchi 1/2", "buchi 2/2"])
+        texts = [segment["text"] for segment in merged]
+        self.assertNotIn("coda della frase prima", texts, "il margine non ripete quello che c'era")
+        self.assertNotIn("Grazie.", texts, "una frase del silenzio, sopra un audio quieto")
+        found = {segment["text"]: segment for segment in merged if not segment["text"].startswith("frase detta")}
+        fichte, oggetto, non_io = "e allora Fichte dice che l'io pone se stesso", "e non l'oggetto", "il non io si oppone all'io"
+        self.assertEqual(set(found), {fichte, oggetto, non_io})
+        self.assertEqual((found[fichte]["start"], found[non_io]["end"]), (100.5, 213.0))
+        self.assertEqual(found[fichte]["words"][0]["start"], 100.5)
+        starts = [segment["start"] for segment in merged]
+        self.assertEqual(starts, sorted(starts))
+        self.assertTrue(all(b["start"] >= a["end"] for a, b in zip(merged, merged[1:])), "niente sovrapposizioni")
+        words = sum(len(server.normalized_words(text)) for text in found)
+        self.assertEqual(stats, {"found": 2, "filled": 2, "seconds": 43.0, "words": words})
+
+    def test_cancelling_stops_between_holes(self) -> None:
+        calls: list[dict] = []
+        with self.assertRaises(server.JobCancelled):
+            self.fill(self.fake(calls, on_call=lambda progress, _length: progress.cancel()))
+        self.assertEqual(len(calls), 1)
+
+    def test_the_cap_stops_the_filling(self) -> None:
+        calls: list[dict] = []
+        # Un tetto da trenta secondi su dieci minuti: il buco da 29 ci sta, quello da 14 dopo no.
+        with mock.patch.object(server, "FILL_MAX_SHARE", 0.05), self.assertLogs("pampa", level="INFO") as logs:
+            merged, stats = self.fill(self.fake(calls))
+        self.assertEqual([round(call["length"]) for call in calls], [31])
+        self.assertEqual((stats["found"], stats["filled"], stats["seconds"]), (2, 1, 29.0))
+        self.assertTrue(any("oltre il tetto" in line for line in logs.output), logs.output)
+        self.assertNotIn("il non io si oppone all'io", [segment["text"] for segment in merged])
+
+    def test_a_hole_that_fails_stays_empty_and_the_rest_goes_on(self) -> None:
+        calls: list[dict] = []
+
+        def boom(_progress, length):  # noqa: ANN001
+            if length > 20:
+                raise ValueError("ffmpeg ha perso il file")
+
+        with self.assertLogs("pampa", level="WARNING"):
+            merged, stats = self.fill(self.fake(calls, on_call=boom))
+        self.assertEqual((stats["found"], stats["filled"]), (2, 1))
+        self.assertIn("il non io si oppone all'io", [segment["text"] for segment in merged])
+
+    def test_no_holes_no_calls(self) -> None:
+        source, _ = self.lesson()
+        calls: list[dict] = []
+        segments = spoken(0, 480)
+        with mock.patch.object(server, "run_job", self.fake(calls)):
+            merged, stats = server.fill_holes(source, segments, "it", FakeEngine(None), 16, "cuda", RecordingProgress())
+        self.assertEqual((calls, merged, stats["found"]), ([], segments, 0))
+
+    def test_a_hole_in_the_second_piece_lands_at_its_place_and_in_the_partial(self) -> None:
+        import numpy
+
+        # 45 minuti con un tetto di 30: due pezzi. Si parla otto secondi ogni dieci.
+        audio = numpy.full(45 * 60 * RATE, 0.1, dtype=numpy.float32)
+        for t in range(0, 45 * 60, 10):
+            audio[(t + 8) * RATE : (t + 10) * RATE] = 0.001
+        mains: list[float] = []
+        fills: list[float] = []
+
+        def fake_run_job(piece, language, engine, batch_size, device, progress=None, prompt=None, vad=None, chunk_size=None, detail=None):  # noqa: ANN001
+            length = len(piece) / RATE
+            if vad is not None:
+                fills.append(length)
+                segments = [{"start": 1.0, "end": length - 1.0, "text": "testo ritrovato nel buco",
+                             "words": [{"word": "testo", "start": 1.0, "end": 1.5, "score": 0.9}]}]
+            else:
+                mains.append(length)
+                # Il secondo pezzo perde i quaranta secondi da 5:00 a 5:40 (nel tempo del pezzo).
+                skip = (300, 340) if len(mains) == 2 else (-1, -1)
+                segments = [
+                    seg(float(s), s + 8.0, f"parla il professore {s}")
+                    for s in range(0, int(length) - 4, 10) if not skip[0] <= s < skip[1]
+                ]
+            return {"segments": segments, "language": "it", "device_used": device, "batch_size": batch_size, "alignment": "ok"}
+
+        server.STATE.update(device="cuda", batch_size=16)
+        progress = RecordingProgress()
+        with mock.patch.object(server, "run_job", fake_run_job), self.assertLogs("pampa", level="INFO") as logs:
+            result = server.transcribe_audio(audio, RATE, "it", progress, FakeEngine(None), max_minutes=30)
+        self.assertEqual(result["chunks"], 2)
+        self.assertEqual(len(fills), 1, "il primo pezzo non ha buchi")
+        offset = mains[0]
+        found = [segment for segment in result["segments"] if segment["text"] == "testo ritrovato nel buco"]
+        self.assertEqual(len(found), 1)
+        # Il testo copre fino a 4:58 (+1) e riprende a 5:40 (-1): il buco e' 4:59–5:39 del secondo pezzo.
+        self.assertAlmostEqual(found[0]["start"], offset + 299.0, places=6)
+        self.assertAlmostEqual(found[0]["end"], offset + 339.0, places=6)
+        self.assertAlmostEqual(found[0]["words"][0]["start"], offset + 299.0, places=6)
+        # Anche nel pezzo provvisorio: chi guarda la lezione arrivare lo vede subito.
+        self.assertIn("testo ritrovato nel buco", [segment["text"] for segment in progress.partial(1)["segments"]])
+        self.assertEqual(result["holes"], {"found": 1, "filled": 1, "seconds": 40.0, "words": 4})
+        self.assertTrue(any("buchi riempiti: 1 di 1" in line for line in logs.output), logs.output)
+
+
+class SizesInTheLogTest(unittest.TestCase):
+    def test_one_unit_everywhere(self) -> None:
+        self.assertEqual(archive.mib(12.3 * 1024 * 1024), "12.3 MiB")
+        self.assertEqual(archive.mib(0), "0.0 MiB")
+        self.assertEqual(archive.gib(3 * 1024**3), "3.0 GiB")
+        with tempfile.TemporaryDirectory() as root:
+            store = archive.Archive(Path(root))
+            data = b"x" * (3 * 1024 * 1024)
+            try:
+                with self.assertLogs("pampa", level="INFO") as logs:
+                    store.store(hashlib.sha256(data).hexdigest(), "voce.m4a", "audio/mp4", [data])
+            finally:
+                store.db.close()
+        self.assertTrue(any("archiviato voce.m4a (3.0 MiB)" in line for line in logs.output), logs.output)
+
+
+class HolesToolTest(unittest.TestCase):
+    """`tools/holes.py` senza modelli: trova il file, e non parte col companion acceso."""
+
+    @staticmethod
+    def tool():  # noqa: ANN205
+        spec = importlib.util.spec_from_file_location("holes_tool", HERE / "tools" / "holes.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_a_prefix_finds_the_blob_read_only(self) -> None:
+        tool = self.tool()
+        with tempfile.TemporaryDirectory() as root:
+            store = archive.Archive(Path(root))
+            data = b"una lezione nell'archivio" * 40
+            sha = hashlib.sha256(data).hexdigest()
+            store.store(sha, "Voce 003.m4a", "audio/mp4", [data])
+            store.db.close()
+            blob = store.path_for(sha, "m4a")
+            self.assertEqual(tool.resolve(sha[:8], Path(root)), (blob, "Voce 003.m4a"))
+            other = ("0" if sha[0] != "0" else "1") + sha[1:8]
+            with self.assertRaises(SystemExit):
+                tool.resolve(other, Path(root))
+            with self.assertRaises(SystemExit):
+                tool.resolve("non-uno-sha", Path(root))
+            self.assertEqual(tool.resolve(str(blob), Path(root))[0], blob, "un percorso vale com'e'")
+
+    def test_it_refuses_while_the_companion_answers(self) -> None:
+        tool = self.tool()
+        with open(os.devnull, "w", encoding="utf-8") as quiet, mock.patch.object(sys, "stderr", quiet), \
+                mock.patch.object(tool, "resolve") as resolve:
+            with mock.patch.object(tool, "companion_running", return_value=True):
+                self.assertEqual(tool.main(["abcd1234"]), 3)
+            self.assertEqual(tool.main(["abcd1234", "--configs", "current,magia"]), 2, "una prova che non esiste")
+        resolve.assert_not_called()
+
+    def test_health_is_what_says_the_companion_is_on(self) -> None:
+        tool = self.tool()
+
+        class Answer(BaseHTTPRequestHandler):
+            def log_message(self, *_: object) -> None:
+                pass
+
+            def do_GET(self) -> None:  # noqa: N802
+                self.send_response(503)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), Answer)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        try:
+            self.assertTrue(tool.companion_running(f"http://127.0.0.1:{httpd.server_address[1]}/health"), "anche un 503 e' qualcuno")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+        self.assertFalse(tool.companion_running(f"http://127.0.0.1:{free_port()}/health", timeout_s=1.0))

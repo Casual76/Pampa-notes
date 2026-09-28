@@ -1216,6 +1216,22 @@ non lo calcola, e `isHallucination` decide solo coi due numeri veri. Se le difes
 segmenti di una parte, il `text` del server non si rimette al loro posto: sarebbe l'allucinazione
 stessa. Le trascrizioni gia' salvate restano come sono; «Ritrascrivi» le ripulisce.
 
+**I buchi, il contrario** (companion 1.0.4). Lezioni tornate con tratti lunghi di parlato normale
+senza testo: il file era quello giusto e `drop_hallucinations` toglieva due o quattro segmenti. I
+sospetti sono il VAD reso severo per «Napoli 18h» e la decodifica a lotti di WhisperX (una passata per
+finestra fusa fino a 30 s, col vocabolario davanti, che su una finestra fitta puo' dare una frase
+corta). Il companion ora li trova dall'audio (`speech_holes`: almeno 10 s non coperti da segmenti o
+parole, allargati di un secondo, in cui meta' dei secondi e' voce — sopra il fondo come in
+`sound_levels` ed entro 20 dB dalla voce del file) e li ritrascrive da se' per pezzo, prima dei pezzi
+provvisori (`fill_holes`: VAD 0,3/0,2 con `vad_params`, finestre da 15 s, niente vocabolario, solo il
+testo col centro nel buco, di nuovo `drop_hallucinations`, al massimo un quarto del pezzo); la
+risposta dice `holes` e `/health` dichiara `holes`. Chi li crea lo dice `companion/tools/holes.py`
+(col companion fermo: rifiuta se `/health` risponde), che trascrive lo stesso file con le manopole
+cambiate una per volta. Col file mandato **e** lo sha di un blob, il companion ne fa l'impronta e,
+se non torna, trascrive il file mandato invece di ignorarlo; il registro scrive `[<sha[:8]>]` e i
+pesi sempre in MiB (`archive.mib`). `GET /v1/files/<sha>/sdocx` (`sdocx_index`) da' `note.note`,
+`mediaInfo.dat` ed `end_tag.bin` di un `.sdocx` che sta solo sul PC, senza scaricarlo.
+
 Il raffinamento passa da `ChatProvider.complete` di `engine-ai` su Groq. Non è un assistente: è un
 passaggio che toglie intercalari e rimette la punteggiatura senza cambiare il contenuto.
 

@@ -23,6 +23,7 @@ questo archivio esiste per evitare.
 from __future__ import annotations
 
 import asyncio
+import base64
 import concurrent.futures
 import contextlib
 import datetime
@@ -247,8 +248,24 @@ class Archive:
                 (sha256, name, mime, ext, size, time.time()),
             )
             self.db.commit()
-        log.info("archiviato %s (%.1f MB) come %s", name, size / 1_000_000, target.name)
+        log.info("archiviato %s (%s) come %s", name, mib(size), target.name)
         return {"sha256": sha256, "name": name, "mime": mime, "ext": ext, "size": size, "path": target}
+
+
+def mib(size: int | float) -> str:
+    """
+    Una misura in byte per il registro, sempre nella stessa unita': «12.3 MiB».
+
+    L'archivio scriveva megabyte decimali e la trascrizione, per lo stesso file, «MB» divisi per
+    1024²: due righe una sotto l'altra con due numeri diversi per la stessa registrazione, e chi le
+    confrontava per capire se il companion avesse trascritto il file giusto pensava di no.
+    """
+    return f"{size / (1024 * 1024):.1f} MiB"
+
+
+def gib(size: int | float) -> str:
+    """Come [mib], per le misure grandi (l'archivio intero): «214.3 GiB»."""
+    return f"{size / (1024 ** 3):.1f} GiB"
 
 
 # Quante volte, e ogni quanto, si riprova a dare al `.part` il nome del blob quando Windows dice di no.
@@ -481,6 +498,58 @@ def file_meta(record: dict[str, Any]) -> dict[str, Any]:
     return {"sha256": record["sha256"], "kind": kind, "created_us": created, "modified_us": modified, "recorded_us": recorded}
 
 
+# --- dentro un `.sdocx`, senza mandarlo -------------------------------------------------------------
+#
+# Un `.sdocx` arriva a mezzo giga, quasi tutto registrazioni e miniature: per rileggere il testo di
+# una nota che sta solo qui (il titolo, il corpo, l'elenco delle registrazioni) il telefono dovrebbe
+# scaricarlo intero. `GET /v1/files/<sha>/sdocx` gli da' le tre voci piccole che il suo `SdocxParser`
+# legge, e l'elenco delle altre con la misura, cosi' decide lui cosa gli serve davvero.
+
+# Oltre questa misura `note.note` non e' una nota: quella di «Fichte», con tre pagine scritte a mano,
+# e' di qualche centinaio di kB. Il tetto vale per tutte e tre le voci: in base64 si gonfiano di un
+# terzo, e una risposta JSON da cento mega sarebbe il download intero che la rotta esiste per evitare.
+SDOCX_ENTRY_MAX = 16 * 1024 * 1024
+SDOCX_ENTRIES = {"note_b64": "note.note", "media_info_b64": "media/mediaInfo.dat", "end_tag_b64": "end_tag.bin"}
+
+
+def sdocx_index(record: dict[str, Any]) -> dict[str, Any]:
+    """
+    La risposta di `GET /v1/files/<sha>/sdocx`: le voci dello zip con la loro misura, e in base64
+    `note.note`, `media/mediaInfo.dat` e `end_tag.bin` (null quelle che mancano).
+
+    415 se il blob non e' un `.sdocx` — non e' uno zip, o e' uno zip senza `note.note` ne'
+    `end_tag.bin` (un `.docx`) —, 413 se una delle tre voci supera [SDOCX_ENTRY_MAX]. La misura si
+    guarda nell'indice dello zip prima di leggere: una voce che mente sulla misura si ferma li'
+    comunque, perche' `zipfile` non decomprime oltre quella dichiarata.
+    """
+    try:
+        bundle = zipfile.ZipFile(record["path"])
+    except (OSError, zipfile.BadZipFile) as error:
+        raise HTTPException(status_code=415, detail="not_sdocx") from error
+    with bundle:
+        infos = [info for info in bundle.infolist() if not info.is_dir()]
+        by_name = {info.filename: info for info in infos}
+        if "note.note" not in by_name and "end_tag.bin" not in by_name:
+            raise HTTPException(status_code=415, detail="not_sdocx")
+        for name in SDOCX_ENTRIES.values():
+            info = by_name.get(name)
+            if info is not None and info.file_size > SDOCX_ENTRY_MAX:
+                raise HTTPException(status_code=413, detail=f"{name} troppo grande")
+        answer: dict[str, Any] = {
+            "sha256": record["sha256"],
+            "entries": [{"name": info.filename, "size": info.file_size} for info in infos],
+        }
+        try:
+            for key, name in SDOCX_ENTRIES.items():
+                info = by_name.get(name)
+                answer[key] = base64.b64encode(bundle.read(info)).decode("ascii") if info is not None else None
+        except (OSError, zipfile.BadZipFile, EOFError, NotImplementedError) as error:
+            # Uno zip rotto dentro (voce troncata, compressione che zipfile non conosce): per chi
+            # chiede non e' un `.sdocx` che si possa leggere, come se non lo fosse.
+            raise HTTPException(status_code=415, detail="not_sdocx") from error
+    return answer
+
+
 def original_name(request: Request) -> str:
     """Il nome originale viaggia in un header, percent-encoded: gli header sono ASCII e i nomi no."""
     raw = request.headers.get("x-pampa-name", "")
@@ -556,6 +625,15 @@ def build_router(check_token: Callable[[Request], None]) -> APIRouter:
         if record is None:
             raise HTTPException(status_code=404, detail="non in archivio")
         return file_meta(record)
+
+    @router.get("/{sha256}/sdocx")
+    def sdocx(request: Request, sha256: str) -> dict[str, Any]:
+        """Le voci piccole di un `.sdocx` (vedi [sdocx_index]), senza mandare il file. Solo il proprietario."""
+        check_token(request)
+        record = current().get(valid(sha256))
+        if record is None:
+            raise HTTPException(status_code=404, detail="non in archivio")
+        return sdocx_index(record)
 
     @router.get("/{sha256}")
     def get(request: Request, sha256: str) -> Response:
