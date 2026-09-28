@@ -3674,10 +3674,11 @@ FILL_VAD = {"vad_onset": 0.3, "vad_offset": 0.2}
 FILL_CHUNK_S = 15
 # Un secondo d'audio in piu' per parte, per non tagliare la prima e l'ultima parola del buco.
 FILL_MARGIN_S = 1.0
-# Al massimo un quarto del pezzo si ritrascrive: se i «buchi» sono di piu', non e' un VAD che ha perso
+# Al massimo il 40% del pezzo si ritrascrive: se i «buchi» sono di piu', non e' un VAD che ha perso
 # una frase ma un file che il companion non sa leggere (una musica, una lingua che non conosce), e
-# rifarlo tutto una seconda volta costerebbe il doppio per niente.
-FILL_MAX_SHARE = 0.25
+# rifarlo tutto una seconda volta costerebbe il doppio per niente. Non un quarto: un tratto di dieci
+# minuti mancante in una lezione da quaranta e' proprio il caso da cui tutto questo e' nato.
+FILL_MAX_SHARE = 0.4
 
 
 def clock(seconds: float) -> str:
@@ -3801,15 +3802,14 @@ def fill_holes(
     spent = 0.0
     added: list[dict] = []
     ordered = sorted(holes, key=lambda hole: hole[0] - hole[1])
+    over: list[tuple[float, float, float]] = []
     for index, (start, end, share) in enumerate(ordered):
         progress.check_cancelled()
+        # Un buco che non ci sta piu' si salta, ma i piu' corti dopo di lui si provano lo stesso:
+        # fermarsi al primo lasciava vuoti anche i buchi da venti secondi dietro uno da dieci minuti.
         if spent + (end - start) > budget:
-            left = ordered[index:]
-            log.info(
-                "buchi: %d (%.1f min) oltre il tetto del %d%% del pezzo, restano vuoti",
-                len(left), sum(e - s for s, e, _ in left) / 60, round(FILL_MAX_SHARE * 100),
-            )
-            break
+            over.append((start, end, share))
+            continue
         spent += end - start
         low, high = max(0.0, start - FILL_MARGIN_S), min(total_s, end + FILL_MARGIN_S)
         try:
@@ -3838,6 +3838,11 @@ def fill_holes(
                 "start": start, "end": end, "speech": share, "segments": len(kept), "words": words,
                 "text": " ".join((segment.get("text") or "").strip() for segment in kept),
             })
+    if over:
+        log.info(
+            "buchi: %d (%.1f min) oltre il tetto del %d%% del pezzo, restano vuoti",
+            len(over), sum(e - s for s, e, _ in over) / 60, round(FILL_MAX_SHARE * 100),
+        )
     stats["seconds"] = round(stats["seconds"], 1)
     if not added:
         return segments, stats
