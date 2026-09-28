@@ -49,4 +49,20 @@ class FileMetaJsonTest {
     assertNull(FileMetaJson.parse(json("""[1, 2]"""), "abc"))
     assertNull(FileMetaJson.parse(null, "abc"))
   }
+
+  @Test
+  fun `l'indice di un sdocx`() {
+    val note = java.util.Base64.getEncoder().encodeToString(byteArrayOf(1, 2, 3))
+    val index = FileMetaJson.parseIndex(
+      json("""{"sha256": "abc", "entries": [{"name": "media/0@6aae38f3_bd0c8.m4a", "size": 34268413}, {"name": "x.m4a"}], "note_b64": "$note", "media_info_b64": null, "end_tag_b64": "!!"}"""),
+      "abc",
+    )!!
+    assertEquals(listOf("media/0@6aae38f3_bd0c8.m4a" to 34_268_413L, "x.m4a" to -1L), index.entries)
+    assertEquals(listOf<Byte>(1, 2, 3), index.note!!.toList())
+    assertNull(index.mediaInfo)
+    // Un base64 rotto e' un pezzo che manca, non un errore.
+    assertNull(index.endTag)
+    assertNull(FileMetaJson.parseIndex(json("""{"sha256": "altro", "entries": []}"""), "abc"))
+    assertNull(FileMetaJson.parseIndex(json("""{"sha256": "abc"}"""), "abc"))
+  }
 }

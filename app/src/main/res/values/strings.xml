@@ -1046,6 +1046,19 @@
     <item quantity="other">%d pagine scritte a mano</item>
   </plurals>
 
+  <!-- Ripara registrazioni: i nomi e i giorni delle registrazioni di Samsung Notes -->
+  <string name="note_repair">Ripara registrazioni</string>
+  <string name="note_repair_working">Rileggo le registrazioni di Samsung Notes…</string>
+  <string name="note_repair_nothing">Le registrazioni sono già a posto</string>
+  <string name="note_repair_unavailable">Non riesco a leggere l\'originale di Samsung Notes: il computer di casa non risponde</string>
+  <string name="note_repair_done">Sistemate: %1$d nomi, %2$d registrazioni nel loro giorno</string>
+  <string name="note_repair_confirm_title">Spostare le registrazioni nel loro giorno?</string>
+  <plurals name="note_repair_confirm_message">
+    <item quantity="one">I nomi sono già sistemati. Una sessione ha una versione ripulita della trascrizione: spostando le registrazioni andrà rifatta. La trascrizione grezza resta.</item>
+    <item quantity="other">I nomi sono già sistemati. %d sessioni hanno una versione ripulita della trascrizione: spostando le registrazioni andranno rifatte. Le trascrizioni grezze restano.</item>
+  </plurals>
+  <string name="note_repair_confirm_action">Sposta</string>
+
   <!-- Caccia ai problemi: import, export, editor, backup, link di configurazione -->
   <string name="export_failure_write">Non sono riuscito a scrivere il pacchetto.</string>
   <string name="export_failure_create">La cartella scelta non ha lasciato creare il file.</string>

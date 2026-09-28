@@ -321,14 +321,30 @@ class PampaSettingsStore(
   suspend fun setRealDatesPending(keys: Set<String>) = edit { it[RealDatesPending] = keys }
 
   /**
-   * I due giri unici dell'avvio (date vere, pagine a mano) ripartono da capo. Serve dopo un
+   * I giri unici dell'avvio (date vere, pagine a mano, riparazione dei `.sdocx`) ripartono da capo. Serve dopo un
    * ripristino: il database di un backup vecchio non ha avuto nessuno dei due, e i segni di «fatto»
    * parlavano di quello che c'era prima.
    */
   suspend fun resetBackfills() = edit {
     it.remove(RealDatesPending)
     it.remove(HandwritingBackfillDone)
+    it.remove(SdocxRepairPending)
+    it.remove(SdocxRepairLastTry)
   }
+
+  /**
+   * Il giro che ripara le registrazioni delle note di Samsung Notes ([SdocxRepairer]): null finche'
+   * non e' mai passato, poi le note rimaste in attesa (il `.sdocx` sta su un computer spento, una
+   * trascrizione in corso). Vuoto: finito.
+   */
+  suspend fun sdocxRepairPending(): Set<String>? = store.data.first()[SdocxRepairPending]
+
+  suspend fun setSdocxRepairPending(keys: Set<String>) = edit { it[SdocxRepairPending] = keys }
+
+  /** Quando il giro ha riprovato l'ultima volta le note in attesa: non piu' di una volta ogni sei ore. */
+  suspend fun sdocxRepairLastTry(): Long = store.data.first()[SdocxRepairLastTry] ?: 0L
+
+  suspend fun setSdocxRepairLastTry(at: Long) = edit { it[SdocxRepairLastTry] = at }
 
   // --- Aggiornamenti dell'app, per dispositivo ---------------------------------------------------
 
@@ -669,7 +685,11 @@ class PampaSettingsStore(
     // Date vere e «Riprendi ad ascoltare».
     val LastListenedKey = stringPreferencesKey("last_listened")
     val SkipSilence = booleanPreferencesKey("skip_silence")
-    val RealDatesPending = stringSetPreferencesKey("real_dates_pending")
+    // «_v2» (28/09): il primo giro aveva preso per vere le date che Samsung Notes riscrive
+    // condividendo, e ci si ripassa una volta con la regola nuova ([RecordingDate.rewrittenAtShare]).
+    val RealDatesPending = stringSetPreferencesKey("real_dates_pending_v2")
+    val SdocxRepairPending = stringSetPreferencesKey("sdocx_repair_pending")
+    val SdocxRepairLastTry = longPreferencesKey("sdocx_repair_last_try")
     // Aggiornamenti dell'app.
     val UpdateLastCheck = longPreferencesKey("update_last_check")
     val UpdateIgnored = stringPreferencesKey("update_ignored")

@@ -106,6 +106,9 @@ class ImportCoordinator @Inject constructor(
   private val audioImporter: AudioImporter,
   private val archive: ArchiveRepository,
   private val handwriting: HandwritingPages,
+  // Un Provider: la riparazione legge le sessioni e il computer, e non deve entrare nel grafo di
+  // chi importa se non quando serve.
+  private val repairer: javax.inject.Provider<SdocxRepairer>,
 ) {
 
   /**
@@ -265,6 +268,13 @@ class ImportCoordinator @Inject constructor(
     }
 
     onProgress(candidates.size, candidates.size, "")
+    // Un aggiornamento rimette a posto anche quello che c'era gia': le registrazioni importate prima
+    // del 28/09 potevano avere il nome di un'altra, o stare nella sessione del giorno sbagliato.
+    // Prima delle date della nota, che leggono i giorni delle sessioni.
+    if (target is ImportTarget.UpdateNote) {
+      runCatching { repairer.get().repairNote(noteId, allowRefined = false) }
+        .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it else android.util.Log.w("PampaNotes", "riparazione dopo l'aggiornamento", it) }
+    }
     applyDates(noteId, target, candidates, audioPlacement)
     ImportOutcome(noteId = noteId, imported = results)
   }

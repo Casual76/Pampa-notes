@@ -367,6 +367,9 @@ interface AudioPartDao {
   @Query("UPDATE audio_parts SET sessionId = :sessionId, position = :position WHERE id = :id")
   suspend fun move(id: String, sessionId: String, position: Int)
 
+  @Query("UPDATE audio_parts SET originalName = :originalName WHERE id = :id")
+  suspend fun rename(id: String, originalName: String)
+
   @Query("DELETE FROM audio_parts WHERE id = :id")
   suspend fun delete(id: String)
 

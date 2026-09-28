@@ -1013,6 +1013,19 @@
     <item quantity="other">%d handwritten pages</item>
   </plurals>
 
+  <!-- Fix recordings: names and days of Samsung Notes recordings -->
+  <string name="note_repair">Fix recordings</string>
+  <string name="note_repair_working">Rereading the Samsung Notes recordings…</string>
+  <string name="note_repair_nothing">The recordings are already in order</string>
+  <string name="note_repair_unavailable">Couldn\'t read the Samsung Notes original: the home computer isn\'t answering</string>
+  <string name="note_repair_done">Fixed: %1$d names, %2$d recordings moved to their day</string>
+  <string name="note_repair_confirm_title">Move the recordings to their day?</string>
+  <plurals name="note_repair_confirm_message">
+    <item quantity="one">The names are already fixed. One session has a cleaned-up version of its transcript: moving the recordings means redoing it. The raw transcript stays.</item>
+    <item quantity="other">The names are already fixed. %d sessions have a cleaned-up version of their transcript: moving the recordings means redoing them. The raw transcripts stay.</item>
+  </plurals>
+  <string name="note_repair_confirm_action">Move</string>
+
   <!-- Bug hunt: import, export, editor, backup, configuration links -->
   <string name="export_failure_write">Couldn\'t write the export.</string>
   <string name="export_failure_create">The chosen folder didn\'t allow creating the file.</string>
