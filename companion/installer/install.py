@@ -163,10 +163,14 @@ def torch_ok(lines: list[str], flavor: str) -> bool:
 # Una copia delle tabelle di `whisperx_server.plan_vram`, solo per il caso in cui il server non si
 # lascia importare (un pacchetto che manca a meta' installazione). `test_install` controlla che dica
 # le stesse cose dell'originale.
-_WEIGHTS = {"large-v3": 3.1, "medium": 1.5, "small": 0.5, "base": 0.15, "tiny": 0.08}
-_BATCH_SCALE = {"large-v3": 1.0, "medium": 0.6, "small": 0.32, "base": 0.12, "tiny": 0.06}
-_CHAIN = (("large-v3", "float16"), ("large-v3", "int8_float16"), ("medium", "int8_float16"),
-          ("small", "int8_float16"), ("base", "int8_float16"), ("tiny", "int8_float16"))
+#
+# La catena si ferma a `medium`, come `SMALLER_MODELS` del server: sotto, la qualita' sull'italiano
+# parlato di una lezione non e' piu' quella che l'utente vuole, e se nemmeno medium ci sta decide il
+# ripiego sul processore. (Il `small` di `choose_model`, sotto, e' un'altra cosa: il modello di chi
+# non ha una scheda e trascrive sul processore.)
+_WEIGHTS = {"large-v3": 3.1, "medium": 1.5}
+_BATCH_SCALE = {"large-v3": 1.0, "medium": 0.6}
+_CHAIN = (("large-v3", "float16"), ("large-v3", "int8_float16"), ("medium", "int8_float16"))
 
 
 def fallback_plan(total_gb: float, batch_max: int = 16) -> dict[str, Any]:

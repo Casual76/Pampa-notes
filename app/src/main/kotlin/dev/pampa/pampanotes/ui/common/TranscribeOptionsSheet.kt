@@ -110,7 +110,7 @@ fun TranscribeOptionsSheet(
     },
   ) {
     SheetBody(scrollable = false) {
-      Text(text = stringResource(R.string.tx_opts_title), style = MaterialTheme.typography.titleLarge)
+      // Il titolo e' gia' quello del pannello (`paneTitle`): ripeterlo in grande qui sotto era rumore.
       Text(
         text = stringResource(R.string.tx_opts_explain),
         style = MaterialTheme.typography.bodyMedium,

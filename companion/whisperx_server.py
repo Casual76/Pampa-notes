@@ -745,8 +745,14 @@ HEADROOM = 0.85
 # Sotto questo lotto conviene un modello piu' leggero: large in int8 con lotto 9 fa lo stesso testo
 # di large in float16 con lotto 3 (la differenza fra i due non si sente), e lo fa prima.
 MIN_USEFUL_BATCH = 4
-# I modelli verso cui si scende quando quello scelto non ci sta, dal piu' grande.
-SMALLER_MODELS = ("medium", "small", "base", "tiny")
+# I modelli verso cui si scende quando quello scelto non ci sta, dal piu' grande. Solo `medium`:
+# `small` sull'italiano parlato di una lezione (nomi propri, termini tecnici, frasi lunghe) sbaglia
+# abbastanza da rendere il testo meno affidabile come fonte per un assistente, e un testo peggiore
+# non vale la velocita' guadagnata. Se nemmeno medium int8 sta nella VRAM che c'e' (altri programmi
+# la occupano) il piano lo dice con `fits` falso e decide il ripiego sul processore di [run_job],
+# che tiene il modello scelto in int8: piu' lento, ma la stessa qualita'. Chi sceglie `small` a mano
+# lo tiene: la catena parte dal suo modello e non sale mai ([downgrade_chain]).
+SMALLER_MODELS = ("medium",)
 VRAM_MODES = ("auto", "manual")
 
 
@@ -1065,6 +1071,94 @@ def apply_plan(plan: dict[str, Any]) -> None:
     STATE["name"] = plan["model"]
     STATE["compute_type"] = plan["compute_type"]
     STATE["batch_size"] = plan["batch_size"]
+
+
+# --- le opzioni di una sola trascrizione ---------------------------------------------------------------
+#
+# L'app, quando l'utente ritrascrive «con impostazioni», manda tre campi facoltativi: `job_model`,
+# `job_vram_gb`, `job_batch_max`. Valgono per quel lavoro e basta: non toccano `config.json`, ne'
+# `STATE["tunables"]`, ne' il piano di serie (`STATE["name"]`, `compute_type`, `batch_size`, `vram`) che
+# `/health` racconta e che la lezione dopo — senza override — riprende da se'. Il modello della lezione
+# con override sostituisce quello in memoria ([ensure_model] ricarica se `loaded_as` e' diverso), e la
+# lezione dopo ricarica quello di serie: un caricamento in piu' pagato da chi ha chiesto di cambiarlo.
+# Solo il proprietario: cambiare modello e memoria e' cambiare il computer di un altro.
+
+
+@dataclass(frozen=True)
+class JobOverrides:
+    """Le opzioni di una richiesta sola, gia' controllate. Immutabile: entra nella chiave del lavoro condiviso."""
+
+    model: str | None = None
+    vram_gb: float | None = None
+    batch_max: int | None = None
+
+
+def _bad_job_option(reason: str) -> HTTPException:
+    return HTTPException(status_code=400, detail=f"bad_job_option: {reason}")
+
+
+def parse_job_overrides(model: str, vram_gb: str, batch_max: str) -> JobOverrides | None:
+    """
+    I tre campi del form in [JobOverrides], o None se sono tutti vuoti (nessun override).
+
+    Vuoto, anche di soli spazi, vuol dire «niente»: e' come l'app dice «come sempre». Un valore che c'e'
+    e non e' valido e' un 400 `bad_job_option: <motivo>`, non un'opzione ignorata: chi ha chiesto
+    «solo 4 GB» e si ritrova la scheda intera si accorge del danno a lezione finita. Il numero della
+    VRAM ha il punto decimale (`6.5`, non `6,5`) e sta fra 1 e 256, gli stessi limiti di
+    `vram_gb` in [validate_tunables]; il lotto e' un intero fra 1 e [BATCH_MAX_LIMIT].
+    """
+    name = (model or "").strip()
+    memory = (vram_gb or "").strip()
+    batch = (batch_max or "").strip()
+    if not (name or memory or batch):
+        return None
+    chosen_model: str | None = None
+    chosen_vram: float | None = None
+    chosen_batch: int | None = None
+    if name:
+        if name not in MODEL_WEIGHTS_GB:
+            raise _bad_job_option(f"job_model sconosciuto: {name!r} (vanno bene {', '.join(MODEL_WEIGHTS_GB)})")
+        chosen_model = name
+    if memory:
+        try:
+            number = float(memory)
+        except ValueError:
+            raise _bad_job_option(f"job_vram_gb non e' un numero: {memory!r} (col punto, come 6.5)") from None
+        if not math.isfinite(number) or not 1 <= number <= 256:
+            raise _bad_job_option("job_vram_gb e' un numero fra 1 e 256")
+        chosen_vram = round(number, 1)
+    if batch:
+        try:
+            whole = int(batch)
+        except ValueError:
+            raise _bad_job_option(f"job_batch_max non e' un intero: {batch!r}") from None
+        if not 1 <= whole <= BATCH_MAX_LIMIT:
+            raise _bad_job_option(f"job_batch_max e' un intero fra 1 e {BATCH_MAX_LIMIT}")
+        chosen_batch = whole
+    return JobOverrides(chosen_model, chosen_vram, chosen_batch)
+
+
+def plan_for_job(overrides: JobOverrides) -> dict[str, Any]:
+    """
+    Il piano di una lezione con le opzioni dell'app, senza toccare lo stato del server.
+
+    Parte dalle impostazioni di adesso (`STATE["tunables"]`, copiate), applica quello che l'app ha
+    chiesto e passa da [decide_vram] come sempre: la protezione resta, un modello che nella VRAM non
+    sta scende lungo la catena ([downgrade_chain], ferma a `medium`) e se nemmeno cosi' ci sta
+    `fits` e' falso e decide il ripiego sul processore di [run_job]. `job_vram_gb` e' «la VRAM che
+    posso usare per questa lezione»: vale come `vram_mode = manual`, dunque senza sottrarre quello che
+    occupano gli altri programmi — l'utente ha gia' fatto il conto. Sul processore [decide_vram]
+    restituisce il modello chiesto e il lotto, e non c'e' niente da misurare.
+    """
+    tunable = dict(STATE["tunables"])
+    if overrides.model:
+        tunable["model"] = overrides.model
+    if overrides.batch_max:
+        tunable["batch_size_max"] = overrides.batch_max
+    if overrides.vram_gb:
+        tunable["vram_mode"] = "manual"
+        tunable["vram_gb"] = overrides.vram_gb
+    return decide_vram(tunable, STATE["device"], STATE["gpu"])
 
 
 # Il VAD di WhisperX (pyannote) decide quali tratti vanno a Whisper. Dal 24/09 al 28/09 era piu'
@@ -1515,9 +1609,12 @@ def _load_align_model(whisperx: Any, language: str, device: str):
 # * `partial`: `GET /v1/jobs/<id>/partial` da' il testo dei pezzi gia' finiti mentre si fa il resto;
 # * `holes`: i tratti di voce rimasti senza testo si ritrascrivono da soli ([fill_holes]), e la
 #   risposta dice quanti (`holes`);
-# * `sdocx_index`: `GET /v1/files/<sha>/sdocx`, le voci piccole di un `.sdocx` senza scaricarlo.
+# * `sdocx_index`: `GET /v1/files/<sha>/sdocx`, le voci piccole di un `.sdocx` senza scaricarlo;
+# * `job_options`: `job_model`, `job_vram_gb`, `job_batch_max` cambiano modello, memoria e lotto per
+#   una trascrizione sola, senza toccare le impostazioni del computer ([JobOverrides]). Solo proprietario.
 FEATURES = (
     "by_ref", "archive_upload", "server_chunks", "file_meta", "prompt", "auto_chunks", "partial", "holes", "sdocx_index",
+    "job_options",
 )
 
 
@@ -2120,12 +2217,18 @@ async def transcriptions(
     diarize: str = Form(default=""),
     min_speakers: str = Form(default=""),
     max_speakers: str = Form(default=""),
+    # Le opzioni di questa trascrizione sola (vedi [JobOverrides]): vuoto = come sempre.
+    job_model: str = Form(default=""),
+    job_vram_gb: str = Form(default=""),
+    job_batch_max: str = Form(default=""),
 ):
     """
     La chiamata vera. Multipart come OpenAI, risposta `verbose_json` con i segmenti.
 
     Il campo `model` si ignora di proposito: il modello e' quello scelto all'avvio, e cambiarlo per
-    richiesta significherebbe rileggere qualche gigabyte di pesi nel mezzo di una lezione.
+    richiesta significherebbe rileggere qualche gigabyte di pesi nel mezzo di una lezione. Chi lo
+    vuole davvero, per una lezione sola, manda `job_model` (e `job_vram_gb`, `job_batch_max`): vedi
+    [JobOverrides]. Il costo del caricamento lo paga quella lezione, e la dopo ricarica il modello di serie.
 
     **Il computer lavora, il telefono chiede.** Il telefono preparava l'audio da se': se la
     registrazione stava solo qui la scaricava per rimandarla indietro, e con un tetto ai pezzi
@@ -2164,8 +2267,9 @@ async def transcriptions(
     # Il `try` comincia prima del file temporaneo, non dopo: una richiesta annullata mentre si
     # copiava l'audio, o mentre aspettava il suo turno, lasciava il file in %TEMP% per sempre.
     try:
-        if (sha or keep) and caller.kind != "owner":
+        if (sha or keep or job_model.strip() or job_vram_gb.strip() or job_batch_max.strip()) and caller.kind != "owner":
             raise HTTPException(status_code=403, detail="owner_only")
+        overrides = parse_job_overrides(job_model, job_vram_gb, job_batch_max)
         if sha and not archive.SHA256.match(sha):
             raise HTTPException(status_code=400, detail="non e' uno sha256")
         store = archive.ARCHIVE
@@ -2237,7 +2341,10 @@ async def transcriptions(
         # La stessa registrazione, con le stesse richieste, gia' in corso per qualcun altro — il tablet
         # che non sapeva che il telefono l'aveva mandata, o il telefono che la rimanda dopo aver perso
         # la risposta: ci si aggancia a quella. Il computer la fa una volta, e la danno a tutti e due.
-        key = (sha, lang or "", vocabulary or "", cap or 0, voices) if sha and archived else None
+        # Le opzioni della lezione ne fanno parte: la stessa registrazione con un altro modello o un'altra
+        # VRAM e' un'altra trascrizione, e agganciarla a quella in corso darebbe a chi ha chiesto «con
+        # medium» il testo di large (o viceversa). Uguali si uniscono, come tutto il resto.
+        key = (sha, lang or "", vocabulary or "", cap or 0, voices, overrides) if sha and archived else None
         # Annullata mentre il file arrivava (`DELETE /v1/jobs/{id}` o il telefono che se ne va): il
         # lavoro non si comincia, e non ci si aggancia a quello di un altro. Prima lo si scopriva solo
         # un secondo dopo, in [_await_work], con il lavoro gia' creato e magari gia' in decodifica.
@@ -2255,7 +2362,7 @@ async def transcriptions(
         else:
             work = SharedWork(key=key, progress=JobProgress("w" + secrets.token_hex(8)))
             work.task = asyncio.create_task(
-                _run_work(work, source, lang, vocabulary, cap, 0 if caller.kind == "owner" else 1, who, label, voices)
+                _run_work(work, source, lang, vocabulary, cap, 0 if caller.kind == "owner" else 1, who, label, voices, overrides)
             )
             if key is not None:
                 INFLIGHT[key] = work
@@ -2341,6 +2448,7 @@ INFLIGHT: dict[tuple, SharedWork] = {}
 async def _run_work(
     work: SharedWork, source: Path, language: str | None, prompt: str | None, cap: int | str | None,
     priority: int, who: str, label: str, voices: "DiarizeRequest | None" = None,
+    overrides: JobOverrides | None = None,
 ) -> dict[str, Any]:
     """La trascrizione vera: il turno nella fila, poi WhisperX su un thread."""
     progress = work.progress
@@ -2360,7 +2468,10 @@ async def _run_work(
                 # rispondere durante i minuti del primo avvio, invece di far credere all'app che il
                 # server sia morto.
                 # Le voci solo se chieste: chi non le chiede chiama [_transcribe] come prima.
-                extra = {"diarize": voices} if voices is not None else {}
+                extra: dict[str, Any] = {"diarize": voices} if voices is not None else {}
+                # Idem le opzioni: senza, [_transcribe] e' chiamata come prima.
+                if overrides is not None:
+                    extra["overrides"] = overrides
                 result = await asyncio.to_thread(
                     _transcribe, str(source), language, progress, prompt=prompt, max_minutes=cap, **extra,
                 )
@@ -3964,15 +4075,29 @@ def _transcribe(
     prompt: str | None = None,
     max_minutes: int | str | None = None,
     diarize: "DiarizeRequest | None" = None,
+    overrides: JobOverrides | None = None,
 ) -> dict[str, Any]:
-    """Il lavoro vero, su un thread suo: WhisperX blocca, e bloccare il loop ferma anche /health."""
+    """
+    Il lavoro vero, su un thread suo: WhisperX blocca, e bloccare il loop ferma anche /health.
+
+    Con [overrides] (le opzioni dell'app per questa lezione sola) il piano e' quello locale
+    ([plan_for_job]) e `STATE` non si tocca: ne' il piano di serie, ne' le impostazioni. Il modello
+    in memoria lo cambia [ensure_model] quando l'[Engine] lo chiede, e la lezione dopo — senza opzioni
+    — ricarica quello di serie.
+    """
     from whisperx.audio import SAMPLE_RATE
 
     progress = progress or JobProgress()
-    replan_for_job()
-    # Da qui in poi la lezione usa queste impostazioni fino alla fine, pezzo dopo pezzo: vedi [Engine].
-    engine = Engine()
-    batch_size, device = STATE["batch_size"], STATE["device"]
+    if overrides is None:
+        replan_for_job()
+        # Da qui in poi la lezione usa queste impostazioni fino alla fine, pezzo dopo pezzo: vedi [Engine].
+        engine = Engine()
+        batch_size, device = STATE["batch_size"], STATE["device"]
+    else:
+        plan = plan_for_job(overrides)
+        log.info("per questa lezione, impostazioni dell'app: %s", describe_plan(plan))
+        engine = Engine(plan["model"], plan["compute_type"])
+        batch_size, device = plan["batch_size"], STATE["device"]
     # Annullata mentre si pianificava: non si decodifica un'ora di audio per nessuno.
     progress.check_cancelled()
     # ffmpeg che decodifica un'ora di m4a sono secondi veri: meglio dirlo che restare «in coda».
@@ -4025,6 +4150,10 @@ def _transcribe(
         "segments": out,
         # «cuda» o «cpu»: l'app lo usa per dire «trascritta sulla RAM, piu' lenta».
         "device_used": job["device_used"],
+        # Il modello e il calcolo con cui la lezione e' partita: con le opzioni dell'app ([JobOverrides])
+        # possono essere diversi da quelli di serie, e il piano puo' aver sceso il modello chiesto.
+        "model_used": engine.name,
+        "compute_type_used": engine.compute_type,
         # La durata vera del file, non la fine dell'ultimo segmento: un finale muto conta lo stesso.
         "audio_s": audio_s,
         "chunks": job["chunks"],

@@ -13,6 +13,7 @@ un'altra porta a caso, e i modelli sono oggetti che finiscono la memoria quando 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import hashlib
 import importlib.machinery
@@ -1277,14 +1278,34 @@ class VramPlanTest(unittest.TestCase):
         self.assertEqual(self.plan(24.0, batch_size_max=8)["batch_size"], 8)
 
     def test_nothing_fits(self) -> None:
+        # Nemmeno medium int8 sta in 1 GB: il piano non scende ancora, lo dice con `fits` falso e
+        # decide il ripiego sul processore di run_job.
         plan = self.plan(1.0)
         self.assertFalse(plan["fits"])
-        self.assertEqual((plan["model"], plan["batch_size"]), ("tiny", 1))
+        self.assertEqual((plan["model"], plan["batch_size"]), ("medium", 1))
+
+    def test_auto_never_goes_below_medium(self) -> None:
+        """Da large-v3, per nessuna scheda e nessun lotto il piano sceglie small, base o tiny."""
+        self.assertEqual(server.SMALLER_MODELS, ("medium",))
+        for budget in (0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0, 12.0, 24.0, 48.0):
+            for batch_max in (1, 2, 4, 16, 64):
+                plan = server.plan_vram("large-v3", "float16", batch_max, budget)
+                self.assertIn(plan["model"], ("large-v3", "medium"), f"{budget} GB, lotto {batch_max}")
+        for chain in (server.downgrade_chain("large-v3", "float16"), server.downgrade_chain("large-v3", "int8_float16")):
+            self.assertEqual({model for model, _ in chain}, {"large-v3", "medium"})
 
     def test_small_model_is_never_upgraded(self) -> None:
         plan = self.plan(4.0, model="small")
         self.assertEqual((plan["model"], plan["compute_type"]), ("small", "float16"))
         self.assertFalse(plan["downgraded"])
+
+    def test_small_chosen_by_hand_keeps_its_own_chain(self) -> None:
+        # Chi sceglie small lo tiene (float16, poi int8), ma da li' non si scende a base o tiny.
+        self.assertEqual(
+            server.downgrade_chain("small", "float16"), [("small", "float16"), ("small", "int8_float16")]
+        )
+        plan = server.plan_vram("small", "float16", 16, 1.0)
+        self.assertEqual(plan["model"], "small")
 
     def test_cpu_and_unknown_card(self) -> None:
         cpu = server.decide_vram(tunables(), "cpu", None)
@@ -1297,6 +1318,166 @@ class VramPlanTest(unittest.TestCase):
         line = server.describe_plan(self.plan(4.0))
         self.assertIn("medium int8_float16", line)
         self.assertIn("chiesto large-v3 float16", line)
+
+
+class JobOverridesTest(StateMixin, unittest.TestCase):
+    """Le opzioni di una trascrizione sola: validate, pianificate, e senza lasciare traccia nello stato."""
+
+    def parse(self, model: str = "", vram: str = "", batch: str = ""):
+        return server.parse_job_overrides(model, vram, batch)
+
+    def refused(self, *fields: str) -> str:
+        with self.assertRaises(server.HTTPException) as caught:
+            self.parse(*fields)
+        self.assertEqual(caught.exception.status_code, 400)
+        self.assertTrue(str(caught.exception.detail).startswith("bad_job_option: "), caught.exception.detail)
+        return str(caught.exception.detail)
+
+    def test_all_empty_is_no_override(self) -> None:
+        self.assertIsNone(self.parse())
+        self.assertIsNone(self.parse("  ", " ", "\t"))
+
+    def test_valid_values(self) -> None:
+        self.assertEqual(self.parse("medium"), server.JobOverrides("medium", None, None))
+        self.assertEqual(self.parse(vram="6.5"), server.JobOverrides(None, 6.5, None))
+        self.assertEqual(self.parse(" large-v3 ", " 12 ", " 8 "), server.JobOverrides("large-v3", 12.0, 8))
+        self.assertEqual(self.parse(batch=str(server.BATCH_MAX_LIMIT)).batch_max, server.BATCH_MAX_LIMIT)
+        self.assertEqual(self.parse(vram="1").vram_gb, 1.0)
+        self.assertEqual(self.parse(vram="256").vram_gb, 256.0)
+        for name in server.MODEL_WEIGHTS_GB:
+            self.assertEqual(self.parse(name).model, name)
+
+    def test_invalid_values_are_a_400_with_the_reason(self) -> None:
+        self.assertIn("job_model", self.refused("gigante"))
+        self.assertIn("job_vram_gb", self.refused("", "6,5"), "il separatore e' il punto")
+        self.assertIn("job_vram_gb", self.refused("", "molta"))
+        for bad in ("0", "0.9", "256.1", "-3", "nan", "inf"):
+            self.assertIn("job_vram_gb", self.refused("", bad), bad)
+        self.assertIn("job_batch_max", self.refused("", "", "x"))
+        self.assertIn("job_batch_max", self.refused("", "", "4.5"))
+        for bad in ("0", "-1", str(server.BATCH_MAX_LIMIT + 1)):
+            self.assertIn("job_batch_max", self.refused("", "", bad), bad)
+        # Un valore valido accanto a uno sbagliato non fa passare niente.
+        self.refused("medium", "", "0")
+
+    def test_overrides_are_hashable_for_the_shared_key(self) -> None:
+        a, b = self.parse("medium", "", "4"), self.parse("medium", "", "4")
+        self.assertEqual(a, b)
+        self.assertEqual(hash(a), hash(b))
+        self.assertNotEqual(a, self.parse("medium", "", "5"))
+        self.assertNotEqual(a, None)
+
+    def set_card(self, total: float = 12.0, device: str = "cuda", **settings: object) -> None:
+        """Uno STATE da scheda con `total` GB, come lo lascia [configure]."""
+        server.STATE["tunables"] = tunables(**settings)
+        server.STATE["device"] = device
+        server.STATE["gpu"] = {"name": "scheda", "total_gb": total} if device == "cuda" else None
+        server.apply_plan(server.decide_vram(server.STATE["tunables"], device, server.STATE["gpu"]))
+
+    def test_plan_with_a_model_on_12_gb(self) -> None:
+        self.set_card(12.0)
+        plan = server.plan_for_job(server.JobOverrides(model="medium"))
+        self.assertEqual((plan["model"], plan["compute_type"], plan["batch_size"]), ("medium", "float16", 16))
+        self.assertFalse(plan["downgraded"])
+        self.assertEqual(plan["mode"], "auto")
+
+    def test_plan_with_a_vram_budget_uses_the_number_not_the_card(self) -> None:
+        self.set_card(12.0)
+        plan = server.plan_for_job(server.JobOverrides(vram_gb=6.0))
+        self.assertEqual((plan["mode"], plan["budget_gb"]), ("manual", 6.0))
+        # Come test_manual_6_gb_uses_the_number_not_the_card: large int8 con lotto 4.
+        self.assertEqual((plan["model"], plan["compute_type"], plan["batch_size"]), ("large-v3", "int8_float16", 4))
+        self.assertLessEqual(plan["estimate_gb"], 6.0 * server.HEADROOM)
+
+    def test_plan_with_a_batch_cap(self) -> None:
+        self.set_card(12.0)
+        self.assertEqual(server.plan_for_job(server.JobOverrides(batch_max=3))["batch_size"], 3)
+
+    def test_the_protection_stays_a_model_that_does_not_fit_goes_down_to_medium(self) -> None:
+        self.set_card(12.0)
+        plan = server.plan_for_job(server.JobOverrides(model="large-v3", vram_gb=3.0))
+        self.assertEqual(plan["model"], "medium")
+        self.assertTrue(plan["downgraded"])
+        plan = server.plan_for_job(server.JobOverrides(model="large-v3", vram_gb=1.0))
+        self.assertEqual(plan["model"], "medium")
+        self.assertFalse(plan["fits"], "nemmeno medium sta: decide il ripiego sul processore")
+
+    def test_on_the_processor_the_asked_model_is_kept(self) -> None:
+        self.set_card(device="cpu")
+        plan = server.plan_for_job(server.JobOverrides(model="medium", vram_gb=2.0, batch_max=3))
+        self.assertEqual((plan["device"], plan["model"], plan["batch_size"]), ("cpu", "medium", 3))
+
+    def test_planning_does_not_touch_the_state(self) -> None:
+        self.set_card(12.0, model="large-v3", batch_size_max=16)
+        before = self.snapshot()
+        server.plan_for_job(server.JobOverrides("medium", 5.0, 2))
+        self.assertEqual(self.snapshot(), before)
+
+    @staticmethod
+    def snapshot() -> dict:
+        return {
+            "name": server.STATE["name"], "compute_type": server.STATE["compute_type"],
+            "batch_size": server.STATE["batch_size"], "tunables": dict(server.STATE["tunables"]),
+            "vram": dict(server.STATE["vram"]),
+        }
+
+    def run_transcribe(self, overrides: server.JobOverrides | None) -> tuple[dict, dict]:
+        """`_transcribe` con l'audio e il lavoro finti: ritorna cosa ha visto `transcribe_audio` e la risposta."""
+        seen: dict = {}
+
+        def fake_transcribe_audio(audio, sample_rate, language, progress, engine, max_minutes=None, prompt=None, **frozen):
+            seen.update(engine=engine, **frozen)
+            return {"segments": [], "language": "it", "device_used": "cuda", "batch_size": 8, "alignment": "ok", "chunks": 1}
+
+        extra = {} if overrides is None else {"overrides": overrides}
+        with mock.patch.object(server, "load_audio", return_value=[0.0] * 16000), \
+                mock.patch.object(server, "probe_duration", return_value=1.0), \
+                mock.patch.object(server, "transcribe_audio", fake_transcribe_audio), \
+                (self.assertLogs("pampa", level="INFO") if overrides is not None else contextlib.nullcontext()) as logs:
+            result = server._transcribe("x.m4a", "it", server.JobProgress(), **extra)
+        seen["logs"] = logs.output if logs is not None else []
+        return seen, result
+
+    def test_a_job_with_overrides_uses_the_local_plan_and_leaves_the_state_as_it_was(self) -> None:
+        self.set_card(12.0, model="large-v3", batch_size_max=16)
+        before = self.snapshot()
+        self.assertEqual((before["name"], before["compute_type"], before["batch_size"]), ("large-v3", "float16", 16))
+        seen, result = self.run_transcribe(server.JobOverrides("medium", 6.0, 3))
+        self.assertEqual((seen["engine"].name, seen["engine"].compute_type, seen["batch_size"]), ("medium", "float16", 3))
+        self.assertEqual((result["model_used"], result["compute_type_used"]), ("medium", "float16"))
+        self.assertTrue(any("impostazioni dell'app" in line and "medium" in line for line in seen["logs"]), seen["logs"])
+        self.assertEqual(self.snapshot(), before, "name, compute_type, batch_size, tunables e vram restano quelli di prima")
+        # E la lezione dopo, senza opzioni, riprende il piano di serie.
+        seen, result = self.run_transcribe(None)
+        self.assertEqual((seen["engine"].name, seen["engine"].compute_type, seen["batch_size"]), ("large-v3", "float16", 16))
+        self.assertEqual((result["model_used"], result["compute_type_used"]), ("large-v3", "float16"))
+        self.assertEqual(self.snapshot(), before)
+
+    def test_without_overrides_the_job_still_replans_like_before(self) -> None:
+        self.set_card(12.0)
+        with mock.patch.object(server, "replan_for_job") as replan:
+            self.run_transcribe(None)
+        replan.assert_called_once_with()
+        with mock.patch.object(server, "replan_for_job") as replan:
+            self.run_transcribe(server.JobOverrides(model="medium"))
+        replan.assert_not_called()
+
+    def test_the_model_swap_is_ensure_models_job(self) -> None:
+        """Il modello della lezione con le opzioni sostituisce quello in memoria; la lezione dopo ricarica quello di serie."""
+        import sys
+        import types
+
+        loads: list[tuple] = []
+        fake = types.SimpleNamespace(load_model=lambda name, device, compute_type, **more: loads.append((name, device, compute_type)) or f"modello {name}")
+        self.set_card(12.0, model="large-v3")
+        server.STATE.update(model=None, loaded_as=None)
+        self.addCleanup(server.STATE.update, model=None, loaded_as=None)
+        with mock.patch.dict(sys.modules, {"whisperx": fake}), self.assertLogs("pampa", level="INFO"):
+            server.Engine().main_model()
+            plan = server.plan_for_job(server.JobOverrides(model="medium"))
+            server.Engine(plan["model"], plan["compute_type"]).main_model()
+            server.Engine().main_model()
+        self.assertEqual(loads, [("large-v3", "cuda", "float16"), ("medium", "cuda", "float16"), ("large-v3", "cuda", "float16")])
 
 
 class DriverBudgetTest(StateMixin, unittest.TestCase):
@@ -2214,8 +2395,83 @@ class ServerTest(StateMixin, unittest.TestCase):
         data = json.loads(self.call("GET", "/health")[2])
         self.assertEqual(
             set(data["features"]),
-            {"by_ref", "archive_upload", "server_chunks", "file_meta", "prompt", "auto_chunks", "partial", "holes", "sdocx_index"},
+            {
+                "by_ref", "archive_upload", "server_chunks", "file_meta", "prompt", "auto_chunks", "partial", "holes",
+                "sdocx_index", "job_options",
+            },
         )
+
+    def test_job_options_reach_the_work_for_the_owner(self) -> None:
+        _, _, seen = self.transcribe_with({}, audio=b"voce")
+        self.assertNotIn("overrides", seen, "senza opzioni la richiesta e' quella di sempre")
+        _, _, seen = self.transcribe_with({"job_model": "", "job_vram_gb": " ", "job_batch_max": ""}, audio=b"voce")
+        self.assertNotIn("overrides", seen, "vuoto = nessun override")
+        status, _, seen = self.transcribe_with(
+            {"job_model": "medium", "job_vram_gb": "6.5", "job_batch_max": "4"}, audio=b"voce"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(seen["overrides"], server.JobOverrides("medium", 6.5, 4))
+
+    def test_job_options_are_owner_only_and_validated(self) -> None:
+        for field, value in (("job_model", "medium"), ("job_vram_gb", "6"), ("job_batch_max", "4")):
+            status, body, seen = self.transcribe_with({field: value}, audio=b"voce", bearer="pg_friend")
+            self.assertEqual((status, body), (403, {"detail": "owner_only"}), field)
+            self.assertEqual(seen, {}, "il lavoro non parte")
+        # L'ospite che non ne manda continua a trascrivere.
+        self.assertEqual(self.transcribe_with({}, audio=b"voce", bearer="pg_friend")[0], 200)
+        status, body, seen = self.transcribe_with({"job_model": "gigante"}, audio=b"voce")
+        self.assertEqual(status, 400)
+        self.assertTrue(body["detail"].startswith("bad_job_option: "), body)
+        self.assertEqual(seen, {})
+        self.assertEqual(self.transcribe_with({"job_batch_max": "0"}, audio=b"voce")[0], 400)
+
+    def test_requests_with_different_job_options_are_not_merged(self) -> None:
+        # Stessa registrazione e stesse richieste ma opzioni diverse: due lavori. Opzioni uguali: uno.
+        server.JOBS.clear()
+        data = b"una lezione con le opzioni" * 40
+        blob = hashlib.sha256(data).hexdigest()
+        archive.ARCHIVE.store(blob, "Voce 003.m4a", "audio/mp4", [data])
+        calls: list = []
+        release = threading.Event()
+        inside = threading.Event()
+
+        def slow(path: str, language: str | None, progress: server.JobProgress, **kwargs: object) -> dict:
+            calls.append(kwargs.get("overrides"))
+            progress.set("transcribing")
+            inside.set()
+            for _ in range(500):
+                if release.is_set():
+                    break
+                progress.callback("transcribing")(10.0)
+                time.sleep(0.01)
+            return {"task": "transcribe", "language": "it", "duration": 1.0, "text": "ciao",
+                    "segments": [{"start": 0.0, "end": 1.0, "text": "ciao"}], "device_used": "cuda", "audio_s": 1.0}
+
+        answers: dict = {}
+
+        def send(name: str, job: str, extra: dict) -> None:
+            body, headers = self.form({"source_sha256": blob, "language": "it", **extra}, None)
+            headers["X-Pampa-Job"] = job
+            answers[name] = self.call("POST", "/v1/audio/transcriptions", bearer="pt_good", body=body, headers=headers)
+
+        medium = {"job_model": "medium"}
+        with mock.patch.object(server, "_transcribe", slow):
+            first = threading.Thread(target=send, args=("a", "aaaaaaaa-3333-4333-8333-333333333333", medium))
+            first.start()
+            self.assertTrue(inside.wait(10))
+            same = threading.Thread(target=send, args=("b", "bbbbbbbb-3333-4333-8333-333333333333", dict(medium)))
+            other = threading.Thread(target=send, args=("c", "cccccccc-3333-4333-8333-333333333333", {"job_vram_gb": "6"}))
+            plain = threading.Thread(target=send, args=("d", "dddddddd-3333-4333-8333-333333333333", {}))
+            for thread in (same, other, plain):
+                thread.start()
+            time.sleep(1.5)
+            release.set()
+            for thread in (first, same, other, plain):
+                thread.join(30)
+        self.assertEqual([answers[name][0] for name in "abcd"], [200, 200, 200, 200])
+        self.assertEqual(len(calls), 3, "le due con medium si uniscono, le altre due no")
+        self.assertEqual(calls[0], server.JobOverrides(model="medium"))
+        self.assertCountEqual(calls[1:], [server.JobOverrides(vram_gb=6.0), None])
 
     def test_diarize_is_a_feature_only_with_a_token_and_the_token_never_shows(self) -> None:
         server.STATE["hf_token"] = None

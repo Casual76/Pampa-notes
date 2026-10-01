@@ -294,7 +294,25 @@ quindi `POST /v1/audio/transcriptions` accetta, oltre ai campi di OpenAI:
 direbbe cosa c'è nell'archivio di un altro. La risposta dice `archived` (il file ora sta
 nell'archivio), `source` (`archive` o `upload`) e `chunks`. `/health` elenca in `features` quello
 che questo companion sa fare (`by_ref`, `archive_upload`, `server_chunks`, `file_meta`, `prompt`,
-`auto_chunks`, `partial`, `holes`, `sdocx_index`): senza la lista, l'app fa come prima.
+`auto_chunks`, `partial`, `holes`, `sdocx_index`, `job_options`): senza la lista, l'app fa come prima.
+
+**Le opzioni di una trascrizione sola** (`job_options`, dalla 1.1.0). Quando l'utente ritrascrive
+«con impostazioni», l'app manda tre campi facoltativi accanto a `max_minutes` e `diarize`; vuoto vuol
+dire «come sempre»:
+
+- `job_model`: uno dei modelli di `/v1/admin/settings` (`models`);
+- `job_vram_gb`: la VRAM che si può usare per questa lezione, un numero col **punto** fra 1 e 256
+  (`6.5`): vale come `vram_mode: manual`, cioè il conto si fa su quel numero e non sulla scheda;
+- `job_batch_max`: il tetto del lotto, un intero fra 1 e 64.
+
+Valgono per quel lavoro e basta: `config.json`, le impostazioni del computer e il piano di serie
+(`/health` → `vram`) restano come sono, e la lezione dopo — senza opzioni — ricarica il modello di
+serie. Il piano passa dalla solita protezione ([Quanta VRAM](#quanta-vram)): un modello che non sta
+scende lungo la catena, ora ferma a `medium`. Un valore sbagliato è un 400
+`bad_job_option: <motivo>`; **solo il proprietario** le può mandare (403 `owner_only` a un ospite,
+prima di leggere il file). Entrano nella chiave del lavoro condiviso: la stessa registrazione con
+opzioni diverse è un altro lavoro, con opzioni uguali si unisce. La risposta dice `model_used` e
+`compute_type_used`, cioè con cosa è partita davvero.
 
 Il registro dice per ogni richiesta da dove viene il file, l'inizio della sua impronta e quanto pesa,
 sempre in MiB: `dall'archivio Voce 001.m4a [39d2a3f1] (54.2 MiB)` (`—` al posto dell'impronta per un
@@ -341,8 +359,12 @@ La stima, per *questo* processo (il desktop e gli altri programmi stanno fuori):
 - **`"auto"`** (di serie): legge la scheda con torch e sceglie il lotto più grande — fino a
   `batch_size`, che ora è il **tetto** — perché la stima stia nell'**85%** della memoria. Se con
   il modello scelto il lotto scenderebbe sotto 4, passa a `int8_float16` (metà dei pesi, lo stesso
-  testo) e poi a un modello più piccolo: su 12 GB `large-v3` float16 lotto 16; su 8 GB lotto 10; su
-  4 GB `medium` int8 lotto 9. Mai in su;
+  testo) e poi a `medium`, e **non oltre**: `small` sull'italiano parlato di una lezione sbaglia
+  troppo per fare da fonte a un assistente. Se nemmeno `medium` int8 sta nella VRAM che c'è, il
+  piano lo dice (`fits: false`) e decide il ripiego sul processore, che tiene il modello scelto in
+  int8: più lento, la stessa qualità. Su 12 GB `large-v3` float16 lotto 16; su 8 GB lotto 10; su
+  4 GB `medium` int8 lotto 9. Mai in su: chi sceglie `small` a mano lo tiene, e la sua catena è
+  `small` float16, poi `small` int8;
 - **`"manual"`**, con **`"vram_gb": 6`**: lo stesso conto, ma sulla VRAM scritta lì — «la VRAM che
   ho», o quella che vuoi lasciare al companion mentre il resto della scheda serve ad altro. Con 6 GB:
   `large-v3` int8 lotto 9.

@@ -1490,13 +1490,13 @@
   <string name="settings_custom_chunk_auto_never">It picks it at the first lesson</string>
   <string name="tx_opts_choose">Set up for this time…</string>
   <string name="tx_opts_title">Transcribe again with your settings</string>
-  <string name="tx_opts_explain">They only apply to this transcription. The app's and the computer's settings stay as they are, and next time you start from those.</string>
+  <string name="tx_opts_explain">They only apply to this transcription. The app\'s and the computer\'s settings stay as they are, and next time you start from those.</string>
   <string name="tx_opts_action">Transcribe again</string>
   <string name="tx_opts_as_now">As now</string>
   <string name="tx_opts_language_detect">Detect</string>
-  <string name="tx_opts_vocabulary_detail">This time's vocabulary: empty it to use none. The one in settings does not change.</string>
+  <string name="tx_opts_vocabulary_detail">This time\'s vocabulary: empty it to use none. The one in settings does not change.</string>
   <string name="tx_opts_speakers_on">Separate voices</string>
-  <string name="tx_opts_speakers_off">Don't separate</string>
+  <string name="tx_opts_speakers_off">Don\'t separate</string>
   <string name="tx_opts_pieces_detail">How much audio the computer transcribes at once. Shorter pieces use less memory and a restart loses less.</string>
   <string name="tx_opts_model_detail">If the chosen model does not fit in the free memory, the computer steps down to a lighter one by itself, but never below “medium”.</string>
   <string name="tx_opts_memory_measured">Measured</string>

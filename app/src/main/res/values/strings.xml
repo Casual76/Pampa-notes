@@ -1525,7 +1525,7 @@
   <string name="settings_custom_chunk_auto_never">Lo sceglie alla prima lezione</string>
   <string name="tx_opts_choose">Imposta per questa volta…</string>
   <string name="tx_opts_title">Ritrascrivi con le tue impostazioni</string>
-  <string name="tx_opts_explain">Valgono solo per questa trascrizione. Le impostazioni dell'app e del computer restano come sono, e la prossima volta si riparte da quelle.</string>
+  <string name="tx_opts_explain">Valgono solo per questa trascrizione. Le impostazioni dell\'app e del computer restano come sono, e la prossima volta si riparte da quelle.</string>
   <string name="tx_opts_action">Ritrascrivi</string>
   <string name="tx_opts_as_now">Come ora</string>
   <string name="tx_opts_language_detect">Riconosci</string>
