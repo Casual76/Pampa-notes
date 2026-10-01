@@ -94,17 +94,18 @@ object SdocxUpdate {
    *
    * Samsung Notes, ricondividendo la nota, riscrive l'intestazione dei file audio: «Voce 002» del 21
    * settembre tornava con quattordici byte in piu' e un'altra impronta, e un aggiornamento la
-   * importava di nuovo — in una sessione nuova, datata oggi, ritrascritta da capo (24/09). Lo stesso
-   * nome con la stessa durata (entro un secondo) e quasi lo stesso peso e' la stessa registrazione;
-   * la durata identica al millesimo, anche con un nome diverso, pure.
+   * importava di nuovo — in una sessione nuova, datata oggi, ritrascritta da capo (24/09). La stessa
+   * durata (entro un secondo) e quasi lo stesso peso sono la stessa registrazione, **qualunque nome
+   * abbia**: il nome lo davamo noi, e fino al 28/09 poteva essere quello di un'altra (i record di
+   * `mediaInfo.dat` fuori ordine, [SdocxPairing]). Fra piu' d'una vince la piu' vicina; quelle in
+   * [exclude] sono gia' state riconosciute in un'altra registrazione.
    */
-  fun sameRecording(existing: List<AudioPartEntity>, originalName: String, durationMs: Long, sizeBytes: Long): AudioPartEntity? {
+  fun sameRecording(existing: List<AudioPartEntity>, durationMs: Long, sizeBytes: Long, exclude: Set<String> = emptySet()): AudioPartEntity? {
     if (durationMs <= 0) return null
-    val closeSize = { part: AudioPartEntity -> kotlin.math.abs(part.sizeBytes - sizeBytes) <= SIZE_SLACK_BYTES }
-    return existing.firstOrNull { part ->
-      part.originalName.equals(originalName, ignoreCase = true) &&
-        kotlin.math.abs(part.durationMs - durationMs) <= DURATION_SLACK_MS && closeSize(part)
-    } ?: existing.firstOrNull { part -> part.durationMs == durationMs && closeSize(part) }
+    return existing
+      .filter { it.id !in exclude }
+      .filter { kotlin.math.abs(it.durationMs - durationMs) <= DURATION_SLACK_MS && kotlin.math.abs(it.sizeBytes - sizeBytes) <= SIZE_SLACK_BYTES }
+      .minWithOrNull(compareBy({ kotlin.math.abs(it.durationMs - durationMs) }, { kotlin.math.abs(it.sizeBytes - sizeBytes) }))
   }
 
   private const val DURATION_SLACK_MS = 1_000L

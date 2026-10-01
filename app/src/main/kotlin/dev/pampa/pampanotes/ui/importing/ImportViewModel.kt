@@ -85,7 +85,7 @@ data class ImportUiState(
    * piu' d'uno quando si importa una settimana di lezioni in una volta.
    */
   val recordedDays: List<java.time.LocalDate>
-    get() = audioInOrder.mapNotNull { it.recordedOn?.date }.distinct().sorted()
+    get() = audioInOrder.mapNotNull { it.recordedOn?.knownDate }.distinct().sorted()
 
   /**
    * Da dove viene il giorno che la schermata propone: la fonte meno affidabile fra quelle usate,

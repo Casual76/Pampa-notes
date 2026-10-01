@@ -13,6 +13,7 @@ import dev.pampa.pampanotes.core.db.TranscriptDao
 import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.db.TranscriptKind
 import dev.pampa.pampanotes.core.files.AppFiles
+import dev.pampa.pampanotes.core.importing.SdocxRepair
 import dev.pampa.pampanotes.core.model.Dates
 import dev.pampa.pampanotes.core.model.Ids
 import dev.pampa.pampanotes.core.model.wordCount
@@ -245,6 +246,83 @@ class SessionRepository @Inject constructor(
   }
 
   // ---------------------------------------------------------------------------------------------
+  // La riparazione
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Applica il piano di [SdocxRepair]: nomi giusti alle parti, ogni parte nella sessione del giorno
+   * in cui e' stata registrata, date delle sessioni. I segmenti seguono le parti come in ogni
+   * spostamento, quindi non si ritrascrive niente.
+   *
+   * Tutto in una transazione, e senza toccare la nota: non e' una modifica di chi la scrive, e alzare
+   * `updatedAt` la farebbe sembrare cambiata oggi — la riportava in cima alla home, e le date vere
+   * ([dev.pampa.pampanotes.core.importing.RealDatesBackfill]) non l'avrebbero piu' riconosciuta.
+   * Sessioni e grezze nuove hanno id deterministici, cosi' due dispositivi che riparano la stessa
+   * nota scrivono le stesse righe.
+   *
+   * Le ricomposizioni sono due passate: nella prima ogni sessione toccata adotta i segmenti delle
+   * parti che ha adesso senza cancellare niente; nella seconda si rifa' tutto come sempre. Con due
+   * sessioni che si scambiano parti non esiste un ordine «prima chi riceve» che salvi tutti i
+   * segmenti; cosi' nessuno li perde.
+   */
+  suspend fun applyRepair(noteId: String, plan: SdocxRepair.Plan) {
+    if (plan.isEmpty) return
+    db.withTransaction {
+      val now = System.currentTimeMillis()
+      val before = sessions.plainByNote(noteId)
+      val wasByDate = before.sortedBy { it.position }.zipWithNext().all { (a, b) -> a.date <= b.date }
+
+      plan.newSessions.forEach { (id, date) ->
+        if (sessions.get(id) == null) {
+          sessions.upsert(
+            SessionEntity(
+              id = id,
+              noteId = noteId,
+              title = "",
+              date = date,
+              position = sessions.nextPosition(noteId),
+              createdAt = now,
+              updatedAt = now,
+            ),
+          )
+        }
+      }
+      plan.renames.forEach { (partId, name) -> parts.rename(partId, name) }
+
+      val losers = mutableSetOf<String>()
+      plan.layout.forEach { (sessionId, partIds) ->
+        partIds.forEachIndexed { position, partId ->
+          val part = parts.get(partId) ?: return@forEachIndexed
+          if (part.sessionId != sessionId) {
+            losers += part.sessionId
+            carryVoiceNames(part.sessionId, sessionId, listOf(partId))
+          }
+          if (part.sessionId != sessionId || part.position != position) parts.move(partId, sessionId, position)
+        }
+      }
+      losers.filter { it !in plan.layout }.forEach { renumber(parts.bySession(it)) }
+
+      val touched = (plan.layout.keys + losers).toList()
+      touched.forEach { rebuildRawNow(it, newRawId = SdocxRepair.rawId(it), adoptOnly = true) }
+      touched.forEach { rebuildRawNow(it, newRawId = SdocxRepair.rawId(it)) }
+      losers.forEach { deleteIfEmpty(it) }
+
+      plan.redates.forEach { (sessionId, date) ->
+        sessions.get(sessionId)?.let { sessions.rename(sessionId, it.title, date, now) }
+      }
+      // Le sessioni erano in ordine di data (il caso normale): ci restano, con quelle nuove al loro
+      // posto. Altrimenti qualcuno le ha messe in un altro ordine, e quelle nuove vanno in fondo.
+      if (wasByDate) {
+        sessions.plainByNote(noteId)
+          .sortedWith(compareBy<SessionEntity> { it.date }.thenBy { it.position })
+          .forEachIndexed { position, session -> if (session.position != position) sessions.setPosition(session.id, position, now) }
+      } else {
+        renumberSessions(noteId)
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------------
   // La ricomposizione
   // ---------------------------------------------------------------------------------------------
 
@@ -269,13 +347,21 @@ class SessionRepository @Inject constructor(
     db.withTransaction { rebuildRawNow(sessionId) }
   }
 
-  private suspend fun rebuildRawNow(sessionId: String) {
+  /**
+   * @param newRawId l'id della grezza, se ne nasce una: la riparazione lo vuole deterministico, come
+   *   le sue sessioni ([dev.pampa.pampanotes.core.importing.SdocxRepair.rawId]).
+   * @param adoptOnly prende i segmenti delle parti che ha adesso e basta: non cancella quelli delle
+   *   parti che se ne sono andate, e non butta la grezza se non le resta niente. Serve quando piu'
+   *   sessioni si scambiano parti in un colpo solo ([applyRepair]): chi le perde non deve portarsi
+   *   via i segmenti prima che chi le riceve li abbia adottati.
+   */
+  private suspend fun rebuildRawNow(sessionId: String, newRawId: String? = null, adoptOnly: Boolean = false) {
     val ordered = parts.bySession(sessionId)
     val existing = transcripts.rawForSession(sessionId)
     val stored = if (ordered.isEmpty()) emptyList() else segments.byParts(ordered.map { it.id })
 
     if (stored.isEmpty()) {
-      existing?.let { dropTranscript(sessionId, it) }
+      if (!adoptOnly) existing?.let { dropTranscript(sessionId, it) }
       return
     }
 
@@ -284,7 +370,7 @@ class SessionRepository @Inject constructor(
       segments = stored.map(::toSessionSegment),
     )
 
-    val target = existing ?: inheritedTranscript(sessionId, stored, assembled.text)
+    val target = existing ?: inheritedTranscript(sessionId, stored, assembled.text, newRawId)
     val changed = existing == null || existing.text != assembled.text
 
     if (existing == null) {
@@ -296,7 +382,7 @@ class SessionRepository @Inject constructor(
 
     // I segmenti si riscrivono comunque: anche a testo uguale i tempi di sessione possono essere
     // cambiati, ed e' su quelli che il lettore salta.
-    segments.deleteByTranscript(target.id)
+    if (!adoptOnly) segments.deleteByTranscript(target.id)
     ordered.forEach { part -> segments.deleteByPart(part.id) }
     segments.insertAll(
       assembled.segments.map { segment ->
@@ -362,7 +448,9 @@ class SessionRepository @Inject constructor(
       // Le parole delle altre parti, da qualunque trascrizione vengano: vanno sotto la grezza nuova
       // prima che quella vecchia se ne vada, o la cascata le porterebbe via con lei.
       val kept = if (others.isEmpty()) emptyList() else segments.byParts(others.map { it.id })
-      val previous = transcripts.rawForSession(target.sessionId)
+      // Tutte le grezze di prima, non solo la piu' recente: due dispositivi che l'hanno trascritta
+      // insieme ne lasciavano due, e la schermata mostrava la piu' vecchia (vedi [RawTranscripts]).
+      val previous = transcripts.bySession(target.sessionId).filter { it.kind == TranscriptKind.RAW }
 
       val transcript = TranscriptEntity(
         id = Ids.newId(),
@@ -398,7 +486,7 @@ class SessionRepository @Inject constructor(
             )
           },
       )
-      previous?.let {
+      previous.forEach {
         transcripts.deleteChildren(it.id)
         transcripts.delete(it.id)
       }
@@ -456,10 +544,11 @@ class SessionRepository @Inject constructor(
     sessionId: String,
     stored: List<SegmentEntity>,
     text: String,
+    id: String? = null,
   ): TranscriptEntity {
     val origins = stored.map { it.transcriptId }.distinct().mapNotNull { transcripts.get(it) }
     return TranscriptEntity(
-      id = Ids.newId(),
+      id = id ?: Ids.newId(),
       sessionId = sessionId,
       kind = TranscriptKind.RAW,
       provider = origins.firstOrNull()?.provider.orEmpty(),

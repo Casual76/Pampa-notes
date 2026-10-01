@@ -1067,14 +1067,14 @@ def apply_plan(plan: dict[str, Any]) -> None:
     STATE["batch_size"] = plan["batch_size"]
 
 
-# Il VAD di WhisperX (pyannote) decide quali tratti vanno a Whisper. Coi valori di serie (0,5 per
-# aprire, 0,363 per chiudere) passava anche il rumore di fondo di una registrazione lasciata accesa:
-# «Napoli 18h», venti ore di cui dieci di stanza vuota, tornava con le ore 0–3 e 13–18 quasi tutte
-# inventate. Un po' piu' severo per aprire e per restare aperto: un tratto di voce vera supera 0,6
-# senza fatica, un fruscio no. Misurato su tre ore di quel file: nelle due di stanza vuota i tratti
-# mandati a Whisper scendono da 41 a 19 e da 23 a 8; in quella in cui si parla le parole restano le
-# stesse (1231 contro 1233). Le allucinazioni che passano lo stesso le toglie [drop_hallucinations].
-VAD_OPTIONS = {"vad_onset": 0.6, "vad_offset": 0.45}
+# Il VAD di WhisperX (pyannote) decide quali tratti vanno a Whisper. Dal 24/09 al 28/09 era piu'
+# severo (0,6 per aprire, 0,45 per restare aperto), tarato su «Napoli 18h», venti ore di cui dieci di
+# stanza vuota. Su una lezione pero' lasciava fuori tratti di voce vera: Impressionismo del 28/09,
+# 44 minuti, 19 buchi per 7 minuti col VAD severo e 14 per 4,7 con quello di serie (e piu' parole),
+# misurati con `tools/holes.py` — col modello piccolo, perche' la scheda era occupata, ma i buchi
+# erano Degas e le ballerine, non silenzio. Si torna ai valori di serie: le frasi inventate nelle ore
+# mute le toglie [drop_hallucinations], e quello che il VAD perde lo riprende [fill_holes].
+VAD_OPTIONS = {"vad_onset": 0.5, "vad_offset": 0.363}
 # Le opzioni di decodifica della pipeline a lotti (`generate_segment_batched` le passa a ctranslate2).
 # Vuote di proposito. `repetition_penalty` 1,1 con `no_repeat_ngram_size` 3 toglie i giri a vuoto, ma
 # vieta al modello di ripetere tre parole in trenta secondi anche quando le ripete chi parla: sull'ora
@@ -1512,8 +1512,13 @@ def _load_align_model(whisperx: Any, language: str, device: str):
 # * `server_chunks`: `max_minutes` divide qui una lezione lunga, invece che sul telefono;
 # * `file_meta`: `GET /v1/files/<sha>/meta`, le date vere di un `.sdocx` o di una registrazione;
 # * `prompt`: il campo `prompt` arriva davvero a Whisper (prima si accettava e si ignorava);
-# * `partial`: `GET /v1/jobs/<id>/partial` da' il testo dei pezzi gia' finiti mentre si fa il resto.
-FEATURES = ("by_ref", "archive_upload", "server_chunks", "file_meta", "prompt", "auto_chunks", "partial")
+# * `partial`: `GET /v1/jobs/<id>/partial` da' il testo dei pezzi gia' finiti mentre si fa il resto;
+# * `holes`: i tratti di voce rimasti senza testo si ritrascrivono da soli ([fill_holes]), e la
+#   risposta dice quanti (`holes`);
+# * `sdocx_index`: `GET /v1/files/<sha>/sdocx`, le voci piccole di un `.sdocx` senza scaricarlo.
+FEATURES = (
+    "by_ref", "archive_upload", "server_chunks", "file_meta", "prompt", "auto_chunks", "partial", "holes", "sdocx_index",
+)
 
 
 @app.get("/health")
@@ -2166,8 +2171,45 @@ async def transcriptions(
         store = archive.ARCHIVE
         record = store.get(sha) if sha and store is not None else None
         label = name.strip() or (file.filename if file is not None else "") or "audio"
+        # L'impronta di quello che si trascrive davvero, per la riga del registro: e' il modo di
+        # rispondere a «il companion ha trascritto il file giusto?» senza aprire l'archivio.
+        heard = sha
 
-        if record is not None:
+        async def receive(digest: Any = None) -> Path:
+            """Il file del multipart in un temporaneo su disco (qui arrivano file da un'ora), col suo hash se chiesto."""
+            nonlocal target
+            suffix = Path(label).suffix or Path(file.filename or "").suffix or ".m4a"
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                target = Path(tmp.name)
+                while chunk := await file.read(1024 * 1024):
+                    if digest is not None:
+                        digest.update(chunk)
+                    tmp.write(chunk)
+            return target
+
+        if record is not None and file is not None:
+            # Impronta e file insieme, col blob nell'archivio. Prima il file si ignorava in silenzio:
+            # se l'app mandava lo sha di un'altra registrazione (una parte scambiata, una riga del sync
+            # che punta al file sbagliato) il computer trascriveva il blob, e la lezione tornava col
+            # testo di un'altra senza che nessuno potesse accorgersene. Il file si legge comunque fino
+            # in fondo, quindi costa poco farne l'impronta mentre arriva: se torna vince il blob, come
+            # prima; se no si trascrive quello che e' arrivato, e il registro lo dice.
+            digest = hashlib.sha256()
+            received = await receive(digest)
+            actual = digest.hexdigest()
+            if actual == sha:
+                with contextlib.suppress(OSError):
+                    received.unlink(missing_ok=True)
+                target = None
+                source, origin, archived = record["path"], "archive", True
+                label = name.strip() or record["name"]
+            else:
+                log.warning(
+                    "%sil file mandato non e' %s dell'archivio (e' %s): trascrivo quello mandato",
+                    who, sha[:8], actual[:8],
+                )
+                source, heard = received, actual
+        elif record is not None:
             source, origin, archived = record["path"], "archive", True
             label = name.strip() or record["name"]
         elif file is None:
@@ -2180,17 +2222,13 @@ async def transcriptions(
                 raise HTTPException(status_code=400, detail="sha_mismatch") from error
             source, archived = stored["path"], True
         else:
-            suffix = Path(label).suffix or Path(file.filename or "").suffix or ".m4a"
-            # Su disco e non in memoria: qui arrivano file da un'ora.
-            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-                target = Path(tmp.name)
-                while chunk := await file.read(1024 * 1024):
-                    tmp.write(chunk)
-            source = target
+            source = await receive()
 
-        size_mb = source.stat().st_size / (1024 * 1024)
         how = "dall'archivio" if origin == "archive" else ("ricevuto e archiviato" if archived else "ricevuto")
-        log.info("%s%s %s (%.1f MB)%s", who, how, label, size_mb, f", {GATE.waiting} in fila" if GATE.waiting else "")
+        log.info(
+            "%s%s %s [%s] (%s)%s", who, how, label, heard[:8] if heard else "—", archive.mib(source.stat().st_size),
+            f", {GATE.waiting} in fila" if GATE.waiting else "",
+        )
         cap: int | str | None = "auto" if max_minutes.strip().lower() == "auto" else _positive_int(max_minutes)
         vocabulary = prompt.strip() or None
         lang = language.strip() or None
@@ -2588,6 +2626,30 @@ def initial_prompt(model: Any, prompt: str | None):
         model.options = options
 
 
+@contextlib.contextmanager
+def vad_params(model: Any, vad: dict[str, float] | None):
+    """
+    Soglie del VAD diverse da [VAD_OPTIONS], per una trascrizione sola.
+
+    In WhisperX 3.8 le soglie non sono un argomento di `transcribe`: la pipeline le tiene in
+    `_vad_params`, fissate da `load_model`, e `transcribe` le passa a `merge_chunks` a ogni chiamata
+    (il modello del VAD da' solo le probabilita', e' `merge_chunks` che le taglia). Si sostituiscono
+    per la durata della chiamata e si rimettono com'erano, anche se fallisce: il modello resta in
+    memoria, e la lezione dopo deve trovare le soglie di sempre. Come [initial_prompt], senza
+    lucchetti perche' la fila fa passare una trascrizione alla volta; un modello senza
+    `_vad_params` (quelli finti delle prove, un WhisperX che le ha spostate) resta com'e'.
+    """
+    params = getattr(model, "_vad_params", None)
+    if not vad or not isinstance(params, dict):
+        yield
+        return
+    model._vad_params = {**params, **vad}
+    try:
+        yield
+    finally:
+        model._vad_params = params
+
+
 def run_job(
     audio: Any,
     language: str | None,
@@ -2596,6 +2658,9 @@ def run_job(
     device: str,
     progress: JobProgress | None = None,
     prompt: str | None = None,
+    vad: dict[str, float] | None = None,
+    chunk_size: int | None = None,
+    detail: str | None = None,
 ) -> dict[str, Any]:
     """
     Trascrive e allinea, scendendo dalla scheda alla RAM se la scheda non basta.
@@ -2615,16 +2680,25 @@ def run_job(
     trascrizione e l'allineamento con i callback di WhisperX, che scattano una volta per segmento.
     Un ripiego ricomincia la sua barra da zero e lo dice in `detail`: tornare indietro e' meglio
     che restare fermi al 60% mentre la lezione riparte da capo sul processore.
+
+    [vad] e [chunk_size] cambiano, per questa chiamata sola, le soglie del VAD ([vad_params]) e la
+    finestra massima in cui il VAD fonde i tratti (30 s in WhisperX); [detail] dice agli stati che
+    cosa si sta facendo («buchi 2/5», vedi [fill_holes]). Senza, e' la trascrizione di sempre, e
+    `chunk_size` non arriva nemmeno a `transcribe`: i modelli finti delle prove non lo conoscono.
     """
     progress = progress or JobProgress()
     device_used = device
     progress.device = device
     size = max(1, int(batch_size))
     transcription: dict[str, Any] | None = None
+    windows = {"chunk_size": int(chunk_size)} if chunk_size else {}
+
+    def note(extra: str | None = None) -> str | None:
+        return " · ".join(part for part in (detail, extra) if part) or None
 
     try:
         if engine.needs_load():
-            progress.set("loading_model")
+            progress.set("loading_model", detail=note())
         model = engine.main_model()
     except Exception as error:
         if device != "cuda" or not is_oom(error):
@@ -2647,10 +2721,11 @@ def run_job(
 
     while model is not None:
         try:
-            progress.set("transcribing", detail=None if size == batch_size else f"batch {size}")
-            with initial_prompt(model, prompt):
+            progress.set("transcribing", detail=note(None if size == batch_size else f"batch {size}"))
+            with initial_prompt(model, prompt), vad_params(model, vad):
                 transcription = model.transcribe(
                     audio, batch_size=size, language=language, progress_callback=progress.callback("transcribing"),
+                    **windows,
                 )
             break
         except Exception as error:
@@ -2666,14 +2741,14 @@ def run_job(
     if transcription is None:
         device_used = "cpu"
         progress.device = "cpu"
-        progress.set("loading_model", detail="cpu")
+        progress.set("loading_model", detail=note("cpu"))
         cpu = engine.cpu_model()
         try:
-            progress.set("transcribing", detail="cpu")
-            with initial_prompt(cpu, prompt):
+            progress.set("transcribing", detail=note("cpu"))
+            with initial_prompt(cpu, prompt), vad_params(cpu, vad):
                 transcription = cpu.transcribe(
                     audio, batch_size=min(size, CPU_BATCH_SIZE), language=language,
-                    progress_callback=progress.callback("transcribing"),
+                    progress_callback=progress.callback("transcribing"), **windows,
                 )
         finally:
             del cpu
@@ -2691,7 +2766,7 @@ def run_job(
         align_device = device_used
         try:
             if segments:
-                progress.set("aligning")
+                progress.set("aligning", detail=note())
                 segments = engine.align(segments, detected, audio, align_device, progress_callback=progress.callback("aligning"))
                 # Quello che l'allineamento ha usato resta nella riserva di torch, e il pezzo dopo lo
                 # trascrive ctranslate2, che quella riserva non la vede: due gigabyte tenuti per niente
@@ -2702,7 +2777,7 @@ def run_job(
                 raise
             engine.release()
             log.warning("allineamento: memoria della scheda finita, lo rifaccio sul processore")
-            progress.set("aligning", detail="cpu")
+            progress.set("aligning", detail=note("cpu"))
             segments = engine.align(segments, detected, audio, "cpu", progress_callback=progress.callback("aligning"))
     except AlignmentUnavailable as missing:
         # Una lingua senza allineatore (o col suo che non si carica) non e' un guasto: i tempi
@@ -3567,6 +3642,213 @@ def response_segment(segment: dict, index: int) -> dict | None:
     }
 
 
+# --- i buchi ----------------------------------------------------------------------------------------
+#
+# Il contrario delle allucinazioni: voce vera, a volume di voce, e nessun testo sopra. Nelle lezioni
+# tornate dal computer mancavano tratti lunghi di parlato normale a meta' lezione — il file era quello
+# giusto, e [drop_hallucinations] ne toglieva due o quattro segmenti in tutto. Due sospettati, tutti e
+# due di WhisperX: il VAD reso piu' severo per «Napoli 18h» ([VAD_OPTIONS]), che su una voce lontana o
+# bassa puo' non aprire, e la decodifica a lotti, che fa una passata sola per ogni finestra fusa dal
+# VAD (fino a trenta secondi, senza tempi, col vocabolario davanti) e davanti a una finestra fitta
+# puo' restituire una frase corta e perdere il resto. Quale dei due lo dira' `tools/holes.py`; intanto
+# i buchi si trovano dall'audio, che non dipende da nessuno dei due, e si ritrascrivono da soli con un
+# VAD largo e finestre piu' corte.
+
+# Un tratto senza testo diventa un buco da questa durata: sotto, sono le pause di chi parla.
+HOLE_MIN_S = 10.0
+# Il testo copre anche un secondo prima e dopo (l'allineamento stringe i tempi sulle parole), e due
+# tratti coperti a meno di due secondi l'uno dall'altro sono lo stesso discorso.
+HOLE_PAD_S = 1.0
+HOLE_BRIDGE_S = 2.0
+# Il buco si giudica a finestre di un secondo: almeno meta' devono essere voce — sopra il fondo del
+# loro blocco come in [sound_levels], e non piu' di venti decibel sotto la voce del file. Un fruscio,
+# una stanza vuota, una musica lontana non ci arrivano; un'aula che parla si'.
+HOLE_WINDOW_S = 1.0
+HOLE_SPEECH_SHARE = 0.5
+HOLE_BELOW_SPEECH_DB = 20.0
+# Come si ritrascrive un buco: VAD largo (quello di serie di WhisperX e' 0,5/0,363, il nostro 0,6/0,45)
+# e finestre da quindici secondi, cosi' una finestra fitta non si riduce a una frase. Il VAD largo sul
+# rumore apre di piu', ma qui si decodifica solo dove l'audio ha gia' detto che c'e' voce, e quello che
+# ne esce passa comunque da [drop_hallucinations].
+FILL_VAD = {"vad_onset": 0.3, "vad_offset": 0.2}
+FILL_CHUNK_S = 15
+# Un secondo d'audio in piu' per parte, per non tagliare la prima e l'ultima parola del buco.
+FILL_MARGIN_S = 1.0
+# Al massimo il 40% del pezzo si ritrascrive: se i «buchi» sono di piu', non e' un VAD che ha perso
+# una frase ma un file che il companion non sa leggere (una musica, una lingua che non conosce), e
+# rifarlo tutto una seconda volta costerebbe il doppio per niente. Non un quarto: un tratto di dieci
+# minuti mancante in una lezione da quaranta e' proprio il caso da cui tutto questo e' nato.
+FILL_MAX_SHARE = 0.4
+
+
+def clock(seconds: float) -> str:
+    """«41:10», o «1:22:05» oltre l'ora: il tempo com'e' scritto nell'app e nell'export."""
+    total = max(0, int(round(seconds)))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes:02d}:{secs:02d}"
+
+
+def covered_spans(segments: list[dict], total_s: float) -> list[tuple[float, float]]:
+    """
+    I tratti coperti dal testo: segmenti e parole (quando ci sono), allargati di [HOLE_PAD_S] per
+    parte e fusi quando fra l'uno e l'altro restano meno di [HOLE_BRIDGE_S]. Le parole contano perche'
+    un segmento puo' avere i suoi tempi sbagliati e le parole giusti, e il contrario.
+    """
+    spans: list[tuple[float, float]] = []
+    for segment in segments:
+        pairs = [(segment.get("start"), segment.get("end"))]
+        pairs += [(word.get("start"), word.get("end")) for word in segment.get("words") or [] if isinstance(word, dict)]
+        for raw_start, raw_end in pairs:
+            start, end = _finite(raw_start, math.nan), _finite(raw_end, math.nan)
+            if math.isnan(start) and math.isnan(end):
+                continue
+            start = end if math.isnan(start) else start
+            end = start if math.isnan(end) else end
+            low, high = min(start, end), max(start, end)
+            spans.append((max(0.0, low - HOLE_PAD_S), min(total_s, high + HOLE_PAD_S)))
+    spans.sort()
+    merged: list[list[float]] = []
+    for start, end in spans:
+        if merged and start - merged[-1][1] < HOLE_BRIDGE_S:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [(start, end) for start, end in merged]
+
+
+def speech_holes(
+    segments: list[dict], energies: Any, frame_s: float, total_s: float, min_hole_s: float = HOLE_MIN_S,
+) -> list[tuple[float, float, float]]:
+    """
+    I buchi: i tratti di almeno [min_hole_s] che nessun testo copre ([covered_spans]) e in cui almeno
+    [HOLE_SPEECH_SHARE] delle finestre da un secondo sono voce. Torna `(inizio, fine, quota di voce)`,
+    in ordine di tempo. Niente buchi se il file non ha una voce misurabile ([sound_levels] None):
+    senza un livello della voce non si distingue un'aula da un condizionatore.
+    """
+    import numpy as np
+
+    if energies is None or not len(energies) or total_s <= 0:
+        return []
+    floors, speech = sound_levels(energies, frame_s)
+    if speech is None or not floors:
+        return []
+    per_window = max(1, int(round(HOLE_WINDOW_S / frame_s)))
+    count = len(energies) // per_window
+    if count == 0:
+        return []
+    frames = np.asarray(energies[: count * per_window], dtype=np.float64).reshape(count, per_window)
+    rms = np.sqrt(np.mean(frames * frames, axis=1))
+    window_s = per_window * frame_s
+    blocks = np.minimum(len(floors) - 1, (np.arange(count) * window_s // FLOOR_BLOCK_S).astype(int))
+    floor = np.asarray(floors, dtype=np.float64)[blocks]
+    voiced = (rms >= floor * ACTIVE_ABOVE_FLOOR) & (rms >= speech * 10 ** (-HOLE_BELOW_SPEECH_DB / 20))
+
+    holes: list[tuple[float, float, float]] = []
+    cursor = 0.0
+    for start, end in [*covered_spans(segments, total_s), (total_s, total_s)]:
+        if start - cursor >= min_hole_s:
+            # Solo le finestre che stanno tutte dentro il buco.
+            first = int(math.ceil(cursor / window_s - 1e-9))
+            last = min(count, int(math.floor(start / window_s + 1e-9)))
+            if last > first:
+                share = float(np.mean(voiced[first:last]))
+                if share >= HOLE_SPEECH_SHARE:
+                    holes.append((round(cursor, 3), round(start, 3), round(share, 3)))
+        cursor = max(cursor, end)
+    return holes
+
+
+def fill_holes(
+    piece_source: Any,
+    segments: list[dict],
+    language: str | None,
+    engine: Engine,
+    batch_size: int,
+    device: str,
+    progress: JobProgress,
+    prompt: str | None = None,
+    energies: Any = None,
+    report: list[dict] | None = None,
+) -> tuple[list[dict], dict[str, Any]]:
+    """
+    Ritrascrive i buchi di un pezzo ([speech_holes]) e ne mette il testo fra i segmenti, in ordine.
+
+    Tutto nel tempo del pezzo: [segments] come li ha dati [run_job], [piece_source] con `piece`,
+    `duration_s` ed `energies` (una [LoadedAudio] sull'array del pezzo), [energies] quelle del pezzo
+    se chi chiama le ha gia'. I tempi del file li mette poi `_shifted`, come per il resto del pezzo:
+    cosi' tagli, pezzi provvisori e voci non si accorgono di niente.
+
+    Dal buco piu' lungo: un secondo in piu' per parte ([FILL_MARGIN_S]), [run_job] con [FILL_VAD] e
+    finestre da [FILL_CHUNK_S], e si tiene solo quello che ha il centro dentro il buco — il margine
+    e' li' per non tagliare le parole, non per ridire quelle che c'erano gia' — passato da
+    [drop_hallucinations]. **Senza vocabolario**: con un VAD cosi' largo il prompt e' la prima cosa che
+    Whisper ripete sul rumore («18h 18h»), e il buco e' voce che il prompt non ha saputo prendere.
+    Oltre [FILL_MAX_SHARE] del pezzo ci si ferma e lo si scrive. Un buco che non si riesce a
+    ritrascrivere (un errore qualunque) resta vuoto e non ferma la lezione; un annullamento si'.
+
+    Torna i segmenti con quelli nuovi e `{found, filled, seconds, words}`: i buchi trovati, quelli che
+    hanno avuto del testo, quanti secondi e quante parole. [report], se c'e', riceve un elemento per
+    buco ritrascritto col testo trovato (per `tools/holes.py`).
+    """
+    frame_s = FRAME_MS / 1000
+    total_s = float(piece_source.duration_s)
+    energies = piece_source.energies() if energies is None else energies
+    holes = speech_holes(segments, energies, frame_s, total_s)
+    stats: dict[str, Any] = {"found": len(holes), "filled": 0, "seconds": 0.0, "words": 0}
+    if not holes:
+        return segments, stats
+    budget = total_s * FILL_MAX_SHARE
+    spent = 0.0
+    added: list[dict] = []
+    ordered = sorted(holes, key=lambda hole: hole[0] - hole[1])
+    over: list[tuple[float, float, float]] = []
+    for index, (start, end, share) in enumerate(ordered):
+        progress.check_cancelled()
+        # Un buco che non ci sta piu' si salta, ma i piu' corti dopo di lui si provano lo stesso:
+        # fermarsi al primo lasciava vuoti anche i buchi da venti secondi dietro uno da dieci minuti.
+        if spent + (end - start) > budget:
+            over.append((start, end, share))
+            continue
+        spent += end - start
+        low, high = max(0.0, start - FILL_MARGIN_S), min(total_s, end + FILL_MARGIN_S)
+        try:
+            job = run_job(
+                piece_source.piece(low, high), language, engine, batch_size, device, progress,
+                vad=FILL_VAD, chunk_size=FILL_CHUNK_S, detail=f"buchi {index + 1}/{len(ordered)}",
+            )
+        except Exception:  # noqa: BLE001 — un buco rimasto vuoto non fa fallire la lezione
+            log.warning("buco %s–%s non ritrascritto", clock(start), clock(end), exc_info=True)
+            continue
+        inside = []
+        for segment in job.get("segments") or []:
+            moved = _shifted(segment, low)
+            middle = (_finite(moved.get("start"), math.nan) + _finite(moved.get("end"), math.nan)) / 2
+            if start <= middle <= end:
+                inside.append(moved)
+        kept, _ = drop_hallucinations(inside, energies, frame_s, prompt=prompt)
+        words = sum(len(normalized_words(segment.get("text") or "")) for segment in kept)
+        if kept:
+            stats["filled"] += 1
+            stats["seconds"] += end - start
+            stats["words"] += words
+            added.extend(kept)
+        if report is not None:
+            report.append({
+                "start": start, "end": end, "speech": share, "segments": len(kept), "words": words,
+                "text": " ".join((segment.get("text") or "").strip() for segment in kept),
+            })
+    if over:
+        log.info(
+            "buchi: %d (%.1f min) oltre il tetto del %d%% del pezzo, restano vuoti",
+            len(over), sum(e - s for s, e, _ in over) / 60, round(FILL_MAX_SHARE * 100),
+        )
+    stats["seconds"] = round(stats["seconds"], 1)
+    if not added:
+        return segments, stats
+    return sorted([*segments, *added], key=lambda segment: _finite(segment.get("start"), 0.0)), stats
+
+
 def transcribe_audio(
     audio: Any,
     sample_rate: int,
@@ -3593,7 +3875,8 @@ def transcribe_audio(
 
     [audio] e' l'array della lezione, o una sorgente ([LoadedAudio], [StreamedAudio]) che i pezzi li
     decodifica quando servono. Senza una lingua, la si riconosce prima dei pezzi dove si parla di
-    piu' ([spoken_language]); alla fine si tolgono le allucinazioni ([drop_hallucinations]).
+    piu' ([spoken_language]); dopo ogni pezzo si ritrascrivono i tratti di voce rimasti senza testo
+    ([fill_holes]); alla fine si tolgono le allucinazioni ([drop_hallucinations]).
     """
     batch_size = int(batch_size or STATE["batch_size"])
     device = device or STATE["device"]
@@ -3613,14 +3896,24 @@ def transcribe_audio(
     # None finche' nessun pezzo ha avuto qualcosa da allineare: vedi [run_job].
     alignment: str | None = None
     used_batch = batch_size
+    holes: dict[str, Any] = {"found": 0, "filled": 0, "seconds": 0.0, "words": 0}
     for index, (start_s, end_s) in enumerate(bounds):
         progress.check_cancelled()
         progress.piece(index + 1, len(bounds))
         piece = source.piece(start_s, end_s)
         job = run_job(piece, detected, engine, batch_size, device, progress, prompt=prompt)
-        piece = None
         detected = detected or job.get("language")
-        shifted = [_shifted(segment, start_s) for segment in job["segments"]]
+        # I buchi del pezzo, nel tempo del pezzo e prima dei pezzi provvisori: chi guarda la lezione
+        # arrivare dal telefono deve vedere anche il testo ritrovato ([fill_holes]).
+        first = int(round(start_s / frame_s))
+        found_segments, found = fill_holes(
+            LoadedAudio(piece, source.sample_rate), job["segments"], detected, engine, batch_size, device, progress,
+            prompt=prompt, energies=energies[first : first + int(round((end_s - start_s) / frame_s))],
+        )
+        piece = None
+        for key in holes:
+            holes[key] += found[key]
+        shifted = [_shifted(segment, start_s) for segment in found_segments]
         segments.extend(shifted)
         if len(bounds) > 1:
             share_piece(progress, shifted, energies, frame_s, prompt)
@@ -3644,6 +3937,12 @@ def transcribe_audio(
     kept, dropped = drop_hallucinations(segments, energies, frame_s, prompt=prompt)
     if dropped:
         log.info("allucinazioni: %s (restano %d segmenti su %d)", describe_dropped(dropped), len(kept), len(segments))
+    holes["seconds"] = round(holes["seconds"], 1)
+    if holes["found"]:
+        log.info(
+            "buchi riempiti: %d di %d (%.1f min, %d parole)",
+            holes["filled"], holes["found"], holes["seconds"] / 60, holes["words"],
+        )
     return {
         "segments": kept,
         "language": detected or "en",
@@ -3652,6 +3951,7 @@ def transcribe_audio(
         "alignment": alignment,
         "chunks": len(bounds),
         "dropped": dropped,
+        "holes": holes,
         "diarization": diarization,
         "diarize_s": diarize_s,
     }
@@ -3732,6 +4032,9 @@ def _transcribe(
         "max_minutes_used": int(cap or 0),
         # Quanti segmenti inventati sono stati tolti, per ragione ([drop_hallucinations]).
         "dropped": job.get("dropped") or {},
+        # I tratti di voce rimasti senza testo e ritrascritti da soli ([fill_holes]): trovati, riempiti,
+        # quanti secondi e quante parole. Tutto a zero e' una lezione senza buchi.
+        "holes": job.get("holes") or {"found": 0, "filled": 0, "seconds": 0.0, "words": 0},
         # «Chi parla»: "ok", l'errore, o None se non si e' chiesto. Un errore non ferma niente: la
         # trascrizione esce senza voci. `speakers` e' quante voci diverse ci sono.
         "diarization": job.get("diarization"),
@@ -4465,7 +4768,7 @@ def banner(settings: dict[str, Any]) -> None:
         print("  Il modello resta in memoria finche' il server e' acceso (--idle-minutes 0).")
     print("  Se il tablet non lo trova, lancia apri-firewall.cmd come amministratore.")
     count, size = archive.current().stats()
-    print(f"  Archivio dei file: {settings['archive_root']}  ({count} file, {size / 1e9:.1f} GB)")
+    print(f"  Archivio dei file: {settings['archive_root']}  ({count} file, {archive.gib(size)})")
     print(flush=True)
 
 

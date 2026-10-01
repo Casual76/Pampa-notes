@@ -352,6 +352,60 @@ class SessionRepositoryTest {
   // -----------------------------------------------------------------------------------------------
 
   /** Il risultato del motore: una frase per parte, al secondo uno, nell'ordine dato. */
+  // --- la riparazione dei .sdocx ---------------------------------------------------------------
+
+  @Test
+  fun riparare_due_sessioni_che_si_scambiano_parti_non_perde_parole() = runTest {
+    val first = seedSession("s1", parts = listOf("a" to 30L, "b" to 20L))
+    val second = seedSession("s2", parts = listOf("c" to 30L, "d" to 20L), position = 1)
+    transcribe(first, listOf("a" to "Uno.", "b" to "Due."))
+    transcribe(second, listOf("c" to "Tre.", "d" to "Quattro."))
+
+    repository.applyRepair(
+      noteId,
+      dev.pampa.pampanotes.core.importing.SdocxRepair.Plan(
+        renames = mapOf("b" to "Voce 003.m4a"),
+        layout = mapOf(first to listOf("a", "c"), second to listOf("b", "d")),
+      ),
+    )
+
+    assertEquals("Uno.\n\nTre.", db.transcripts().rawForSession(first)!!.text)
+    assertEquals("Due.\n\nQuattro.", db.transcripts().rawForSession(second)!!.text)
+    val all = listOf(first, second).flatMap { session -> db.segments().byTranscript(db.transcripts().rawForSession(session)!!.id) }
+    assertEquals(setOf("a", "b", "c", "d"), all.map { it.partId }.toSet())
+    assertEquals(4, all.size)
+    assertEquals("Voce 003.m4a", db.audioParts().get("b")!!.originalName)
+    // La riparazione non e' una modifica di chi scrive: la nota resta com'era.
+    assertEquals(0L, db.notes().get(noteId)!!.updatedAt)
+  }
+
+  @Test
+  fun riparare_crea_la_sessione_del_giorno_e_toglie_quella_rimasta_vuota() = runTest {
+    val first = seedSession("s1", parts = listOf("a" to 30L))
+    val second = seedSession("s2", parts = listOf("b" to 20L), position = 1)
+    transcribe(second, listOf("b" to "Il 24."))
+    val day = java.time.LocalDate.of(2026, 9, 24)
+    val created = dev.pampa.pampanotes.core.importing.SdocxRepair.sessionId(noteId, day)
+
+    repository.applyRepair(
+      noteId,
+      dev.pampa.pampanotes.core.importing.SdocxRepair.Plan(
+        newSessions = listOf(created to "2026-09-24"),
+        layout = mapOf(created to listOf("b"), second to emptyList()),
+        redates = mapOf(first to "2026-09-19"),
+      ),
+    )
+
+    assertNull(db.sessions().get(second))
+    assertEquals("2026-09-24", db.sessions().get(created)!!.date)
+    val raw = db.transcripts().rawForSession(created)!!
+    assertEquals("Il 24.", raw.text)
+    assertEquals(dev.pampa.pampanotes.core.importing.SdocxRepair.rawId(created), raw.id)
+    assertEquals("2026-09-19", db.sessions().get(first)!!.date)
+    // In ordine di data: il 19 prima del 24.
+    assertEquals(listOf(first, created), db.sessions().plainByNote(noteId).sortedBy { it.position }.map { it.id })
+  }
+
   private fun result(vararg texts: Pair<String, String>) = SessionTranscript(
     text = texts.joinToString("\n\n") { it.second },
     segments = texts.mapIndexed { index, (partId, text) ->

@@ -97,6 +97,7 @@ class NoteViewModel @Inject constructor(
   private val files: AppFiles,
   private val fetcher: ArchiveFetcher,
   private val handwriting: HandwritingPages,
+  private val repairer: dev.pampa.pampanotes.core.importing.SdocxRepairer,
   jobDao: JobDao,
 ) : ViewModel() {
 
@@ -250,6 +251,28 @@ class NoteViewModel @Inject constructor(
       val title = notes.get(noteId)?.title.orEmpty()
       onDone(handwriting.rederive(noteId, title))
       if (settingsStore.current().syncEnabled) scheduler.syncNow()
+    } catch (cancelled: CancellationException) {
+      throw cancelled
+    } catch (error: Exception) {
+      onError(error.message ?: error::class.java.simpleName)
+    }
+  }
+
+  /**
+   * «Ripara registrazioni»: ogni registrazione di Samsung Notes col suo nome e nella sessione del
+   * giorno in cui e' stata fatta ([dev.pampa.pampanotes.core.importing.SdocxRepairer]). Puo'
+   * scaricare il `.sdocx` dal computer. Senza [allowRefined] non sposta parti dove una versione
+   * ripulita andrebbe rifatta: lo dice l'esito, e la schermata chiede.
+   */
+  fun repairRecordings(
+    allowRefined: Boolean,
+    onDone: (dev.pampa.pampanotes.core.importing.SdocxRepairer.Report) -> Unit,
+    onError: (String) -> Unit,
+  ) = viewModelScope.launch {
+    try {
+      val report = repairer.repairNote(noteId, allowRefined)
+      onDone(report)
+      if (report.renamed + report.moved + report.redated > 0 && settingsStore.current().syncEnabled) scheduler.syncNow()
     } catch (cancelled: CancellationException) {
       throw cancelled
     } catch (error: Exception) {

@@ -15,22 +15,30 @@
       "ref": "main"
     },
     "stable": {
-      "version": "1.0.3",
-      "releaseDate": "2026-09-24",
-      "changelog": "I silenzi, le Registrazioni e chi parla.\n\n- Nuova scheda «Registrazioni» per l'audio che non è scuola: statistiche sue, fuori da materie e «Da fare», e di serie i file stanno solo sul computer di casa.\n- I silenzi non si riempiono più di frasi inventate («Grazie», il titolo ripetuto, giri a vuoto) e nel testo si vedono: «— 16 min di silenzio —».\n- «Salta i silenzi» nel lettore, «Cerca dentro una registrazione» e i capitoli automatici per le registrazioni lunghe (solo confini e prime parole, niente riassunti).\n- Mentre il computer trascrive una registrazione lunga, i pezzi già pronti compaiono subito nella sessione.\n- La ricerca generale apre la registrazione al minuto esatto in cui si dice la parola.\n- «Chi parla»: il computer di casa separa le voci («Voce 1», «Voce 2»), e le puoi rinominare. Serve un token gratuito di Hugging Face sul PC.\n- Selezione multipla anche nella home, in Registrazioni, nella ricerca e fra le materie: esporti quattro note di materie diverse in un colpo.\n- Slider di vetro in Impostazioni → Trascrizione, riordinata per gruppi.\n- «Aggiorna» da Samsung Notes riconosce le registrazioni già presenti anche quando Samsung ne riscrive l'intestazione.\n- Una trascrizione fallita si vede nella nota e nella sessione; una registrazione muta non è più un errore.\n- Tanti ritocchi: «Materie» al posto di «Cartelle», conferme dove servono, tasti più grandi, lettore con tempo mancante e salti lunghi.\n- Per le novità del computer di casa (silenzi, pezzi in arrivo, voci) aggiorna il companion alla 1.0.3.",
-      "releaseTag": "stable-pampa-notes-v1.0.3",
-      "apkAsset": "pampa-notes-1.0.3.apk",
-      "sizeBytes": 12704912
+      "version": "1.0.4",
+      "releaseDate": "2026-09-28",
+      "changelog": "Registrazioni al posto giusto, e niente più pezzi di lezione persi.\n\n- Samsung Notes: ogni registrazione ha il suo nome e la sua data vera. Prima due registrazioni potevano scambiarsi il nome (e la trascrizione), e tutte prendevano il giorno della condivisione.\n- Le note già importate si sistemano da sole all'apertura: ogni registrazione torna col suo nome, nella sessione del giorno in cui l'hai fatta, senza ritrascrivere niente. C'è anche «Ripara registrazioni» nella scheda Audio della nota.\n- Anche un audio condiviso da un'altra app prende il giorno in cui è stato registrato, non quello in cui l'hai mandato.\n- Niente più tratti di lezione spariti: dopo un «Riprova» o un cambio di servizio l'app non rimette più pezzi di un tentativo vecchio al posto di quelli nuovi.\n- Una sessione mostra sempre la trascrizione più recente, e una registrazione tornata senza testo te lo dice.\n- Le lezioni trascritte dal computer dal 24/09 in poi: l'app propone di ritrascriverle, solo quando lo decidi tu.\n- Per recuperare i tratti di voce che il computer perdeva, aggiorna il companion alla 1.0.4.",
+      "releaseTag": "stable-pampa-notes-v1.0.4",
+      "apkAsset": "pampa-notes-1.0.4.apk",
+      "sizeBytes": 12746764
     },
     "beta": {
-      "version": "1.0.3",
-      "releaseDate": "2026-09-24",
-      "changelog": "I silenzi, le Registrazioni e chi parla.\n\n- Nuova scheda «Registrazioni» per l'audio che non è scuola: statistiche sue, fuori da materie e «Da fare», e di serie i file stanno solo sul computer di casa.\n- I silenzi non si riempiono più di frasi inventate («Grazie», il titolo ripetuto, giri a vuoto) e nel testo si vedono: «— 16 min di silenzio —».\n- «Salta i silenzi» nel lettore, «Cerca dentro una registrazione» e i capitoli automatici per le registrazioni lunghe (solo confini e prime parole, niente riassunti).\n- Mentre il computer trascrive una registrazione lunga, i pezzi già pronti compaiono subito nella sessione.\n- La ricerca generale apre la registrazione al minuto esatto in cui si dice la parola.\n- «Chi parla»: il computer di casa separa le voci («Voce 1», «Voce 2»), e le puoi rinominare. Serve un token gratuito di Hugging Face sul PC.\n- Selezione multipla anche nella home, in Registrazioni, nella ricerca e fra le materie: esporti quattro note di materie diverse in un colpo.\n- Slider di vetro in Impostazioni → Trascrizione, riordinata per gruppi.\n- «Aggiorna» da Samsung Notes riconosce le registrazioni già presenti anche quando Samsung ne riscrive l'intestazione.\n- Una trascrizione fallita si vede nella nota e nella sessione; una registrazione muta non è più un errore.\n- Tanti ritocchi: «Materie» al posto di «Cartelle», conferme dove servono, tasti più grandi, lettore con tempo mancante e salti lunghi.\n- Per le novità del computer di casa (silenzi, pezzi in arrivo, voci) aggiorna il companion alla 1.0.3.",
-      "releaseTag": "stable-pampa-notes-v1.0.3",
-      "apkAsset": "pampa-notes-1.0.3.apk",
-      "sizeBytes": 12704912
+      "version": "1.0.4",
+      "releaseDate": "2026-09-28",
+      "changelog": "Registrazioni al posto giusto, e niente più pezzi di lezione persi.\n\n- Samsung Notes: ogni registrazione ha il suo nome e la sua data vera. Prima due registrazioni potevano scambiarsi il nome (e la trascrizione), e tutte prendevano il giorno della condivisione.\n- Le note già importate si sistemano da sole all'apertura: ogni registrazione torna col suo nome, nella sessione del giorno in cui l'hai fatta, senza ritrascrivere niente. C'è anche «Ripara registrazioni» nella scheda Audio della nota.\n- Anche un audio condiviso da un'altra app prende il giorno in cui è stato registrato, non quello in cui l'hai mandato.\n- Niente più tratti di lezione spariti: dopo un «Riprova» o un cambio di servizio l'app non rimette più pezzi di un tentativo vecchio al posto di quelli nuovi.\n- Una sessione mostra sempre la trascrizione più recente, e una registrazione tornata senza testo te lo dice.\n- Le lezioni trascritte dal computer dal 24/09 in poi: l'app propone di ritrascriverle, solo quando lo decidi tu.\n- Per recuperare i tratti di voce che il computer perdeva, aggiorna il companion alla 1.0.4.",
+      "releaseTag": "stable-pampa-notes-v1.0.4",
+      "apkAsset": "pampa-notes-1.0.4.apk",
+      "sizeBytes": 12746764
     },
     "history": [
+      {
+        "version": "1.0.3",
+        "releaseDate": "2026-09-24",
+        "changelog": "I silenzi, le Registrazioni e chi parla.\n\n- Nuova scheda «Registrazioni» per l'audio che non è scuola: statistiche sue, fuori da materie e «Da fare», e di serie i file stanno solo sul computer di casa.\n- I silenzi non si riempiono più di frasi inventate («Grazie», il titolo ripetuto, giri a vuoto) e nel testo si vedono: «— 16 min di silenzio —».\n- «Salta i silenzi» nel lettore, «Cerca dentro una registrazione» e i capitoli automatici per le registrazioni lunghe (solo confini e prime parole, niente riassunti).\n- Mentre il computer trascrive una registrazione lunga, i pezzi già pronti compaiono subito nella sessione.\n- La ricerca generale apre la registrazione al minuto esatto in cui si dice la parola.\n- «Chi parla»: il computer di casa separa le voci («Voce 1», «Voce 2»), e le puoi rinominare. Serve un token gratuito di Hugging Face sul PC.\n- Selezione multipla anche nella home, in Registrazioni, nella ricerca e fra le materie: esporti quattro note di materie diverse in un colpo.\n- Slider di vetro in Impostazioni → Trascrizione, riordinata per gruppi.\n- «Aggiorna» da Samsung Notes riconosce le registrazioni già presenti anche quando Samsung ne riscrive l'intestazione.\n- Una trascrizione fallita si vede nella nota e nella sessione; una registrazione muta non è più un errore.\n- Tanti ritocchi: «Materie» al posto di «Cartelle», conferme dove servono, tasti più grandi, lettore con tempo mancante e salti lunghi.\n- Per le novità del computer di casa (silenzi, pezzi in arrivo, voci) aggiorna il companion alla 1.0.3.",
+        "releaseTag": "stable-pampa-notes-v1.0.3",
+        "apkAsset": "pampa-notes-1.0.3.apk",
+        "sizeBytes": 12704912
+      },
       {
         "version": "1.0.2",
         "releaseDate": "2026-09-23",

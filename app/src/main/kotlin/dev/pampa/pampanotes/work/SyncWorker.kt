@@ -7,6 +7,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import dev.pampa.pampanotes.core.importing.StartupRepairs
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.sync.SyncRepository
 
@@ -24,11 +25,15 @@ class SyncWorker @AssistedInject constructor(
   private val repository: SyncRepository,
   private val settingsStore: PampaSettingsStore,
   private val scheduler: WorkScheduler,
+  private val repairs: StartupRepairs,
 ) : CoroutineWorker(context, params) {
 
   override suspend fun doWork(): Result {
     if (!settingsStore.current().syncEnabled) return Result.success()
     val report = repository.syncNow()
+    // Dopo il pull, non prima: le note che un altro dispositivo ha gia' riparato arrivano sistemate,
+    // e qui non si riscrive niente. Quello che cambia sale col prossimo giro.
+    if (repairs.run() && report.ok) scheduler.syncSoon()
     // Le righe nuove sono arrivate: se si e' chiesto di tenere tutto anche qui, i loro file si
     // vanno a prendere adesso. Il worker si chiude da solo se non c'e' niente da scaricare.
     val settings = settingsStore.current()

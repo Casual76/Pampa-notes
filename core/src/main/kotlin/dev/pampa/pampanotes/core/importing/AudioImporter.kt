@@ -87,7 +87,7 @@ class AudioImporter @Inject constructor(
 
     // Altrimenti lo dicono le registrazioni: una sessione per giorno, datata col giorno in cui sono
     // state fatte e non con quello dell'import. Nella stessa sessione, le parti di quel giorno.
-    val byDay = RecordingDate.groupByDay(candidates, { it.recordedOn?.date })
+    val byDay = RecordingDate.groupByDay(candidates, { it.recordedOn?.knownDate })
     byDay.flatMap { (day, group) ->
       importInto(createSession(noteId, day.toString(), newSession.title), group)
     }
@@ -97,9 +97,9 @@ class AudioImporter @Inject constructor(
     val results = mutableListOf<ImportedItem>()
     var position = parts.nextPosition(sessionId)
 
-    // In ordine di nome: un registratore numera i file, e "parte 2" viene dopo "parte 1" anche
-    // quando il selettore li consegna al contrario.
-    candidates.sortedBy { it.displayName.lowercase() }.forEach { candidate ->
+    // In ordine di registrazione quando lo si sa (un `.sdocx`), altrimenti di nome: un registratore
+    // numera i file, e "parte 2" viene dopo "parte 1" anche quando il selettore li consegna al contrario.
+    candidates.sortedWith(compareBy<ImportCandidate, Int?>(nullsLast()) { it.sequence }.thenBy { it.displayName.lowercase() }).forEach { candidate ->
       val temp = candidate.file
       if (temp == null || !temp.exists()) {
         results += ImportedItem(candidate.id, candidate.displayName, candidate.kind, SourceStatus.FAILED, summary = ImportSummary.FileUnavailable)

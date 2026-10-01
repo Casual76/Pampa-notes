@@ -14,9 +14,17 @@ data class SdocxRecording(
   /** La durata che Samsung Notes scrive accanto al nome, in millisecondi; 0 se non l'ha scritta. */
   val durationMs: Long,
   val sha256: String?,
-  /** Quando la registrazione e' stata fatta, in millisecondi epoch; null se il record non lo dice. */
+  /**
+   * Quando si e' cominciato a registrare, in millisecondi epoch ([SdocxPairing.startOf]: dal nome
+   * della voce nello ZIP); null se il file non lo dice in un modo di cui fidarsi.
+   */
   val createdAtMillis: Long?,
+  /** Quanto pesa la voce nello ZIP, in byte; -1 se non si sa. */
+  val sizeBytes: Long = -1L,
 )
+
+/** Una registrazione come la mostra Samsung Notes: il nome e la durata che scrive accanto. */
+data class SdocxVoice(val title: String, val durationMs: Long)
 
 /**
  * Quando una nota di Samsung Notes e' nata e quando e' stata cambiata l'ultima volta, in
@@ -43,6 +51,11 @@ data class SdocxDocument(
    * Null se il file non lo dice in un modo credibile: allora vale il momento dell'import.
    */
   val dates: SdocxDates? = null,
+  /**
+   * I nomi e le durate di `note.note`, nel suo ordine. [recordings] li ha gia' accoppiati per
+   * posizione; chi misura i file li ricontrolla con [SdocxPairing.assign].
+   */
+  val voices: List<SdocxVoice> = emptyList(),
 ) {
   /** In Samsung Notes ogni riga e' un paragrafo: fra due non c'e' sempre una riga vuota. */
   val paragraphCount: Int get() = body.lineSequence().count { it.isNotBlank() }
@@ -56,8 +69,9 @@ data class SdocxDocument(
  * E' uno ZIP. Dentro, `note.note` e' un binario dell'S-Pen SDK in cui il testo battuto sta in
  * chiaro come stringhe UTF-16LE precedute dalla lunghezza in caratteri; il resto del file sono i
  * tratti dell'inchiostro e la struttura della pagina, che non ci servono. `media/mediaInfo.dat`
- * elenca le registrazioni, una per record, **nell'ordine in cui sono state fatte**, con il nome
- * della voce nello ZIP e l'ora di creazione.
+ * elenca le registrazioni, una per record, con il nome della voce nello ZIP e l'ora in cui Samsung
+ * Notes ha scritto il file l'ultima volta. **Non** sono in ordine, e quell'ora non e' quella della
+ * registrazione: ordine e data vengono dal nome della voce ([SdocxPairing]).
  *
  * Il metodo e' quello di chi legge un formato senza specifica: si cerca quello che si sa
  * riconoscere e si ignora il resto. Per questo il parser e' pieno di controlli di plausibilita' —
@@ -79,28 +93,44 @@ object SdocxParser {
 
   fun parse(file: File): SdocxDocument = ZipFile(file).use { zip -> parse(zip) }
 
-  fun parse(zip: ZipFile): SdocxDocument {
-    val note = zip.getEntry(NOTE_ENTRY)?.let { zip.getInputStream(it).use { s -> s.readBytes() } }
-    val mediaInfo = zip.getEntry(MEDIA_INFO_ENTRY)?.let { zip.getInputStream(it).use { s -> s.readBytes() } }
-
-    val (title, body) = note?.let(::titleAndBody) ?: (null to "")
-
-    val voices = note?.let(::readVoices).orEmpty()
-    val media = mediaInfo?.let { readMediaInfo(it) }.orEmpty()
-    val audioEntries = zip.entries().asSequence()
-      .map { it.name }
-      .filter { it.substringAfterLast('.', "").lowercase() in AUDIO_EXTENSIONS }
+  fun parse(zip: ZipFile, now: Long = System.currentTimeMillis()): SdocxDocument {
+    val read = { name: String -> zip.getEntry(name)?.let { zip.getInputStream(it).use { s -> s.readBytes() } } }
+    val audio = zip.entries().asSequence()
+      .filter { it.name.substringAfterLast('.', "").lowercase() in AUDIO_EXTENSIONS }
+      .map { it.name to it.size }
       .toList()
-
     // Solo il conto: le pagine si leggono una alla volta e si buttano, e un inchiostro che non si
     // legge vale zero pagine invece di far fallire l'ispezione di una nota che ha anche del testo.
     val handwritten = SdocxInk.countSlices(zip)
+    return assemble(read(NOTE_ENTRY), read(MEDIA_INFO_ENTRY), read(END_TAG_ENTRY), audio, handwritten, now)
+  }
+
+  /**
+   * Il documento dai pezzi che contano, senza lo ZIP: cosi' si legge anche l'indice che il computer
+   * di casa manda di un `.sdocx` che qui non c'e' (`GET /v1/files/<sha>/sdocx`), senza scaricarne
+   * i 180 MB di audio.
+   *
+   * @param audio le voci audio dello ZIP con il loro peso (-1 se non si sa).
+   */
+  fun assemble(
+    note: ByteArray?,
+    mediaInfo: ByteArray?,
+    endTag: ByteArray?,
+    audio: List<Pair<String, Long>>,
+    handwrittenPages: Int = 0,
+    now: Long = System.currentTimeMillis(),
+  ): SdocxDocument {
+    val (title, body) = note?.let(::titleAndBody) ?: (null to "")
+    val voices = note?.let(::readVoices).orEmpty()
+    val media = mediaInfo?.let { readMediaInfo(it, now) }.orEmpty()
+    val dates = endTag?.let { parseEndTag(it, now) } ?: note?.let { parseNoteHeader(it, now) }
     return SdocxDocument(
       title = title,
       body = body,
-      recordings = pairRecordings(media, voices, audioEntries),
-      handwrittenPages = handwritten,
-      dates = readDates(zip, note),
+      recordings = pairRecordings(media, voices, audio, now),
+      handwrittenPages = handwrittenPages,
+      dates = dates,
+      voices = voices.map { (name, duration) -> SdocxVoice(name, duration) },
     )
   }
 
@@ -317,35 +347,53 @@ object SdocxParser {
   }
 
   /**
-   * Mette insieme le tre fonti: i record di `mediaInfo.dat` (ordine, nome nello ZIP, ora), le voci
-   * di `note.note` (titolo e durata) e le voci dello ZIP (quello che c'e' davvero).
+   * Mette insieme le tre fonti: i record di `mediaInfo.dat` (nome nello ZIP, impronta), le voci di
+   * `note.note` (titolo e durata) e le voci dello ZIP (quello che c'e' davvero).
    *
-   * L'accoppiamento e' per posizione: la prima registrazione di `mediaInfo.dat` e' «Voce 001».
-   * Quando i conti non tornano si tiene quello che e' certo — i file — e si lascia vuoto il resto,
-   * invece di assegnare un titolo a caso.
+   * L'ordine e' quello in cui si e' registrato, dall'ora nel nome della voce ([SdocxPairing]); solo
+   * se qualche nome non la porta resta quello dei record. Poi l'accoppiamento con i titoli e' per
+   * posizione: la prima registrazione fatta e' «Voce 001». Quando i conti non tornano si tiene quello
+   * che e' certo — i file — e si lascia vuoto il resto, invece di assegnare un titolo a caso; chi
+   * misura le durate ricontrolla i titoli ([SdocxPairing.assign]).
    */
   private fun pairRecordings(
     media: List<MediaRecord>,
     voices: List<Pair<String, Long>>,
-    audioEntries: List<String>,
+    audio: List<Pair<String, Long>>,
+    now: Long,
   ): List<SdocxRecording> {
-    val byName = audioEntries.associateBy { it.substringAfterLast('/') }
+    val entries = audio.map { it.first }
+    val sizes = audio.toMap()
+    val byName = entries.associateBy { it.substringAfterLast('/') }
     val ordered = media.mapNotNull { record -> byName[record.name]?.let { record to it } }
     // Un file che c'e' nello ZIP ma non nell'indice si accoda: meglio importarlo senza nome che perderlo.
     val listed = ordered.map { it.second }.toSet()
-    val orphans = audioEntries.filter { it !in listed }.sorted()
+    val orphans = entries.filter { it !in listed }.sorted()
 
-    val paired = ordered.mapIndexed { position, (record, entry) ->
-      val voice = voices.getOrNull(position)?.takeIf { voices.size == ordered.size }
+    val atShare = SdocxPairing.shareStamped(ordered.map { it.first.createdAtMillis })
+    val found = ordered.map { (record, entry) ->
       SdocxRecording(
         entryName = entry,
-        title = voice?.first?.takeIf { it.isNotBlank() },
-        durationMs = voice?.second ?: 0L,
+        title = null,
+        durationMs = 0L,
         sha256 = record.sha256,
-        createdAtMillis = record.createdAtMillis,
+        createdAtMillis = SdocxPairing.startOf(entry, record.createdAtMillis, atShare, now),
+        sizeBytes = sizes[entry] ?: -1L,
       )
+    } + orphans.map { entry ->
+      SdocxRecording(entry, null, 0L, null, SdocxPairing.startFromEntryName(entry, now), sizes[entry] ?: -1L)
     }
-    return paired + orphans.map { SdocxRecording(it, null, 0L, null, null) }
+    // Tutte con l'ora nel nome: si mettono in fila per quella. Altrimenti l'ordine dei record, che e'
+    // quello che c'era prima e resta il meglio che si sa.
+    val chronological = if (found.all { SdocxPairing.startFromEntryName(it.entryName, now) != null }) {
+      found.sortedBy { SdocxPairing.startFromEntryName(it.entryName, now) }
+    } else {
+      found
+    }
+    return chronological.mapIndexed { position, recording ->
+      val voice = voices.getOrNull(position)?.takeIf { voices.size == chronological.size }
+      recording.copy(title = voice?.first?.takeIf { it.isNotBlank() }, durationMs = voice?.second ?: 0L)
+    }
   }
 
   // -----------------------------------------------------------------------------------------------

@@ -87,6 +87,45 @@ fun NoteRoute(
   val context = LocalContext.current
   // Le stringhe dalle risorse osservabili, non dal contesto: cambiano con la lingua e il tema.
   val resources = LocalResources.current
+  // «Ripara registrazioni» che sposterebbe parti di sessioni con una versione ripulita: quante.
+  var repairAsks by remember { mutableStateOf<Int?>(null) }
+  val repair = { allowRefined: Boolean ->
+    viewModel.repairRecordings(
+      allowRefined = allowRefined,
+      onDone = { report ->
+        if (report.outcome == dev.pampa.pampanotes.core.importing.SdocxRepairer.Outcome.NEEDS_CONFIRMATION) {
+          repairAsks = report.refined
+        } else {
+          val message = when {
+            report.outcome == dev.pampa.pampanotes.core.importing.SdocxRepairer.Outcome.PENDING && report.renamed + report.moved + report.redated == 0 ->
+              resources.getString(R.string.note_repair_unavailable)
+            report.renamed + report.moved + report.redated == 0 -> resources.getString(R.string.note_repair_nothing)
+            else -> resources.getString(R.string.note_repair_done, report.renamed, report.moved + report.redated)
+          }
+          Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        }
+      },
+      onError = { Toast.makeText(context, resources.getString(R.string.note_source_fetch_failed, it), Toast.LENGTH_LONG).show() },
+    )
+  }
+  repairAsks?.let { count ->
+    FluidAlert(
+      onDismissRequest = { repairAsks = null },
+      title = stringResource(R.string.note_repair_confirm_title),
+      message = pluralStringResource(R.plurals.note_repair_confirm_message, count, count),
+      actions = listOf(
+        FluidAlertAction(
+          label = stringResource(R.string.note_repair_confirm_action),
+          emphasis = FluidAlertAction.Emphasis.Preferred,
+          onClick = {
+            repairAsks = null
+            repair(true)
+          },
+        ),
+        FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = { repairAsks = null }),
+      ),
+    )
+  }
   NoteScreen(
     state = state,
     initialTab = tabFromRoute(initialTab),
@@ -122,6 +161,10 @@ fun NoteRoute(
         onError = { Toast.makeText(context, resources.getString(R.string.note_source_fetch_failed, it), Toast.LENGTH_LONG).show() },
       )
     },
+    onRepairRecordings = {
+      Toast.makeText(context, resources.getString(R.string.note_repair_working), Toast.LENGTH_SHORT).show()
+      repair(false)
+    },
   )
 }
 
@@ -148,6 +191,7 @@ private fun NoteScreen(
   onOpenSession: (String) -> Unit,
   onOpenSource: (SourceEntity) -> Unit,
   onRederiveHandwriting: () -> Unit,
+  onRepairRecordings: () -> Unit,
 ) {
   var tab by rememberSaveable { mutableStateOf(initialTab) }
   var confirmingDelete by remember { mutableStateOf(false) }
@@ -188,6 +232,7 @@ private fun NoteScreen(
   val addAudioLabel = stringResource(R.string.note_add_audio)
   val retranscribeAllLabel = stringResource(R.string.note_retranscribe_all)
   val chooseSessionsLabel = stringResource(R.string.note_choose_sessions)
+  val repairLabel = stringResource(R.string.note_repair)
 
   CloseWhenGone(gone = !state.loading && state.note == null, onBack = onBack)
 
@@ -253,6 +298,9 @@ private fun NoteScreen(
                     )
                   }
                   if (state.sessions.isNotEmpty()) add(FluidContextAction(label = chooseSessionsLabel) { selecting = true })
+                  // Le registrazioni di Samsung Notes importate prima del 28/09 potevano avere il nome
+                  // di un'altra ed essere nella sessione del giorno sbagliato.
+                  if (state.partCount > 0 && state.sources.any { it.kind == SourceKind.SDOCX }) add(FluidContextAction(label = repairLabel) { onRepairRecordings() })
                 }
                 NoteTab.SOURCES -> add(FluidContextAction(label = importLabel) { onImport() })
               }

@@ -281,13 +281,19 @@ class RealDatesBackfill @Inject constructor(
     if (local != null) {
       val raw = audio.probe(local).metadataDate
       val day = RecordingDate.parseMetadata(raw, context.zone)?.takeIf { RecordingDate.plausible(it, context.today) } ?: return Recorded.NONE
-      return Recorded(day, RecordingDate.parseMetadataInstant(raw, context.zone) ?: RecordingDate.noonOf(day, context.zone))
+      val instant = RecordingDate.parseMetadataInstant(raw, context.zone)
+      // L'ora che Samsung Notes (o chi ha condiviso) ha scritto nel file mentre lo mandava: e' il
+      // giorno dell'import, cioe' proprio la data sbagliata che questo giro deve togliere.
+      if (instant != null && RecordingDate.rewrittenAtShare(instant, part.durationMs, part.createdAt)) return Recorded.NONE
+      return Recorded(day, instant ?: RecordingDate.noonOf(day, context.zone))
     }
     if (part.archivedAt <= 0) return Recorded.NONE
     val computer = context.computer() ?: return Recorded.NONE
     return when (val answer = computer.meta(part.sha256)) {
       is FileMetaResult.Found -> {
         val moment = answer.meta.recordedUs?.div(1000) ?: return Recorded.NONE
+        // Il computer legge la stessa intestazione (ffprobe, `creation_time`): stessa regola.
+        if (RecordingDate.rewrittenAtShare(moment, part.durationMs, part.createdAt)) return Recorded.NONE
         val day = Instant.ofEpochMilli(moment).atZone(context.zone).toLocalDate()
         if (RecordingDate.plausible(day, context.today)) Recorded(day, moment) else Recorded.NONE
       }

@@ -784,7 +784,7 @@ Gli URI di una condivisione si copiano subito (vedi sopra) e poi si legge la cop
 registrazione** e' quella in cui e' stata fatta, non quella dell'import (`RecordingDate`): prima la
 data dei metadati del contenitore, poi una data nel nome del file (Registratore Samsung, WhatsApp,
 `20250922_101500`…), poi la data del file dal provider, e solo alla fine oggi; date nel futuro o
-prima del 2000 si scartano. Registrazioni di giorni diversi fanno una sessione per giorno, e il
+prima del 2000 si scartano, e cosi' un'ora riscritta alla condivisione (`rewrittenAtShare`: piu' tarda di adesso meno la durata, con un quarto d'ora di margine). Un file senza data va con gli altri. Registrazioni di giorni diversi fanno una sessione per giorno, e il
 wizard dice da dove ha preso la data e la lascia cambiare. Un tipo per
 lettore: `TextExtractor` per testo, PDF (PdfBox) e DOCX (`DocxParser`, SAX su `word/document.xml`,
 puro e provato in JVM). `MimeSniffer` non si fida del MIME dichiarato: guarda l'estensione, poi i
@@ -806,8 +806,13 @@ Il formato, decodificato da un file vero (`core/src/test/resources/sdocx/fichte.
   sono coppie di byte che `isLetter` accetta;
 - i nomi delle registrazioni ("Voce 001", "HH:MM:SS") hanno il prefisso **int16**;
 - `media/mediaInfo.dat`: un record per file, int32 tag `0x79`, int32 indice, **int16** lunghezza
-  del nome, nome UTF-16LE, sha256 in esadecimale, 2 byte, int64 timestamp in microsecondi. L'ordine
-  dei record e' l'ordine cronologico delle parti.
+  del nome, nome UTF-16LE, sha256 in esadecimale, 2 byte, int64 timestamp in microsecondi. **Ne'
+  l'ordine dei record ne' l'ora sono della registrazione** (Impressionismo, 28/09: record 0, 1, 3, 2,
+  tutti con l'ora della condivisione): l'inizio vero sta nel nome della voce ZIP,
+  `media/<slot>@<secondi hex>_….m4a`, e da li' vengono ordine e data (`SdocxPairing`); i nomi di
+  `note.note` si ricontrollano con la durata misurata (`SdocxPairing.assign`). Le note importate prima
+  le ripara `SdocxRepairer` (all'avvio dopo il pull, o «Ripara registrazioni» nel menu della nota):
+  nome giusto e sessione del giorno giusto per ogni parte, id deterministici, niente ritrascrizione.
 
 `SdocxParser` e' tarato su questo file: se non riconosce niente, l'archivio resta come fonte e lo
 dice, invece di importare una nota vuota.
@@ -930,9 +935,10 @@ l'ultimo allineamento (`"alignment": {"it": "ok"}`).
 **Il silenzio non si trascrive.** «Napoli 18h» (19,8 ore, una gita registrata di notte) tornava con
 le ore 0–3 e 13–18 tutte inventate: 407 eco del titolo mandato come vocabolario («18h 18h 18h»:
 WhisperX rilegge il prompt a ogni finestra da trenta secondi), un centinaio di «Grazie.», 78 giri a
-vuoto. Il companion ora si difende da se', su quattro fronti. Il **VAD** e' piu' severo
-(`VAD_OPTIONS`, 0,6/0,45: nelle ore mute i tratti mandati a Whisper si dimezzano, le parole dell'ora
-parlata restano le stesse); `repetition_penalty` e `no_repeat_ngram_size` sono stati provati e
+vuoto. Il companion ora si difende da se', su quattro fronti. Il **VAD** era stato reso piu'
+severo (0,6/0,45) e il 28/09 e' tornato ai valori di serie (`VAD_OPTIONS`, 0,5/0,363): su una
+lezione perdeva tratti di voce vera (vedi i buchi, piu' sotto), e nelle ore mute le frasi inventate
+le toglie comunque `drop_hallucinations`; `repetition_penalty` e `no_repeat_ngram_size` sono stati provati e
 **lasciati spenti** (`ASR_OPTIONS`): vietano al modello le ripetizioni vere — «vorrei fare festa»,
 ripetuto da chi parlava, diventava «vuoi rifare festa… vuol fa festa». La **lingua**, se l'app non la
 dice, si riconosce a maggioranza sulle tre finestre da trenta secondi piu' parlate del file
@@ -1017,6 +1023,29 @@ accese (un tocco porta il lettore li'), sopra la trascrizione vecchia se si sta 
 **E' provvisorio e non si salva ne' sincronizza**: la risposta passa ancora dal filtro sulla lezione
 intera e dalla separazione delle voci, e vince lei. Un companion vecchio non riceve nessuna domanda
 in piu'.
+
+**I pezzi non si confondono.** Il 28/09 mancavano tratti lunghi anche per colpa dell'app: i pezzi gia'
+trascritti (`chunk-N.json` nella cartella del lavoro) si rileggevano per posizione, e un «Riprova» sul
+computer dopo un tentativo con Groq metteva il pezzo 0–10 min di prima al posto di quello 0–30 di
+adesso — venti minuti spariti senza un errore. Adesso ogni pezzo porta indice, inizio, fine e la firma
+del piano (provider e tetto, `StoredChunks`), la cartella ha `work.json` e si svuota se la firma cambia,
+«Riprova» su un fallimento la butta sempre (`FailedJobs.discardsWorkOnRetry`), e un risultato vuoto
+non si salva in `computer.json`. Una parte con audio tornata senza parole mentre le altre ne hanno
+(oltre 30 s) non passa zitta: la sessione mostra «Una registrazione è tornata senza testo» con
+«Ritrascrivi» (`SessionTranscript.emptyPartIds`, salvati nel lavoro). La cucitura fra pezzi sta a meta'
+della sovrapposizione, non all'inizio del pezzo dopo (`TranscriptStitcher.seam`), e sulla strada del
+computer l'app non rifa' l'eco del vocabolario che il companion ha gia' filtrato
+(`stitchFromComputer`). **Una grezza per sessione**: la schermata e l'export leggevano la piu'
+vecchia; adesso vince la piu' recente (poi l'id, uguale su ogni dispositivo: `RawTranscripts`),
+`saveTranscription` toglie tutte le precedenti e il sync, dopo una pagina, toglie quelle che la piu'
+recente copre gia' (`SyncApplier.settleRaws`, tombstone scritti a mano sotto la guardia).
+
+**«Ritrascrivi le lezioni del filtro vecchio».** Le lezioni trascritte dal computer dal 24/09 fino al
+primo `/health` che dichiara `holes` (`holesSince`, salvato una volta) hanno avuto il VAD severo e
+niente seconda passata: `RetranscribeOffer.candidates` (puro) le trova — la grezza piu' recente
+`custom` in quell'intervallo, senza le mute, quelle in lavoro e quelle in trascrizione altrove — e una
+scheda in cima a Lavori e sotto «Da fare» nella home lo propone con le ore; parte solo col tocco e
+solo verso il computer, mai Groq; «Non ora» la nasconde.
 
 **Le statistiche.** `transcription_runs` (schema 6) tiene una riga per trascrizione finita: durata
 dell'audio, tempo sul telefono dal primo passo alla fine (la coda esclusa), parole, dispositivo
@@ -1218,6 +1247,22 @@ confine fra pezzi, dove prima restavano tutte. Un `no_speech_prob` nullo e' «no
 non lo calcola, e `isHallucination` decide solo coi due numeri veri. Se le difese tolgono tutti i
 segmenti di una parte, il `text` del server non si rimette al loro posto: sarebbe l'allucinazione
 stessa. Le trascrizioni gia' salvate restano come sono; «Ritrascrivi» le ripulisce.
+
+**I buchi, il contrario** (companion 1.0.4). Lezioni tornate con tratti lunghi di parlato normale
+senza testo: il file era quello giusto e `drop_hallucinations` toglieva due o quattro segmenti. I
+sospetti sono il VAD reso severo per «Napoli 18h» e la decodifica a lotti di WhisperX (una passata per
+finestra fusa fino a 30 s, col vocabolario davanti, che su una finestra fitta puo' dare una frase
+corta). Il companion ora li trova dall'audio (`speech_holes`: almeno 10 s non coperti da segmenti o
+parole, allargati di un secondo, in cui meta' dei secondi e' voce — sopra il fondo come in
+`sound_levels` ed entro 20 dB dalla voce del file) e li ritrascrive da se' per pezzo, prima dei pezzi
+provvisori (`fill_holes`: VAD 0,3/0,2 con `vad_params`, finestre da 15 s, niente vocabolario, solo il
+testo col centro nel buco, di nuovo `drop_hallucinations`, al massimo il 40% del pezzo: un buco che non ci sta si salta e si provano i piu' corti); la
+risposta dice `holes` e `/health` dichiara `holes`. Chi li crea lo dice `companion/tools/holes.py`
+(col companion fermo: rifiuta se `/health` risponde), che trascrive lo stesso file con le manopole
+cambiate una per volta. Col file mandato **e** lo sha di un blob, il companion ne fa l'impronta e,
+se non torna, trascrive il file mandato invece di ignorarlo; il registro scrive `[<sha[:8]>]` e i
+pesi sempre in MiB (`archive.mib`). `GET /v1/files/<sha>/sdocx` (`sdocx_index`) da' `note.note`,
+`mediaInfo.dat` ed `end_tag.bin` di un `.sdocx` che sta solo sul PC, senza scaricarlo.
 
 Il raffinamento passa da `ChatProvider.complete` di `engine-ai` su Groq. Non è un assistente: è un
 passaggio che toglie intercalari e rimette la punteggiatura senza cambiare il contenuto.

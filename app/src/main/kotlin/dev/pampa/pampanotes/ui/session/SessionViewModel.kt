@@ -22,7 +22,9 @@ import dev.pampa.pampanotes.core.db.SegmentEntity
 import dev.pampa.pampanotes.core.db.SessionEntity
 import dev.pampa.pampanotes.core.db.SessionWithParts
 import dev.pampa.pampanotes.core.db.TranscriptEntity
-import dev.pampa.pampanotes.core.db.TranscriptKind
+import dev.pampa.pampanotes.core.db.JobType
+import dev.pampa.pampanotes.core.repo.RawTranscripts
+import dev.pampa.pampanotes.core.repo.TranscribeOptions
 import dev.pampa.pampanotes.core.db.TranscriptionRunEntity
 import dev.pampa.pampanotes.core.repo.StatsRepository
 import dev.pampa.pampanotes.core.stats.TranscriptionStats
@@ -120,6 +122,12 @@ data class SessionUiState(
    * resto. Solo in memoria, mai salvato; null quando non c'e' (vedi `PartialTranscripts`).
    */
   val partial: dev.pampa.pampanotes.core.transcription.SessionPartial? = null,
+  /**
+   * Le registrazioni che l'ultima trascrizione finita ha riportato senza parole mentre le altre le
+   * avevano (`TranscribeOptions.emptyParts`). Non sono «arrivate dopo»: sono tornate vuote, e la
+   * schermata lo dice con parole sue.
+   */
+  val emptyPartIds: Set<String> = emptySet(),
   val loading: Boolean = true,
 ) {
   val durationMs: Long get() = parts.sumOf { it.durationMs }
@@ -136,7 +144,8 @@ data class SessionUiState(
    * tasto qui vuol dire un lavoro che fallisce per forza.
    */
   val transcribableHere: Boolean get() = missing.isNullOrEmpty() || fetchable
-  val raw: TranscriptEntity? get() = transcripts.firstOrNull { it.kind == TranscriptKind.RAW }
+  /** La grezza che vale: la piu' recente ([RawTranscripts]), anche quando il sync ne ha portate due. */
+  val raw: TranscriptEntity? get() = RawTranscripts.newest(transcripts)
 
   /** Le parti di cui la trascrizione non dice niente: importate dopo, o arrivate da un'altra sessione. */
   val untranscribed: List<AudioPartEntity>
@@ -145,6 +154,12 @@ data class SessionUiState(
       val covered = segments.mapTo(mutableSetOf()) { it.partId }
       return parts.filterNot { it.id in covered }
     }
+
+  /** Fra quelle senza testo, le registrazioni tornate vuote dall'ultima trascrizione ([emptyPartIds]). */
+  val returnedEmpty: List<AudioPartEntity> get() = untranscribed.filter { it.id in emptyPartIds }
+
+  /** Fra quelle senza testo, le altre: importate dopo, o arrivate da un'altra sessione. */
+  val missingText: List<AudioPartEntity> get() = untranscribed.filterNot { it.id in emptyPartIds }
 
   val canMerge: Boolean get() = session != null && siblings.any { it.position < session.position }
 
@@ -314,7 +329,7 @@ class SessionViewModel @Inject constructor(
    */
   @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
   private val segmentsFlow: Flow<List<SegmentEntity>> = transcriptsFlow.flatMapLatest { list ->
-    val raw = list.firstOrNull { it.kind == TranscriptKind.RAW } ?: return@flatMapLatest flowOf(emptyList())
+    val raw = RawTranscripts.newest(list) ?: return@flatMapLatest flowOf(emptyList())
     repository.observeSegments(raw.id)
   }
 
@@ -343,7 +358,7 @@ class SessionViewModel @Inject constructor(
       parts = withParts?.partsSorted.orEmpty(),
       transcripts = transcripts,
       activeTranscript = transcripts.firstOrNull { it.id == session?.activeTranscriptId }
-        ?: transcripts.firstOrNull { it.kind == TranscriptKind.RAW },
+        ?: RawTranscripts.newest(transcripts),
       segments = values[3] as List<SegmentEntity>,
       job = (values[4] as List<JobEntity>).firstOrNull { it.state.isActive },
       // Una grezza (o una raffinata) arrivata dopo il fallimento — dal sync, da un altro dispositivo,
@@ -358,6 +373,12 @@ class SessionViewModel @Inject constructor(
       lastRun = values[9] as TranscriptionRunEntity?,
       elsewhere = values[10] as RemoteTranscribing?,
       partial = values[11] as dev.pampa.pampanotes.core.transcription.SessionPartial?,
+      // Dall'ultima trascrizione finita qui: una piu' vecchia parlava di parti che nel frattempo
+      // possono essere state rifatte (e allora non sono piu' senza testo, e non si mostrano).
+      emptyPartIds = (values[4] as List<JobEntity>)
+        .firstOrNull { it.type == JobType.TRANSCRIBE && it.state == JobState.DONE }
+        ?.let { TranscribeOptions.decode(it.optionsJson).emptyParts.toSet() }
+        .orEmpty(),
       loading = false,
     )
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SessionUiState())

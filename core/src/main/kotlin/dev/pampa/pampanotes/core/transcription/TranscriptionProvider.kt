@@ -249,6 +249,13 @@ object CompanionFeatures {
    * `job_batch_max`), senza cambiare le impostazioni del computer. Solo per il proprietario.
    */
   const val JOB_OPTIONS = "job_options"
+
+  /**
+   * Il companion che non perde piu' pezzi di parlato in mezzo alla lezione (1.0.4). Le lezioni
+   * trascritte prima si possono rifare: la prima volta che lo si vede, l'app lo segna
+   * (`PampaSettingsStore.markHolesSince`) e le offre in Lavori e nella home.
+   */
+  const val HOLES = "holes"
 }
 
 /** Come caricare un file al companion quando sa fare di piu' di un server qualsiasi. */

@@ -136,6 +136,9 @@ class CompanionSettingsApi @Inject constructor(
       if (error is CancellationException) throw error
       return CompanionStatus.Unreachable
     }
+    val features = OpenAiCompatProvider.parseFeatures(health)
+    // Il companion che non perde piu' pezzi: la prima volta che lo si vede, da qui (vedi `holesSince`).
+    if (CompanionFeatures.HOLES in features) settingsStore.markHolesSince(System.currentTimeMillis())
     val parsed = CompanionSettingsJson.parseHealth(health) ?: return CompanionStatus.Unsupported
 
     val settings = runCatching { authorized { headers -> http.getJson("$base/admin/settings", headers, readTimeoutMillis = TIMEOUT_MS) } }

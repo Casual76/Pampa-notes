@@ -33,6 +33,19 @@ data class FileMeta(
   val recordedUs: Long?,
 )
 
+/**
+ * I pezzi di un `.sdocx` che servono a capire le sue registrazioni, senza i gigabyte di audio:
+ * `note.note`, `media/mediaInfo.dat`, `end_tag.bin` e l'elenco delle voci dello ZIP col loro peso.
+ * Si legge con [dev.pampa.pampanotes.core.importing.SdocxParser.assemble].
+ */
+class SdocxIndex(
+  val sha256: String,
+  val entries: List<Pair<String, Long>>,
+  val note: ByteArray?,
+  val mediaInfo: ByteArray?,
+  val endTag: ByteArray?,
+)
+
 /** Com'e' andata una domanda al computer. */
 sealed interface FileMetaResult {
   data class Found(val meta: FileMeta) : FileMetaResult
@@ -108,10 +121,53 @@ class FileMetaApi @Inject constructor(
         if (RemoteJobPoller.httpCode(error) == 404) FileMetaResult.Unknown else FileMetaResult.Unavailable
       }
     }
+
+    /**
+     * `GET /v1/files/<sha>/sdocx`: i pezzi di un `.sdocx` che sta sul computer ([SdocxIndex]), per
+     * riparare le registrazioni di una nota senza scaricare il file intero. Null se il computer non
+     * risponde, non lo sa fare (un companion di prima della 1.0.4), o quel file non ce l'ha.
+     */
+    suspend fun sdocxIndex(sha256: String): SdocxIndex? {
+      val health = health() ?: return null
+      if (!FileMetaJson.hasFeature(health, SDOCX_FEATURE)) return null
+      return try {
+        val body = auth.call(
+          isUnauthorized = { TranscriptionError.from(it) is TranscriptionError.Unauthorized },
+          rejected = { TranscriptionError.Unauthorized(CompanionAuth.ACCOUNT_REJECTED) },
+        ) { bearer ->
+          val headers = bearer?.takeIf { it.isNotBlank() }?.let { mapOf("Authorization" to "Bearer $it") } ?: emptyMap()
+          http.getJson("$base/files/$sha256/sdocx", headers, readTimeoutMillis = INDEX_TIMEOUT_MS)
+        }
+        FileMetaJson.parseIndex(body, sha256)
+      } catch (error: Throwable) {
+        if (error is CancellationException) throw error
+        null
+      }
+    }
+
+    private var healthRead = false
+    private var healthBody: JsonElement? = null
+
+    private suspend fun health(): JsonElement? {
+      if (!healthRead) {
+        healthBody = try {
+          http.getJson("${base.removeSuffix("/v1")}/health", emptyMap(), readTimeoutMillis = TIMEOUT_MS)
+        } catch (error: Throwable) {
+          if (error is CancellationException) throw error
+          null
+        }
+        healthRead = true
+      }
+      return healthBody
+    }
   }
 
   private companion object {
     const val FEATURE = "file_meta"
+    const val SDOCX_FEATURE = "sdocx_index"
+
+    /** L'indice porta `note.note`, che in un quaderno scritto a mano sono qualche megabyte. */
+    const val INDEX_TIMEOUT_MS = 30_000
 
     /** Domande piccole: un PC che non risponde in otto secondi e' un PC da riprovare dopo. */
     const val TIMEOUT_MS = 8_000
@@ -146,6 +202,21 @@ object FileMetaJson {
       modifiedUs = obj.long("modified_us"),
       recordedUs = obj.long("recorded_us"),
     )
+  }
+
+  /** La risposta di `/sdocx` ([SdocxIndex]). Null se non e' quella, o se parla di un altro file. */
+  fun parseIndex(body: JsonElement?, expectedSha: String): SdocxIndex? {
+    val obj = body as? JsonObject ?: return null
+    val sha = (obj["sha256"] as? JsonPrimitive)?.content ?: expectedSha
+    if (!sha.equals(expectedSha, ignoreCase = true)) return null
+    val entries = (obj["entries"] as? JsonArray)?.mapNotNull { item ->
+      val entry = item as? JsonObject ?: return@mapNotNull null
+      val name = (entry["name"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return@mapNotNull null
+      name to (entry.long("size") ?: -1L)
+    } ?: return null
+    fun bytes(key: String): ByteArray? = (obj[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+      ?.let { runCatching { java.util.Base64.getDecoder().decode(it) }.getOrNull() }
+    return SdocxIndex(sha, entries, bytes("note_b64"), bytes("media_info_b64"), bytes("end_tag_b64"))
   }
 
   private fun JsonObject.long(key: String): Long? =

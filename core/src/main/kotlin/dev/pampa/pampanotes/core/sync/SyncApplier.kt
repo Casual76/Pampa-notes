@@ -12,9 +12,11 @@ import dev.pampa.pampanotes.core.db.SyncMetaEntity
 import dev.pampa.pampanotes.core.db.SyncOriginEntity
 import dev.pampa.pampanotes.core.db.SyncOutboxEntity
 import dev.pampa.pampanotes.core.db.TranscriptEntity
+import dev.pampa.pampanotes.core.db.TranscriptKind
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.model.Ids
 import dev.pampa.pampanotes.core.repo.FolderRepository
+import dev.pampa.pampanotes.core.repo.RawTranscripts
 import dev.pampa.pampanotes.core.sync.SyncMerge.Decision
 import dev.pampa.pampanotes.core.sync.SyncMerge.LocalView
 import dev.pampa.pampanotes.core.transcription.TranscribingMarker
@@ -147,6 +149,9 @@ class SyncApplier @Inject constructor(
           pending = parked
         }
         for (change in deletes) applyOne(change, tally)
+        // Una grezza arrivata in una sessione che ne aveva gia' una: ne resta una sola, dopo la
+        // pagina intera (la cancellazione dell'altra potrebbe essere arrivata nella stessa pagina).
+        tally.rawSessions.forEach { settleRaws(it) }
         if (big) {
           PampaDatabase.SEARCH_TRIGGERS.forEach { db.openHelper.writableDatabase.execSQL(it) }
           db.search().rebuild()
@@ -174,6 +179,9 @@ class SyncApplier @Inject constructor(
     var forked = 0
     var resurrected = 0
     val revived = mutableListOf<String>()
+
+    /** Le sessioni in cui e' arrivata una grezza: a fine pagina se ne tiene una ([settleRaws]). */
+    val rawSessions = mutableSetOf<String>()
 
     fun outcome(orphans: List<WireChange>) = ApplyOutcome(applied, deleted, skipped, forked, orphans, resurrected, revived)
   }
@@ -250,6 +258,9 @@ class SyncApplier @Inject constructor(
         // col riallineamento che [SyncRepository] fa prima del push.
         val reborn = !change.isDelete && view.pendingDelete && change.tbl in CONTAINERS
         val keptLocalMarker = if (change.isDelete) { delete(change, tally.trash); false } else upsert(change, tally.deviceName)
+        if (!change.isDelete && change.tbl == "transcripts") {
+          db.transcripts().get(change.id)?.takeIf { it.kind == TranscriptKind.RAW }?.let { tally.rawSessions += it.sessionId }
+        }
         bookkeep(change, tally.ownerId)
         if (reborn) tally.revived += SyncPlan.key(change.tbl, change.id)
         // La sessione e' quella remota, ma il segno «in trascrizione su» e' rimasto quello di qui:
@@ -259,6 +270,33 @@ class SyncApplier @Inject constructor(
       }
     }
     return true
+  }
+
+  /**
+   * Una grezza per sessione anche col sync ([RawTranscripts]): due dispositivi che trascrivono la
+   * stessa sessione insieme ne lasciano due, e ognuno arriva all'altro. Resta la piu' recente; quelle
+   * che copre gia' tutte se ne vanno, con le raffinate che ne discendevano — come quando si ritrascrive.
+   *
+   * Sotto la guardia, quindi niente trigger: le loro voci di outbox si scrivono a mano, e il push
+   * manda il tombstone (o, per una riga che il server non ha mai saputo, non manda niente). Senza,
+   * sul server restavano tutte e due e ogni dispositivo le rimetteva giu' a ogni riallineamento. Non
+   * rimbalza: la regola sceglie la stessa riga ovunque — l'ora e poi l'id — e una grezza che qui perde
+   * perde anche altrove, dove c'e' almeno quella che l'ha battuta qui.
+   */
+  private suspend fun settleRaws(sessionId: String) {
+    val all = db.transcripts().bySession(sessionId)
+    val raws = all.filter { it.kind == TranscriptKind.RAW }
+    if (raws.size < 2) return
+    val partsOf = raws.associate { raw ->
+      raw.id to db.segments().byTranscriptWithoutWords(raw.id).mapTo(mutableSetOf()) { it.partId }
+    }
+    val sync = db.sync()
+    RawTranscripts.redundant(raws, partsOf).forEach { loser ->
+      (all.filter { it.parentId == loser.id } + loser).forEach { gone ->
+        db.transcripts().delete(gone.id)
+        sync.markDirty(SyncOutboxEntity(tbl = "transcripts", rowId = gone.id, op = WireChange.OP_DELETE))
+      }
+    }
   }
 
   private suspend fun parentMissing(change: WireChange): Boolean {

@@ -367,6 +367,9 @@ interface AudioPartDao {
   @Query("UPDATE audio_parts SET sessionId = :sessionId, position = :position WHERE id = :id")
   suspend fun move(id: String, sessionId: String, position: Int)
 
+  @Query("UPDATE audio_parts SET originalName = :originalName WHERE id = :id")
+  suspend fun rename(id: String, originalName: String)
+
   @Query("DELETE FROM audio_parts WHERE id = :id")
   suspend fun delete(id: String)
 
@@ -439,6 +442,13 @@ interface TranscriptDao {
 
   @Query("SELECT id FROM transcripts WHERE parentId = :parentId")
   suspend fun childIds(parentId: String): List<String>
+
+  /**
+   * Tutte le grezze senza il testo, per sapere chi le ha fatte e quando: il testo di una
+   * registrazione di diciannove ore sono megabyte, e qui non serve (vedi `RetranscribeOffer`).
+   */
+  @Query("SELECT id, sessionId, provider, createdAt FROM transcripts WHERE kind = 'RAW'")
+  fun observeRawStamps(): Flow<List<dev.pampa.pampanotes.core.repo.RawStamp>>
 
   @Upsert
   suspend fun upsert(transcript: TranscriptEntity)
@@ -760,6 +770,10 @@ interface JobDao {
       "errorMessage = NULL, finishedAt = NULL, updatedAt = :updatedAt WHERE id = :id AND state != 'CANCEL_REQUESTED'",
   )
   suspend fun requeueWithOptions(id: String, phase: String?, optionsJson: String?, updatedAt: Long): Int
+
+  /** Solo le opzioni: quello che un lavoro finito ha da dire dopo (le registrazioni tornate mute). */
+  @Query("UPDATE jobs SET optionsJson = :optionsJson, updatedAt = :updatedAt WHERE id = :id")
+  suspend fun setOptions(id: String, optionsJson: String?, updatedAt: Long): Int
 
   @Query("UPDATE jobs SET state = 'CANCELLED', phase = NULL, finishedAt = :now, updatedAt = :now WHERE id = :id")
   suspend fun markCancelled(id: String, now: Long)

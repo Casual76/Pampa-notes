@@ -58,6 +58,12 @@ data class ImportCandidate(
    * che diventa la data della nota. Null quando del giorno non si sa niente.
    */
   val recordedAtMillis: Long? = null,
+  /**
+   * Il posto nella fila delle registrazioni, quando lo si sa per certo (quelle di un `.sdocx`, in
+   * ordine di registrazione): dentro una sessione vale piu' del nome. Null per l'audio qualunque,
+   * che va in ordine di nome.
+   */
+  val sequence: Int? = null,
 ) {
   val isAudio: Boolean get() = kind == SourceKind.AUDIO
 
