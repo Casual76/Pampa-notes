@@ -15,22 +15,30 @@
       "ref": "main"
     },
     "stable": {
-      "version": "1.0.4",
-      "releaseDate": "2026-09-28",
-      "changelog": "Registrazioni al posto giusto, e niente più pezzi di lezione persi.\n\n- Samsung Notes: ogni registrazione ha il suo nome e la sua data vera. Prima due registrazioni potevano scambiarsi il nome (e la trascrizione), e tutte prendevano il giorno della condivisione.\n- Le note già importate si sistemano da sole all'apertura: ogni registrazione torna col suo nome, nella sessione del giorno in cui l'hai fatta, senza ritrascrivere niente. C'è anche «Ripara registrazioni» nella scheda Audio della nota.\n- Anche un audio condiviso da un'altra app prende il giorno in cui è stato registrato, non quello in cui l'hai mandato.\n- Niente più tratti di lezione spariti: dopo un «Riprova» o un cambio di servizio l'app non rimette più pezzi di un tentativo vecchio al posto di quelli nuovi.\n- Una sessione mostra sempre la trascrizione più recente, e una registrazione tornata senza testo te lo dice.\n- Le lezioni trascritte dal computer dal 24/09 in poi: l'app propone di ritrascriverle, solo quando lo decidi tu.\n- Per recuperare i tratti di voce che il computer perdeva, aggiorna il companion alla 1.0.4.",
-      "releaseTag": "stable-pampa-notes-v1.0.4",
-      "apkAsset": "pampa-notes-1.0.4.apk",
-      "sizeBytes": 12746764
+      "version": "1.0.5",
+      "releaseDate": "2026-10-01",
+      "changelog": "Ritrascrivere con le tue impostazioni, e il computer non scende più a «small».\n\n- «Ritrascrivi» ha un secondo tasto, «Imposta per questa volta…»: scegli lingua, vocabolario, voci, lunghezza dei pezzi e — con il computer di casa aggiornato — modello, memoria video e lotto, solo per quella trascrizione. Le impostazioni dell'app e del computer non cambiano, e «Riprova» ripete la stessa richiesta. Prima di partire il pannello mostra la stima di memoria del computer.\n- Se la memoria video libera è poca, il computer scende al massimo a «medium» (prima poteva arrivare a «small», «base» o «tiny», che sbagliano troppo l'italiano parlato). Chi sceglie un modello a mano lo tiene.\n- Per modello, memoria e lotto per una lezione sola aggiorna il companion alla 1.1.0.",
+      "releaseTag": "stable-pampa-notes-v1.0.5",
+      "apkAsset": "pampa-notes-1.0.5.apk",
+      "sizeBytes": 12756187
     },
     "beta": {
-      "version": "1.0.4",
-      "releaseDate": "2026-09-28",
-      "changelog": "Registrazioni al posto giusto, e niente più pezzi di lezione persi.\n\n- Samsung Notes: ogni registrazione ha il suo nome e la sua data vera. Prima due registrazioni potevano scambiarsi il nome (e la trascrizione), e tutte prendevano il giorno della condivisione.\n- Le note già importate si sistemano da sole all'apertura: ogni registrazione torna col suo nome, nella sessione del giorno in cui l'hai fatta, senza ritrascrivere niente. C'è anche «Ripara registrazioni» nella scheda Audio della nota.\n- Anche un audio condiviso da un'altra app prende il giorno in cui è stato registrato, non quello in cui l'hai mandato.\n- Niente più tratti di lezione spariti: dopo un «Riprova» o un cambio di servizio l'app non rimette più pezzi di un tentativo vecchio al posto di quelli nuovi.\n- Una sessione mostra sempre la trascrizione più recente, e una registrazione tornata senza testo te lo dice.\n- Le lezioni trascritte dal computer dal 24/09 in poi: l'app propone di ritrascriverle, solo quando lo decidi tu.\n- Per recuperare i tratti di voce che il computer perdeva, aggiorna il companion alla 1.0.4.",
-      "releaseTag": "stable-pampa-notes-v1.0.4",
-      "apkAsset": "pampa-notes-1.0.4.apk",
-      "sizeBytes": 12746764
+      "version": "1.0.5",
+      "releaseDate": "2026-10-01",
+      "changelog": "Ritrascrivere con le tue impostazioni, e il computer non scende più a «small».\n\n- «Ritrascrivi» ha un secondo tasto, «Imposta per questa volta…»: scegli lingua, vocabolario, voci, lunghezza dei pezzi e — con il computer di casa aggiornato — modello, memoria video e lotto, solo per quella trascrizione. Le impostazioni dell'app e del computer non cambiano, e «Riprova» ripete la stessa richiesta. Prima di partire il pannello mostra la stima di memoria del computer.\n- Se la memoria video libera è poca, il computer scende al massimo a «medium» (prima poteva arrivare a «small», «base» o «tiny», che sbagliano troppo l'italiano parlato). Chi sceglie un modello a mano lo tiene.\n- Per modello, memoria e lotto per una lezione sola aggiorna il companion alla 1.1.0.",
+      "releaseTag": "stable-pampa-notes-v1.0.5",
+      "apkAsset": "pampa-notes-1.0.5.apk",
+      "sizeBytes": 12756187
     },
     "history": [
+      {
+        "version": "1.0.4",
+        "releaseDate": "2026-09-28",
+        "changelog": "Registrazioni al posto giusto, e niente più pezzi di lezione persi.\n\n- Samsung Notes: ogni registrazione ha il suo nome e la sua data vera. Prima due registrazioni potevano scambiarsi il nome (e la trascrizione), e tutte prendevano il giorno della condivisione.\n- Le note già importate si sistemano da sole all'apertura: ogni registrazione torna col suo nome, nella sessione del giorno in cui l'hai fatta, senza ritrascrivere niente. C'è anche «Ripara registrazioni» nella scheda Audio della nota.\n- Anche un audio condiviso da un'altra app prende il giorno in cui è stato registrato, non quello in cui l'hai mandato.\n- Niente più tratti di lezione spariti: dopo un «Riprova» o un cambio di servizio l'app non rimette più pezzi di un tentativo vecchio al posto di quelli nuovi.\n- Una sessione mostra sempre la trascrizione più recente, e una registrazione tornata senza testo te lo dice.\n- Le lezioni trascritte dal computer dal 24/09 in poi: l'app propone di ritrascriverle, solo quando lo decidi tu.\n- Per recuperare i tratti di voce che il computer perdeva, aggiorna il companion alla 1.0.4.",
+        "releaseTag": "stable-pampa-notes-v1.0.4",
+        "apkAsset": "pampa-notes-1.0.4.apk",
+        "sizeBytes": 12746764
+      },
       {
         "version": "1.0.3",
         "releaseDate": "2026-09-24",
