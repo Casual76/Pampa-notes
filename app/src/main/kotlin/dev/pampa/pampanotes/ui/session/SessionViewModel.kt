@@ -41,6 +41,7 @@ import dev.pampa.pampanotes.core.settings.RefinementPreset
 import dev.pampa.pampanotes.core.repo.SessionRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.transcription.RemoteTranscribing
+import dev.pampa.pampanotes.core.transcription.TranscribeOverrides
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.player.PlayablePart
 import dev.pampa.pampanotes.player.PlaybackState
@@ -566,9 +567,10 @@ class SessionViewModel @Inject constructor(
 
   fun showTranscript(transcriptId: String) = viewModelScope.launch { repository.setActiveTranscript(sessionId, transcriptId) }
 
-  fun transcribe() = viewModelScope.launch {
+  /** [overrides]: «Ritrascrivi con le tue impostazioni», valide per questo solo lavoro. */
+  fun transcribe(overrides: TranscribeOverrides? = null) = viewModelScope.launch {
     val provider = settingsStore.current().transcriptionProvider
-    transcription.enqueue(sessionId, provider)
+    transcription.enqueue(sessionId, provider, overrides)
     scheduler.kick(provider.id)
   }
 

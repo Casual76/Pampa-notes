@@ -88,6 +88,8 @@ sealed interface CompanionStatus {
      * per uno di prima: allora non serve un token, serve aggiornarlo, e la pagina lo dice.
      */
     val speakersKnown: Boolean = true,
+    /** Accetta modello, memoria e lotto per una trascrizione sola ([CompanionFeatures.JOB_OPTIONS]). */
+    val jobOptions: Boolean = false,
   ) : CompanionStatus
 }
 
@@ -140,10 +142,12 @@ class CompanionSettingsApi @Inject constructor(
       .onFailure { if (it is CancellationException) throw it }
       .getOrNull()
       ?.let(CompanionSettingsJson::parseSettings)
+    val features = OpenAiCompatProvider.parseFeatures(health)
     return CompanionStatus.Ready(
       gpu = parsed.gpu, vram = parsed.vram, settings = settings, canEdit = settings != null,
-      diarize = CompanionFeatures.DIARIZE in OpenAiCompatProvider.parseFeatures(health),
+      diarize = CompanionFeatures.DIARIZE in features,
       speakersKnown = (health as? JsonObject)?.containsKey("diarization") == true,
+      jobOptions = CompanionFeatures.JOB_OPTIONS in features,
     )
   }
 

@@ -883,7 +883,10 @@ se, ricodificati, supererebbero il limite in byte.
 scheda dipende dal modello, dal tipo di calcolo e dal lotto; una lezione piu' lunga costa tempo e un
 po' di RAM. Il companion misura la scheda (o usa la VRAM indicata a mano, `vram_mode`/`vram_gb`),
 stima quanto userebbe (`estimate_vram_gb`: pesi + lotto + allineamento + contesto CUDA) e sceglie il
-lotto — e se non basta, `int8` o un modello piu' piccolo — per restare sotto l'85%. Su Windows una
+lotto — e se non basta, `int8` o un modello piu' piccolo, **ma mai sotto `medium`** (`SMALLER_MODELS`:
+`small` sull'italiano parlato sbaglia troppo; se nemmeno `medium` ci sta, decide il ripiego sul
+processore, che tiene il modello scelto in int8; chi ha scelto `small` a mano lo tiene) — per restare
+sotto l'85%. Su Windows una
 scheda piena non da' «out of memory»: il driver travasa nella RAM condivisa e tutto va sei volte piu'
 lento, quindi la stima e' la protezione vera; il ripiego sul processore resta per gli errori veri.
 Impostazioni → Trascrizione mostra scheda e stima (`/health`) e le cambia sul computer
@@ -1255,7 +1258,18 @@ c'e' bisogna battere `/health`, ed e' il bug che il primo giro di prova ha trova
 ha risposto in tempo» invece dell'attesa).
 
 **Ritrascrivi** (menu della sessione, con conferma) e' un `enqueue` come gli altri: `saveTranscript`
-sostituisce la grezza e porta via le raffinate. **Selezione multipla** («Seleziona» nel menu della
+sostituisce la grezza e porta via le raffinate. La conferma ha un secondo tasto, «Imposta per questa
+volta…», che apre `TranscribeOptionsSheet`: lingua, vocabolario, voci, pezzi e — solo per il
+proprietario di un computer che dichiara `job_options` — modello, memoria video e lotto, **per quel
+lavoro soltanto**. Le scelte (`TranscribeOverrides`, tutto null = «come nelle impostazioni») vivono
+in `optionsJson` della riga del lavoro: `requestFor` le mette sopra alla richiesta, `bind` sopra ai
+pezzi, e «Riprova» le tiene (e' la stessa richiesta); non toccano le preferenze dell'app ne'
+`config.json` del computer, ne' lo slider dei pezzi («Ultima lezione» resta quella delle
+impostazioni). Il computer le riceve come `job_model`, `job_vram_gb`, `job_batch_max`, le valuta col
+solito piano della VRAM (la protezione resta: un modello che non entra scende, fino a `medium`) senza
+scrivere in `STATE` — la lezione dopo riparte dalle impostazioni di sempre e, se serve, ricarica il
+suo modello — e un ospite le rifiuta (`owner_only`, strada di sempre). Il pannello mostra la stima del
+computer (`/v1/admin/estimate`) prima di partire; con Groq mostra solo lingua e vocabolario. **Selezione multipla** («Seleziona» nel menu della
 barra): nella nota, le sessioni (ritrascrivi, elimina); nella cartella, le note (trascrivi quelle
 da fare, sposta con `FolderPickerSheet`, esporta con `ExportScope.Notes`, elimina). La barra in alto
 diventa quella della selezione — titolo «N selezionate», indietro la chiude — invece di una barra

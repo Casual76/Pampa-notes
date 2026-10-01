@@ -289,8 +289,12 @@ class TranscriptionRunner @Inject constructor(
     // «Chi parla» si chiede solo a un computer che dichiara di saperlo fare, e solo sulla strada in
     // cui la parte va intera: sulla strada di sempre (Groq, un companion vecchio, un ospite) il campo
     // non parte, e i pezzi tagliati qui avrebbero comunque voci che non si riconoscono fra loro.
-    val plain = request.copy(diarize = false)
-    val onComputer = request.copy(diarize = request.diarize && computer?.diarize == true)
+    // Lo stesso per modello, memoria e lotto (`job_*`): sono richieste a un computer che li conosce.
+    val plain = request.copy(diarize = false, computer = null)
+    val onComputer = request.copy(
+      diarize = request.diarize && computer?.diarize == true,
+      computer = request.computer?.takeIf { computer?.jobOptions == true && !it.isEmpty },
+    )
     // Il testo provvisorio della sessione, parte per parte, nel tempo della sessione.
     val partials = PartialCollector(sorted.map { SessionAssembler.Part(it.id, it.durationMs) })
 
@@ -334,6 +338,8 @@ class TranscriptionRunner @Inject constructor(
     val archive: Boolean,
     /** Il computer sa separare le voci ([CompanionFeatures.DIARIZE]). */
     val diarize: Boolean = false,
+    /** Il computer accetta modello, memoria e lotto per una richiesta sola ([CompanionFeatures.JOB_OPTIONS]). */
+    val jobOptions: Boolean = false,
   ) {
     /**
      * Il computer ha detto che chi chiede e' un ospite: da li' in poi, per questo lavoro, la strada
@@ -357,6 +363,7 @@ class TranscriptionRunner @Inject constructor(
     return ComputerMode(
       companion, maxMinutes, archiveUploads && CompanionFeatures.ARCHIVE_UPLOAD in features,
       diarize = CompanionFeatures.DIARIZE in features,
+      jobOptions = CompanionFeatures.JOB_OPTIONS in features,
     )
   }
 

@@ -318,7 +318,9 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     }
 
     val settings = settingsStore.current()
-    val bound = repository.bind(job.provider) ?: run {
+    // Le impostazioni scelte da chi ha ritrascritto, per questo lavoro soltanto.
+    val overrides = repository.overridesOf(job)
+    val bound = repository.bind(job.provider, overrides?.pieces) ?: run {
       // Configurato ma muto: si aspetta. Mai configurato: e' un errore, e lo si dice.
       if (job.provider == OpenAiCompatProvider.ID && settings.hasEndpoint) return Step.WaitForEndpoint
       fail(
@@ -340,7 +342,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     val partIds = parts.map { it.id }
 
     val model = repository.resolveModel(provider, settings)
-    val request = repository.requestFor(job.sessionId, model, settings)
+    val request = repository.requestFor(job.sessionId, model, settings, overrides)
     // Annullato o tolto mentre si sceglieva il modello: non si parte. Il passaggio e' condizionato,
     // cosi' un «Annulla» che arriva proprio adesso non viene riscritto da una copia vecchia.
     if (!repository.start(job.id, JobState.PREPARING, model)) return Step.Next

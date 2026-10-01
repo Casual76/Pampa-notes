@@ -26,6 +26,7 @@ import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.repo.SessionRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.transcription.RemoteTranscribing
+import dev.pampa.pampanotes.core.transcription.TranscribeOverrides
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.work.WorkScheduler
 import dev.pampa.pampanotes.core.repo.NoteRepository
@@ -227,9 +228,9 @@ class NoteViewModel @Inject constructor(
    * che ne venivano ([TranscriptionRepository.saveTranscript]); una che ha gia' un lavoro in corso
    * non ne prende un secondo.
    */
-  fun retranscribe(sessionIds: Collection<String>) = viewModelScope.launch {
+  fun retranscribe(sessionIds: Collection<String>, overrides: TranscribeOverrides? = null) = viewModelScope.launch {
     val provider = settingsStore.current().transcriptionProvider
-    sessionIds.forEach { transcription.enqueue(it, provider) }
+    sessionIds.forEach { transcription.enqueue(it, provider, overrides) }
     scheduler.kick(provider.id)
   }
 

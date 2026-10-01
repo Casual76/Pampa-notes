@@ -28,7 +28,9 @@ import dev.pampa.pampanotes.core.transcription.ComputerAuth
 import dev.pampa.pampanotes.core.transcription.GroqWhisperProvider
 import dev.pampa.pampanotes.core.transcription.EndpointResolver
 import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
+import dev.pampa.pampanotes.core.transcription.Pieces
 import dev.pampa.pampanotes.core.transcription.SessionTranscript
+import dev.pampa.pampanotes.core.transcription.TranscribeOverrides
 import dev.pampa.pampanotes.core.transcription.TranscribeRequest
 import dev.pampa.pampanotes.core.transcription.TranscriptionPrompt
 import dev.pampa.pampanotes.core.transcription.TranscriptionError
@@ -95,13 +97,19 @@ class TranscriptionRepository @Inject constructor(
    *   vorrebbe dire la stessa lezione due volte dal computer o da Groq. Vale per tutti quelli che
    *   accodano — il tasto, «Trascrivi tutte», la selezione, l'import — anche se la schermata non
    *   l'ha ancora saputo.
+   *
+   * @param overrides le impostazioni di questo lavoro soltanto ([TranscribeOverrides]): finiscono in
+   *   `optionsJson` e valgono solo per lui. Vuote o null: il lavoro usa le impostazioni di sempre.
    */
-  suspend fun enqueue(sessionId: String, providerId: TranscriptionProviderId): JobEntity? {
+  suspend fun enqueue(
+    sessionId: String,
+    providerId: TranscriptionProviderId,
+    overrides: TranscribeOverrides? = null,
+  ): JobEntity? {
     jobs.activeForSession(sessionId)?.let { return it }
     if (busyElsewhere(sessionId) != null) return null
 
     val now = System.currentTimeMillis()
-    val settings = settingsStore.current()
     val job = JobEntity(
       id = Ids.newId(),
       sessionId = sessionId,
@@ -111,6 +119,8 @@ class TranscriptionRepository @Inject constructor(
       state = JobState.QUEUED,
       chunkTotal = 0,
       chunkDone = 0,
+      optionsJson = overrides?.takeUnless { it.isEmpty }
+        ?.let { json.encodeToString(TranscribeOptions.serializer(), TranscribeOptions(overrides = it)) },
       createdAt = now,
       updatedAt = now,
     )
@@ -294,6 +304,10 @@ class TranscriptionRepository @Inject constructor(
     job.optionsJson?.let { runCatching { json.decodeFromString(TranscribeOptions.serializer(), it) }.getOrNull() }
       ?: TranscribeOptions()
 
+  /** Le impostazioni di questo solo lavoro, se chi ha ritrascritto ne ha scelte ([enqueue]). */
+  fun overridesOf(job: JobEntity): TranscribeOverrides? =
+    if (job.type == JobType.TRANSCRIBE) transcribeOptions(job).overrides else null
+
   /**
    * Il sistema ha fermato il worker a meta' lavoro (vincoli, quota, un aggiornamento): il lavoro non
    * e' fallito, torna in fila e riparte dai pezzi gia' su disco. Un «Annulla» arrivato nel frattempo
@@ -392,8 +406,13 @@ class TranscriptionRepository @Inject constructor(
     // stesso id «Riprova» li rileggerebbe invece di chiedere di nuovo ([FailedJobs.discardsWorkOnRetry]).
     if (FailedJobs.discardsWorkOnRetry(job)) runCatching { java.io.File(files.jobs, job.id).deleteRecursively() }
     // Il conto delle volte che il computer e' sparito riparte: chi riprova ha di solito rimesso a
-    // posto il computer. Le opzioni di un raffinamento (il preset) invece restano.
-    val options = if (job.type == JobType.TRANSCRIBE) null else job.optionsJson
+    // posto il computer. Le opzioni di un raffinamento (il preset) invece restano, e le impostazioni
+    // che chi ha ritrascritto aveva scelto per questo lavoro: «Riprova» e' la stessa richiesta.
+    val options = if (job.type == JobType.TRANSCRIBE) {
+      transcribeOptions(job).overrides?.let { json.encodeToString(TranscribeOptions.serializer(), TranscribeOptions(overrides = it)) }
+    } else {
+      job.optionsJson
+    }
     jobs.retry(jobId, effectiveProvider(job), options, System.currentTimeMillis())
     return jobs.get(jobId)
   }
@@ -432,10 +451,15 @@ class TranscriptionRepository @Inject constructor(
    */
   suspend fun markPartArchived(partId: String, at: Long) = parts.markArchived(partId, at)
 
-  suspend fun requestFor(sessionId: String, model: String, settings: PampaSettings): TranscribeRequest {
+  suspend fun requestFor(
+    sessionId: String,
+    model: String,
+    settings: PampaSettings,
+    overrides: TranscribeOverrides? = null,
+  ): TranscribeRequest {
     val session = sessions.get(sessionId)
     val note = session?.let { notes.get(it.noteId) }
-    return TranscribeRequest(
+    val request = TranscribeRequest(
       model = model,
       // La lingua della nota vince su quella generale: un quaderno di inglese in mezzo a note
       // italiane non deve essere trascritto come italiano storpiato.
@@ -450,6 +474,8 @@ class TranscriptionRepository @Inject constructor(
         SpeakerSeparation.PERSONAL -> note != null && PersonalScope.isPersonal(note.folderId, db.folders().all())
       },
     )
+    // Quello che chi ritrascrive ha scelto per questo lavoro sta sopra a tutto il resto.
+    return overrides?.applyTo(request) ?: request
   }
 
   /**
@@ -470,8 +496,11 @@ class TranscriptionRepository @Inject constructor(
    * se a meta' lavoro il computer si raggiunge da un'altra strada (vedi [endpointMovedFrom]), il
    * lavoro si rimette in fila invece di fallire.
    */
-  suspend fun bind(providerId: String): BoundProvider? {
+  suspend fun bind(providerId: String, pieces: Pieces? = null): BoundProvider? {
     val settings = settingsStore.current()
+    // I pezzi scelti per questo lavoro vincono su quelli delle impostazioni.
+    val chunkAuto = pieces?.auto ?: settings.customChunkAuto
+    val chunkMinutes = if (pieces != null) pieces.minutes else settings.customMaxMinutes
     return when (providerId) {
       GroqWhisperProvider.ID -> {
         val key = keys.key(ProviderId.GROQ)?.takeIf { it.isNotBlank() } ?: return null
@@ -499,9 +528,11 @@ class TranscriptionRepository @Inject constructor(
             settings.endpointTimeoutMinutes * 60_000L,
           ).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
           // Con «Automatico» nessun tetto dal telefono: lo sceglie il computer, e lo racconta.
-          maxChunkMinutes = if (settings.customChunkAuto) null else settings.customMaxMinutes,
-          autoChunks = settings.customChunkAuto,
-          onChunksChosen = { minutes -> settingsStore.setCustomLastMaxMinutes(minutes) },
+          maxChunkMinutes = if (chunkAuto) null else chunkMinutes,
+          autoChunks = chunkAuto,
+          // Quello che il computer sceglie in «Automatico» e' la sua ultima scelta, per lo slider: un
+          // lavoro con i pezzi decisi da chi ha ritrascritto non e' la scelta delle impostazioni.
+          onChunksChosen = { minutes -> if (pieces == null) settingsStore.setCustomLastMaxMinutes(minutes) },
           // Un elenco per processo: il lavoro lasciato indietro da questo provider lo ferma il
           // provider del lavoro dopo. Vedi [AbandonedCompanionJobs].
           abandoned = dev.pampa.pampanotes.core.transcription.AbandonedCompanionJobs.shared,
@@ -699,9 +730,12 @@ class TranscriptionRepository @Inject constructor(
   /** Un giro alla volta: il cambio di un lavoro e il rinnovo a orologio possono arrivare insieme. */
   private val markersLock = Mutex()
 
-  /** Le opzioni di una trascrizione, in `optionsJson`: per ora solo quante volte il computer e' sparito. */
+  /**
+   * Le opzioni di una trascrizione, in `optionsJson`: quante volte il computer e' sparito, e le
+   * impostazioni che chi ha ritrascritto ha scelto per questo lavoro soltanto ([TranscribeOverrides]).
+   */
   @Serializable
-  private data class TranscribeOptions(val endpointLosses: Int = 0)
+  private data class TranscribeOptions(val endpointLosses: Int = 0, val overrides: TranscribeOverrides? = null)
 
   private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 

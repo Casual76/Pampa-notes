@@ -1490,4 +1490,21 @@
   <string name="settings_custom_chunk_auto_last">Ultima lezione: pezzi da %1$d minuti</string>
   <string name="settings_custom_chunk_auto_last_whole">Ultima lezione: intera</string>
   <string name="settings_custom_chunk_auto_never">Lo sceglie alla prima lezione</string>
+  <string name="tx_opts_choose">Imposta per questa volta…</string>
+  <string name="tx_opts_title">Ritrascrivi con le tue impostazioni</string>
+  <string name="tx_opts_explain">Valgono solo per questa trascrizione. Le impostazioni dell'app e del computer restano come sono, e la prossima volta si riparte da quelle.</string>
+  <string name="tx_opts_action">Ritrascrivi</string>
+  <string name="tx_opts_as_now">Come ora</string>
+  <string name="tx_opts_language_detect">Riconosci</string>
+  <string name="tx_opts_vocabulary_detail">Il vocabolario di questa volta: lo svuoti per non usarne nessuno. Quello delle impostazioni non cambia.</string>
+  <string name="tx_opts_speakers_on">Separa le voci</string>
+  <string name="tx_opts_speakers_off">Non separare</string>
+  <string name="tx_opts_pieces_detail">Quanto audio il computer trascrive in una volta. Pezzi più corti costano meno memoria e un riavvio perde meno.</string>
+  <string name="tx_opts_model_detail">Se il modello scelto non entra nella memoria libera, il computer scende da solo a uno più leggero, ma mai sotto «medium».</string>
+  <string name="tx_opts_memory_measured">Misurata</string>
+  <string name="tx_opts_memory_detail">Quanta memoria video dire al computer di poter usare, per questa trascrizione. Serve quando un altro programma ne occupa e il computer sceglie un modello più leggero di quello che vorresti.</string>
+  <string name="tx_opts_batch">Lotti</string>
+  <string name="tx_opts_batch_detail">Quante finestre di audio insieme: lotti più piccoli usano meno memoria e vanno più piano.</string>
+  <string name="tx_opts_computer_silent">Il computer di casa non risponde: modello, memoria e pezzi si scelgono solo quando risponde. Lingua e vocabolario valgono lo stesso.</string>
+  <string name="tx_opts_computer_old">Il programma sul computer è di una versione che non permette di scegliere modello e memoria per una sola lezione: aggiornalo per averli.</string>
 </resources>

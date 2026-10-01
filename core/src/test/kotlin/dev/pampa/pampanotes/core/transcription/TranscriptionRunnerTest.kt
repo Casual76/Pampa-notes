@@ -408,6 +408,28 @@ class TranscriptionRunnerTest {
   }
 
   @Test
+  fun `modello, memoria e lotto di un lavoro si mandano solo a chi li dichiara`() = runBlocking {
+    val tuned = ComputerOverrides(model = "medium", vramGb = 6.0, batchMax = 4)
+    val request = TranscribeRequest("m", computer = tuned)
+
+    val knows = FakeCompanion(allFeatures + CompanionFeatures.JOB_OPTIONS, byRef = { TranscriptResult("a", listOf(RawSegment(0, 5_000, "a")), "it", 60_000) })
+    runner.transcribeSession("job-j", listOf(archivedPart("a")), knows, request, chunkMinutes = 10)
+    assertEquals(listOf(tuned), knows.requests.map { it.computer })
+
+    val unaware = FakeCompanion(allFeatures)
+    runner.transcribeSession("job-u", listOf(archivedPart("b")), unaware, request, chunkMinutes = 10)
+    assertEquals("un computer che non conosce il campo non lo riceve", listOf(null), unaware.requests.map { it.computer })
+
+    val old = FakeCompanion(features = emptySet())
+    runner.transcribeSession("job-o", listOf(archivedPart("c", local = true)), old, request, chunkMinutes = 10)
+    assertEquals("la strada di sempre non lo manda mai", listOf(null), old.requests.map { it.computer })
+
+    val empty = FakeCompanion(allFeatures + CompanionFeatures.JOB_OPTIONS)
+    runner.transcribeSession("job-e", listOf(archivedPart("d")), empty, TranscribeRequest("m", computer = ComputerOverrides()), chunkMinutes = 10)
+    assertEquals("scelte vuote non diventano campi", listOf(null), empty.requests.map { it.computer })
+  }
+
+  @Test
   fun `un companion vecchio segue la strada di sempre`() = runBlocking {
     val companion = FakeCompanion(features = emptySet())
 

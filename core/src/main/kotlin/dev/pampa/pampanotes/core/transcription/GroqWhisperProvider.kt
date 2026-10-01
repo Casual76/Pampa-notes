@@ -333,6 +333,12 @@ class OpenAiCompatProvider(
     request.prompt?.takeIf { it.isNotBlank() }?.let { fields["prompt"] = it }
     // «Chi parla»: il runner lo accende solo per un companion che dichiara `diarize`.
     if (request.diarize) fields[FIELD_DIARIZE] = "1"
+    // Modello, memoria e lotto di questo lavoro: il runner li lascia solo se il companion li conosce.
+    request.computer?.let { computer ->
+      computer.model?.takeIf { it.isNotBlank() }?.let { fields[FIELD_JOB_MODEL] = it }
+      computer.vramGb?.let { fields[FIELD_JOB_VRAM_GB] = vramField(it) }
+      computer.batchMax?.let { fields[FIELD_JOB_BATCH_MAX] = it.toString() }
+    }
     return fields
   }
 
@@ -673,6 +679,12 @@ class OpenAiCompatProvider(
     const val FIELD_NAME = "name"
     const val FIELD_MAX_MINUTES = "max_minutes"
     const val FIELD_DIARIZE = "diarize"
+    const val FIELD_JOB_MODEL = "job_model"
+    const val FIELD_JOB_VRAM_GB = "job_vram_gb"
+    const val FIELD_JOB_BATCH_MAX = "job_batch_max"
+
+    /** Un decimale, col punto: il locale del telefono non deve decidere come il computer legge «6,5». */
+    internal fun vramField(gb: Double): String = String.format(java.util.Locale.ROOT, "%.1f", gb)
     const val MAX_MINUTES_AUTO = "auto"
 
     /** `features` di `/health`: un elenco di stringhe. Qualunque altra forma vale «niente». */

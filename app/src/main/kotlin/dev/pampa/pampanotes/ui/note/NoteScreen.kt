@@ -14,6 +14,8 @@ import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Refresh
 import dev.pampa.pampanotes.ui.common.SelectionMark
+import dev.pampa.pampanotes.ui.common.TranscribeOptionsSheet
+import dev.pampa.pampanotes.core.transcription.TranscribeOverrides
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -139,7 +141,7 @@ private fun NoteScreen(
   onTogglePinned: () -> Unit,
   onDelete: () -> Unit,
   onTranscribe: (String) -> Unit,
-  onRetranscribe: (Collection<String>) -> Unit,
+  onRetranscribe: (Collection<String>, TranscribeOverrides?) -> Unit,
   onDeleteSessions: (Collection<String>) -> Unit,
   onCancelJob: (String) -> Unit,
   onDismissJob: (String) -> Unit,
@@ -159,6 +161,8 @@ private fun NoteScreen(
   var selecting by remember { mutableStateOf(false) }
   var selected by remember { mutableStateOf(emptySet<String>()) }
   var confirmingRetranscribe by remember { mutableStateOf(false) }
+  // «Ritrascrivi con le tue impostazioni»: le scelte valgono solo per questo giro.
+  var choosingTranscribeOptions by remember { mutableStateOf(false) }
   var confirmingDeleteSessions by remember { mutableStateOf(false) }
   val exitSelection = {
     selecting = false
@@ -303,12 +307,30 @@ private fun NoteScreen(
           emphasis = FluidAlertAction.Emphasis.Preferred,
           onClick = {
             confirmingRetranscribe = false
-            onRetranscribe(selected)
+            onRetranscribe(selected, null)
             exitSelection()
+          },
+        ),
+        FluidAlertAction(
+          label = stringResource(R.string.tx_opts_choose),
+          onClick = {
+            confirmingRetranscribe = false
+            choosingTranscribeOptions = true
           },
         ),
         FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = { confirmingRetranscribe = false }),
       ),
+    )
+  }
+
+  if (choosingTranscribeOptions) {
+    TranscribeOptionsSheet(
+      onDismiss = { choosingTranscribeOptions = false },
+      onConfirm = { overrides ->
+        choosingTranscribeOptions = false
+        onRetranscribe(selected, overrides)
+        exitSelection()
+      },
     )
   }
 

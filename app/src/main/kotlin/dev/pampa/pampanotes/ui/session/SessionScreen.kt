@@ -59,7 +59,9 @@ import dev.pampa.pampanotes.core.playback.SilenceSkipper
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
 import dev.antigravity.fluidengine.ui.fluid.FluidBarAction
+import dev.pampa.pampanotes.core.transcription.TranscribeOverrides
 import dev.pampa.pampanotes.core.transcription.TranscriptSearch
+import dev.pampa.pampanotes.ui.common.TranscribeOptionsSheet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -148,7 +150,8 @@ fun SessionRoute(
     onSeek = viewModel::seekTo,
     onCycleSpeed = viewModel::cycleSpeed,
     onUserScrolled = viewModel::stopFollowing,
-    onTranscribe = viewModel::transcribe,
+    onTranscribe = { viewModel.transcribe() },
+    onTranscribeWith = { viewModel.transcribe(it) },
     onCancelJob = viewModel::cancelJob,
     onDismissJob = { viewModel.dismissJob(it) },
     onFetchMissing = viewModel::fetchMissing,
@@ -184,6 +187,8 @@ private fun SessionScreen(
   onCycleSpeed: () -> Unit,
   onUserScrolled: () -> Unit,
   onTranscribe: () -> Unit,
+  /** «Ritrascrivi» con le impostazioni scelte per questa volta sola ([TranscribeOptionsSheet]). */
+  onTranscribeWith: (TranscribeOverrides) -> Unit,
   onCancelJob: (String) -> Unit,
   onDismissJob: (String) -> Unit,
   onFetchMissing: () -> Unit,
@@ -211,6 +216,7 @@ private fun SessionScreen(
   // Una registrazione tolta puo' essere l'unica copia: si chiede, come per la sessione intera.
   var confirmingPartDelete by remember { mutableStateOf<String?>(null) }
   var confirmingRetranscribe by remember { mutableStateOf(false) }
+  var choosingTranscribeOptions by remember { mutableStateOf(false) }
   var refining by remember { mutableStateOf(false) }
   // Dove sta il tasto «altro»: i pop-up di rinomina e ripulitura nascono da li'.
   var moreOrigin by remember { mutableStateOf<Rect?>(null) }
@@ -588,8 +594,25 @@ private fun SessionScreen(
             onTranscribe()
           },
         ),
+        FluidAlertAction(
+          label = stringResource(R.string.tx_opts_choose),
+          onClick = {
+            confirmingRetranscribe = false
+            choosingTranscribeOptions = true
+          },
+        ),
         FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = { confirmingRetranscribe = false }),
       ),
+    )
+  }
+
+  if (choosingTranscribeOptions) {
+    TranscribeOptionsSheet(
+      onDismiss = { choosingTranscribeOptions = false },
+      onConfirm = { overrides ->
+        choosingTranscribeOptions = false
+        onTranscribeWith(overrides)
+      },
     )
   }
 

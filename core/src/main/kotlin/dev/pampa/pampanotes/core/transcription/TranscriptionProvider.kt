@@ -49,6 +49,12 @@ data class TranscribeRequest(
    * [CompanionFeatures.DIARIZE], e mai a Groq, che non saprebbe cosa farne.
    */
   val diarize: Boolean = false,
+  /**
+   * Modello, memoria e lotto per questa sola richiesta (`job_*`). Come [diarize]: lo decide chi
+   * ritrascrive, e [TranscriptionRunner] lo manda solo a un companion che dichiara
+   * [CompanionFeatures.JOB_OPTIONS], mai a Groq.
+   */
+  val computer: ComputerOverrides? = null,
 )
 
 /** Un pezzo di testo con i suoi tempi, come lo restituisce il servizio. */
@@ -237,6 +243,12 @@ object CompanionFeatures {
    * lo mostra «in arrivo» invece di aspettare la fine di una lezione lunga. Vedi [RemotePartial].
    */
   const val PARTIAL = "partial"
+
+  /**
+   * Accetta modello, memoria e lotto per una richiesta sola (`job_model`, `job_vram_gb`,
+   * `job_batch_max`), senza cambiare le impostazioni del computer. Solo per il proprietario.
+   */
+  const val JOB_OPTIONS = "job_options"
 }
 
 /** Come caricare un file al companion quando sa fare di piu' di un server qualsiasi. */
