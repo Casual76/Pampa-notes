@@ -15,22 +15,30 @@
       "ref": "main"
     },
     "stable": {
-      "version": "1.0.5",
-      "releaseDate": "2026-10-01",
-      "changelog": "Ritrascrivere con le tue impostazioni, e il computer non scende più a «small».\n\n- «Ritrascrivi» ha un secondo tasto, «Imposta per questa volta…»: scegli lingua, vocabolario, voci, lunghezza dei pezzi e — con il computer di casa aggiornato — modello, memoria video e lotto, solo per quella trascrizione. Le impostazioni dell'app e del computer non cambiano, e «Riprova» ripete la stessa richiesta. Prima di partire il pannello mostra la stima di memoria del computer.\n- Se la memoria video libera è poca, il computer scende al massimo a «medium» (prima poteva arrivare a «small», «base» o «tiny», che sbagliano troppo l'italiano parlato). Chi sceglie un modello a mano lo tiene.\n- Per modello, memoria e lotto per una lezione sola aggiorna il companion alla 1.1.0.",
-      "releaseTag": "stable-pampa-notes-v1.0.5",
-      "apkAsset": "pampa-notes-1.0.5.apk",
-      "sizeBytes": 12756187
+      "version": "1.0.6",
+      "releaseDate": "2026-10-05",
+      "changelog": "Le statistiche di una nota, e un promemoria quando Tailscale è spento.\n\n- Nel menu di una nota c'è «Statistiche»: il volume medio delle registrazioni (misurato sui file, con un paragone a orecchio: «come una conversazione»), il momento più forte — un tocco ci porta il lettore — e quanto silenzio c'è. Poi le parole: quante ne sono state dette e a che velocità, la parola preferita, l'intercalare («quindi», 94 volte) e gli appunti contro il parlato. Il volume si misura la prima volta che apri il pannello e poi resta.\n- Fuori casa, se il computer non si vede né sulla rete né da fuori e Tailscale è spento, l'app lo dice: una notifica e una scheda in Lavori, nella home e nella sessione, con «Accendi Tailscale». Appena Tailscale si accende, le trascrizioni in attesa ripartono.",
+      "releaseTag": "stable-pampa-notes-v1.0.6",
+      "apkAsset": "pampa-notes-1.0.6.apk",
+      "sizeBytes": 12816803
     },
     "beta": {
-      "version": "1.0.5",
-      "releaseDate": "2026-10-01",
-      "changelog": "Ritrascrivere con le tue impostazioni, e il computer non scende più a «small».\n\n- «Ritrascrivi» ha un secondo tasto, «Imposta per questa volta…»: scegli lingua, vocabolario, voci, lunghezza dei pezzi e — con il computer di casa aggiornato — modello, memoria video e lotto, solo per quella trascrizione. Le impostazioni dell'app e del computer non cambiano, e «Riprova» ripete la stessa richiesta. Prima di partire il pannello mostra la stima di memoria del computer.\n- Se la memoria video libera è poca, il computer scende al massimo a «medium» (prima poteva arrivare a «small», «base» o «tiny», che sbagliano troppo l'italiano parlato). Chi sceglie un modello a mano lo tiene.\n- Per modello, memoria e lotto per una lezione sola aggiorna il companion alla 1.1.0.",
-      "releaseTag": "stable-pampa-notes-v1.0.5",
-      "apkAsset": "pampa-notes-1.0.5.apk",
-      "sizeBytes": 12756187
+      "version": "1.0.6",
+      "releaseDate": "2026-10-05",
+      "changelog": "Le statistiche di una nota, e un promemoria quando Tailscale è spento.\n\n- Nel menu di una nota c'è «Statistiche»: il volume medio delle registrazioni (misurato sui file, con un paragone a orecchio: «come una conversazione»), il momento più forte — un tocco ci porta il lettore — e quanto silenzio c'è. Poi le parole: quante ne sono state dette e a che velocità, la parola preferita, l'intercalare («quindi», 94 volte) e gli appunti contro il parlato. Il volume si misura la prima volta che apri il pannello e poi resta.\n- Fuori casa, se il computer non si vede né sulla rete né da fuori e Tailscale è spento, l'app lo dice: una notifica e una scheda in Lavori, nella home e nella sessione, con «Accendi Tailscale». Appena Tailscale si accende, le trascrizioni in attesa ripartono.",
+      "releaseTag": "stable-pampa-notes-v1.0.6",
+      "apkAsset": "pampa-notes-1.0.6.apk",
+      "sizeBytes": 12816803
     },
     "history": [
+      {
+        "version": "1.0.5",
+        "releaseDate": "2026-10-01",
+        "changelog": "Ritrascrivere con le tue impostazioni, e il computer non scende più a «small».\n\n- «Ritrascrivi» ha un secondo tasto, «Imposta per questa volta…»: scegli lingua, vocabolario, voci, lunghezza dei pezzi e — con il computer di casa aggiornato — modello, memoria video e lotto, solo per quella trascrizione. Le impostazioni dell'app e del computer non cambiano, e «Riprova» ripete la stessa richiesta. Prima di partire il pannello mostra la stima di memoria del computer.\n- Se la memoria video libera è poca, il computer scende al massimo a «medium» (prima poteva arrivare a «small», «base» o «tiny», che sbagliano troppo l'italiano parlato). Chi sceglie un modello a mano lo tiene.\n- Per modello, memoria e lotto per una lezione sola aggiorna il companion alla 1.1.0.",
+        "releaseTag": "stable-pampa-notes-v1.0.5",
+        "apkAsset": "pampa-notes-1.0.5.apk",
+        "sizeBytes": 12756187
+      },
       {
         "version": "1.0.4",
         "releaseDate": "2026-09-28",
