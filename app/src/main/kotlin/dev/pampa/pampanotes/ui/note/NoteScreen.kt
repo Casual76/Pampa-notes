@@ -81,6 +81,8 @@ fun NoteRoute(
   onEdit: (String) -> Unit,
   onOpenSession: (String) -> Unit,
   onImportInto: (String) -> Unit,
+  /** Una sessione aperta a un momento preciso: il piu' forte, dalle statistiche. */
+  onOpenSessionAt: (String, Long) -> Unit,
   viewModel: NoteViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -140,6 +142,7 @@ fun NoteRoute(
     onCancelJob = viewModel::cancelJob,
     onDismissJob = viewModel::dismissJob,
     onOpenSession = onOpenSession,
+    onOpenSessionAt = onOpenSessionAt,
     onOpenSource = { source ->
       viewModel.openSource(
         source,
@@ -189,6 +192,7 @@ private fun NoteScreen(
   onCancelJob: (String) -> Unit,
   onDismissJob: (String) -> Unit,
   onOpenSession: (String) -> Unit,
+  onOpenSessionAt: (String, Long) -> Unit,
   onOpenSource: (SourceEntity) -> Unit,
   onRederiveHandwriting: () -> Unit,
   onRepairRecordings: () -> Unit,
@@ -197,6 +201,7 @@ private fun NoteScreen(
   var confirmingDelete by remember { mutableStateOf(false) }
   var exporting by remember { mutableStateOf(false) }
   var sharing by remember { mutableStateOf(false) }
+  var showingStats by remember { mutableStateOf(false) }
   val computerOnly = rememberComputerOnly()
   // Tirando giu' la nota si sincronizza: la trascrizione fatta sull'altro dispositivo arriva adesso.
   val pull = rememberPullToSync()
@@ -226,6 +231,7 @@ private fun NoteScreen(
   val exportLabel = stringResource(R.string.action_export)
   val editLabel = stringResource(R.string.note_edit)
   val shareLabel = stringResource(R.string.note_share)
+  val statsLabel = stringResource(R.string.note_stats_title)
   val selectLabel = stringResource(R.string.action_select)
   val retranscribeLabel = stringResource(R.string.session_retranscribe)
   val rederiveLabel = stringResource(R.string.note_handwriting_rederive)
@@ -306,6 +312,7 @@ private fun NoteScreen(
               }
               add(FluidContextAction(label = exportLabel) { exporting = true })
               add(FluidContextAction(label = shareLabel) { sharing = true })
+              add(FluidContextAction(label = statsLabel) { showingStats = true })
               state.note?.let { note -> add(computerOnly.noteAction(note.id, note.folderId, note.title)) }
               add(FluidContextAction(label = if (state.note?.pinned == true) unpinLabel else pinLabel) { onTogglePinned() })
               add(FluidContextAction(label = deleteLabel, destructive = true) { confirmingDelete = true })
@@ -405,6 +412,17 @@ private fun NoteScreen(
   state.note?.let { note ->
     if (exporting) ExportSheet(scope = ExportScope.Note(note.id), onDismiss = { exporting = false })
     if (sharing) ShareSheet(noteId = note.id, onDismiss = { sharing = false })
+    if (showingStats) {
+      NoteStatsSheet(
+        sessions = state.sessions,
+        personal = state.personal,
+        onOpenMoment = { sessionId, atMs ->
+          showingStats = false
+          onOpenSessionAt(sessionId, atMs)
+        },
+        onDismiss = { showingStats = false },
+      )
+    }
   }
 
   if (confirmingDelete) {
@@ -821,7 +839,7 @@ private fun sourceStatusLabel(status: SourceStatus): String = stringResource(
 )
 
 @Composable
-private fun sessionTitle(index: Int, title: String, date: String): String {
+internal fun sessionTitle(index: Int, title: String, date: String): String {
   val number = stringResource(R.string.note_session_number, index + 1)
   val prettyDate = dev.pampa.pampanotes.core.model.Dates.parseOrNull(date)?.let { Formats.relativeDate(it) } ?: date
   return if (title.isBlank()) "$number — $prettyDate" else "$number — $prettyDate · $title"

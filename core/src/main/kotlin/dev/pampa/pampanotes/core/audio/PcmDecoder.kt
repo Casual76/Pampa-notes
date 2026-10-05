@@ -52,6 +52,75 @@ object PcmDecoder {
     target: File,
     onProgress: (fraction: Float) -> Unit = {},
   ): DecodedAudio {
+    try {
+      val energies = ArrayList<Float>(1024)
+      val samplesPerFrame = TARGET_SAMPLE_RATE * FRAME_MS / 1000L
+      var frameSum = 0.0
+      var frameCount = 0L
+      var writtenSamples = 0L
+
+      DataOutputStream(BufferedOutputStream(target.outputStream(), 256 * 1024)).use { out ->
+        var resampler: Resampler? = null
+        var resamplerRate = 0
+        stream(source, onProgress) { mono, rate ->
+          // Un ricampionatore nuovo solo se la frequenza cambia davvero: quello vecchio porta con se'
+          // il resto del blocco precedente, e buttarlo senza motivo farebbe un clic.
+          val current = resampler?.takeIf { resamplerRate == rate } ?: Resampler(rate, TARGET_SAMPLE_RATE).also {
+            resampler = it
+            resamplerRate = rate
+          }
+          for (sample in current.process(mono)) {
+            out.writeByte(sample.toInt() and 0xFF)
+            out.writeByte((sample.toInt() shr 8) and 0xFF)
+            val normalized = sample / 32768f
+            frameSum += (normalized * normalized).toDouble()
+            frameCount++
+            writtenSamples++
+            if (frameCount >= samplesPerFrame) {
+              energies += sqrt(frameSum / frameCount).toFloat()
+              frameSum = 0.0
+              frameCount = 0
+            }
+          }
+        }
+        // L'ultima finestra incompleta conta lo stesso: senza, l'ultimo mezzo secondo di un audio
+        // non avrebbe energia e il pianificatore lo leggerebbe come silenzio.
+        if (frameCount > 0) energies += sqrt(frameSum / frameCount).toFloat()
+      }
+
+      return DecodedAudio(
+        pcmFile = target,
+        sampleRate = TARGET_SAMPLE_RATE,
+        frameEnergies = energies.toFloatArray(),
+        frameMs = FRAME_MS,
+        durationMs = writtenSamples * 1000L / TARGET_SAMPLE_RATE,
+      )
+    } catch (e: TranscriptionError) {
+      target.delete()
+      throw e
+    } catch (e: kotlinx.coroutines.CancellationException) {
+      target.delete()
+      throw e
+    } catch (t: Throwable) {
+      target.delete()
+      throw TranscriptionError.Decode(t.message ?: "audio illeggibile", t)
+    }
+  }
+
+  /**
+   * Decodifica [source] e consegna a [sink] un blocco alla volta, gia' mono e a 16 bit, con la
+   * frequenza a cui il decoder lo ha prodotto: niente su disco e niente ricampionamento. E' la
+   * strada di [decodeToPcm], e di chi vuole solo guardare l'audio (il volume di una nota, vedi
+   * `LoudnessMeter`) senza scriverne cento megabyte.
+   *
+   * Gli errori escono come [TranscriptionError.Decode]; la `CancellationException` di chi smette di
+   * aspettare passa com'e'.
+   */
+  fun stream(
+    source: File,
+    onProgress: (fraction: Float) -> Unit = {},
+    sink: (mono: ShortArray, sampleRate: Int) -> Unit,
+  ) {
     val extractor = MediaExtractor()
     var codec: MediaCodec? = null
     try {
@@ -79,100 +148,60 @@ object PcmDecoder {
       codec.configure(inputFormat, null, null, 0)
       codec.start()
 
-      val energies = ArrayList<Float>(estimateFrames(totalUs))
-      val samplesPerFrame = TARGET_SAMPLE_RATE * FRAME_MS / 1000L
-      var frameSum = 0.0
-      var frameCount = 0L
-      var writtenSamples = 0L
+      val bufferInfo = MediaCodec.BufferInfo()
+      var sawInputEnd = false
+      var sawOutputEnd = false
 
-      DataOutputStream(BufferedOutputStream(target.outputStream(), 256 * 1024)).use { out ->
-        var resampler = Resampler(outRate, TARGET_SAMPLE_RATE)
-        val bufferInfo = MediaCodec.BufferInfo()
-        var sawInputEnd = false
-        var sawOutputEnd = false
-
-        while (!sawOutputEnd) {
-          if (!sawInputEnd) {
-            val inputIndex = codec.dequeueInputBuffer(DEQUEUE_TIMEOUT_US)
-            if (inputIndex >= 0) {
-              val buffer = codec.getInputBuffer(inputIndex)!!
-              val size = extractor.readSampleData(buffer, 0)
-              if (size < 0) {
-                codec.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                sawInputEnd = true
-              } else {
-                codec.queueInputBuffer(inputIndex, 0, size, extractor.sampleTime, 0)
-                extractor.advance()
-              }
+      while (!sawOutputEnd) {
+        if (!sawInputEnd) {
+          val inputIndex = codec.dequeueInputBuffer(DEQUEUE_TIMEOUT_US)
+          if (inputIndex >= 0) {
+            val buffer = codec.getInputBuffer(inputIndex)!!
+            val size = extractor.readSampleData(buffer, 0)
+            if (size < 0) {
+              codec.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+              sawInputEnd = true
+            } else {
+              codec.queueInputBuffer(inputIndex, 0, size, extractor.sampleTime, 0)
+              extractor.advance()
             }
-          }
-
-          val outputIndex = codec.dequeueOutputBuffer(bufferInfo, DEQUEUE_TIMEOUT_US)
-          when {
-            outputIndex >= 0 -> {
-              val buffer = codec.getOutputBuffer(outputIndex)!!
-              if (bufferInfo.size > 0) {
-                buffer.position(bufferInfo.offset)
-                buffer.limit(bufferInfo.offset + bufferInfo.size)
-                val mono = PcmFrames.toMono16(buffer.order(ByteOrder.nativeOrder()), outEncoding, outChannels)
-                val resampled = resampler.process(mono)
-                for (sample in resampled) {
-                  out.writeByte(sample.toInt() and 0xFF)
-                  out.writeByte((sample.toInt() shr 8) and 0xFF)
-                  val normalized = sample / 32768f
-                  frameSum += (normalized * normalized).toDouble()
-                  frameCount++
-                  writtenSamples++
-                  if (frameCount >= samplesPerFrame) {
-                    energies += sqrt(frameSum / frameCount).toFloat()
-                    frameSum = 0.0
-                    frameCount = 0
-                  }
-                }
-              }
-              codec.releaseOutputBuffer(outputIndex, false)
-              if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) sawOutputEnd = true
-              if (totalUs > 0) onProgress((bufferInfo.presentationTimeUs.toFloat() / totalUs).coerceIn(0f, 1f))
-            }
-
-            outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-              val format = codec.outputFormat
-              val rate = runCatching { format.getInteger(MediaFormat.KEY_SAMPLE_RATE) }.getOrDefault(outRate)
-              outChannels = runCatching { format.getInteger(MediaFormat.KEY_CHANNEL_COUNT) }.getOrDefault(outChannels).coerceAtLeast(1)
-              outEncoding = if (format.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
-                format.getInteger(MediaFormat.KEY_PCM_ENCODING)
-              } else {
-                PcmFrames.ENCODING_PCM_16BIT
-              }
-              if (!PcmFrames.supports(outEncoding)) throw TranscriptionError.Decode("formato PCM $outEncoding non gestito")
-              // Un ricampionatore nuovo solo se la frequenza cambia davvero: quello vecchio porta
-              // con se' il resto del blocco precedente, e buttarlo senza motivo farebbe un clic.
-              if (rate != outRate) {
-                outRate = rate
-                resampler = Resampler(outRate, TARGET_SAMPLE_RATE)
-              }
-            }
-            outputIndex == MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
           }
         }
-        // L'ultima finestra incompleta conta lo stesso: senza, l'ultimo mezzo secondo di un audio
-        // non avrebbe energia e il pianificatore lo leggerebbe come silenzio.
-        if (frameCount > 0) energies += sqrt(frameSum / frameCount).toFloat()
-      }
 
+        val outputIndex = codec.dequeueOutputBuffer(bufferInfo, DEQUEUE_TIMEOUT_US)
+        when {
+          outputIndex >= 0 -> {
+            val buffer = codec.getOutputBuffer(outputIndex)!!
+            if (bufferInfo.size > 0) {
+              buffer.position(bufferInfo.offset)
+              buffer.limit(bufferInfo.offset + bufferInfo.size)
+              sink(PcmFrames.toMono16(buffer.order(ByteOrder.nativeOrder()), outEncoding, outChannels), outRate)
+            }
+            codec.releaseOutputBuffer(outputIndex, false)
+            if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) sawOutputEnd = true
+            if (totalUs > 0) onProgress((bufferInfo.presentationTimeUs.toFloat() / totalUs).coerceIn(0f, 1f))
+          }
+
+          outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+            val format = codec.outputFormat
+            outRate = runCatching { format.getInteger(MediaFormat.KEY_SAMPLE_RATE) }.getOrDefault(outRate)
+            outChannels = runCatching { format.getInteger(MediaFormat.KEY_CHANNEL_COUNT) }.getOrDefault(outChannels).coerceAtLeast(1)
+            outEncoding = if (format.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
+              format.getInteger(MediaFormat.KEY_PCM_ENCODING)
+            } else {
+              PcmFrames.ENCODING_PCM_16BIT
+            }
+            if (!PcmFrames.supports(outEncoding)) throw TranscriptionError.Decode("formato PCM $outEncoding non gestito")
+          }
+          outputIndex == MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
+        }
+      }
       onProgress(1f)
-      return DecodedAudio(
-        pcmFile = target,
-        sampleRate = TARGET_SAMPLE_RATE,
-        frameEnergies = energies.toFloatArray(),
-        frameMs = FRAME_MS,
-        durationMs = writtenSamples * 1000L / TARGET_SAMPLE_RATE,
-      )
     } catch (e: TranscriptionError) {
-      target.delete()
+      throw e
+    } catch (e: kotlinx.coroutines.CancellationException) {
       throw e
     } catch (t: Throwable) {
-      target.delete()
       throw TranscriptionError.Decode(t.message ?: "audio illeggibile", t)
     } finally {
       runCatching { codec?.stop() }
@@ -180,9 +209,6 @@ object PcmDecoder {
       runCatching { extractor.release() }
     }
   }
-
-  private fun estimateFrames(totalUs: Long): Int =
-    if (totalUs <= 0) 1024 else (totalUs / 1000 / FRAME_MS).toInt().coerceAtLeast(1024)
 }
 
 /**

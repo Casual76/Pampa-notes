@@ -303,6 +303,14 @@ class PampaSettingsStore(
 
   private fun endpointWaitingKey(providerId: String) = longPreferencesKey("endpoint_waiting_since_$providerId")
 
+  /**
+   * L'attesa (il suo [endpointWaitingSince]) per cui si e' gia' ricordato di accendere Tailscale con
+   * una notifica: una per attesa, non una a ogni tentativo. 0: mai.
+   */
+  suspend fun tailscaleRemindedFor(): Long = store.data.first()[TailscaleRemindedFor] ?: 0L
+
+  suspend fun setTailscaleRemindedFor(waitingSince: Long) = edit { it[TailscaleRemindedFor] = waitingSince }
+
   // --- date vere e «Riprendi ad ascoltare» -------------------------------------------------------
 
   /** L'ultima sessione ascoltata qui, o null. Vedi [LastListened]. */
@@ -664,6 +672,7 @@ class PampaSettingsStore(
     val SyncTokenBlob = stringPreferencesKey("sync_token")
     val SyncDeviceId = stringPreferencesKey("sync_device_id")
     val HandwritingBackfillDone = booleanPreferencesKey("handwriting_backfill_done")
+    val TailscaleRemindedFor = longPreferencesKey("tailscale_reminded_for")
     val SyncDeviceName = stringPreferencesKey("sync_device_name")
     val SyncAccount = stringPreferencesKey("sync_account")
     val LastSyncAt = longPreferencesKey("last_sync_at")

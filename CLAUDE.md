@@ -666,6 +666,20 @@ cominciano in quel pezzo (`ChapterLines`: `[13:58:00]–14:40:12 · 42 min di pa
 stesso `[hh:mm:ss]` del paragrafo, cosi' un `grep` porta al testo), e `INDEX.md` una riga per
 capitolo sotto la sessione, col pezzo in cui comincia; le righe non contano nelle parole. La scheda
 Registrazioni non li conta: servirebbe leggere tutti i segmenti di ogni registrazione lunga.
+
+**Statistiche della nota** (menu della nota, `NoteStatsSheet`): un'aggiunta per ridere, con numeri
+veri. **Il volume** si misura sui file (`NoteStatsRepository.loudness`): `PcmDecoder.stream`
+decodifica senza scrivere PCM e `LoudnessAccumulator` (puro) prende la potenza di ogni secondo —
+media dell'energia (non dei decibel, o un'ora di silenzio la porterebbe a −120), il secondo piu'
+forte (un tocco apre la sessione li', `openSessionAtMoment`) e i secondi sotto −50 dBFS. Il numero
+misurato e' in dBFS; i «≈ 64 dB · come una conversazione» sono dBFS + 90 (`Loudness.SPL_OFFSET`), e
+il pannello dice che e' una stima: il registratore alza il guadagno da se'. Si ascolta solo a
+pannello aperto (chiuderlo ferma la decodifica al blocco dopo), si ricorda **per impronta** in
+`filesDir/stats/loudness.json` (fuori da sync e backup, rifarlo costa solo tempo; `Loudness.VERSION`
+invalida), e le registrazioni che non sono qui non si scaricano: si dice quante mancano. **Le
+parole** (`SpokenStats`, puro) si contano sulle grezze: quante, la velocita' sul tempo dei segmenti
+(non dei file), la parola preferita (quattro lettere almeno, senza le parole di servizio) e
+l'intercalare («quindi», 214 volte, una ogni 22 s), e gli appunti contro il parlato.
 ## Raffinamento
 
 L'unico posto in cui l'app manda del testo a un modello di chat, e fa una cosa sola: riscrivere
@@ -1301,6 +1315,20 @@ Attenzione al resolver: con due indirizzi `EndpointResolver.resolve` **restituis
 strada**, anche se nessuna delle due risponde — decide *quale*, non *se*. Per sapere se il computer
 c'e' bisogna battere `/health`, ed e' il bug che il primo giro di prova ha trovato («Il servizio non
 ha risposto in tempo» invece dell'attesa).
+
+**«Accendi Tailscale».** Fuori casa con Tailscale spento la coda aspettava in silenzio. Quando ne'
+casa ne' fuori rispondono, di mezzo c'e' Tailscale (un indirizzo di fuori, o uno di casa in
+100.64/10 o `*.ts.net`) e Tailscale qui e' spento (`TailscaleHint`, puro), l'app lo ricorda: una
+notifica per attesa (`TailscaleReminder.onWaiting`, chiamata da `waitForEndpoint`; il segno
+`tailscaleRemindedFor` = `endpointWaitingSince`), tolta quando il computer risponde o Tailscale si
+accende, e una scheda in Lavori, nella home e sotto il lavoro della sessione finche' qualcosa e' in
+«In attesa del computer di casa». «Acceso» si legge dalle reti: una rete VPN con un indirizzo di
+Tailscale (`Tailscale.isUp`; il 100.64/10 da solo e' anche il NAT degli operatori mobili). «Accendi»
+manda il broadcast per Tasker (`com.tailscale.ipn.CONNECT_VPN` a `IPNReceiver`) due volte a due
+secondi — su Android 16 il primo sveglia solo il servizio — aspetta la rete e sveglia la coda; se non
+arriva, la scheda apre l'app di Tailscale (che chiede il permesso della VPN), la notifica lo fa col
+suo tocco (dal ricevitore non si puo': trampolini vietati). Serve `<queries>` per il pacchetto.
+Con Tailscale acceso e il computer muto niente promemoria: e' il PC a essere spento.
 
 **Ritrascrivi** (menu della sessione, con conferma) e' un `enqueue` come gli altri: `saveTranscript`
 sostituisce la grezza e porta via le raffinate. La conferma ha un secondo tasto, «Imposta per questa

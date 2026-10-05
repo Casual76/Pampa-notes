@@ -59,6 +59,7 @@ import dev.pampa.pampanotes.core.playback.SilenceSkipper
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
 import dev.antigravity.fluidengine.ui.fluid.FluidBarAction
+import dev.pampa.pampanotes.core.transcription.JobPhase
 import dev.pampa.pampanotes.core.transcription.TranscribeOverrides
 import dev.pampa.pampanotes.core.transcription.TranscriptSearch
 import dev.pampa.pampanotes.ui.common.TranscribeOptionsSheet
@@ -103,6 +104,8 @@ import dev.pampa.pampanotes.ui.common.CloseWhenGone
 import dev.pampa.pampanotes.ui.common.JobProgressBars
 import dev.pampa.pampanotes.ui.common.jobErrorText
 import dev.pampa.pampanotes.ui.common.jobPhaseText
+import dev.pampa.pampanotes.ui.common.TailscaleReminderCard
+import dev.pampa.pampanotes.ui.common.TailscaleReminderViewModel
 import dev.pampa.pampanotes.ui.common.MarkdownText
 import androidx.compose.ui.geometry.Rect
 import dev.antigravity.fluidengine.ui.fluid.fluidExpandOrigin
@@ -211,6 +214,9 @@ private fun SessionScreen(
   onSearchJumpApplied: () -> Unit,
 ) {
   val listState = rememberLazyListState()
+  // La lezione aspetta il computer e Tailscale e' spento: sotto la scheda del lavoro, «accendilo».
+  val tailscale: TailscaleReminderViewModel = hiltViewModel()
+  val tailscaleCard by tailscale.card.collectAsStateWithLifecycle()
   var renaming by remember { mutableStateOf(false) }
   var confirmingDelete by remember { mutableStateOf(false) }
   // Una registrazione tolta puo' essere l'unica copia: si chiede, come per la sessione intera.
@@ -497,6 +503,14 @@ private fun SessionScreen(
     },
   ) {
     jobItem(state, onCancelJob, onRetryJob = { if (it.type == JobType.REFINE) refining = true else onTranscribe() }, onDismissJob = onDismissJob)
+    val waitingForComputer = state.job?.let { JobPhase.parse(it.phase) } == JobPhase.Endpoint
+    if (waitingForComputer) {
+      tailscaleCard?.let { card ->
+        item(key = "tailscale") {
+          TailscaleReminderCard(card, onTurnOn = tailscale::turnOn, onOpen = tailscale::open)
+        }
+      }
+    }
     // «Il testo che arriva a pezzi», sotto la scheda del lavoro finche' il lavoro va (PartialTranscriptBlock.kt).
     if (state.job != null) partialTranscriptItems(state.partial, onSeek)
     remoteAudioItem(state, onFetchMissing)

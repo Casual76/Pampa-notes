@@ -30,6 +30,7 @@ object AppNotifications {
   const val ID_ARCHIVE_FOREGROUND = 1003
   const val ID_FETCH_FOREGROUND = 1004
   private const val ID_NEEDS_APP = 1005
+  private const val ID_TAILSCALE = 1006
   private const val ID_RESULT_BASE = 2000
 
   fun createChannels(context: Context) {
@@ -154,17 +155,48 @@ object AppNotifications {
     runCatching { NotificationManagerCompat.from(context).cancel(ID_NEEDS_APP) }
   }
 
+  /**
+   * Il computer di casa non si vede, ne' sulla rete ne' da fuori, e Tailscale e' spento (vedi
+   * `TailscaleReminder`). Il tocco apre Tailscale (o lo store, se non c'e'); «Accendi» glielo chiede
+   * senza aprirlo, e la coda riparte appena la rete arriva.
+   */
+  fun notifyTailscale(context: Context, waiting: Int, installed: Boolean) {
+    val open = PendingIntent.getActivity(
+      context,
+      ID_TAILSCALE,
+      Tailscale.launchIntent(context) ?: Tailscale.storeIntent(),
+      PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+    val text = context.resources.getQuantityString(R.plurals.notification_tailscale_text, waiting, waiting)
+    val builder = NotificationCompat.Builder(context, CHANNEL_RESULTS)
+      .setContentTitle(context.getString(R.string.notification_tailscale_title))
+      .setContentText(text)
+      .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+      .setSmallIcon(android.R.drawable.stat_sys_warning)
+      .setAutoCancel(true)
+      .setOnlyAlertOnce(true)
+      .setContentIntent(open)
+    if (installed) {
+      val turnOn = PendingIntent.getBroadcast(
+        context,
+        ID_TAILSCALE,
+        TailscaleReceiver.intent(context),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+      )
+      builder.addAction(0, context.getString(R.string.tailscale_turn_on), turnOn)
+    }
+    show(context, ID_TAILSCALE, builder.build())
+  }
+
+  fun cancelTailscale(context: Context) {
+    runCatching { NotificationManagerCompat.from(context).cancel(ID_TAILSCALE) }
+  }
+
   private fun notify(context: Context, jobId: String, title: String, text: String) {
     post(context, ID_RESULT_BASE + jobId.hashCode().and(0xFFF), title, text)
   }
 
   private fun post(context: Context, id: Int, title: String, text: String, alertOnce: Boolean = false) {
-    val manager = NotificationManagerCompat.from(context)
-    if (!manager.areNotificationsEnabled()) return
-    // Da Android 13 il permesso e' a parte: senza, notify non fa niente e lint lo segnala.
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-      ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-    ) return
     val notification = NotificationCompat.Builder(context, CHANNEL_RESULTS)
       .setContentTitle(title)
       .setContentText(text)
@@ -175,6 +207,16 @@ object AppNotifications {
       .setOnlyAlertOnce(alertOnce)
       .setContentIntent(openApp(context))
       .build()
+    show(context, id, notification)
+  }
+
+  private fun show(context: Context, id: Int, notification: Notification) {
+    val manager = NotificationManagerCompat.from(context)
+    if (!manager.areNotificationsEnabled()) return
+    // Da Android 13 il permesso e' a parte: senza, notify non fa niente e lint lo segnala.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+      ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+    ) return
     runCatching { manager.notify(id, notification) }
   }
 

@@ -1505,4 +1505,86 @@
   <string name="tx_opts_batch_detail">How many windows of audio at once: smaller batches use less memory and run slower.</string>
   <string name="tx_opts_computer_silent">The home computer is not answering: model, memory and pieces can only be chosen when it answers. Language and vocabulary still apply.</string>
   <string name="tx_opts_computer_old">The program on the computer is a version that cannot pick a model and memory for a single lesson: update it to get them.</string>
+
+  <!-- Note statistics -->
+  <string name="note_stats_title">Statistics</string>
+  <string name="note_stats_volume">Loudness</string>
+  <string name="note_stats_words">Words</string>
+  <string name="note_stats_listening">Listening to the recordings…</string>
+  <string name="note_stats_listening_start">Starting with the first one</string>
+  <string name="note_stats_listening_detail">Recording %1$d of %2$d · %3$d%%</string>
+  <string name="note_stats_volume_none">No recordings to listen to here</string>
+  <string name="note_stats_volume_none_detail">This note’s recordings are not on this device: open them once, and the loudness gets measured.</string>
+  <string name="note_stats_db">≈ %1$d dB</string>
+  <string name="note_stats_dbfs">%1$s dBFS</string>
+  <string name="note_stats_mean">Average loudness</string>
+  <string name="note_stats_peak">The loudest moment</string>
+  <string name="note_stats_quiet">Silence</string>
+  <string name="note_stats_quiet_detail">out of %1$s recorded</string>
+  <string name="note_stats_volume_footnote">The dB are a rough guess: the phone turns the volume up and down on its own, and every microphone is different. The number actually measured is the dBFS one, how loud the file is.</string>
+  <plurals name="note_stats_skipped">
+    <item quantity="one">One recording is not on this device, or could not be read: it is not counted.</item>
+    <item quantity="other">%1$d recordings are not on this device, or could not be read: they are not counted.</item>
+  </plurals>
+  <string name="note_stats_like_whisper">like a whisper</string>
+  <string name="note_stats_like_library">like a library</string>
+  <string name="note_stats_like_office">like a quiet office</string>
+  <string name="note_stats_like_conversation">like a conversation</string>
+  <string name="note_stats_like_break">like a classroom at break time</string>
+  <string name="note_stats_like_traffic">like rush-hour traffic</string>
+  <string name="note_stats_like_blender">like a blender</string>
+  <string name="note_stats_like_concert">like a rock concert</string>
+  <string name="note_stats_said">Said in class</string>
+  <string name="note_stats_said_personal">Said in the recordings</string>
+  <plurals name="note_stats_spoken_words">
+    <item quantity="one">%1$s word</item>
+    <item quantity="other">%1$s words</item>
+  </plurals>
+  <string name="note_stats_speech_time">in %1$s of speech</string>
+  <string name="note_stats_not_transcribed">Nothing yet: transcribe the recordings and they get counted.</string>
+  <string name="note_stats_pace">Pace</string>
+  <string name="note_stats_wpm">%1$d words a minute</string>
+  <string name="note_stats_pace_calm">taking it easy</string>
+  <string name="note_stats_pace_lecture">lecture pace</string>
+  <string name="note_stats_pace_brisk">brisk</string>
+  <string name="note_stats_pace_commentator">sports commentator</string>
+  <string name="note_stats_pace_rapper">rapper</string>
+  <string name="note_stats_favorite">Favourite word</string>
+  <string name="note_stats_filler">The filler word</string>
+  <string name="note_stats_quoted_word">“%1$s”</string>
+  <plurals name="note_stats_times">
+    <item quantity="one">%1$d time</item>
+    <item quantity="other">%1$d times</item>
+  </plurals>
+  <string name="note_stats_filler_every">%1$s · one every %2$s</string>
+  <string name="note_stats_seconds">%1$d s</string>
+  <string name="note_stats_written">Written by you</string>
+  <plurals name="note_stats_written_words">
+    <item quantity="one">%1$s word of notes</item>
+    <item quantity="other">%1$s words of notes</item>
+  </plurals>
+  <string name="note_stats_written_none">No notes: the lesson did all the work.</string>
+  <string name="note_stats_written_none_personal">No notes: only the recordings did the talking.</string>
+  <string name="note_stats_ratio">The lesson said %1$d times as much.</string>
+  <string name="note_stats_ratio_personal">The recordings said %1$d times as much.</string>
+  <string name="note_stats_ratio_writer">You wrote more than was said. Respect.</string>
+  <string name="note_stats_ratio_even">About even: you wrote nearly everything down.</string>
+  <string name="note_stats_nothing_to_compare">Nothing said yet to compare it with.</string>
+
+  <!-- Tailscale reminder -->
+  <string name="notification_tailscale_title">Can’t see the home computer</string>
+  <plurals name="notification_tailscale_text">
+    <item quantity="one">Not on the network, not from outside, and Tailscale is off: turn it on and the waiting transcription starts.</item>
+    <item quantity="other">Not on the network, not from outside, and Tailscale is off: turn it on and the %1$d waiting transcriptions start.</item>
+  </plurals>
+  <string name="tailscale_card_eyebrow">Tailscale is off</string>
+  <string name="tailscale_card_title">Can’t see the home computer</string>
+  <plurals name="tailscale_card_detail">
+    <item quantity="one">Not on the network, not from outside. With Tailscale on, the waiting transcription starts by itself.</item>
+    <item quantity="other">Not on the network, not from outside. With Tailscale on, the %1$d waiting transcriptions start by themselves.</item>
+  </plurals>
+  <string name="tailscale_turn_on">Turn on Tailscale</string>
+  <string name="tailscale_turning_on">Turning on…</string>
+  <string name="tailscale_open">Open Tailscale</string>
+  <string name="tailscale_install">Install Tailscale</string>
 </resources>

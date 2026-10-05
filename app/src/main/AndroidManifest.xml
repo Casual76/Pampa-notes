@@ -10,6 +10,11 @@
   <!-- engine-ai dichiara RECORD_AUDIO per la dettatura: questa app non registra, quindi lo toglie. -->
   <uses-permission android:name="android.permission.RECORD_AUDIO" tools:node="remove" />
 
+  <!-- Per sapere se Tailscale c'e', aprirlo e chiedergli di accendersi (il promemoria fuori casa). -->
+  <queries>
+    <package android:name="com.tailscale.ipn" />
+  </queries>
+
   <application
     android:name=".PampaNotesApp"
     android:allowBackup="false"
@@ -43,6 +48,10 @@
     <!-- «Annulla» nella notifica di una trascrizione: annulla il lavoro, non il worker. Solo dall'app. -->
     <receiver
       android:name=".work.JobCancelReceiver"
+      android:exported="false" />
+
+    <receiver
+      android:name=".work.TailscaleReceiver"
       android:exported="false" />
 
     <activity

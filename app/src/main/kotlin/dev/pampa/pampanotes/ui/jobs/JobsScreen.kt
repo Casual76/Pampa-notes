@@ -31,6 +31,8 @@ import dev.pampa.pampanotes.ui.common.Formats
 import dev.pampa.pampanotes.ui.common.HolesOfferCard
 import dev.pampa.pampanotes.ui.common.HolesOfferViewModel
 import dev.pampa.pampanotes.ui.common.JobProgressBars
+import dev.pampa.pampanotes.ui.common.TailscaleReminderCard
+import dev.pampa.pampanotes.ui.common.TailscaleReminderViewModel
 import dev.pampa.pampanotes.ui.common.jobErrorText
 import dev.pampa.pampanotes.ui.common.jobPhaseText
 import dev.pampa.pampanotes.ui.common.jobStateLabel
@@ -45,6 +47,8 @@ fun JobsRoute(
   val state by viewModel.uiState.collectAsStateWithLifecycle()
   val holes: HolesOfferViewModel = hiltViewModel()
   val offer by holes.offer.collectAsStateWithLifecycle()
+  val tailscale: TailscaleReminderViewModel = hiltViewModel()
+  val tailscaleCard by tailscale.card.collectAsStateWithLifecycle()
 
   val cancelLabel = stringResource(R.string.action_cancel)
   val retryLabel = stringResource(R.string.action_retry)
@@ -56,6 +60,11 @@ fun JobsRoute(
     onBack = onBack,
     ambient = FluidAmbient(tone = FluidHeroTone.Tertiary, motif = FluidHeroMotif.Ticks),
   ) {
+    // Le trascrizioni aspettano il computer, e fuori casa con Tailscale spento non lo vedranno mai.
+    tailscaleCard?.let { card ->
+      item(key = "tailscale") { TailscaleReminderCard(card, onTurnOn = tailscale::turnOn, onOpen = tailscale::open) }
+    }
+
     // Le lezioni da rifare dopo la correzione dei buchi: in cima, anche con la coda vuota — e' qui
     // che si viene a vedere cosa fa il computer.
     offer?.let { found ->

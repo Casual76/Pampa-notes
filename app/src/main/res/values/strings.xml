@@ -1540,4 +1540,86 @@
   <string name="tx_opts_batch_detail">Quante finestre di audio insieme: lotti più piccoli usano meno memoria e vanno più piano.</string>
   <string name="tx_opts_computer_silent">Il computer di casa non risponde: modello, memoria e pezzi si scelgono solo quando risponde. Lingua e vocabolario valgono lo stesso.</string>
   <string name="tx_opts_computer_old">Il programma sul computer è di una versione che non permette di scegliere modello e memoria per una sola lezione: aggiornalo per averli.</string>
+
+  <!-- Statistiche della nota -->
+  <string name="note_stats_title">Statistiche</string>
+  <string name="note_stats_volume">Il volume</string>
+  <string name="note_stats_words">Le parole</string>
+  <string name="note_stats_listening">Ascolto le registrazioni…</string>
+  <string name="note_stats_listening_start">Comincio dalla prima</string>
+  <string name="note_stats_listening_detail">Registrazione %1$d di %2$d · %3$d%%</string>
+  <string name="note_stats_volume_none">Nessuna registrazione da ascoltare qui</string>
+  <string name="note_stats_volume_none_detail">Le registrazioni di questa nota non sono su questo dispositivo: aprile una volta, e il volume si misura.</string>
+  <string name="note_stats_db">≈ %1$d dB</string>
+  <string name="note_stats_dbfs">%1$s dBFS</string>
+  <string name="note_stats_mean">Volume medio</string>
+  <string name="note_stats_peak">Il momento più forte</string>
+  <string name="note_stats_quiet">Silenzio</string>
+  <string name="note_stats_quiet_detail">su %1$s registrate</string>
+  <string name="note_stats_volume_footnote">I dB sono una stima a orecchio: il telefono alza e abbassa il volume da sé, e ogni microfono è diverso. Il numero misurato davvero è quello in dBFS, quanto è forte il file.</string>
+  <plurals name="note_stats_skipped">
+    <item quantity="one">Una registrazione non è su questo dispositivo, o non si è potuta leggere: non è contata.</item>
+    <item quantity="other">%1$d registrazioni non sono su questo dispositivo, o non si sono potute leggere: non sono contate.</item>
+  </plurals>
+  <string name="note_stats_like_whisper">come un sussurro</string>
+  <string name="note_stats_like_library">come una biblioteca</string>
+  <string name="note_stats_like_office">come un ufficio tranquillo</string>
+  <string name="note_stats_like_conversation">come una conversazione</string>
+  <string name="note_stats_like_break">come un’aula all’intervallo</string>
+  <string name="note_stats_like_traffic">come il traffico dell’ora di punta</string>
+  <string name="note_stats_like_blender">come un frullatore</string>
+  <string name="note_stats_like_concert">come un concerto rock</string>
+  <string name="note_stats_said">Detto a lezione</string>
+  <string name="note_stats_said_personal">Detto nelle registrazioni</string>
+  <plurals name="note_stats_spoken_words">
+    <item quantity="one">%1$s parola</item>
+    <item quantity="other">%1$s parole</item>
+  </plurals>
+  <string name="note_stats_speech_time">in %1$s di parlato</string>
+  <string name="note_stats_not_transcribed">Ancora niente: trascrivi le registrazioni e si contano.</string>
+  <string name="note_stats_pace">Velocità</string>
+  <string name="note_stats_wpm">%1$d parole al minuto</string>
+  <string name="note_stats_pace_calm">con calma</string>
+  <string name="note_stats_pace_lecture">ritmo da lezione</string>
+  <string name="note_stats_pace_brisk">spedito</string>
+  <string name="note_stats_pace_commentator">da telecronista</string>
+  <string name="note_stats_pace_rapper">da rapper</string>
+  <string name="note_stats_favorite">La parola preferita</string>
+  <string name="note_stats_filler">L’intercalare</string>
+  <string name="note_stats_quoted_word">«%1$s»</string>
+  <plurals name="note_stats_times">
+    <item quantity="one">%1$d volta</item>
+    <item quantity="other">%1$d volte</item>
+  </plurals>
+  <string name="note_stats_filler_every">%1$s · una ogni %2$s</string>
+  <string name="note_stats_seconds">%1$d s</string>
+  <string name="note_stats_written">Scritto da te</string>
+  <plurals name="note_stats_written_words">
+    <item quantity="one">%1$s parola di appunti</item>
+    <item quantity="other">%1$s parole di appunti</item>
+  </plurals>
+  <string name="note_stats_written_none">Niente appunti: la lezione ha fatto tutto da sola.</string>
+  <string name="note_stats_written_none_personal">Niente appunti: hanno parlato solo le registrazioni.</string>
+  <string name="note_stats_ratio">La lezione ha detto %1$d volte tanto.</string>
+  <string name="note_stats_ratio_personal">Le registrazioni hanno detto %1$d volte tanto.</string>
+  <string name="note_stats_ratio_writer">Hai scritto più di quanto è stato detto. Rispetto.</string>
+  <string name="note_stats_ratio_even">Più o meno pari: hai scritto quasi tutto.</string>
+  <string name="note_stats_nothing_to_compare">Ancora niente di detto con cui fare il paragone.</string>
+
+  <!-- Promemoria Tailscale -->
+  <string name="notification_tailscale_title">Il computer di casa non si vede</string>
+  <plurals name="notification_tailscale_text">
+    <item quantity="one">Né sulla rete né da fuori, e Tailscale è spento: accendilo e la trascrizione in attesa parte.</item>
+    <item quantity="other">Né sulla rete né da fuori, e Tailscale è spento: accendilo e le %1$d trascrizioni in attesa partono.</item>
+  </plurals>
+  <string name="tailscale_card_eyebrow">Tailscale è spento</string>
+  <string name="tailscale_card_title">Il computer di casa non si vede</string>
+  <plurals name="tailscale_card_detail">
+    <item quantity="one">Né sulla rete né da fuori. Con Tailscale acceso la trascrizione in attesa parte da sola.</item>
+    <item quantity="other">Né sulla rete né da fuori. Con Tailscale acceso le %1$d trascrizioni in attesa partono da sole.</item>
+  </plurals>
+  <string name="tailscale_turn_on">Accendi Tailscale</string>
+  <string name="tailscale_turning_on">Accendo…</string>
+  <string name="tailscale_open">Apri Tailscale</string>
+  <string name="tailscale_install">Installa Tailscale</string>
 </resources>

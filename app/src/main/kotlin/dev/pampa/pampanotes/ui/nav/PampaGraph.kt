@@ -77,6 +77,12 @@ class PampaNavActions(
    */
   fun openSessionAt(id: String, atMs: Long?, query: String) =
     openDetail(Routes.session(id, atMs = atMs, query = query), fresh = true)
+
+  /**
+   * La sessione a un momento, dalla nota (il punto piu' forte, nelle statistiche): il lettore pronto
+   * li', senza ricerca. Dentro la nota come una sessione qualunque, e indietro ci riporta.
+   */
+  fun openSessionAtMoment(id: String, atMs: Long) = openDetail(Routes.session(id, atMs = atMs))
   fun openEditor(noteId: String) = openDetail(Routes.editor(noteId))
   fun openImport(fresh: Boolean = true) = openDetail(Routes.IMPORT, fresh = fresh)
 
@@ -372,6 +378,7 @@ fun NavGraphBuilder.detailDestinations(actions: PampaNavActions, host: NavHostCo
         onEdit = actions::openEditor,
         onOpenSession = actions::openSession,
         onImportInto = actions.pickFilesInto,
+        onOpenSessionAt = actions::openSessionAtMoment,
       )
     }
   }

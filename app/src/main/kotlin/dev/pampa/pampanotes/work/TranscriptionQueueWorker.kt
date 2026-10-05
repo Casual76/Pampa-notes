@@ -71,6 +71,8 @@ class TranscriptionQueueWorker @AssistedInject constructor(
   private val computerOnly: dev.pampa.pampanotes.core.archive.ComputerOnlyScope,
   /** «Il testo che arriva a pezzi»: il provvisorio che la sessione mostra mentre il computer lavora. */
   private val partials: dev.pampa.pampanotes.core.transcription.PartialTranscripts,
+  /** Fuori casa, con Tailscale spento: «accendilo», una volta per attesa. */
+  private val tailscale: TailscaleReminder,
 ) : CoroutineWorker(context, params) {
 
   /** Cosa fare dopo un lavoro: il prossimo, aspettare il computer di casa, o riprendere a un'ora. */
@@ -237,6 +239,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
   private suspend fun endWait(providerId: String) {
     runCatching { settingsStore.setEndpointWaitingSince(providerId, null) }
     scheduler.cancelEndpointRetry(providerId)
+    tailscale.onReachable()
   }
 
   /** In primo piano, se il sistema lo concede adesso. */
@@ -280,6 +283,8 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     val since = EndpointWait.waitingSince(runCatching { settingsStore.endpointWaitingSince(providerId) }.getOrDefault(0L), now)
     runCatching { settingsStore.setEndpointWaitingSince(providerId, since) }
     scheduler.retryForEndpoint(providerId, EndpointWait.nextDelayMs(now - since))
+    // Ne' casa ne' fuori hanno risposto: se di mezzo c'e' Tailscale ed e' spento, lo si dice.
+    runCatching { tailscale.onWaiting(since) }
     return Result.success()
   }
 

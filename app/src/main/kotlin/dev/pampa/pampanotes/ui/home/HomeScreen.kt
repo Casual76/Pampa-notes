@@ -58,6 +58,8 @@ import dev.pampa.pampanotes.core.stats.lessonMs
 import dev.pampa.pampanotes.ui.common.Formats
 import dev.pampa.pampanotes.ui.common.HolesOfferCard
 import dev.pampa.pampanotes.ui.common.HolesOfferViewModel
+import dev.pampa.pampanotes.ui.common.TailscaleReminderCard
+import dev.pampa.pampanotes.ui.common.TailscaleReminderViewModel
 import dev.pampa.pampanotes.ui.common.folderIconOf
 import dev.pampa.pampanotes.ui.common.jobStateLabel
 import dev.pampa.pampanotes.ui.common.UpdateHomeCard
@@ -101,6 +103,8 @@ fun HomeRoute(
   val update by updates.state.collectAsStateWithLifecycle()
   val holes: HolesOfferViewModel = hiltViewModel()
   val holesOffer by holes.offer.collectAsStateWithLifecycle()
+  val tailscale: TailscaleReminderViewModel = hiltViewModel()
+  val tailscaleCard by tailscale.card.collectAsStateWithLifecycle()
   var pendingDelete by remember { mutableStateOf<RecentNote?>(null) }
   val computerOnly = rememberComputerOnly()
   var exporting by remember { mutableStateOf<RecentNote?>(null) }
@@ -223,6 +227,11 @@ fun HomeRoute(
     // Una versione nuova, sopra tutto il resto: e' l'unico modo in cui la trova chi non apre lo store.
     if (!selecting && update.supported && update.offerOnHome) {
       item(key = "update") { UpdateHomeCard(update, updates) }
+    }
+
+    // Lezioni ferme ad aspettare il computer, fuori casa con Tailscale spento: un tocco le fa partire.
+    tailscaleCard?.takeUnless { selecting }?.let { card ->
+      item(key = "tailscale") { TailscaleReminderCard(card, onTurnOn = tailscale::turnOn, onOpen = tailscale::open) }
     }
 
     if (state.isEmpty) {
