@@ -32,9 +32,26 @@ Android 8.0 o più recente. Per la trascrizione serve una chiave [Groq](https://
 
 Vedi [CLAUDE.md](CLAUDE.md): comandi, architettura, modello dei dati.
 
-L'app è costruita sul [Fluid Engine](https://github.com/Casual76/fluid-engine), agganciato come
+L'app è costruita sul [Fluid Engine](https://github.com/Casual76/fluid-engine) (3.0.0), agganciato come
 submodule. Dopo il clone:
 
 ```bash
 git submodule update --init --recursive
 ```
+
+## Licenza
+
+Pampa Notes è software libero: si distribuisce sotto la **GNU General Public License, versione 3**
+(testo completo in [`LICENSE`](LICENSE)). Chi riceve l'APK ha diritto ai sorgenti, che sono questo
+repository, pubblico: <https://github.com/Casual76/Pampa-notes>. Si possono leggere, modificare e
+ridistribuire alle condizioni della GPL-3.0, con la stessa licenza. La licenza è quella del
+repository intero, quindi anche del server `companion/` e del Worker in `worker/`.
+
+**Perché GPL-3.0.** Dalla 3.0 il Fluid Engine contiene codice di
+[LibrePods](https://github.com/librepods-org/librepods) (GPL-3.0): il comportamento dei pulsanti e delle
+pagine non è più riscritto, è portato. Un'app che distribuisce l'engine è un'opera derivata, e va
+distribuita con la stessa licenza. È la regola di tutte le app Pampa che usano l'engine.
+
+Le opere di altri che l'APK porta con sé (il vetro di Kyant, Apache-2.0; i caratteri Inter, SIL OFL 1.1;
+LibrePods) sono elencate nella pagina **Impostazioni › Informazioni** dell'app, con gli avvisi che le
+loro licenze chiedono; i testi sono in [`engine/LICENSES/`](engine/LICENSES).
