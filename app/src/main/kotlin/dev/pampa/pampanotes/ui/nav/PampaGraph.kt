@@ -1,32 +1,20 @@
 package dev.pampa.pampanotes.ui.nav
 
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
-import dev.antigravity.fluidengine.ui.fluid.FluidMotion
-import dev.antigravity.fluidengine.ui.theme.FluidRouteMotion
-import dev.antigravity.fluidengine.ui.theme.FluidRouteMotionHost
-import dev.antigravity.fluidengine.ui.theme.FluidTouchOriginState
-import dev.antigravity.fluidengine.ui.theme.LocalRouteMotionSignals
-import dev.antigravity.fluidengine.ui.theme.MotionOrigin
-import dev.antigravity.fluidengine.ui.theme.RouteMotionSignals
+import dev.antigravity.fluidengine.ui.fluid.LocalFluidBottomInset
+import dev.antigravity.fluidengine.ui.navigation.composable
+import dev.antigravity.fluidengine.ui.page.FluidBackSwipe
+import dev.antigravity.fluidengine.ui.page.FluidPageTransition
 import dev.pampa.pampanotes.ui.editor.EditorRoute
 import dev.pampa.pampanotes.ui.folder.FolderRoute
 import dev.pampa.pampanotes.ui.folders.FoldersRoute
@@ -40,12 +28,11 @@ import dev.pampa.pampanotes.ui.search.SearchRoute
 import dev.pampa.pampanotes.ui.session.SessionRoute
 import dev.pampa.pampanotes.ui.settings.SettingsRoute
 import dev.pampa.pampanotes.ui.settings.SettingsSectionRoute
-import kotlin.math.roundToInt
 
 /**
  * Le azioni di navigazione dell'app, con due padroni di casa.
  *
- * Su una pagina larga la lista e il dettaglio hanno un `NavHost` ciascuno: aprire una nota dalla
+ * Su una pagina larga la lista e il dettaglio hanno un `FluidNavHost` ciascuno: aprire una nota dalla
  * lista mette la nota nel dettaglio e la lista resta dov'e'. Su una pagina stretta il dettaglio
  * non c'e' e tutto passa dalla lista, come sempre. Chi chiama non lo sa: chiede «apri questa
  * nota», e dove finisce dipende da quanto e' larga la finestra in quel momento.
@@ -54,7 +41,6 @@ class PampaNavActions(
   val listNav: NavHostController,
   val detailNav: NavHostController,
   private val twoPane: () -> Boolean,
-  private val touchOrigin: FluidTouchOriginState,
   /** Apre il selettore di file; quello che sceglie finisce nel wizard di import. */
   val pickFiles: () -> Unit,
   /** Lo stesso, ma dentro una nota gia' esistente. */
@@ -95,7 +81,7 @@ class PampaNavActions(
     host.popBackStack()
     val under = host.currentBackStackEntry
     if (under?.destination?.route == Routes.NOTE && under.arguments?.getString("noteId") == noteId) return
-    if (host === detailNav) openDetail(Routes.note(noteId)) else navigateExpanding(listNav, Routes.note(noteId))
+    if (host === detailNav) openDetail(Routes.note(noteId)) else push(listNav, Routes.note(noteId))
   }
   fun openFolder(id: String) = openList(Routes.folder(id))
   fun openSearch() = openList(Routes.SEARCH)
@@ -109,7 +95,6 @@ class PampaNavActions(
   fun switchTopLevel(route: String) {
     closeDetail()
     listNav.navigateTopLevelRoute(route)
-    listNav.currentBackStackEntry?.savedStateHandle?.writePeerMotion()
   }
 
   /** Dalla barra laterale: una materia al posto di quella di prima, sopra la Home. */
@@ -119,7 +104,6 @@ class PampaNavActions(
       popUpTo(Routes.HOME)
       launchSingleTop = true
     }
-    listNav.currentBackStackEntry?.savedStateHandle?.writePeerMotion()
   }
 
   /**
@@ -144,18 +128,18 @@ class PampaNavActions(
     if (host === detailNav) {
       openDetail(route)
     } else {
-      navigateExpanding(listNav, route)
+      push(listNav, route)
     }
   }
 
   private fun openList(route: String) {
     closeDetail()
-    navigateExpanding(listNav, route)
+    push(listNav, route)
   }
 
   private fun openDetail(route: String, fresh: Boolean = false) {
     if (!twoPane()) {
-      navigateExpanding(listNav, route)
+      push(listNav, route)
       return
     }
     // Una nota nuova dalla lista prende il posto di quella aperta: due note impilate nel dettaglio
@@ -165,14 +149,12 @@ class PampaNavActions(
       if (fresh) popUpTo(Routes.DETAIL_EMPTY)
       launchSingleTop = true
     }
-    detailNav.currentBackStackEntry?.savedStateHandle?.writeExpandMotion(touchOrigin.origin)
   }
 
-  // La destinazione porta con se' sia il punto da cui e' stata aperta sia il fatto che sia stata
-  // *aperta* invece che raggiunta di lato: tornare indietro disfa lo stesso movimento.
-  private fun navigateExpanding(host: NavHostController, route: String) {
+  // Il punto da cui si e' aperta una pagina che cresce lo prende da solo l'host delle pagine (il
+  // dito che e' sceso), e il ritorno disfa lo stesso movimento: qui non c'e' piu' niente da scrivere.
+  private fun push(host: NavHostController, route: String) {
     host.navigate(route)
-    host.currentBackStackEntry?.savedStateHandle?.writeExpandMotion(touchOrigin.origin)
   }
 }
 
@@ -232,55 +214,10 @@ private fun detailRouteOf(entry: NavBackStackEntry): String? {
   }
 }
 
-/** Un `NavHost` con il movimento di rotta dell'app: uno solo, per la lista e per il dettaglio. */
-@Composable
-fun PampaNavHost(
-  controller: NavHostController,
-  startDestination: String,
-  modifier: Modifier = Modifier,
-  builder: NavGraphBuilder.() -> Unit,
-) {
-  val motionSignals = LocalRouteMotionSignals.current
-  NavHost(
-    navController = controller,
-    startDestination = startDestination,
-    modifier = modifier,
-    enterTransition = {
-      routeEnterTransition(
-        decision = motionSignals.resolve(initialState, targetState, isPop = false),
-        origin = targetState.savedStateHandle.readMotionOrigin(),
-        isPop = false,
-      )
-    },
-    exitTransition = {
-      routeExitTransition(
-        decision = motionSignals.resolve(initialState, targetState, isPop = false),
-        origin = targetState.savedStateHandle.readMotionOrigin(),
-        isPop = false,
-      )
-    },
-    popEnterTransition = {
-      routeEnterTransition(
-        decision = motionSignals.resolve(initialState, targetState, isPop = true),
-        origin = initialState.savedStateHandle.readMotionOrigin(),
-        isPop = true,
-      )
-    },
-    popExitTransition = {
-      routeExitTransition(
-        decision = motionSignals.resolve(initialState, targetState, isPop = true),
-        origin = initialState.savedStateHandle.readMotionOrigin(),
-        isPop = true,
-      )
-    },
-    builder = builder,
-  )
-}
-
 /** Le pagine che elencano: le schede principali, le cartelle, cerca, lavori, impostazioni. */
 fun NavGraphBuilder.listDestinations(actions: PampaNavActions, host: NavHostController) {
   composable(Routes.HOME) {
-    FluidRouteMotionHost(this@composable) {
+    TabPage {
       HomeRoute(
         onOpenNote = actions::openNote,
         onImport = actions.pickFiles,
@@ -291,7 +228,7 @@ fun NavGraphBuilder.listDestinations(actions: PampaNavActions, host: NavHostCont
     }
   }
   composable(Routes.FOLDERS) {
-    FluidRouteMotionHost(this@composable) {
+    TabPage {
       FoldersRoute(
         onOpenFolder = actions::openFolder,
         onImport = actions.pickFiles,
@@ -299,7 +236,7 @@ fun NavGraphBuilder.listDestinations(actions: PampaNavActions, host: NavHostCont
     }
   }
   composable(Routes.RECORDINGS) {
-    FluidRouteMotionHost(this@composable) {
+    TabPage {
       RecordingsRoute(
         onOpenFolder = actions::openFolder,
         onOpenNote = actions::openNote,
@@ -312,7 +249,7 @@ fun NavGraphBuilder.listDestinations(actions: PampaNavActions, host: NavHostCont
     }
   }
   composable(Routes.MORE) {
-    FluidRouteMotionHost(this@composable) {
+    TabPage {
       MoreRoute(
         onOpenSearch = actions::openSearch,
         onOpenJobs = actions::openJobs,
@@ -323,37 +260,32 @@ fun NavGraphBuilder.listDestinations(actions: PampaNavActions, host: NavHostCont
     }
   }
   composable(Routes.SEARCH) {
-    FluidRouteMotionHost(this@composable) {
-      SearchRoute(
-        onBack = { host.popBackStack() },
-        onOpenNote = actions::openNote,
-        onOpenMoment = actions::openSessionAt,
-      )
-    }
+    SearchRoute(
+      onBack = { host.popBackStack() },
+      onOpenNote = actions::openNote,
+      onOpenMoment = actions::openSessionAt,
+    )
   }
   composable(Routes.JOBS) {
-    FluidRouteMotionHost(this@composable) { JobsRoute(onBack = { host.popBackStack() }, onOpenSession = actions::openSession) }
+    JobsRoute(onBack = { host.popBackStack() }, onOpenSession = actions::openSession)
   }
   composable(Routes.SETTINGS) {
-    FluidRouteMotionHost(this@composable) {
-      SettingsRoute(onBack = { host.popBackStack() }, onOpenSection = actions::openSettingsSection)
-    }
+    SettingsRoute(onBack = { host.popBackStack() }, onOpenSection = actions::openSettingsSection)
   }
   composable(
     route = Routes.FOLDER,
     arguments = listOf(navArgument("folderId") { type = NavType.StringType }),
+    transition = FluidPageTransition.Expand,
   ) { entry ->
-    FluidRouteMotionHost(this@composable) {
-      FolderRoute(
-        folderId = entry.arguments?.getString("folderId").orEmpty(),
-        onBack = { host.popBackStack() },
-        onOpenFolder = actions::openFolder,
-        onOpenNote = actions::openNote,
-        onImport = actions.pickFiles,
-        onOpenEditor = actions::openEditor,
-        onImportInto = actions.pickFilesIntoFolder,
-      )
-    }
+    FolderRoute(
+      folderId = entry.arguments?.getString("folderId").orEmpty(),
+      onBack = { host.popBackStack() },
+      onOpenFolder = actions::openFolder,
+      onOpenNote = actions::openNote,
+      onImport = actions.pickFiles,
+      onOpenEditor = actions::openEditor,
+      onImportInto = actions.pickFilesIntoFolder,
+    )
   }
 }
 
@@ -370,17 +302,16 @@ fun NavGraphBuilder.detailDestinations(actions: PampaNavActions, host: NavHostCo
       navArgument("noteId") { type = NavType.StringType },
       navArgument("tab") { nullable = true; defaultValue = null },
     ),
+    transition = FluidPageTransition.Expand,
   ) { entry ->
-    FluidRouteMotionHost(this@composable) {
-      NoteRoute(
-        initialTab = entry.arguments?.getString("tab"),
-        onBack = { host.popBackStack() },
-        onEdit = actions::openEditor,
-        onOpenSession = actions::openSession,
-        onImportInto = actions.pickFilesInto,
-        onOpenSessionAt = actions::openSessionAtMoment,
-      )
-    }
+    NoteRoute(
+      initialTab = entry.arguments?.getString("tab"),
+      onBack = { host.popBackStack() },
+      onEdit = actions::openEditor,
+      onOpenSession = actions::openSession,
+      onImportInto = actions.pickFilesInto,
+      onOpenSessionAt = actions::openSessionAtMoment,
+    )
   }
   composable(
     route = Routes.SESSION,
@@ -390,52 +321,64 @@ fun NavGraphBuilder.detailDestinations(actions: PampaNavActions, host: NavHostCo
       navArgument("at") { nullable = true; defaultValue = null },
       navArgument("q") { nullable = true; defaultValue = null },
     ),
+    transition = FluidPageTransition.Expand,
   ) { entry ->
-    FluidRouteMotionHost(this@composable) {
-      SessionRoute(
-        onBack = { host.popBackStack() },
-        onJumpUsed = { entry.savedStateHandle[SESSION_JUMP_USED] = true },
-        // Separare una sessione apre quella nuova al posto di questa: e' li' che si finisce il
-        // lavoro, ed e' li' che si torna indietro da.
-        onOpenSession = { id -> actions.replaceWith(host, Routes.session(id)) },
-      )
-    }
+    SessionRoute(
+      onBack = { host.popBackStack() },
+      onJumpUsed = { entry.savedStateHandle[SESSION_JUMP_USED] = true },
+      // Separare una sessione apre quella nuova al posto di questa: e' li' che si finisce il
+      // lavoro, ed e' li' che si torna indietro da.
+      onOpenSession = { id -> actions.replaceWith(host, Routes.session(id)) },
+    )
   }
   composable(
     route = Routes.EDITOR,
     arguments = listOf(navArgument("noteId") { type = NavType.StringType }),
+    transition = FluidPageTransition.Expand,
+    // Un campo di testo a pagina intera ha i suoi trascinamenti (le maniglie della selezione): il
+    // back a dito parte solo dal bordo. Il `BackHandler` della pagina salva, in tutti e due i casi.
+    backSwipe = FluidBackSwipe.EdgeOnly,
   ) {
-    FluidRouteMotionHost(this@composable) {
-      EditorRoute(onDone = { host.popBackStack() })
-    }
+    EditorRoute(onDone = { host.popBackStack() })
   }
-  composable(Routes.IMPORT) {
-    FluidRouteMotionHost(this@composable) {
-      ImportRoute(
-        onClose = { host.popBackStack() },
-        onOpenNote = { id -> actions.finishImport(host, id) },
-      )
-    }
+  composable(Routes.IMPORT, transition = FluidPageTransition.Expand) {
+    ImportRoute(
+      onClose = { host.popBackStack() },
+      onOpenNote = { id -> actions.finishImport(host, id) },
+    )
   }
   composable(
     route = Routes.SETTINGS_SECTION,
     arguments = listOf(navArgument("section") { type = NavType.StringType }),
   ) { entry ->
-    FluidRouteMotionHost(this@composable) {
-      SettingsSectionRoute(
-        section = SettingsSection.fromRoute(entry.arguments?.getString("section")) ?: SettingsSection.SERVICES,
-        onBack = { host.popBackStack() },
-        onOpenSection = actions::openSettingsSection,
-      )
-    }
+    SettingsSectionRoute(
+      section = SettingsSection.fromRoute(entry.arguments?.getString("section")) ?: SettingsSection.SERVICES,
+      onBack = { host.popBackStack() },
+      onOpenSection = actions::openSettingsSection,
+    )
   }
+}
+
+/**
+ * Quanto spazio si lascia la pagina di una scheda in fondo, per la pillola che la copre: la barra
+ * sta fuori dall'host delle pagine, e una pagina che si apre sopra (la nota, le impostazioni) non
+ * ne ha bisogno. Lo da' la shell: sui tablet, con il rail o la barra laterale, vale zero.
+ */
+val LocalTabBarInset = compositionLocalOf { 0.dp }
+
+/** Una scheda: lo spazio della pillola vale per lei e non per le pagine che le si aprono sopra. */
+@Composable
+private fun TabPage(content: @Composable () -> Unit) {
+  CompositionLocalProvider(LocalFluidBottomInset provides LocalTabBarInset.current, content = content)
 }
 
 /**
  * Passa a una scheda principale mantenendo lo stato delle altre.
  *
- * Ripristinare la rotta di partenza qui ripristinerebbe anche la scheda appena tolta da sotto, e il
- * back dalla Home riaprirebbe quella scheda. Il suo stato resta comunque salvato per dopo.
+ * La Home resta sempre in fondo alla pila: `popUpTo` su di lei trova sempre qualcosa da togliere,
+ * e il back da una scheda torna alla Home e da li' esce. Se la Home potesse uscire dalla pila (come
+ * nelle app con una scheda di partenza che non e' la prima) servirebbe `popUpTo(graph.id)` senza
+ * `saveState`, o le schede si accumulerebbero.
  */
 private fun NavHostController.navigateTopLevelRoute(targetRoute: String) {
   val startDestination = graph.findStartDestination()
@@ -444,88 +387,5 @@ private fun NavHostController.navigateTopLevelRoute(targetRoute: String) {
     popUpTo(startDestination.id) { saveState = true }
     launchSingleTop = true
     restoreState = !targetsStart
-  }
-}
-
-/**
- * Un solo movimento gerarchico per tutta l'app: la destinazione cresce dal punto toccato mentre la
- * pagina che copre arretra appena sotto di lei.
- *
- * Tutto a durata, e non e' una preferenza di stile: il back predittivo guida queste transizioni
- * *scorrendole*, e solo una curva finita e monotona si puo' scorrere.
- */
-private fun expandSpec() = tween<Float>(durationMillis = FluidMotion.DurationExpand, easing = FluidMotion.EaseEmphasized)
-
-private fun collapseSpec() = tween<Float>(durationMillis = FluidMotion.DurationCollapse, easing = FluidMotion.EaseEmphasized)
-
-private fun peerSlideSpec() = tween<IntOffset>(durationMillis = FluidMotion.DurationPeer, easing = FluidMotion.EaseEmphasized)
-
-/** La pagina che viene coperta: lascia il passo mentre la nuova sta ancora diventando opaca. */
-private fun coveredFadeOut() = tween<Float>(durationMillis = FluidMotion.DurationRouteFadeOut, easing = FluidMotion.EaseIn)
-
-/**
- * La pagina che viene congedata: resta solida mentre si stringe e sparisce solo alla fine. Una
- * pagina che comincia a dissolversi appena inizia il gesto si legge come una pagina che si sfalda.
- */
-private fun dismissedFadeOut() = tween<Float>(durationMillis = 170, delayMillis = 90, easing = FluidMotion.EaseIn)
-
-private fun peerSlidePx(width: Int, direction: Int): Int =
-  (width * FluidMotion.PeerSlideFraction * direction).roundToInt()
-
-/**
- * Risolve il movimento fra due voci e registra, per i livelli che stanno per disegnare, se la
- * pagina che se ne va deve perdere il fuoco mentre esce.
- */
-private fun RouteMotionSignals.resolve(
-  initialState: NavBackStackEntry,
-  targetState: NavBackStackEntry,
-  isPop: Boolean,
-): RouteMotionDecision {
-  val carrier = if (isPop) initialState else targetState
-  val decision = decideRouteMotion(
-    fromRoute = initialState.destination.route,
-    toRoute = targetState.destination.route,
-    requestedKind = carrier.savedStateHandle.readMotionKind(),
-  )
-  hierarchical = decision.kind == RouteMotionKind.Expand
-  return decision
-}
-
-private fun routeEnterTransition(
-  decision: RouteMotionDecision,
-  origin: MotionOrigin,
-  isPop: Boolean,
-): EnterTransition = when (decision.kind) {
-  // Le pari scorrono di lato insieme. Opache dal primo fotogramma: una dissolvenza incrociata
-  // tenuta ferma a meta' da un back trascinato e' due schede stampate una sopra l'altra.
-  RouteMotionKind.TopLevelSwitch -> if (decision.direction == 0) {
-    fadeIn(tween(FluidMotion.DurationPeerFadeIn, easing = FluidMotion.EaseOut))
-  } else {
-    slideInHorizontally(peerSlideSpec()) { width -> peerSlidePx(width, decision.direction) }
-  }
-
-  RouteMotionKind.Expand -> if (isPop) {
-    // Tornando indietro, la pagina sotto viene scoperta: rientra da poco troppo vicino, che e'
-    // esattamente dove l'andata l'aveva lasciata.
-    scaleIn(animationSpec = collapseSpec(), initialScale = FluidRouteMotion.ExpandParentScale, transformOrigin = origin.toTransformOrigin())
-  } else {
-    scaleIn(animationSpec = expandSpec(), initialScale = FluidRouteMotion.ExpandInitialScale, transformOrigin = origin.toTransformOrigin())
-  }
-}
-
-private fun routeExitTransition(
-  decision: RouteMotionDecision,
-  origin: MotionOrigin,
-  isPop: Boolean,
-): ExitTransition = when (decision.kind) {
-  RouteMotionKind.TopLevelSwitch -> {
-    val fade = fadeOut(tween(FluidMotion.DurationPeerFadeOut, easing = FluidMotion.EaseIn))
-    if (decision.direction == 0) fade else fade + slideOutHorizontally(peerSlideSpec()) { width -> peerSlidePx(width, -decision.direction) }
-  }
-
-  RouteMotionKind.Expand -> if (isPop) {
-    fadeOut(dismissedFadeOut()) + scaleOut(animationSpec = collapseSpec(), targetScale = FluidRouteMotion.ExpandInitialScale, transformOrigin = origin.toTransformOrigin())
-  } else {
-    fadeOut(coveredFadeOut()) + scaleOut(animationSpec = expandSpec(), targetScale = FluidRouteMotion.ExpandParentScale, transformOrigin = origin.toTransformOrigin())
   }
 }

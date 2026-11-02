@@ -3,9 +3,6 @@ package dev.pampa.pampanotes.ui
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -33,23 +30,31 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.layout
+import dev.antigravity.fluidengine.ui.fluid.FluidFloatingTabBar
+import dev.antigravity.fluidengine.ui.fluid.FluidFloatingTabBarDefaults
+import dev.antigravity.fluidengine.ui.fluid.rememberFluidFloatingTabBarScrollConnection
+import dev.antigravity.fluidengine.ui.navigation.FluidNavHost
+import dev.antigravity.fluidengine.ui.navigation.composable
+import dev.antigravity.fluidengine.ui.page.FluidPageHostState
+import dev.antigravity.fluidengine.ui.page.rememberFluidPageHostState
+import dev.pampa.pampanotes.ui.nav.LocalTabBarInset
+import dev.pampa.pampanotes.ui.nav.PampaPeerMove
+import dev.pampa.pampanotes.ui.nav.hidesTabBar
+import dev.pampa.pampanotes.ui.nav.tabBarHidden
+import kotlin.math.roundToInt
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import dev.antigravity.fluidengine.ui.fluid.FluidAlert
 import dev.antigravity.fluidengine.ui.fluid.FluidAlertAction
-import dev.antigravity.fluidengine.ui.fluid.FluidBarFold
 import dev.antigravity.fluidengine.ui.fluid.FluidChromeController
-import dev.antigravity.fluidengine.ui.fluid.FluidFoldAlignment
-import dev.antigravity.fluidengine.ui.fluid.FluidFoldingTabBar
-import dev.antigravity.fluidengine.ui.fluid.FluidFoldingTabBarDefaults
 import dev.antigravity.fluidengine.ui.fluid.FluidGlassModalHost
-import dev.antigravity.fluidengine.ui.fluid.FluidMotion
 import dev.antigravity.fluidengine.ui.fluid.FluidMotionPolicyProvider
 import dev.antigravity.fluidengine.ui.fluid.FluidNotification
 import dev.antigravity.fluidengine.ui.fluid.FluidNotificationHost
@@ -67,18 +72,12 @@ import dev.antigravity.fluidengine.ui.fluid.LocalFluidNotificationHostState
 import dev.antigravity.fluidengine.ui.fluid.ProvideFluidChrome
 import dev.antigravity.fluidengine.ui.fluid.fluidGlassModalObscured
 import dev.antigravity.fluidengine.ui.fluid.fluidPaneLayout
-import dev.antigravity.fluidengine.ui.fluid.rememberFluidBarFold
 import dev.antigravity.fluidengine.ui.fluid.rememberFluidChromeController
-import dev.antigravity.fluidengine.ui.fluid.rememberFluidChromeScrollConnection
 import dev.antigravity.fluidengine.ui.fluid.rememberFluidGlassModalHostState
 import dev.antigravity.fluidengine.ui.fluid.rememberFluidNotificationHostState
 import dev.antigravity.fluidengine.ui.fluid.rememberGlassBackdrop
 import dev.antigravity.fluidengine.ui.theme.FluidEmptyState
 import dev.antigravity.fluidengine.ui.theme.FluidScreenSurface
-import dev.antigravity.fluidengine.ui.theme.LocalRouteMotionSignals
-import dev.antigravity.fluidengine.ui.theme.fluidTouchOriginTracker
-import dev.antigravity.fluidengine.ui.theme.rememberFluidTouchOrigin
-import dev.antigravity.fluidengine.ui.theme.rememberRouteMotionSignals
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.work.NotificationPermissionGate
 import dev.pampa.pampanotes.ui.common.LocalSubjectRegistry
@@ -86,7 +85,6 @@ import dev.pampa.pampanotes.ui.common.SubjectRegistry
 import dev.pampa.pampanotes.ui.importing.ImportRequest
 import dev.pampa.pampanotes.ui.onboarding.OnboardingRoute
 import dev.pampa.pampanotes.ui.nav.PampaNavActions
-import dev.pampa.pampanotes.ui.nav.PampaNavHost
 import dev.pampa.pampanotes.ui.nav.PampaSidebar
 import dev.pampa.pampanotes.ui.nav.Routes
 import dev.pampa.pampanotes.ui.nav.detailDestinations
@@ -116,7 +114,6 @@ fun MainApp(
   val onboardingDone by viewModel.onboardingDone.collectAsStateWithLifecycle()
   val notificationHostState = rememberFluidNotificationHostState()
   val glassModalHostState = rememberFluidGlassModalHostState()
-  val routeMotionSignals = rememberRouteMotionSignals()
   // La materia in cui ci si trova colora l'app: le schermate si iscrivono qui, e il tema legge.
   val subjects = remember { SubjectRegistry() }
 
@@ -125,7 +122,6 @@ fun MainApp(
     CompositionLocalProvider(
       LocalFluidNotificationHostState provides notificationHostState,
       LocalFluidGlassModalHostState provides glassModalHostState,
-      LocalRouteMotionSignals provides routeMotionSignals,
       LocalSubjectRegistry provides subjects,
     ) {
       FluidScreenSurface(modifier = Modifier.fillMaxSize()) {
@@ -271,8 +267,9 @@ private fun AppShell(
 ) {
   val listNav = rememberNavController()
   val detailNav = rememberNavController()
+  // La pillola in basso legge cosa si muove nell'host della lista (vedi TabBarScaffold).
+  val listPages = rememberFluidPageHostState()
   val scrollToTop = remember { FluidScrollToTopBus() }
-  val touchOrigin = rememberFluidTouchOrigin()
   // La materia che le schermate hanno dichiarato: da' il colore al fondale della finestra.
   val subject = LocalSubjectRegistry.current?.current
 
@@ -285,6 +282,7 @@ private fun AppShell(
       fluidPaneLayout(maxWidth, hasSide = true, hasRail = true, showDetail = detailOpen)
     }
     val splits = rememberUpdatedState(layout.splits)
+    val pageColor = if (layout.panes.size > 1) Color.Transparent else MaterialTheme.colorScheme.background
 
     // Il selettore file e le azioni si conoscono a vicenda: il selettore, finito, apre il wizard;
     // le azioni lanciano il selettore. Il rimando passa da uno stato perche' i due nascono in
@@ -292,12 +290,11 @@ private fun AppShell(
     val launchPicker = remember { mutableStateOf<() -> Unit>({}) }
     // Scelti da dentro una nota: il wizard si apre sopra di lei invece di prenderne il posto.
     val pickingInto = remember { mutableStateOf(false) }
-    val actions = remember(listNav, detailNav, touchOrigin) {
+    val actions = remember(listNav, detailNav) {
       PampaNavActions(
         listNav = listNav,
         detailNav = detailNav,
         twoPane = { splits.value },
-        touchOrigin = touchOrigin,
         pickFiles = {
           pickingInto.value = false
           launchPicker.value()
@@ -379,7 +376,12 @@ private fun AppShell(
     val selectedFolderId = listEntry?.takeIf { it.destination.route == Routes.FOLDER }?.arguments?.getString("folderId")
     // La pillola in basso solo dove non c'e' altra chrome: col rail o con la barra laterale
     // sarebbe la stessa cosa detta due volte.
-    val showTabBar = !layout.showRail && !layout.showSide && listRoute in Routes.topLevelSet
+    val hasTabBar = !layout.showRail && !layout.showSide
+    val onTab = listRoute in Routes.topLevelSet
+    // La scheda evidenziata e' l'ultima che e' stata davanti: mentre la pillola esce con la pagina
+    // che si apre sopra, la scheda scelta non deve spegnersi.
+    val lastTab = remember { LastTab() }
+    if (listRoute != null && onTab) lastTab.route = listRoute
 
     val tabItems = listOf(
       FluidTabItem(Routes.HOME, stringResource(R.string.tab_home), Icons.Rounded.Home),
@@ -392,8 +394,10 @@ private fun AppShell(
     FluidMotionPolicyProvider {
       TabBarScaffold(
         items = tabItems,
-        currentRoute = listRoute,
-        showTabBar = showTabBar,
+        selectedRoute = lastTab.route,
+        hasTabBar = hasTabBar,
+        onTab = onTab,
+        pages = listPages,
         chromeController = chromeController,
         scrollToTop = scrollToTop,
         onSelect = { item -> actions.switchTopLevel(item.route) },
@@ -434,10 +438,16 @@ private fun AppShell(
             )
           },
           list = {
-            PampaNavHost(
-              controller = listNav,
+            // Le pagine le muove l'engine: apertura da destra o dal tocco, il back sotto il dito, il
+            // passo laterale fra le schede (`peer`). Con piu' pannelli le pagine non dipingono: il
+            // fondale e' quello della finestra.
+            FluidNavHost(
+              navController = listNav,
               startDestination = Routes.HOME,
-              modifier = Modifier.fillMaxSize().fluidTouchOriginTracker(touchOrigin),
+              modifier = Modifier.fillMaxSize(),
+              peer = PampaPeerMove,
+              state = listPages,
+              pageColor = pageColor,
             ) {
               listDestinations(actions, listNav)
               // Su una pagina stretta il dettaglio sta qui, sopra chi lo ha aperto.
@@ -445,10 +455,11 @@ private fun AppShell(
             }
           },
           detail = {
-            PampaNavHost(
-              controller = detailNav,
+            FluidNavHost(
+              navController = detailNav,
               startDestination = Routes.DETAIL_EMPTY,
-              modifier = Modifier.fillMaxSize().fluidTouchOriginTracker(touchOrigin),
+              modifier = Modifier.fillMaxSize(),
+              pageColor = pageColor,
             ) {
               composable(Routes.DETAIL_EMPTY) { EmptyDetail() }
               detailDestinations(actions, detailNav)
@@ -490,12 +501,26 @@ private fun EmptyDetail() {
   }
 }
 
-/** La pillola in basso e lo spazio che la pagina le lascia. */
+/** L'ultima scheda che e' stata davanti: un valore che si scrive durante la composizione senza riscriverla. */
+private class LastTab {
+  var route: String = Routes.HOME
+}
+
+/**
+ * La pillola in basso.
+ *
+ * Sta fuori dall'host delle pagine ed e' una sola: non viaggia con nessuna pagina, ma esce con quella
+ * che si apre sopra e rientra con quella che si chiude, **sotto il dito** (legge l'avanzamento di
+ * [pages], vedi `tabBarHidden`). Lo spazio che la pagina di una scheda le lascia lo da'
+ * [LocalTabBarInset], e vale per le schede e non per quello che si apre sopra.
+ */
 @Composable
 private fun TabBarScaffold(
   items: List<FluidTabItem>,
-  currentRoute: String?,
-  showTabBar: Boolean,
+  selectedRoute: String,
+  hasTabBar: Boolean,
+  onTab: Boolean,
+  pages: FluidPageHostState,
   chromeController: FluidChromeController,
   scrollToTop: FluidScrollToTopBus,
   onSelect: (FluidTabItem) -> Unit,
@@ -503,56 +528,65 @@ private fun TabBarScaffold(
   content: @Composable (GlassBackdropState) -> Unit,
 ) {
   val fallbackBackdrop = rememberGlassBackdrop()
-  val barFold: FluidBarFold = rememberFluidBarFold()
-  val chromeScroll = rememberFluidChromeScrollConnection(controller = chromeController, enabled = showTabBar)
+  val tabBarScroll = rememberFluidFloatingTabBarScrollConnection()
+  val backdrop = chromeController.activeBackdrop.value ?: fallbackBackdrop
 
   BoxWithConstraints(
     modifier = Modifier
       .fillMaxSize()
-      .nestedScroll(chromeScroll)
-      .then(if (showTabBar) Modifier.nestedScroll(barFold.connection) else Modifier),
+      .then(if (hasTabBar) Modifier.nestedScroll(tabBarScroll) else Modifier),
   ) {
-    val bottomInset = if (showTabBar) FluidFoldingTabBarDefaults.ContentInset else 0.dp
-    val backdrop = chromeController.activeBackdrop.value ?: fallbackBackdrop
-
-    ProvideFluidChrome(controller = chromeController, bottomInset = bottomInset, scrollToTop = scrollToTop) {
-      Box(modifier = Modifier.fillMaxSize()) { content(backdrop) }
+    ProvideFluidChrome(controller = chromeController, bottomInset = 0.dp, scrollToTop = scrollToTop) {
+      CompositionLocalProvider(
+        LocalTabBarInset provides if (hasTabBar) FluidFloatingTabBarDefaults.ContentInset else 0.dp,
+      ) {
+        Box(modifier = Modifier.fillMaxSize()) { content(backdrop) }
+      }
     }
 
-    AnimatedVisibility(
-      visible = showTabBar,
-      enter = slideInVertically(animationSpec = barSlideSpec()) { it },
-      exit = slideOutVertically(animationSpec = barSlideSpec()) { it },
-      modifier = Modifier
-        // Su uno schermo largo la barra non si stira da bordo a bordo: resta larga come su un
-        // telefono e sta dalla parte del pollice, dove poi si raccoglie ripiegandosi.
-        .align(if (maxWidth >= 600.dp) Alignment.BottomStart else Alignment.BottomCenter)
-        .widthIn(max = 500.dp)
-        .navigationBarsPadding()
-        .padding(
-          horizontal = FluidFoldingTabBarDefaults.HorizontalMargin,
-          vertical = FluidFoldingTabBarDefaults.BottomMargin,
-        ),
-    ) {
-      FluidFoldingTabBar(
-        items = items,
-        selectedRoute = currentRoute,
-        onSelect = onSelect,
-        onReselect = onReselect,
-        backdrop = backdrop,
-        fold = { barFold.progress.value },
-        onExpandRequest = barFold::unfold,
-        foldAlignment = FluidFoldAlignment.Start,
-      )
+    // C'e' finche' davanti c'e' una scheda, e mentre una pagina senza (la nota) si apre o si chiude.
+    if (hasTabBar && (onTab || pages.isMoving)) {
+      Box(
+        modifier = Modifier
+          // Su uno schermo largo la pillola non si stira da bordo a bordo: resta larga come su un telefono.
+          .align(Alignment.BottomCenter)
+          .widthIn(max = 500.dp)
+          .slideOffBottom {
+            tabBarHidden(
+              moving = pages.isMoving,
+              fromHidden = pages.from.hidesTabBar(),
+              toHidden = pages.to.hidesTabBar(),
+              progress = pages.progress,
+              restHidden = !onTab,
+            )
+          }
+          .navigationBarsPadding()
+          .padding(
+            horizontal = FluidFloatingTabBarDefaults.HorizontalMargin,
+            vertical = FluidFloatingTabBarDefaults.BottomMargin,
+          ),
+      ) {
+        FluidFloatingTabBar(
+          items = items,
+          selectedRoute = selectedRoute,
+          onSelect = onSelect,
+          onReselect = onReselect,
+          scrollConnection = tabBarScroll,
+          backdrop = backdrop,
+        )
+      }
     }
   }
 }
 
 /**
- * La barra ha il suo tempo, piu' rapido della pagina: e' chrome, deve essersi gia' tolta di mezzo
- * quando la schermata nuova finisce di arrivare.
+ * Sposta in basso, fuori dallo schermo, di [hidden] volte la propria altezza: 0 e' al suo posto, 1 e' via.
+ * E' un offset di posizione, letto quando si posa: il vetro della pillola sa dov'e' davvero, e non c'e'
+ * mai un layer traslato sopra una lastra che rifrange.
  */
-private fun barSlideSpec() = FluidMotion.intOffset(
-  dampingRatio = FluidMotion.DampingChrome,
-  stiffness = FluidMotion.ResponseSnappy,
-)
+private fun Modifier.slideOffBottom(hidden: () -> Float): Modifier = layout { measurable, constraints ->
+  val placeable = measurable.measure(constraints)
+  layout(placeable.width, placeable.height) {
+    placeable.place(0, (placeable.height * hidden().coerceIn(0f, 1f)).roundToInt())
+  }
+}
