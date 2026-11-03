@@ -665,8 +665,8 @@
   <string name="player_time_toggle">Mostra quanto manca o quanto dura</string>
   <string name="player_skipped">Saltati %1$s</string>
   <string name="player_skipped_seconds">Saltati %1$d s</string>
-  <string name="session_skip_silence_inactive">Salta i silenzi oltre %1$d s: spento</string>
-  <string name="session_skip_silence_active">Salta i silenzi oltre %1$d s: acceso</string>
+  <string name="session_skip_silence_inactive">Salta i silenzi >%1$d s</string>
+  <string name="session_skip_silence_active">Non saltare i silenzi</string>
   <string name="player_skipping_silence">Salta i silenzi è acceso</string>
   <string name="session_search">Cerca nella trascrizione</string>
   <string name="session_search_placeholder">Cerca una parola</string>

@@ -34,6 +34,7 @@ import dev.antigravity.fluidengine.ui.theme.FluidListDivider
 import dev.antigravity.fluidengine.ui.theme.FluidListGroup
 import dev.antigravity.fluidengine.ui.theme.FluidListRow
 import dev.antigravity.fluidengine.ui.theme.FluidTone
+import dev.pampa.pampanotes.ui.common.RowIcon
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
@@ -108,22 +109,22 @@ internal fun LazyListScope.installCompanionContent(
       FluidListRow(
         title = stringResource(R.string.install_step_download),
         subtitle = stringResource(R.string.install_step_download_detail),
-        tone = FluidTone.Primary,
-        leading = { Icon(Icons.Rounded.Download, contentDescription = null) },
+        leading = { RowIcon(Icons.Rounded.Download, FluidTone.Primary) },
+        leadingTile = false,
       )
       FluidListDivider()
       FluidListRow(
         title = stringResource(R.string.install_step_install),
         subtitle = stringResource(R.string.install_step_install_detail),
-        tone = FluidTone.Primary,
-        leading = { Icon(Icons.Rounded.InstallDesktop, contentDescription = null) },
+        leading = { RowIcon(Icons.Rounded.InstallDesktop, FluidTone.Primary) },
+        leadingTile = false,
       )
       FluidListDivider()
       FluidListRow(
         title = stringResource(R.string.install_step_scan),
         subtitle = stringResource(R.string.install_step_scan_detail),
-        tone = FluidTone.Primary,
-        leading = { Icon(Icons.Rounded.QrCodeScanner, contentDescription = null) },
+        leading = { RowIcon(Icons.Rounded.QrCodeScanner, FluidTone.Primary) },
+        leadingTile = false,
       )
     }
   }

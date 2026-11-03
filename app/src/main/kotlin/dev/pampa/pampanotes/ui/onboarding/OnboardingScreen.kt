@@ -45,6 +45,7 @@ import dev.antigravity.fluidengine.ui.theme.FluidListDivider
 import dev.antigravity.fluidengine.ui.theme.FluidListGroup
 import dev.antigravity.fluidengine.ui.theme.FluidListRow
 import dev.antigravity.fluidengine.ui.theme.FluidTone
+import dev.pampa.pampanotes.ui.common.RowIcon
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
 import dev.pampa.pampanotes.ui.settings.CheckState
@@ -275,15 +276,16 @@ private fun LazyListScope.accountStep(
             else -> pluralStringResource(R.plurals.onboarding_account_notes, notes, notes)
           },
           tone = FluidTone.Success,
-          leading = { Icon(Icons.Rounded.CheckCircle, contentDescription = null) },
+          leading = { RowIcon(Icons.Rounded.CheckCircle, FluidTone.Success) },
+          leadingTile = false,
         )
         if (computer != null) {
           FluidListDivider()
           FluidListRow(
             title = stringResource(R.string.onboarding_computer_from_account, computer),
             subtitle = stringResource(R.string.onboarding_computer_from_account_detail),
-            tone = FluidTone.Info,
-            leading = { Icon(Icons.Rounded.Computer, contentDescription = null) },
+            leading = { RowIcon(Icons.Rounded.Computer, FluidTone.Info) },
+            leadingTile = false,
           )
         }
       }
@@ -313,22 +315,22 @@ private fun LazyListScope.welcomeStep() {
       FluidListRow(
         title = stringResource(R.string.onboarding_step_import),
         subtitle = stringResource(R.string.onboarding_step_import_detail),
-        tone = FluidTone.Success,
-        leading = { Icon(Icons.Rounded.Download, contentDescription = null) },
+        leading = { RowIcon(Icons.Rounded.Download, FluidTone.Success) },
+        leadingTile = false,
       )
       FluidListDivider()
       FluidListRow(
         title = stringResource(R.string.onboarding_step_transcribe),
         subtitle = stringResource(R.string.onboarding_step_transcribe_detail),
-        tone = FluidTone.Info,
-        leading = { Icon(Icons.Rounded.GraphicEq, contentDescription = null) },
+        leading = { RowIcon(Icons.Rounded.GraphicEq, FluidTone.Info) },
+        leadingTile = false,
       )
       FluidListDivider()
       FluidListRow(
         title = stringResource(R.string.onboarding_step_export),
         subtitle = stringResource(R.string.onboarding_step_export_detail),
-        tone = FluidTone.Primary,
-        leading = { Icon(Icons.Rounded.CloudUpload, contentDescription = null) },
+        leading = { RowIcon(Icons.Rounded.CloudUpload, FluidTone.Primary) },
+        leadingTile = false,
       )
     }
   }
@@ -456,7 +458,8 @@ private fun LazyListScope.providerStep(
           title = stringResource(R.string.onboarding_computer_from_account, accountComputer),
           subtitle = stringResource(R.string.onboarding_computer_from_account_detail),
           tone = FluidTone.Success,
-          leading = { Icon(Icons.Rounded.Computer, contentDescription = null) },
+          leading = { RowIcon(Icons.Rounded.Computer, FluidTone.Success) },
+          leadingTile = false,
         )
       }
     }
@@ -477,8 +480,8 @@ private fun LazyListScope.providerStep(
         FluidListRow(
           title = stringResource(R.string.install_onboarding_row),
           subtitle = stringResource(R.string.install_row_detail),
-          tone = FluidTone.Primary,
-          leading = { Icon(Icons.Rounded.InstallDesktop, contentDescription = null) },
+          leading = { RowIcon(Icons.Rounded.InstallDesktop, FluidTone.Primary) },
+          leadingTile = false,
           onClick = onInstall,
         )
       }

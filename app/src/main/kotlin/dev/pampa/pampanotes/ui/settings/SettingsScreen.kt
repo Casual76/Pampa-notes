@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.unit.dp
+import dev.pampa.pampanotes.ui.common.RowIcon
 import dev.pampa.pampanotes.ui.common.rememberAppearanceStrings
 import dev.pampa.pampanotes.ui.common.rememberUpdateStrings
 import dev.pampa.pampanotes.ui.theme.PampaNotesBrand
@@ -392,8 +393,8 @@ private fun LazyListScope.servicesSection(
       FluidListRow(
         title = stringResource(R.string.install_title),
         subtitle = stringResource(R.string.install_row_detail),
-        tone = FluidTone.Primary,
-        leading = { Icon(Icons.Rounded.InstallDesktop, contentDescription = null) },
+        leading = { RowIcon(Icons.Rounded.InstallDesktop, FluidTone.Primary) },
+        leadingTile = false,
         onClick = onInstall,
       )
     }
