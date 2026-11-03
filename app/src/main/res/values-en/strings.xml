@@ -146,7 +146,6 @@
   <string name="folder_empty_detail">Create a note, or import notes and recordings from another app.</string>
 
   <string name="settings_dynamic_color">Colours from wallpaper</string>
-  <string name="settings_dynamic_color_detail">Takes the accent from the phone theme</string>
   <string name="settings_amoled">Pure black</string>
   <string name="settings_amoled_detail">Black surfaces while the theme is dark</string>
   <string name="settings_haptics">Haptics</string>
@@ -155,7 +154,6 @@
   <string name="theme_system">System</string>
   <string name="theme_light">Light</string>
   <string name="theme_dark">Dark</string>
-  <string name="theme_amoled">Black</string>
   <string name="folder_empty_title">Empty folder</string>
   <string name="note_loading">Note</string>
   <string name="note_tab_text">Text</string>
@@ -637,7 +635,6 @@
   <string name="player_skipping_silence">Skipping silences is on</string>
   <string name="session_search">Search the transcript</string>
   <string name="session_search_placeholder">Find a word</string>
-  <string name="session_search_count">%1$d of %2$d</string>
   <string name="session_search_none">None</string>
   <string name="session_search_previous">Previous match</string>
   <string name="session_search_next">Next match</string>
@@ -865,7 +862,6 @@
   <string name="sync_linked">%1$s. Turn it on whenever you like.</string>
   <string name="settings_model_auto">Automatic</string>
   <string name="settings_model_auto_detail">The best of what Groq lists: %1$s</string>
-  <string name="settings_model_chosen">Chosen</string>
   <string name="settings_models_missing">Verify the Groq key under Services to see the models to choose from.</string>
   <string name="settings_subject_accent_detail">With the brand colours, the app takes the colour of the subject you are in. With Material You or a chosen tint, that one stays.</string>
   <string name="note_sources_hint">The files the text came from. Tap a row to reopen the original.</string>
@@ -1459,9 +1455,7 @@
   <string name="update_check_now">Check for updates</string>
   <string name="update_checking">Checking…</string>
   <string name="update_none">You have the latest version</string>
-  <string name="update_no_notes">A new version, without notes.</string>
   <string name="update_check_failed">Could not check: no network, or GitHub is not answering.</string>
-  <string name="update_last_checked">Last checked: %1$s</string>
   <string name="update_never_checked">It checks by itself every time you open the app.</string>
   <string name="update_badge_new">New</string>
   <string name="update_beta">Get betas</string>

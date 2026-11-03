@@ -146,7 +146,6 @@
 
   <!-- Impostazioni: aspetto -->
   <string name="settings_dynamic_color">Colori dallo sfondo</string>
-  <string name="settings_dynamic_color_detail">Prende l\'accento dal tema del telefono</string>
   <string name="settings_amoled">Nero pieno</string>
   <string name="settings_amoled_detail">Superfici nere quando il tema è scuro</string>
   <string name="settings_haptics">Vibrazione</string>
@@ -155,7 +154,6 @@
   <string name="theme_system">Sistema</string>
   <string name="theme_light">Chiaro</string>
   <string name="theme_dark">Scuro</string>
-  <string name="theme_amoled">Nero</string>
   <string name="folder_empty_title">Cartella vuota</string>
   <!-- Nota -->
   <string name="note_loading">Nota</string>
@@ -672,7 +670,6 @@
   <string name="player_skipping_silence">Salta i silenzi è acceso</string>
   <string name="session_search">Cerca nella trascrizione</string>
   <string name="session_search_placeholder">Cerca una parola</string>
-  <string name="session_search_count">%1$d di %2$d</string>
   <string name="session_search_none">Nessuna</string>
   <string name="session_search_previous">Occorrenza precedente</string>
   <string name="session_search_next">Occorrenza successiva</string>
@@ -900,7 +897,6 @@
   <string name="sync_linked">%1$s. Accendi l’interruttore quando vuoi.</string>
   <string name="settings_model_auto">Automatico</string>
   <string name="settings_model_auto_detail">Il migliore fra quelli che Groq dichiara: %1$s</string>
-  <string name="settings_model_chosen">Scelto</string>
   <string name="settings_models_missing">Verifica la chiave Groq in Servizi per vedere i modelli fra cui scegliere.</string>
   <string name="settings_subject_accent_detail">Con i colori del marchio, l\'app prende il colore della materia in cui ti trovi. Con Material You o una tinta scelta, resta quella.</string>
   <string name="note_sources_hint">I file da cui è arrivato il testo. Tocca una riga per riaprire l\'originale.</string>
@@ -1494,9 +1490,7 @@
   <string name="update_check_now">Cerca aggiornamenti</string>
   <string name="update_checking">Controllo…</string>
   <string name="update_none">Hai l\'ultima versione</string>
-  <string name="update_no_notes">Una versione nuova, senza note.</string>
   <string name="update_check_failed">Non sono riuscito a controllare: niente rete, o GitHub non risponde.</string>
-  <string name="update_last_checked">Ultimo controllo: %1$s</string>
   <string name="update_never_checked">Si controlla da sola a ogni apertura dell\'app.</string>
   <string name="update_badge_new">Nuova</string>
   <string name="update_beta">Ricevi le beta</string>
