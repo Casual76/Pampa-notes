@@ -19,9 +19,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.antigravity.fluidengine.ui.fluid.FluidButton
 import dev.antigravity.fluidengine.ui.fluid.FluidButtonStyle
+import dev.antigravity.fluidengine.ui.fluid.FluidChoiceRow
 import dev.antigravity.fluidengine.ui.fluid.FluidSectionFootnote
 import dev.antigravity.fluidengine.ui.fluid.FluidSegmentedControl
-import dev.antigravity.fluidengine.ui.fluid.FluidSwitch
+import dev.antigravity.fluidengine.ui.fluid.FluidToggleRow
 import dev.antigravity.fluidengine.ui.theme.FluidListDivider
 import dev.antigravity.fluidengine.ui.theme.FluidListGroup
 import dev.antigravity.fluidengine.ui.theme.FluidListRow
@@ -32,7 +33,6 @@ import dev.pampa.pampanotes.core.export.ExportOptions
 import dev.pampa.pampanotes.core.export.ExportTarget
 import dev.pampa.pampanotes.core.export.TranscriptChoice
 import dev.pampa.pampanotes.ui.common.Formats
-import dev.pampa.pampanotes.ui.common.SelectionMark
 
 /**
  * «Dove lo usi?» e «Personalizza»: le scelte di un export, uguali nel pannello e nelle impostazioni.
@@ -60,13 +60,13 @@ fun ExportChoices(
     FluidListGroup {
       ExportTarget.entries.forEachIndexed { index, target ->
         if (index > 0) FluidListDivider()
-        FluidListRow(
+        // Una scelta singola con la spunta a destra: niente freccia «›», che promette una pagina dietro,
+        // e questa e' una scelta che si fa qui. Scegliere la destinazione gia' scelta non cambia niente.
+        FluidChoiceRow(
           title = target.label(),
           subtitle = target.detail(),
-          leading = { SelectionMark(selected = options.target == target) },
-          // Il tocco sulla riga, non `onClick`: l'engine ci metterebbe la freccia «›», che promette
-          // una pagina dietro, e questa e' una scelta che si fa qui.
-          modifier = Modifier.fluidRowPressable(onClick = { if (options.target != target) onOptions(options.withTarget(target)) }),
+          selected = options.target == target,
+          onSelect = { if (options.target != target) onOptions(options.withTarget(target)) },
         )
       }
     }
@@ -110,25 +110,25 @@ private fun CustomizeBody(options: ExportOptions, onOptions: (ExportOptions) -> 
   )
 
   FluidListGroup {
-    SwitchRow(
+    FluidToggleRow(
       title = stringResource(R.string.export_timestamps),
       subtitle = stringResource(R.string.export_timestamps_detail),
       checked = options.timestamps,
-      onChange = { onOptions(options.copy(timestamps = it)) },
+      onCheckedChange = { onOptions(options.copy(timestamps = it)) },
     )
     // Regole e allegati contano solo nello ZIP: i file sciolti hanno le regole in instructions.md
     // sempre, e il testo da incollare in cima. Un interruttore che non cambia niente e' un
     // interruttore che insegna a non fidarsi degli altri.
     if (options.carriesAttachments) {
       FluidListDivider()
-      SwitchRow(
+      FluidToggleRow(
         title = stringResource(R.string.export_skill),
         subtitle = stringResource(R.string.export_skill_effect),
         checked = options.includeSkill,
-        onChange = { onOptions(options.copy(includeSkill = it)) },
+        onCheckedChange = { onOptions(options.copy(includeSkill = it)) },
       )
       FluidListDivider()
-      SwitchRow(
+      FluidToggleRow(
         title = stringResource(R.string.export_audio),
         subtitle = if (audioDurationMs != null && audioDurationMs > 0) {
           stringResource(R.string.export_audio_effect_size, Formats.durationShort(audioDurationMs))
@@ -136,14 +136,14 @@ private fun CustomizeBody(options: ExportOptions, onOptions: (ExportOptions) -> 
           stringResource(R.string.export_audio_effect)
         },
         checked = options.includeAudio,
-        onChange = { onOptions(options.copy(includeAudio = it)) },
+        onCheckedChange = { onOptions(options.copy(includeAudio = it)) },
       )
       FluidListDivider()
-      SwitchRow(
+      FluidToggleRow(
         title = stringResource(R.string.export_sources),
         subtitle = stringResource(R.string.export_sources_effect),
         checked = options.includeSources,
-        onChange = { onOptions(options.copy(includeSources = it)) },
+        onCheckedChange = { onOptions(options.copy(includeSources = it)) },
       )
     }
   }
@@ -163,16 +163,6 @@ private fun CustomizeBody(options: ExportOptions, onOptions: (ExportOptions) -> 
       modifier = Modifier.fillMaxWidth(),
     )
   }
-}
-
-@Composable
-private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-  FluidListRow(
-    title = title,
-    subtitle = subtitle,
-    modifier = Modifier.fluidRowPressable(onClick = { onChange(!checked) }),
-    badge = { FluidSwitch(checked = checked, onCheckedChange = onChange) },
-  )
 }
 
 /** «Trascrizione: la migliore · Tempi: sì · Registrazioni: no · Originali: no». */

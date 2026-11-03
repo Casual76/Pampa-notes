@@ -30,10 +30,12 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.antigravity.fluidengine.ui.fluid.FluidPromptAlert
 import dev.antigravity.fluidengine.ui.fluid.FluidAlert
 import dev.antigravity.fluidengine.ui.fluid.FluidAlertAction
 import dev.antigravity.fluidengine.ui.fluid.FluidAmbient
 import dev.antigravity.fluidengine.ui.fluid.FluidBarAction
+import dev.antigravity.fluidengine.ui.fluid.FluidChip
 import dev.antigravity.fluidengine.ui.fluid.FluidContextAction
 import dev.antigravity.fluidengine.ui.fluid.FluidScreen
 import dev.antigravity.fluidengine.ui.fluid.FluidSectionHeader
@@ -42,7 +44,6 @@ import dev.antigravity.fluidengine.ui.theme.FluidEmptyState
 import dev.antigravity.fluidengine.ui.theme.FluidListDivider
 import dev.antigravity.fluidengine.ui.theme.FluidListGroup
 import dev.antigravity.fluidengine.ui.theme.FluidListRow
-import dev.antigravity.fluidengine.ui.theme.FluidQuickAction
 import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
@@ -319,15 +320,17 @@ private fun FolderScreen(
         )
       }
       item {
-        FluidQuickAction(
+        FluidChip(
           label = stringResource(R.string.folder_new_note),
+          selected = false,
           onClick = { creatingNote = true },
           modifier = Modifier.fillMaxWidth(),
         )
       }
       item {
-        FluidQuickAction(
+        FluidChip(
           label = importLabel,
+          selected = false,
           onClick = onImport,
           modifier = Modifier.fillMaxWidth(),
         )
@@ -363,18 +366,17 @@ private fun FolderScreen(
   }
 
   if (creatingNote) {
-    FolderEditorSheet(
+    // Una nota non ha colore ne' icona: chiede solo il nome, e un avviso con un campo basta.
+    FluidPromptAlert(
       title = stringResource(R.string.folder_new_note),
-      initialName = "",
-      initialTone = null,
-      initialIcon = null,
-      onDismiss = { creatingNote = false },
-      appearance = false,
-      placeholder = stringResource(R.string.folder_new_note_placeholder),
-      onConfirm = { name, _, _ ->
+      onDismissRequest = { creatingNote = false },
+      onConfirm = { name ->
         onCreateNote(name)
         creatingNote = false
       },
+      placeholder = stringResource(R.string.folder_new_note_placeholder),
+      confirmLabel = stringResource(R.string.action_save),
+      cancelLabel = stringResource(R.string.action_cancel),
     )
   }
 

@@ -50,8 +50,6 @@ fun FolderEditorSheet(
   initialIcon: String?,
   onDismiss: () -> Unit,
   onConfirm: (name: String, tone: String?, icon: String?) -> Unit,
-  // Una nota non ha colore ne' icona: senza, il pannello chiede solo il nome.
-  appearance: Boolean = true,
   placeholder: String? = null,
 ) {
   // Chiavi sul contenuto: un secondo pannello aperto su un'altra cartella deve ripartire dai suoi
@@ -98,7 +96,7 @@ fun FolderEditorSheet(
         modifier = Modifier.fillMaxWidth(),
       )
 
-      if (appearance) FolderAppearance(tone, { tone = it }, effectiveIcon, { icon = it })
+      FolderAppearance(tone, { tone = it }, effectiveIcon, { icon = it })
     }
   }
 }

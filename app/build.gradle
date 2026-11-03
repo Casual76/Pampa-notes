@@ -161,8 +161,6 @@ dependencies {
   implementation libs.datastore.preferences
   implementation libs.serialization.json
   implementation libs.media3.exoplayer
-  implementation libs.markdown.renderer
-  implementation libs.markdown.renderer.m3
   implementation libs.androidx.documentfile
 
   ksp libs.hilt.compiler

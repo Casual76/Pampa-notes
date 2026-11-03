@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.material3.Icon
 import dev.antigravity.fluidengine.ui.fluid.FluidAmbient
 import dev.antigravity.fluidengine.ui.fluid.FluidHeroMotif
 import dev.antigravity.fluidengine.ui.fluid.FluidHeroTone
@@ -29,7 +30,6 @@ import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.ui.common.UpdateViewModel
 import dev.pampa.pampanotes.core.export.ExportScope
-import dev.pampa.pampanotes.ui.common.RowIcon
 import dev.pampa.pampanotes.ui.export.ExportSheet
 
 /**
@@ -63,14 +63,16 @@ fun MoreRoute(
         FluidListRow(
           title = stringResource(R.string.search_title),
           subtitle = stringResource(R.string.more_search_detail),
-          leading = { RowIcon(Icons.Rounded.Search, FluidTone.Primary) },
+          tone = FluidTone.Primary,
+          leading = { Icon(Icons.Rounded.Search, contentDescription = null) },
           onClick = onOpenSearch,
         )
         FluidListDivider()
         FluidListRow(
           title = stringResource(R.string.jobs_title),
           subtitle = stringResource(R.string.more_jobs_detail),
-          leading = { RowIcon(Icons.AutoMirrored.Rounded.ListAlt, FluidTone.Info) },
+          tone = FluidTone.Info,
+          leading = { Icon(Icons.AutoMirrored.Rounded.ListAlt, contentDescription = null) },
           badge = if (state.activeJobs > 0) {
             { FluidStatusBadge(label = state.activeJobs.toString(), tone = FluidTone.Warning) }
           } else {
@@ -82,14 +84,16 @@ fun MoreRoute(
         FluidListRow(
           title = stringResource(R.string.action_import),
           subtitle = stringResource(R.string.more_import_detail),
-          leading = { RowIcon(Icons.Rounded.Download, FluidTone.Success) },
+          tone = FluidTone.Success,
+          leading = { Icon(Icons.Rounded.Download, contentDescription = null) },
           onClick = onImport,
         )
         FluidListDivider()
         FluidListRow(
           title = stringResource(R.string.action_export),
           subtitle = stringResource(R.string.more_export_detail),
-          leading = { RowIcon(Icons.Rounded.CloudUpload, FluidTone.Primary) },
+          tone = FluidTone.Primary,
+          leading = { Icon(Icons.Rounded.CloudUpload, contentDescription = null) },
           onClick = { exporting = true },
         )
       }
@@ -101,7 +105,8 @@ fun MoreRoute(
         FluidListRow(
           title = stringResource(R.string.settings_title),
           subtitle = stringResource(R.string.more_settings_detail),
-          leading = { RowIcon(Icons.Rounded.Tune, FluidTone.Primary) },
+          tone = FluidTone.Primary,
+          leading = { Icon(Icons.Rounded.Tune, contentDescription = null) },
           onClick = onOpenSettings,
         )
         FluidListDivider()
@@ -109,7 +114,8 @@ fun MoreRoute(
           title = stringResource(R.string.settings_version),
           // Una versione nuova si vede anche qui, dove si guarda la versione.
           subtitle = update.available?.let { stringResource(R.string.more_version_update, state.versionName, it.version) } ?: state.versionName,
-          leading = { RowIcon(Icons.Rounded.Info, if (update.available != null) FluidTone.Primary else FluidTone.Neutral) },
+          tone = if (update.available != null) FluidTone.Primary else FluidTone.Neutral,
+          leading = { Icon(Icons.Rounded.Info, contentDescription = null) },
           meta = "Fluid Engine ${state.engineVersion}",
           onClick = onOpenAbout,
         )

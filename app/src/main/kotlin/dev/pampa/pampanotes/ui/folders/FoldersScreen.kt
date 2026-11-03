@@ -30,6 +30,7 @@ import dev.antigravity.fluidengine.ui.fluid.FluidAlert
 import dev.antigravity.fluidengine.ui.fluid.FluidAlertAction
 import dev.antigravity.fluidengine.ui.fluid.FluidAmbient
 import dev.antigravity.fluidengine.ui.fluid.FluidBarAction
+import dev.antigravity.fluidengine.ui.fluid.FluidChip
 import dev.antigravity.fluidengine.ui.fluid.FluidContextAction
 import dev.antigravity.fluidengine.ui.fluid.FluidHeroMotif
 import dev.antigravity.fluidengine.ui.fluid.FluidHeroTone
@@ -37,7 +38,6 @@ import dev.antigravity.fluidengine.ui.fluid.FluidScreen
 import dev.antigravity.fluidengine.ui.fluid.FluidVividCard
 import dev.antigravity.fluidengine.ui.fluid.FluidVividEffect
 import dev.antigravity.fluidengine.ui.theme.FluidEmptyState
-import dev.antigravity.fluidengine.ui.theme.FluidQuickAction
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.db.FolderRow
 import dev.pampa.pampanotes.ui.common.FolderEditorSheet
@@ -130,10 +130,10 @@ fun FoldersRoute(
         )
       }
       item {
-        FluidQuickAction(label = newLabel, onClick = { editing = FolderEdit.New }, modifier = Modifier.fillMaxWidth())
+        FluidChip(label = newLabel, selected = false, onClick = { editing = FolderEdit.New }, modifier = Modifier.fillMaxWidth())
       }
       item {
-        FluidQuickAction(label = stringResource(R.string.action_import), onClick = onImport, modifier = Modifier.fillMaxWidth())
+        FluidChip(label = stringResource(R.string.action_import), selected = false, onClick = onImport, modifier = Modifier.fillMaxWidth())
       }
     } else {
       // Due colonne a mano invece di una griglia pigra: il contenuto della schermata e' gia' una

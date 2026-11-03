@@ -26,9 +26,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.material3.Icon
+import dev.antigravity.fluidengine.ui.fluid.FluidToggleRow
 import dev.antigravity.fluidengine.ui.fluid.FluidAmbient
 import dev.antigravity.fluidengine.ui.fluid.FluidButton
 import dev.antigravity.fluidengine.ui.fluid.FluidButtonStyle
@@ -46,7 +47,6 @@ import dev.antigravity.fluidengine.ui.theme.FluidListRow
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
-import dev.pampa.pampanotes.ui.common.RowIcon
 import dev.pampa.pampanotes.ui.settings.CheckState
 import dev.pampa.pampanotes.ui.settings.ServicesUiState
 import dev.pampa.pampanotes.ui.settings.SettingsViewModel
@@ -275,14 +275,15 @@ private fun LazyListScope.accountStep(
             else -> pluralStringResource(R.plurals.onboarding_account_notes, notes, notes)
           },
           tone = FluidTone.Success,
-          leading = { RowIcon(Icons.Rounded.CheckCircle, FluidTone.Success) },
+          leading = { Icon(Icons.Rounded.CheckCircle, contentDescription = null) },
         )
         if (computer != null) {
           FluidListDivider()
           FluidListRow(
             title = stringResource(R.string.onboarding_computer_from_account, computer),
             subtitle = stringResource(R.string.onboarding_computer_from_account_detail),
-            leading = { RowIcon(Icons.Rounded.Computer, FluidTone.Info) },
+            tone = FluidTone.Info,
+            leading = { Icon(Icons.Rounded.Computer, contentDescription = null) },
           )
         }
       }
@@ -312,19 +313,22 @@ private fun LazyListScope.welcomeStep() {
       FluidListRow(
         title = stringResource(R.string.onboarding_step_import),
         subtitle = stringResource(R.string.onboarding_step_import_detail),
-        leading = { RowIcon(Icons.Rounded.Download, FluidTone.Success) },
+        tone = FluidTone.Success,
+        leading = { Icon(Icons.Rounded.Download, contentDescription = null) },
       )
       FluidListDivider()
       FluidListRow(
         title = stringResource(R.string.onboarding_step_transcribe),
         subtitle = stringResource(R.string.onboarding_step_transcribe_detail),
-        leading = { RowIcon(Icons.Rounded.GraphicEq, FluidTone.Info) },
+        tone = FluidTone.Info,
+        leading = { Icon(Icons.Rounded.GraphicEq, contentDescription = null) },
       )
       FluidListDivider()
       FluidListRow(
         title = stringResource(R.string.onboarding_step_export),
         subtitle = stringResource(R.string.onboarding_step_export_detail),
-        leading = { RowIcon(Icons.Rounded.CloudUpload, FluidTone.Primary) },
+        tone = FluidTone.Primary,
+        leading = { Icon(Icons.Rounded.CloudUpload, contentDescription = null) },
       )
     }
   }
@@ -359,10 +363,11 @@ private fun LazyListScope.importStep(
   }
   item {
     FluidListGroup {
-      FluidListRow(
+      FluidToggleRow(
         title = stringResource(R.string.settings_auto_transcribe),
         subtitle = stringResource(R.string.settings_auto_transcribe_detail),
-        badge = { FluidSwitch(checked = autoTranscribe, onCheckedChange = onAutoTranscribe) },
+        checked = autoTranscribe,
+        onCheckedChange = onAutoTranscribe,
       )
     }
   }
@@ -408,8 +413,7 @@ private fun LazyListScope.providerStep(
         onValueChange = onGroqKeyChange,
         label = stringResource(R.string.settings_groq_key),
         placeholder = "gsk_…",
-        visualTransformation = PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        secret = true,
         supportingText = stringResource(R.string.settings_groq_key_hint),
         modifier = Modifier.fillMaxWidth(),
       )
@@ -452,7 +456,7 @@ private fun LazyListScope.providerStep(
           title = stringResource(R.string.onboarding_computer_from_account, accountComputer),
           subtitle = stringResource(R.string.onboarding_computer_from_account_detail),
           tone = FluidTone.Success,
-          leading = { RowIcon(Icons.Rounded.Computer, FluidTone.Success) },
+          leading = { Icon(Icons.Rounded.Computer, contentDescription = null) },
         )
       }
     }
@@ -473,7 +477,8 @@ private fun LazyListScope.providerStep(
         FluidListRow(
           title = stringResource(R.string.install_onboarding_row),
           subtitle = stringResource(R.string.install_row_detail),
-          leading = { RowIcon(Icons.Rounded.InstallDesktop, FluidTone.Primary) },
+          tone = FluidTone.Primary,
+          leading = { Icon(Icons.Rounded.InstallDesktop, contentDescription = null) },
           onClick = onInstall,
         )
       }
@@ -505,7 +510,7 @@ private fun LazyListScope.providerStep(
         onValueChange = onEndpointTokenChange,
         label = stringResource(R.string.settings_endpoint_token),
         placeholder = stringResource(R.string.settings_endpoint_token_hint),
-        visualTransformation = PasswordVisualTransformation(),
+        secret = true,
         modifier = Modifier.fillMaxWidth(),
       )
     }

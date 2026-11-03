@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.material3.Icon
 import dev.antigravity.fluidengine.ui.fluid.FluidAmbient
 import dev.antigravity.fluidengine.ui.fluid.FluidButton
 import dev.antigravity.fluidengine.ui.fluid.FluidButtonStyle
@@ -36,7 +37,6 @@ import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
-import dev.pampa.pampanotes.ui.common.RowIcon
 import dev.pampa.pampanotes.ui.common.jobErrorText
 
 /**
@@ -108,19 +108,22 @@ internal fun LazyListScope.installCompanionContent(
       FluidListRow(
         title = stringResource(R.string.install_step_download),
         subtitle = stringResource(R.string.install_step_download_detail),
-        leading = { RowIcon(Icons.Rounded.Download, FluidTone.Primary) },
+        tone = FluidTone.Primary,
+        leading = { Icon(Icons.Rounded.Download, contentDescription = null) },
       )
       FluidListDivider()
       FluidListRow(
         title = stringResource(R.string.install_step_install),
         subtitle = stringResource(R.string.install_step_install_detail),
-        leading = { RowIcon(Icons.Rounded.InstallDesktop, FluidTone.Primary) },
+        tone = FluidTone.Primary,
+        leading = { Icon(Icons.Rounded.InstallDesktop, contentDescription = null) },
       )
       FluidListDivider()
       FluidListRow(
         title = stringResource(R.string.install_step_scan),
         subtitle = stringResource(R.string.install_step_scan_detail),
-        leading = { RowIcon(Icons.Rounded.QrCodeScanner, FluidTone.Primary) },
+        tone = FluidTone.Primary,
+        leading = { Icon(Icons.Rounded.QrCodeScanner, contentDescription = null) },
       )
     }
   }

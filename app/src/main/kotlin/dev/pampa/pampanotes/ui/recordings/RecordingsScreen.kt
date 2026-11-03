@@ -24,6 +24,7 @@ import dev.antigravity.fluidengine.ui.fluid.FluidAmbient
 import dev.antigravity.fluidengine.ui.fluid.FluidBarAction
 import dev.antigravity.fluidengine.ui.fluid.FluidButton
 import dev.antigravity.fluidengine.ui.fluid.FluidButtonStyle
+import dev.antigravity.fluidengine.ui.fluid.FluidChip
 import dev.antigravity.fluidengine.ui.fluid.FluidContextAction
 import dev.antigravity.fluidengine.ui.fluid.FluidHero
 import dev.antigravity.fluidengine.ui.fluid.FluidHeroMetric
@@ -36,7 +37,6 @@ import dev.antigravity.fluidengine.ui.theme.FluidEmptyState
 import dev.antigravity.fluidengine.ui.theme.FluidListDivider
 import dev.antigravity.fluidengine.ui.theme.FluidListGroup
 import dev.antigravity.fluidengine.ui.theme.FluidListRow
-import dev.antigravity.fluidengine.ui.theme.FluidQuickAction
 import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
@@ -176,7 +176,7 @@ fun RecordingsRoute(
         )
       }
       item {
-        FluidQuickAction(label = newFolderLabel, onClick = { editing = RecordingsFolderEdit.New }, modifier = Modifier.fillMaxWidth())
+        FluidChip(label = newFolderLabel, selected = false, onClick = { editing = RecordingsFolderEdit.New }, modifier = Modifier.fillMaxWidth())
       }
       return@FluidScreen
     }
@@ -217,7 +217,7 @@ fun RecordingsRoute(
         )
       }
       item(key = "no-recordings-import") {
-        FluidQuickAction(label = importLabel, onClick = importAction, modifier = Modifier.fillMaxWidth())
+        FluidChip(label = importLabel, selected = false, onClick = importAction, modifier = Modifier.fillMaxWidth())
       }
     } else {
       item(key = "recordings-header") { FluidSectionHeader(title = stringResource(R.string.recordings_section_list)) }

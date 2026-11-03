@@ -1,56 +1,49 @@
 package dev.pampa.pampanotes.ui.common
 
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import com.mikepenz.markdown.compose.Markdown
-import com.mikepenz.markdown.m3.markdownColor
-import com.mikepenz.markdown.m3.markdownTypography
+import androidx.compose.ui.platform.LocalContext
+import dev.antigravity.fluidengine.ui.fluid.FluidMarkdown
+import dev.antigravity.fluidengine.ui.fluid.FluidMarkdownDefaults
+import dev.antigravity.fluidengine.ui.fluid.FluidMarkdownOptions
+import dev.antigravity.fluidengine.ui.fluid.FluidMarkdownStrings
+import dev.pampa.pampanotes.R
 
 /**
- * Il testo di una nota, reso come Markdown.
+ * Il testo di una nota, reso come Markdown dall'engine (`FluidMarkdown`): niente libreria in piu' nell'APK.
  *
- * I titoli scendono dai default della libreria: `displayLarge` per un `#` e' un cartello da
- * copertina, e in una nota che comincia con il proprio titolo sarebbe il titolo scritto due volte,
- * una delle quali alta un pollice. Qui un `#` e' grande quanto il titolo di una sezione.
+ * Tre scelte, tutte per il fatto che il testo e' **dell'utente** e arriva da `.md`, `.txt`, DOCX e PDF:
+ *  - i titoli sono quelli di una pagina di testo (`documentHeadings`: un `#` e' grande quanto il titolo
+ *    di una sezione, non un cartello da copertina, in una nota che comincia gia' con il proprio titolo);
+ *  - **un a capo singolo resta un a capo** (`softBreak = "\n"`): il parser di DOCX scrive un `<w:br>`
+ *    come una riga a capo dentro il paragrafo, e un `.txt` e' fatto di righe — in Markdown stretto si
+ *    fonderebbero tutte in una riga sola;
+ *  - il testo si seleziona e si copia, cosa che nessun testo dell'app permetteva.
  *
- * `retainState` e `immediate` evitano il fotogramma vuoto: l'analisi del Markdown e' sospesa, e
- * senza questi due, ogni volta che il testo cambia, lo slot torna vuoto per un fotogramma.
+ * Quello che il parser dell'engine non disegna (immagini, liste di attivita', HTML) resta testo.
  */
 @Composable
 fun MarkdownText(
   markdown: String,
   modifier: Modifier = Modifier,
 ) {
-  val typography = MaterialTheme.typography
-  val code = typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
-  androidx.compose.foundation.layout.Box(modifier = modifier) {
-    Markdown(
-      content = markdown,
-      colors = markdownColor(),
-      typography = markdownTypography(
-        h1 = heading(1, typography),
-        h2 = heading(2, typography),
-        h3 = heading(3, typography),
-        h4 = heading(4, typography),
-        h5 = heading(5, typography),
-        h6 = heading(6, typography),
-        code = code,
-        inlineCode = code,
-      ),
-      retainState = true,
-      immediate = true,
+  val resources = LocalContext.current.resources
+  val strings = remember(resources) {
+    FluidMarkdownStrings(
+      codeLabel = resources.getString(R.string.markdown_code_label),
+      copy = resources.getString(R.string.markdown_copy),
+      copied = resources.getString(R.string.markdown_copied),
+      copyDescription = resources.getString(R.string.markdown_copy_description),
+      codeBlockDescription = resources.getString(R.string.markdown_code_block_description),
     )
   }
-}
-
-private fun heading(level: Int, typography: Typography): TextStyle = when (level) {
-  1 -> typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
-  2 -> typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
-  3 -> typography.titleSmall.copy(fontWeight = FontWeight.SemiBold)
-  else -> typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold)
+  FluidMarkdown(
+    markdown = markdown,
+    modifier = modifier,
+    style = FluidMarkdownDefaults.style(headings = FluidMarkdownDefaults.documentHeadings()),
+    strings = strings,
+    options = FluidMarkdownOptions(softBreak = "\n"),
+    selectable = true,
+  )
 }

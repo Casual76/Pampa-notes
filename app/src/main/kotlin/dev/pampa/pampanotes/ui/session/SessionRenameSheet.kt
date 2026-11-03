@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import dev.antigravity.fluidengine.ui.fluid.FluidSheetScaffold
 import dev.antigravity.fluidengine.ui.fluid.FluidButton
 import dev.antigravity.fluidengine.ui.fluid.FluidButtonStyle
 import dev.antigravity.fluidengine.ui.fluid.FluidChip
@@ -23,7 +24,6 @@ import dev.antigravity.fluidengine.ui.fluid.FluidGlassModalPresentation
 import dev.antigravity.fluidengine.ui.fluid.FluidSectionFootnote
 import dev.antigravity.fluidengine.ui.fluid.FluidTextField
 import dev.pampa.pampanotes.R
-import dev.pampa.pampanotes.ui.common.SheetScaffold
 import dev.pampa.pampanotes.ui.common.Formats
 import java.time.LocalDate
 
@@ -58,7 +58,8 @@ fun SessionRenameSheet(
     origin = origin,
     paneTitle = stringResource(R.string.session_rename),
   ) {
-    SheetScaffold(
+    FluidSheetScaffold(
+      title = stringResource(R.string.session_rename),
       insetBottom = false,
       actions = {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {

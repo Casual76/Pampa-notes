@@ -35,6 +35,7 @@ import dev.antigravity.fluidengine.ui.fluid.FluidAlert
 import dev.antigravity.fluidengine.ui.fluid.FluidAlertAction
 import dev.antigravity.fluidengine.ui.fluid.FluidAmbient
 import dev.antigravity.fluidengine.ui.fluid.FluidBarAction
+import dev.antigravity.fluidengine.ui.fluid.FluidChip
 import dev.antigravity.fluidengine.ui.fluid.FluidHeroMotif
 import dev.antigravity.fluidengine.ui.fluid.FluidHeroTone
 import dev.antigravity.fluidengine.ui.fluid.FluidContextAction
@@ -47,7 +48,6 @@ import dev.antigravity.fluidengine.ui.theme.FluidListDivider
 import dev.antigravity.fluidengine.ui.theme.FluidListGroup
 import dev.antigravity.fluidengine.ui.theme.FluidListRow
 import dev.antigravity.fluidengine.ui.theme.FluidPillTabs
-import dev.antigravity.fluidengine.ui.theme.FluidQuickAction
 import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.antigravity.fluidengine.ui.theme.FluidInlineMessage
@@ -459,8 +459,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.textTab(
       )
     }
     item {
-      FluidQuickAction(
+      FluidChip(
         label = stringResource(R.string.note_edit),
+        selected = false,
         onClick = onEdit,
         modifier = Modifier.fillMaxWidth(),
       )
@@ -510,8 +511,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
       )
     }
     item {
-      FluidQuickAction(
+      FluidChip(
         label = stringResource(R.string.note_add_audio),
+        selected = false,
         onClick = onImport,
         modifier = Modifier.fillMaxWidth(),
       )
@@ -668,8 +670,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
     }
   }
   item {
-    FluidQuickAction(
+    FluidChip(
       label = stringResource(R.string.note_add_audio),
+      selected = false,
       onClick = onImport,
       modifier = Modifier.fillMaxWidth(),
     )
@@ -739,8 +742,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sourcesTab(
       )
     }
     item {
-      FluidQuickAction(
+      FluidChip(
         label = stringResource(R.string.action_import),
+        selected = false,
         onClick = onImport,
         modifier = Modifier.fillMaxWidth(),
       )
@@ -772,8 +776,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sourcesTab(
     }
   }
   item {
-    FluidQuickAction(
+    FluidChip(
       label = stringResource(R.string.action_import),
+      selected = false,
       onClick = onImport,
       modifier = Modifier.fillMaxWidth(),
     )

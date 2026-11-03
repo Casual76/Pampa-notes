@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import dev.antigravity.fluidengine.ui.fluid.FluidSheetScaffold
 import dev.antigravity.fluidengine.ui.fluid.FluidButton
 import dev.antigravity.fluidengine.ui.fluid.FluidButtonStyle
 import dev.antigravity.fluidengine.ui.fluid.FluidGlassModalPortal
@@ -25,7 +26,6 @@ import dev.antigravity.fluidengine.ui.theme.FluidInlineMessage
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.settings.RefinementPreset
-import dev.pampa.pampanotes.ui.common.SheetScaffold
 
 /**
  * Il pannello che chiede quanto intervenire sulla trascrizione.
@@ -58,7 +58,9 @@ fun RefineSheet(
     origin = origin,
     paneTitle = stringResource(R.string.refine_title),
   ) {
-    SheetScaffold(
+    FluidSheetScaffold(
+      title = stringResource(R.string.refine_title),
+      message = stringResource(R.string.refine_explain),
       insetBottom = false,
       actions = {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -81,13 +83,6 @@ fun RefineSheet(
         }
       },
     ) {
-      Text(text = stringResource(R.string.refine_title), style = MaterialTheme.typography.titleLarge)
-      Text(
-        text = stringResource(R.string.refine_explain),
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-      )
-
       if (!hasKey) {
         FluidInlineMessage(
           title = stringResource(R.string.refine_title),

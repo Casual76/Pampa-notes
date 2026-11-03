@@ -1,11 +1,6 @@
 package dev.pampa.pampanotes.ui.common
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.RadioButtonUnchecked
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
@@ -21,10 +16,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.antigravity.fluidengine.ui.fluid.FluidAlert
 import dev.antigravity.fluidengine.ui.fluid.FluidAlertAction
+import dev.antigravity.fluidengine.ui.fluid.FluidSelectionMark
 import dev.pampa.pampanotes.R
 
 /**
- * Il segno di una riga in selezione multipla: un cerchio vuoto, o pieno e del colore dell'accento.
+ * Il segno di una riga in selezione multipla: `FluidSelectionMark` dell'engine (un nodo solo, la
+ * spunta che si disegna, scura su un disco chiaro), con le parole di TalkBack nella lingua dell'app:
+ * quelle dell'engine sono in italiano.
  *
  * Sta nello spazio `leading` di `FluidListRow`: e' l'unica cosa che cambia fra una riga normale e
  * una in selezione, cosi' l'elenco non salta quando si entra e si esce.
@@ -34,13 +32,11 @@ import dev.pampa.pampanotes.R
  */
 @Composable
 fun SelectionMark(selected: Boolean, tint: Color? = null) {
-  val scheme = MaterialTheme.colorScheme
-  Icon(
-    imageVector = if (selected) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
+  FluidSelectionMark(
+    selected = selected,
+    tint = tint ?: Color.Unspecified,
     // Letto insieme alla riga: senza, TalkBack non diceva mai quali erano scelte.
     contentDescription = stringResource(if (selected) R.string.a11y_selected else R.string.a11y_not_selected),
-    tint = tint ?: if (selected) scheme.primary else scheme.onSurfaceVariant,
-    modifier = Modifier.size(24.dp),
   )
 }
 

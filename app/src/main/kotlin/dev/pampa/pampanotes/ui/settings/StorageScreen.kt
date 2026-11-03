@@ -12,6 +12,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.antigravity.fluidengine.ui.fluid.FluidToggleRow
 import dev.antigravity.fluidengine.ui.fluid.FluidAlert
 import dev.antigravity.fluidengine.ui.fluid.FluidAlertAction
 import dev.antigravity.fluidengine.ui.fluid.FluidAmbient
@@ -380,21 +381,25 @@ private fun LazyListScope.toComputerSection(
         onClick = onOpenServices,
       )
       FluidListDivider()
-      FluidListRow(
+      FluidToggleRow(
         title = stringResource(R.string.storage_archive_enable),
         subtitle = when {
           !state.hasEndpoint -> stringResource(R.string.storage_archive_state_no_computer)
           !state.archiveEnabled -> stringResource(R.string.storage_archive_state_off)
           else -> stringResource(R.string.storage_archive_state_on, network)
         },
-        badge = { FluidSwitch(checked = state.archiveEnabled, onCheckedChange = viewModel::setArchiveEnabled, enabled = state.hasEndpoint) },
+        checked = state.archiveEnabled,
+        onCheckedChange = viewModel::setArchiveEnabled,
+        enabled = state.hasEndpoint,
       )
       FluidListDivider()
       // Vale per tutti e due i versi, e lo dice: prima era sotto l'archivio e sembrava solo suo.
-      FluidListRow(
+      FluidToggleRow(
         title = stringResource(R.string.storage_archive_unmetered),
         subtitle = stringResource(if (state.archiveOnlyUnmetered) R.string.storage_unmetered_on else R.string.storage_unmetered_off),
-        badge = { FluidSwitch(checked = state.archiveOnlyUnmetered, onCheckedChange = viewModel::setArchiveOnlyUnmetered, enabled = state.hasEndpoint) },
+        checked = state.archiveOnlyUnmetered,
+        onCheckedChange = viewModel::setArchiveOnlyUnmetered,
+        enabled = state.hasEndpoint,
       )
       if (state.hasEndpoint && state.archiveEnabled) {
         FluidListDivider()
@@ -468,7 +473,7 @@ private fun LazyListScope.toHereSection(state: StorageUiState, viewModel: Storag
   item {
     val network = stringResource(if (state.archiveOnlyUnmetered) R.string.storage_net_wifi else R.string.storage_net_any)
     FluidListGroup {
-      FluidListRow(
+      FluidToggleRow(
         title = stringResource(R.string.storage_mirror),
         subtitle = when {
           !state.hasEndpoint -> stringResource(R.string.storage_archive_state_no_computer)
@@ -477,7 +482,9 @@ private fun LazyListScope.toHereSection(state: StorageUiState, viewModel: Storag
           !state.syncEnabled -> stringResource(R.string.storage_mirror_state_no_sync)
           else -> stringResource(R.string.storage_mirror_state_on, network)
         },
-        badge = { FluidSwitch(checked = state.mirrorEnabled, onCheckedChange = viewModel::setMirrorEnabled, enabled = state.hasEndpoint) },
+        checked = state.mirrorEnabled,
+        onCheckedChange = viewModel::setMirrorEnabled,
+        enabled = state.hasEndpoint,
       )
       if (remote.count > 0) {
         FluidListDivider()

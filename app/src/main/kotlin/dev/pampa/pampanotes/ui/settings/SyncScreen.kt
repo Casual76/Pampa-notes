@@ -12,9 +12,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.antigravity.fluidengine.ui.fluid.FluidToggleRow
 import dev.antigravity.fluidengine.ui.fluid.FluidAmbient
 import dev.antigravity.fluidengine.ui.fluid.FluidButton
 import dev.antigravity.fluidengine.ui.fluid.FluidButtonStyle
@@ -77,8 +77,7 @@ fun SyncSectionRoute(
           onValueChange = { token = it },
           label = stringResource(R.string.sync_token),
           placeholder = if (state.hasToken) stringResource(R.string.sync_token_present) else stringResource(R.string.sync_token_hint),
-          visualTransformation = PasswordVisualTransformation(),
-          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+          secret = true,
           modifier = Modifier.fillMaxWidth(),
         )
       }
@@ -134,10 +133,12 @@ fun SyncSectionRoute(
 
     item {
       FluidListGroup {
-        FluidListRow(
+        FluidToggleRow(
           title = stringResource(R.string.sync_enable),
           subtitle = stringResource(R.string.sync_enable_detail),
-          badge = { FluidSwitch(checked = state.enabled, onCheckedChange = viewModel::setEnabled, enabled = state.configured) },
+          checked = state.enabled,
+          onCheckedChange = viewModel::setEnabled,
+          enabled = state.configured,
         )
       }
     }

@@ -13,6 +13,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.antigravity.fluidengine.ui.fluid.FluidToggleRow
 import dev.antigravity.fluidengine.ui.fluid.FluidAlert
 import dev.antigravity.fluidengine.ui.fluid.FluidAlertAction
 import dev.antigravity.fluidengine.ui.fluid.FluidAmbient
@@ -87,20 +88,18 @@ fun BackupSectionRoute(
           onClick = { pickFolder.launch(null) },
         )
         FluidListDivider()
-        FluidListRow(
+        FluidToggleRow(
           title = stringResource(R.string.backup_include_audio),
           subtitle = stringResource(R.string.backup_include_audio_detail),
-          badge = {
-            FluidSwitch(checked = state.includeAudio, onCheckedChange = viewModel::setIncludeAudio)
-          },
+          checked = state.includeAudio,
+          onCheckedChange = viewModel::setIncludeAudio,
         )
         FluidListDivider()
-        FluidListRow(
+        FluidToggleRow(
           title = stringResource(R.string.backup_include_sources),
           subtitle = stringResource(R.string.backup_include_sources_detail),
-          badge = {
-            FluidSwitch(checked = state.includeSources, onCheckedChange = viewModel::setIncludeSources)
-          },
+          checked = state.includeSources,
+          onCheckedChange = viewModel::setIncludeSources,
         )
       }
     }

@@ -31,6 +31,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.antigravity.fluidengine.ui.fluid.FluidSheetScaffold
 import dev.antigravity.fluidengine.ui.fluid.FluidButton
 import dev.antigravity.fluidengine.ui.fluid.FluidButtonStyle
 import dev.antigravity.fluidengine.ui.fluid.FluidCapsuleShape
@@ -43,7 +44,6 @@ import dev.antigravity.fluidengine.ui.fluid.FluidSectionFootnote
 import dev.antigravity.fluidengine.ui.fluid.FluidTextField
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.transcription.VoiceNames
-import dev.pampa.pampanotes.ui.common.SheetScaffold
 
 /**
  * Una voce della sessione, com'e' a schermo: la chiave a cui si attacca il nome, il numero di
@@ -135,7 +135,8 @@ fun VoiceRenameSheet(
     origin = origin,
     paneTitle = stringResource(R.string.session_voice_rename_title, numbered),
   ) {
-    SheetScaffold(
+    FluidSheetScaffold(
+      title = stringResource(R.string.session_voice_rename_title, numbered),
       insetBottom = false,
       actions = {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
