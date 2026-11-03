@@ -1,56 +1,26 @@
 package dev.pampa.pampanotes.ui.session
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.KeyboardArrowDown
-import androidx.compose.material.icons.rounded.KeyboardArrowUp
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextLayoutResult
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import dev.antigravity.fluidengine.ui.fluid.FluidCapsuleShape
-import dev.antigravity.fluidengine.ui.fluid.FluidTextField
+import dev.antigravity.fluidengine.ui.fluid.FluidSearchField
+import dev.antigravity.fluidengine.ui.fluid.FluidSearchNavigation
 import dev.antigravity.fluidengine.ui.fluid.GlassBackdropState
-import dev.antigravity.fluidengine.ui.fluid.fluidPressable
 import dev.antigravity.fluidengine.ui.fluid.fluidReadingWidth
-import dev.antigravity.fluidengine.ui.fluid.glassControlSurface
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.transcription.TranscriptSearch
+import dev.pampa.pampanotes.ui.common.rememberSearchLabels
 
 /**
  * Cosa si sta cercando dentro la sessione: aperta o no, la parola, e quale occorrenza e' la corrente.
@@ -141,12 +111,13 @@ fun rememberTranscriptSearchState(): TranscriptSearchState =
   rememberSaveable(saver = TranscriptSearchState.Saver) { TranscriptSearchState() }
 
 /**
- * La barra della ricerca, sospesa sopra il lettore.
+ * La barra della ricerca, sospesa sopra il lettore: `FluidSearchField` dell'engine, nel caso «ricerca
+ * dentro una pagina» per cui e' fatto — il campo, il contatore «3/12», le frecce e la crocetta in una
+ * lastra di vetro sola, con il fuoco e la tastiera all'apertura.
  *
  * Sta nell'overlay e non in cima alla lista: in una registrazione di ore l'occorrenza dopo e' dieci
  * schermi piu' giu', e i tasti «precedente» e «successiva» devono restare sotto il pollice mentre la
- * lista scorre. E' vetro come la capsula del lettore — un elemento piccolo che galleggia — e il campo
- * dentro e' quello dell'engine, con la sua crocetta per svuotarlo; la X a destra invece chiude.
+ * lista scorre. La crocetta chiude la ricerca (e la cancella: [TranscriptSearchState.close]).
  * «Invio» sulla tastiera va all'occorrenza dopo, come nelle ricerche di un browser.
  */
 @Composable
@@ -158,76 +129,30 @@ fun TranscriptSearchBar(
   onClose: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val focus = remember { FocusRequester() }
-  LaunchedEffect(Unit) { if (state.focusOnOpen) runCatching { focus.requestFocus() } }
-  val total = state.matches.size
-  val counter = when {
-    state.query.isBlank() -> null
-    total == 0 -> stringResource(R.string.session_search_none)
-    else -> stringResource(R.string.session_search_count, state.current + 1, total)
-  }
-
-  Row(
-    modifier = modifier
-      .fluidReadingWidth()
-      .clip(FluidCapsuleShape)
-      .glassControlSurface(backdrop = backdrop, shape = FluidCapsuleShape, interactive = false)
-      .padding(horizontal = 6.dp, vertical = 6.dp),
-    horizontalArrangement = Arrangement.spacedBy(2.dp),
-    verticalAlignment = Alignment.CenterVertically,
-  ) {
-    FluidTextField(
-      value = state.query,
-      onValueChange = { state.query = it },
-      placeholder = stringResource(R.string.session_search_placeholder),
-      leading = { Icon(Icons.Rounded.Search, contentDescription = null) },
-      keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-      keyboardActions = KeyboardActions(onSearch = { onNext() }),
-      modifier = Modifier
-        .weight(1f)
-        .focusRequester(focus),
-    )
-    counter?.let {
-      Text(
-        text = it,
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        maxLines = 1,
-        // Letto da TalkBack quando cambia: chi non vede lo scorrere della lista sente «3 di 12».
-        modifier = Modifier
-          .padding(horizontal = 4.dp)
-          .semantics { liveRegion = LiveRegionMode.Polite },
-      )
-    }
-    SearchButton(Icons.Rounded.KeyboardArrowUp, stringResource(R.string.session_search_previous), enabled = total > 0, onClick = onPrevious)
-    SearchButton(Icons.Rounded.KeyboardArrowDown, stringResource(R.string.session_search_next), enabled = total > 0, onClick = onNext)
-    SearchButton(Icons.Rounded.Close, stringResource(R.string.session_search_close), enabled = true, onClick = onClose)
-  }
+  FluidSearchField(
+    query = state.query,
+    onQueryChange = { state.query = it },
+    modifier = modifier.fluidReadingWidth(),
+    backdrop = backdrop,
+    placeholder = stringResource(R.string.session_search_placeholder),
+    labels = rememberSearchLabels(),
+    onSearch = onNext,
+    expanded = true,
+    onExpandedChange = { open -> if (!open) onClose() },
+    navigation = FluidSearchNavigation(
+      current = state.current,
+      total = state.matches.size,
+      onPrevious = onPrevious,
+      onNext = onNext,
+    ),
+    // Non quando la ricerca arriva gia' scritta dalla ricerca di tutte le note: li' si e' venuti a
+    // leggere e ad ascoltare, e la tastiera coprirebbe proprio il paragrafo trovato.
+    autoFocus = state.focusOnOpen,
+  )
 }
 
 /** Lo spazio che la barra della ricerca occupa sopra il lettore: la lista se lo lascia sotto. */
 val SearchBarHeight = 72.dp
-
-/**
- * Un comando piatto nella capsula, come quelli del lettore; spento, resta al suo posto ma velato.
- * Occupa 40 dp ma il dito ne prende 48 ([touchTarget]): la capsula resta com'era.
- */
-@Composable
-private fun SearchButton(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
-  val tint = MaterialTheme.colorScheme.onSurface
-  val visual = 40.dp
-  Box(
-    modifier = Modifier
-      .touchTarget(visual)
-      .fluidPressable(onClick = onClick, enabled = enabled, pressedScale = 0.88f, role = Role.Button)
-      .semantics { contentDescription = label }
-      .padding((MinTouchTarget - visual) / 2)
-      .clip(FluidCapsuleShape),
-    contentAlignment = Alignment.Center,
-  ) {
-    Icon(imageVector = icon, contentDescription = null, tint = if (enabled) tint else tint.copy(alpha = 0.38f))
-  }
-}
 
 /**
  * Le occorrenze dipinte **dietro** il testo: un velo nel colore della materia, piu' pieno su quella

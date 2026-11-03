@@ -2,19 +2,14 @@ package dev.pampa.pampanotes.ui.session
 
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentHeight
-import androidx.compose.ui.unit.Constraints
-import androidx.compose.ui.unit.Dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.Forward10
@@ -26,36 +21,34 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.layout.layout
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.onClick
-import androidx.compose.ui.semantics.ProgressBarRangeInfo
-import androidx.compose.ui.semantics.progressBarRangeInfo
-import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import dev.antigravity.fluidengine.ui.fluid.FluidCapsuleAction
 import dev.antigravity.fluidengine.ui.fluid.FluidCapsuleShape
+import dev.antigravity.fluidengine.ui.fluid.FluidFloatingCapsule
+import dev.antigravity.fluidengine.ui.fluid.FluidScrubber
+import dev.antigravity.fluidengine.ui.fluid.FluidScrubbing
 import dev.antigravity.fluidengine.ui.fluid.GlassBackdropState
 import dev.antigravity.fluidengine.ui.fluid.fluidPressable
 import dev.antigravity.fluidengine.ui.fluid.fluidReadingWidth
-import dev.antigravity.fluidengine.ui.fluid.glassControlSurface
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.player.PlaybackState
 import dev.pampa.pampanotes.player.SessionPlayer
@@ -67,11 +60,11 @@ import dev.pampa.pampanotes.ui.common.Formats
  * Sta nell'overlay della schermata e non nella lista apposta: una lezione dura un'ora e il punto in
  * cui si e' arrivati deve restare visibile mentre si scorre il testo.
  *
- * Due oggetti piccoli, non un blocco: una **capsula** di comandi larga quanto i comandi, e sopra
- * lo **scrubber** come una riga sottile senza niente sotto. Il vetro sta sulla capsula e basta —
- * un pannello a tutta larghezza che rifrange il testo non lo lascia leggere, e i tasti di vetro
- * dentro un pannello di vetro non rifrangono niente. Dentro la capsula i comandi sono icone
- * piatte, e l'unico pieno e' il play, che e' quello che si cerca.
+ * Due oggetti, e sono dell'engine: lo **scrubber** (`FluidScrubber`: la maniglia a goccia dello slider,
+ * il tocco salta, il trascinamento e' del dito e non del lettore, i capitoli come punti sulla pista) e
+ * la **capsula** di comandi (`FluidFloatingCapsule`: una lastra di vetro sola, la stessa della barra
+ * delle schede). Dentro la capsula i comandi sono icone piatte che crescono sotto il dito, e l'unico
+ * pieno e' il play, che e' quello che si cerca.
  */
 @Composable
 fun PlayerBar(
@@ -86,40 +79,55 @@ fun PlayerBar(
   notice: String? = null,
   /** «Salta i silenzi» e' acceso: un segno piccolo accanto al tempo, finche' resta acceso. */
   skippingSilence: Boolean = false,
+  /** Dove cominciano i capitoli, in millisecondi dall'inizio: punti sulla pista (vedi [chapterMarks]). */
+  marks: List<Long> = emptyList(),
 ) {
+  val resources = LocalContext.current.resources
+  // «1:05 di 3:20» nella lingua dell'app: quello dell'engine e' scritto in italiano.
+  val spoken = remember(resources) {
+    { position: Float, range: ClosedFloatingPointRange<Float> ->
+      resources.getString(
+        R.string.player_scrubber_spoken,
+        FluidScrubbing.Elapsed(position, range),
+        FluidScrubbing.Total(position, range),
+      )
+    }
+  }
   Column(
     // L'overlay non passa dalla lista, quindi la misura di lettura se la da' da solo: lo scrubber
     // corre sotto le colonne del testo, non da un bordo all'altro del tablet.
     modifier = modifier.fluidReadingWidth(),
     horizontalAlignment = Alignment.CenterHorizontally,
-    verticalArrangement = Arrangement.spacedBy(6.dp),
+    verticalArrangement = Arrangement.spacedBy(2.dp),
   ) {
     Row(
       modifier = Modifier.fillMaxWidth(),
       horizontalArrangement = Arrangement.spacedBy(8.dp),
       verticalAlignment = Alignment.CenterVertically,
     ) {
-      Scrubber(
-        fraction = state.fraction,
-        durationMs = state.durationMs,
-        onSeek = onSeek,
+      FluidScrubber(
+        position = { state.positionMs.toFloat() },
+        onSeek = { onSeek(it.toLong()) },
         modifier = Modifier.weight(1f),
+        valueRange = 0f..state.durationMs.toFloat(),
+        enabled = state.durationMs > 0,
+        marks = marks.map { it.toFloat() },
+        contentDescription = stringResource(R.string.player_scrubber),
+        valueDescription = spoken,
+        // Una freccia, o la tastiera, sposta di dieci secondi: come i tasti della capsula.
+        keyStep = SessionPlayer.SKIP_MS.toFloat(),
+        stepBackLabel = stringResource(R.string.player_back),
+        stepForwardLabel = stringResource(R.string.player_forward),
+        backdrop = backdrop,
       )
       EndTime(positionMs = state.positionMs, durationMs = state.durationMs)
     }
 
-    Row(
-      modifier = Modifier
-        .clip(FluidCapsuleShape)
-        .glassControlSurface(backdrop = backdrop, shape = FluidCapsuleShape, interactive = false)
-        .padding(horizontal = 8.dp, vertical = 6.dp),
-      horizontalArrangement = Arrangement.spacedBy(2.dp),
-      verticalAlignment = Alignment.CenterVertically,
-    ) {
+    FluidFloatingCapsule(backdrop = backdrop) {
       TimeOrNotice(positionMs = state.positionMs, notice = notice, skippingSilence = skippingSilence)
       // Tenuti premuti saltano cinque minuti: in una registrazione di ore quindici secondi alla volta
       // non portano da nessuna parte, e un altro tasto nella capsula non ci sta.
-      PlayerButton(
+      SkipAction(
         icon = Icons.Rounded.Replay10,
         label = stringResource(R.string.player_back),
         longLabel = stringResource(R.string.player_back_long),
@@ -127,7 +135,7 @@ fun PlayerBar(
         onLongClick = { onSkip(-LONG_SKIP_MS) },
       )
       PlayButton(playing = state.playing, onClick = onPlayPause)
-      PlayerButton(
+      SkipAction(
         icon = Icons.Rounded.Forward10,
         label = stringResource(R.string.player_forward),
         longLabel = stringResource(R.string.player_forward_long),
@@ -148,6 +156,20 @@ fun PlayerBar(
     }
   }
 }
+
+/**
+ * I capitoli come punti sulla pista dello scrubber: gli inizi, senza lo zero (c'e' gia' il bordo) e
+ * solo finche' si contano. Su una registrazione di diciannove ore i capitoli sono centinaia, e cento
+ * punti da 5 dp su una pista da 300 sono una riga continua: meglio nessun punto di un tratteggio.
+ */
+fun chapterMarks(startsMs: List<Long>, durationMs: Long): List<Long> {
+  if (durationMs <= 0L) return emptyList()
+  val marks = startsMs.filter { it in 1 until durationMs }.distinct()
+  return if (marks.size <= MAX_CHAPTER_MARKS) marks else emptyList()
+}
+
+/** Oltre questo numero di capitoli la pista non li disegna. */
+const val MAX_CHAPTER_MARKS = 40
 
 /**
  * Il cronometro, o per due secondi e mezzo quanto silenzio si e' appena saltato.
@@ -186,32 +208,27 @@ private fun TimeOrNotice(positionMs: Long, notice: String?, skippingSilence: Boo
 }
 
 /**
- * Un comando piatto dentro la capsula: l'icona e il suo bersaglio, niente superficie sua. Il salto
- * lungo ([onLongClick]) e' anche un'azione di TalkBack, con il suo nome: tenere premuto non si scopre
- * con la voce.
+ * Un salto di dieci secondi, e di cinque minuti tenendo premuto: l'azione piatta della capsula. Il
+ * salto lungo e' anche un'azione di TalkBack, con il suo nome: tenere premuto non si scopre con la voce.
  */
 @Composable
-private fun PlayerButton(icon: ImageVector, label: String, longLabel: String, onClick: () -> Unit, onLongClick: () -> Unit) {
-  Box(
-    modifier = Modifier
-      .touchTarget(PlayerButtonSize)
-      .fluidPressable(onClick = onClick, onLongClick = onLongClick, pressedScale = 0.88f, role = Role.Button)
-      .semantics {
-        contentDescription = label
-        customActions = listOf(CustomAccessibilityAction(longLabel) { onLongClick(); true })
-      }
-      .padding((MinTouchTarget - PlayerButtonSize) / 2)
-      .clip(FluidCapsuleShape),
-    contentAlignment = Alignment.Center,
-  ) {
-    Icon(imageVector = icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
-  }
+private fun SkipAction(icon: ImageVector, label: String, longLabel: String, onClick: () -> Unit, onLongClick: () -> Unit) {
+  FluidCapsuleAction(
+    icon = icon,
+    contentDescription = label,
+    onClick = onClick,
+    onLongClick = onLongClick,
+    tint = MaterialTheme.colorScheme.onSurface,
+    modifier = Modifier.semantics { customActions = listOf(CustomAccessibilityAction(longLabel) { onLongClick(); true }) },
+  )
 }
 
 /**
  * In fondo allo scrubber, quanto manca («−48:10»), o — con un tocco — quanto dura tutta la
  * registrazione. In una lezione da un'ora il punto in cui si e' arrivati dice poco senza la fine, e
  * in una registrazione di diciannove ore dice ancora meno.
+ *
+ * Un testo toccabile a parte e non l'`endLabel` dello scrubber: quello non si tocca.
  */
 @Composable
 private fun EndTime(positionMs: Long, durationMs: Long) {
@@ -244,113 +261,33 @@ private fun EndTime(positionMs: Long, durationMs: Long) {
   )
 }
 
-/** Il play e' l'unico pieno: nel colore della materia, e' la cosa che il pollice cerca. */
+/**
+ * Il play e' l'unico pieno: nel colore della materia, e' la cosa che il pollice cerca. Dentro il suo
+ * bersaglio da 48 dp, il disco e' da 44.
+ */
 @Composable
 private fun PlayButton(playing: Boolean, onClick: () -> Unit) {
   val label = stringResource(if (playing) R.string.player_pause else R.string.player_play)
   Box(
     modifier = Modifier
-      .touchTarget(PlayerButtonSize)
+      .size(MinTouchTarget)
       .fluidPressable(onClick = onClick, pressedScale = 0.9f, role = Role.Button)
-      .semantics { contentDescription = label }
-      .padding((MinTouchTarget - PlayerButtonSize) / 2)
-      .clip(FluidCapsuleShape)
-      .background(MaterialTheme.colorScheme.primary),
+      .semantics { contentDescription = label },
     contentAlignment = Alignment.Center,
   ) {
-    Icon(
-      imageVector = if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-      contentDescription = null,
-      tint = MaterialTheme.colorScheme.onPrimary,
-    )
-  }
-}
-
-/**
- * La riga su cui si trascina.
- *
- * Senza pallino e senza superficie: il riempimento e' nel colore della materia, la traccia e' un
- * velo. Durante il trascinamento il valore mostrato e' quello del dito, non quello del lettore,
- * altrimenti la riga tornerebbe indietro a ogni battito del cronometro finche' la richiesta di
- * salto non arriva.
- */
-@Composable
-private fun Scrubber(
-  fraction: Float,
-  durationMs: Long,
-  onSeek: (Long) -> Unit,
-  modifier: Modifier = Modifier,
-) {
-  var width by remember { mutableFloatStateOf(1f) }
-  var dragging by remember { mutableStateOf(false) }
-  var dragFraction by remember { mutableFloatStateOf(0f) }
-  val shown = if (dragging) dragFraction else fraction
-  val label = stringResource(R.string.player_scrubber)
-
-  fun commit(x: Float) {
-    val value = (x / width).coerceIn(0f, 1f)
-    dragFraction = value
-    onSeek((value * durationMs).toLong())
-  }
-
-  Box(
-    modifier = modifier
-      // Il bersaglio e' alto un dito (48 dp) ma nella colonna del lettore ne occupa 24: la riga
-      // sottile resta dov'era, la capsula sotto non si sposta, e il pollice non deve centrare 3 dp.
-      // La parte che sborda sta sopra (sul testo, che il lettore copre gia') e sotto (sulla capsula,
-      // che disegnata dopo prende i suoi tocchi per prima).
-      .layout { measurable, constraints ->
-        val touch = ScrubberTouchHeight.roundToPx()
-        val shown = ScrubberHeight.roundToPx()
-        val placeable = measurable.measure(constraints.copy(minHeight = touch, maxHeight = touch))
-        layout(placeable.width, shown) { placeable.place(0, (shown - touch) / 2) }
-      }
-      .fillMaxWidth()
-      // Per TalkBack e' una barra di avanzamento che si puo' spostare: prima era solo un nome, e
-      // chi non vede non poteva saltare da nessuna parte.
-      .semantics {
-        contentDescription = label
-        progressBarRangeInfo = ProgressBarRangeInfo(shown, 0f..1f)
-        setProgress { target ->
-          onSeek((target.coerceIn(0f, 1f) * durationMs).toLong())
-          true
-        }
-      }
-      .onSizeChanged { width = it.width.toFloat().coerceAtLeast(1f) }
-      .pointerInput(durationMs) {
-        detectTapGestures { offset -> commit(offset.x) }
-      }
-      .pointerInput(durationMs) {
-        detectHorizontalDragGestures(
-          onDragStart = { offset ->
-            dragging = true
-            dragFraction = (offset.x / width).coerceIn(0f, 1f)
-          },
-          onDragEnd = {
-            commit(dragFraction * width)
-            dragging = false
-          },
-          onDragCancel = { dragging = false },
-        ) { change, _ ->
-          dragFraction = (change.position.x / width).coerceIn(0f, 1f)
-        }
-      },
-    contentAlignment = Alignment.CenterStart,
-  ) {
     Box(
       modifier = Modifier
-        .fillMaxWidth()
-        .height(if (dragging) 6.dp else 3.dp)
-        .clip(FluidCapsuleShape)
-        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f)),
-    )
-    Box(
-      modifier = Modifier
-        .fillMaxWidth(shown)
-        .height(if (dragging) 6.dp else 3.dp)
+        .size(PlayDiscSize)
         .clip(FluidCapsuleShape)
         .background(MaterialTheme.colorScheme.primary),
-    )
+      contentAlignment = Alignment.Center,
+    ) {
+      Icon(
+        imageVector = if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+        contentDescription = null,
+        tint = MaterialTheme.colorScheme.onPrimary,
+      )
+    }
   }
 }
 
@@ -368,28 +305,17 @@ private fun formatSpeed(speed: Float): String {
   return format.format(speed)
 }
 
-/** L'altezza che il lettore occupa: quanto spazio la lista deve lasciarsi sotto per non finirci dietro. */
-val PlayerBarHeight = 92.dp
-
-/** Quanto si vede di un tasto della capsula; il dito ne prende [MinTouchTarget]. */
-private val PlayerButtonSize = 44.dp
+/**
+ * L'altezza che il lettore occupa: quanto spazio la lista deve lasciarsi sotto per non finirci dietro.
+ * Lo scrubber (48 dp, la riga del dito) piu' la capsula (60 dp, come la barra delle schede).
+ */
+val PlayerBarHeight = 112.dp
 
 /** Il bersaglio minimo di un tocco, come chiede Android: 48 dp per lato. */
 internal val MinTouchTarget = 48.dp
 
-/**
- * Un tasto che occupa [visual] per lato ma prende il dito su [MinTouchTarget]: i modificatori che
- * seguono vedono 48 dp, il layout intorno ne vede [visual]. Cosi' la capsula resta della sua misura
- * e il pollice non deve centrare un bersaglio di 40: il bordo in piu' sborda di qualche dp tutto
- * intorno, sulla capsula stessa. Chi lo usa rimette il disegno a [visual] con un `padding` dopo il
- * tocco, come fa lo scrubber con la sua riga sottile.
- */
-internal fun Modifier.touchTarget(visual: Dp): Modifier = layout { measurable, _ ->
-  val touch = MinTouchTarget.roundToPx()
-  val shown = visual.roundToPx()
-  val placeable = measurable.measure(Constraints.fixed(touch, touch))
-  layout(shown, shown) { placeable.place((shown - touch) / 2, (shown - touch) / 2) }
-}
+/** Il disco del play, dentro il suo bersaglio. */
+private val PlayDiscSize = 44.dp
 
 /**
  * Lo stesso per un testo toccabile: alto [MinTouchTarget] per il dito, e nel layout alto quanto il
@@ -401,10 +327,6 @@ internal fun Modifier.touchHeight(): Modifier = layout { measurable, constraints
   val shown = measurable.minIntrinsicHeight(placeable.width).coerceIn(0, placeable.height)
   layout(placeable.width, shown) { placeable.place(0, (shown - placeable.height) / 2) }
 }
-
-/** Lo spazio che lo scrubber occupa nella colonna, e quello in cui prende il dito. */
-private val ScrubberHeight = 24.dp
-private val ScrubberTouchHeight = 48.dp
 
 /** Il salto lungo, tenendo premuti i tasti dei secondi. */
 private const val LONG_SKIP_MS = 5 * 60_000L

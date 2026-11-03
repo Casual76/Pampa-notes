@@ -476,6 +476,8 @@ private fun SessionScreen(
           onCycleSpeed = onCycleSpeed,
           notice = noticeText?.takeIf { skipSilence },
           skippingSilence = skipSilence && state.segments.isNotEmpty(),
+          // I capitoli sono punti sulla pista: l'inizio di ognuno si raggiunge da li'.
+          marks = remember(chapters, state.durationMs) { chapterMarks(chapters.map { it.startMs }, state.durationMs) },
           modifier = Modifier
             .align(Alignment.BottomCenter)
             .navigationBarsPadding()
