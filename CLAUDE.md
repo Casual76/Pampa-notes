@@ -36,11 +36,20 @@ Due moduli più l'engine come submodule.
 |---|---|
 | `:core` | dominio, Room, DataStore, file, import, trascrizione, raffinamento, export. I package puri (pianificatore dei chunk, cucitura, writer Markdown, parser DOCX) non importano niente di Android e si provano in JVM. |
 | `:app` | UI Compose, navigazione, DI, worker, share target, lettore audio. |
-| `engine/` | [Fluid Engine](https://github.com/Casual76/fluid-engine) 1.36.0, submodule. **Non si modifica da qui**: una modifica non committata a monte sparisce al primo aggiornamento. |
+| `engine/` | [Fluid Engine](https://github.com/Casual76/fluid-engine) 3.0.0, submodule. **Non si modifica da qui**: una modifica non committata a monte sparisce al primo aggiornamento. |
 
 Il design system è quello dell'engine: `FluidScreen`, `FluidListGroup`/`FluidListRow`,
-`ContinuousCornerShape` (mai `RoundedCornerShape`), nessun colore o dimensione scritti a mano,
-transizioni di rotta laterali e opache. Le regole per esteso stanno nella skill `fluid-engine`.
+`ContinuousCornerShape` (mai `RoundedCornerShape`), nessun colore o dimensione scritti a mano, nessuna
+molla o `tween` letterale (si passa da `FluidMotion`), nessuna aptica grezza. Le pagine le muove
+`FluidNavHost`, il vetro e' dell'engine. Le regole per esteso stanno nella skill `fluid-engine`.
+
+### La licenza
+
+**GPL-3.0** (`LICENSE`), dalla 3.0 dell'engine: contiene codice di LibrePods (GPL-3.0), e un'app che lo
+distribuisce e' un'opera derivata. Il repository e' pubblico e i sorgenti sono quelli che chiede la licenza;
+la pagina Informazioni lo dice con `fluidLicensesSection()` (con le parole dell'app, `licenses_note`, e dove
+stanno i sorgenti). La licenza e' del repository intero, quindi anche di `companion/` e `worker/`. Chi
+aggiunge una dipendenza guarda che la sua licenza sia compatibile con la GPL-3.0.
 
 ### I pannelli
 
@@ -57,13 +66,27 @@ indietro. Scegliere qualcosa dalla barra laterale **chiude** quello che era aper
 (`PampaNavActions.closeDetail`): senza, il tocco cambierebbe un elenco che in quel momento nessuno
 vede.
 
-Due `NavHost`, issati nella shell (`MainApp.kt`) e descritti in `ui/nav/PampaGraph.kt`: `listNav`
+Due `FluidNavHost`, issati nella shell (`MainApp.kt`) e descritti in `ui/nav/PampaGraph.kt`: `listNav`
 ha **tutte** le destinazioni, `detailNav` solo quelle di dettaglio piu' `DETAIL_EMPTY`. Dove va una
 rotta lo decide `PampaNavActions` al momento del tocco, in base al regime: su una pagina larga la
 nota va nel dettaglio, su una stretta in cima alla lista. `syncPanes` sposta la nota aperta da un
 padrone di casa all'altro quando la finestra cambia regime, ricostruendo la rotta dagli argomenti:
 la rotazione non perde il posto. Il back non ha handler scritti a mano: con `DETAIL_EMPTY` sotto,
-lo stack del dettaglio ha due voci quando una nota e' aperta e il suo `NavHost` vince.
+lo stack del dettaglio ha due voci quando una nota e' aperta e il suo host vince.
+
+**Le pagine sono dell'engine** (`ADOZIONE.md`, «Migrare alla 3.0»): opache, aperte da destra o — la
+firma dell'app, per nota, sessione, cartella, editor e import — **dal punto toccato**
+(`FluidPageTransition.Expand`, che l'host prende da solo); il back sta sotto il dito, e passa dai
+`BackHandler` della pagina (l'editor salva, l'import chiede conferma durante un lavoro: nessuno dei due
+spegne il gesto, solo l'editor lo prende dal bordo perche' il campo di testo ha i suoi trascinamenti).
+Le quattro schede sono `peer`: il passo laterale, senza gesto. **La Home resta sempre in fondo alla pila**
+(`navigateTopLevelRoute`: `popUpTo` su di lei trova sempre qualcosa da togliere): il back da una scheda
+torna alla Home e da li' esce; se una scheda di partenza potesse uscire dalla pila servirebbe `popUpTo(graph.id)`
+senza `saveState`, o le schede si accumulerebbero.
+
+**La pillola** (`FluidFloatingTabBar`) sta fuori dall'host ed e' una sola: esce con la pagina che si apre
+sopra e rientra col dito, leggendo `FluidPageHostState` (`tabBarHidden`, in `ui/nav/PageMotion.kt`, con test).
+Lo spazio che la pagina di una scheda le lascia e' `LocalTabBarInset`, letto solo dalle schede.
 
 ### Il colore della materia
 
@@ -211,6 +234,10 @@ Cinque cose non ovvie, tutte in `core/backup/`:
 Dopo M7, il rifacimento dell'interfaccia (engine 1.32–1.35): misura di lettura e pagine intere,
 vetro solo sugli elementi piccoli, tre pannelli sul tablet, la materia che colora l'app, il testo
 che si accende.
+
+| Milestone | |
+|---|---|
+| M21 engine 3.0: GPL-3.0, pagine di `FluidNavHost`, pulsanti che tengono il dito, menu liquidi, e i pezzi che l'app si era scritta passano all'engine (slider, scrubber, capsula del lettore, ricerca nella pagina, Markdown, aspetto, aggiornamenti, righe di scelta e di interruttore) | fatto |
 
 Il piano per esteso: `C:\Users\casua\.claude\plans\praticamente-vorrei-un-applicazione-che-crispy-falcon.md`
 
