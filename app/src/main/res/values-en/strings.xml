@@ -1587,4 +1587,40 @@
   <string name="tailscale_turning_on">Turning on…</string>
   <string name="tailscale_open">Open Tailscale</string>
   <string name="tailscale_install">Install Tailscale</string>
+
+  <!-- Engine 3.0: the words of the engine's sections (appearance, updates, in-page search) -->
+  <string name="appearance_theme_system_detail">Follows the phone\u2019s settings.</string>
+  <string name="appearance_accent">Accent</string>
+  <string name="update_up_to_date_detail">No newer version on the chosen channel.</string>
+  <string name="update_check_failed_title">Check failed</string>
+  <string name="update_failed_title">Update failed</string>
+  <string name="update_updating">Updating\u2026</string>
+  <string name="update_available_message">A new version is ready to install (%1$s).</string>
+  <string name="update_available_message_unsized">A new version is ready to install.</string>
+  <string name="update_skip">Skip this version</string>
+  <string name="update_whats_new">What\u2019s new</string>
+  <string name="update_checked_now">Checked just now</string>
+  <string name="update_checked_yesterday">Checked yesterday</string>
+  <plurals name="update_checked_minutes">
+    <item quantity="one">Checked %d minute ago</item>
+    <item quantity="other">Checked %d minutes ago</item>
+  </plurals>
+  <plurals name="update_checked_hours">
+    <item quantity="one">Checked %d hour ago</item>
+    <item quantity="other">Checked %d hours ago</item>
+  </plurals>
+  <plurals name="update_checked_days">
+    <item quantity="one">Checked %d day ago</item>
+    <item quantity="other">Checked %d days ago</item>
+  </plurals>
+  <string name="session_search_counter_spoken">%1$d of %2$d</string>
+  <string name="session_search_clear">Clear the field</string>
+  <string name="licenses_title">Licences and credits</string>
+  <string name="licenses_note">Pampa Notes is free software (GPL-3.0): the source is at github.com/Casual76/Pampa-notes. Fluid Engine %1$s includes these third-party works, among them GPL-3.0 code (LibrePods), and the app is distributed under the same licence. The full licences are in the engine repository, under LICENSES/.</string>
+  <string name="markdown_code_label">code</string>
+  <string name="markdown_copy">copy</string>
+  <string name="markdown_copied">copied</string>
+  <string name="markdown_copy_description">Copy the code</string>
+  <string name="markdown_code_block_description">Block of %1$s</string>
+  <string name="player_scrubber_spoken">%1$s of %2$s</string>
 </resources>

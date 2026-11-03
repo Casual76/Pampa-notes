@@ -15,18 +15,19 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.LifecycleEventEffect
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.antigravity.fluidengine.foundation.AppUpdateInstallState
+import dev.antigravity.fluidengine.foundation.UpdateChannel
 import dev.antigravity.fluidengine.ui.fluid.FluidButton
 import dev.antigravity.fluidengine.ui.fluid.FluidButtonStyle
 import dev.antigravity.fluidengine.ui.fluid.FluidIndeterminateBar
 import dev.antigravity.fluidengine.ui.fluid.FluidProgressBar
-import dev.antigravity.fluidengine.ui.fluid.FluidSectionHeader
-import dev.antigravity.fluidengine.ui.fluid.FluidSwitch
+import dev.antigravity.fluidengine.ui.fluid.FluidUpdate
+import dev.antigravity.fluidengine.ui.fluid.FluidUpdateChannelStyle
+import dev.antigravity.fluidengine.ui.fluid.FluidUpdateStrings
+import dev.antigravity.fluidengine.ui.fluid.FluidUpdateUiState
+import dev.antigravity.fluidengine.ui.fluid.fluidUpdateSection
+import dev.antigravity.fluidengine.ui.fluid.toFluidUpdateRelease
+import dev.antigravity.fluidengine.ui.fluid.toFluidUpdateState
 import dev.antigravity.fluidengine.ui.theme.FluidCard
-import dev.antigravity.fluidengine.ui.theme.FluidListDivider
-import dev.antigravity.fluidengine.ui.theme.FluidListGroup
-import dev.antigravity.fluidengine.ui.theme.FluidListRow
-import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
-import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.update.UpdateController
 import dev.pampa.pampanotes.update.UpdateUiState
@@ -62,7 +63,7 @@ fun UpdateHomeCard(state: UpdateUiState, viewModel: UpdateViewModel) {
     if (state.needsPermission) {
       PermissionHint(onOpen = viewModel::install, onDismiss = viewModel::dismissInstall)
     } else if (install == null) {
-      update?.changelog?.let { changelogSummary(it) }?.takeIf { it.isNotBlank() }?.let {
+      update?.changelog?.let { FluidUpdate.notesSummary(it) }?.takeIf { it.isNotBlank() }?.let {
         Text(text = it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 4)
       }
       Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -125,74 +126,47 @@ fun installText(install: AppUpdateInstallState): String = when (install) {
 }
 
 /**
- * Informazioni → Aggiornamenti: la versione di adesso, cosa c'e' di nuovo, il tasto, le beta. Qui la
- * versione a cui si e' detto «non ora» si vede lo stesso: e' il posto dove la si va a cercare.
+ * Come l'engine vede lo stato degli aggiornamenti dell'app.
+ *
+ * L'ordine e' quello delle cose che contano di piu': il permesso mancante e l'installazione in corso
+ * parlano della versione che si sta installando, un controllo in corso copre quello che si sapeva, e
+ * una versione trovata resta offerta anche se l'ultimo controllo e' fallito (`UpdateController` non la
+ * cancella). Puro, cosi' si prova senza disegnare.
  */
-fun LazyListScope.updatesSection(state: UpdateUiState, viewModel: UpdateViewModel) {
-  item { FluidSectionHeader(title = stringResource(R.string.update_title)) }
-  if (!state.supported) {
-    item {
-      FluidListGroup {
-        FluidListRow(title = stringResource(R.string.update_debug_title), subtitle = stringResource(R.string.update_debug_detail))
-      }
-    }
-    return
-  }
-  item {
-    val update = state.available
-    FluidListGroup {
-      FluidListRow(
-        title = when {
-          update != null -> stringResource(R.string.update_card_title, update.version)
-          state.checking -> stringResource(R.string.update_checking)
-          else -> stringResource(R.string.update_none)
-        },
-        subtitle = when {
-          update != null -> changelogSummary(update.changelog).ifBlank { stringResource(R.string.update_no_notes) }
-          state.checkFailed -> stringResource(R.string.update_check_failed)
-          state.lastCheckedAt > 0 -> stringResource(R.string.update_last_checked, Formats.relativeDate(state.lastCheckedAt))
-          else -> stringResource(R.string.update_never_checked)
-        },
-        badge = if (update != null) {
-          { FluidStatusBadge(label = stringResource(R.string.update_badge_new), tone = FluidTone.Primary) }
-        } else {
-          null
-        },
-      )
-      FluidListDivider()
-      FluidListRow(
-        title = stringResource(R.string.update_beta),
-        subtitle = stringResource(R.string.update_beta_detail),
-        badge = { FluidSwitch(checked = state.beta, onCheckedChange = viewModel::setBeta) },
-      )
-    }
-  }
-  if (state.needsPermission) {
-    item {
-      LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.onResume() }
-      FluidCard { PermissionHint(onOpen = viewModel::install, onDismiss = viewModel::dismissInstall) }
-    }
-  }
-  state.install?.let { install ->
-    item { FluidCard { InstallProgress(install, onDismiss = viewModel::dismissInstall, onRetry = viewModel::install) } }
-  }
-  item {
-    val update = state.available
-    FluidButton(
-      text = if (update != null) stringResource(R.string.update_install_version, update.version) else stringResource(R.string.update_check_now),
-      onClick = if (update != null) viewModel::install else viewModel::checkNow,
-      style = if (update != null) FluidButtonStyle.Tinted else FluidButtonStyle.Plain,
-      enabled = !state.checking && !state.installing,
-      loading = state.checking,
-      fillWidth = true,
-      modifier = Modifier.fillMaxWidth(),
-    )
+fun UpdateUiState.toFluidUpdateState(): FluidUpdateUiState {
+  val release = available?.toFluidUpdateRelease()
+  return when {
+    release != null && needsPermission -> FluidUpdateUiState.NeedsPermission(release)
+    release != null && install != null -> install.toFluidUpdateState(release)
+    checking -> FluidUpdateUiState.Checking
+    release != null -> FluidUpdateUiState.Available(release)
+    checkFailed -> FluidUpdateUiState.CheckFailed()
+    lastCheckedAt > 0L -> FluidUpdateUiState.UpToDate
+    else -> FluidUpdateUiState.Idle
   }
 }
 
 /**
- * Il primo paragrafo del changelog, senza il Markdown: nel changelog dello store il grassetto serve,
- * in una riga di quattro righe al massimo sono solo asterischi.
+ * Informazioni → Aggiornamenti: sono le righe dell'engine (`fluidUpdateSection`) — il controllo e
+ * l'installazione sono la stessa riga, «controllato 5 minuti fa», le beta come interruttore. Qui si
+ * fa solo il collegamento col controllore dell'app: lo stato, i due tocchi, il canale.
+ *
+ * La versione installata non e' una riga di questa sezione: sta sopra, con quella dell'engine.
  */
-private fun changelogSummary(changelog: String): String =
-  changelog.replace("**", "").split(Regex("\\n\\s*\\n")).firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+fun LazyListScope.updatesSection(
+  state: UpdateUiState,
+  viewModel: UpdateViewModel,
+  strings: FluidUpdateStrings,
+) {
+  fluidUpdateSection(
+    state = state.toFluidUpdateState(),
+    onCheck = viewModel::checkNow,
+    onInstall = viewModel::install,
+    lastCheckedAtMillis = state.lastCheckedAt.takeIf { it > 0L },
+    channel = if (state.beta) UpdateChannel.BETA else UpdateChannel.STABLE,
+    onChannelChange = { viewModel.setBeta(it == UpdateChannel.BETA) },
+    channelStyle = FluidUpdateChannelStyle.BetaToggle,
+    supported = state.supported,
+    strings = strings,
+  )
+}

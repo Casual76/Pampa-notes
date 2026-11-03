@@ -1622,4 +1622,40 @@
   <string name="tailscale_turning_on">Accendo…</string>
   <string name="tailscale_open">Apri Tailscale</string>
   <string name="tailscale_install">Installa Tailscale</string>
+
+  <!-- Engine 3.0: le parole delle sezioni dell'engine (aspetto, aggiornamenti, ricerca nella pagina) -->
+  <string name="appearance_theme_system_detail">Segue le impostazioni del telefono.</string>
+  <string name="appearance_accent">Accento</string>
+  <string name="update_up_to_date_detail">Nessuna versione più recente sul canale scelto.</string>
+  <string name="update_check_failed_title">Controllo non riuscito</string>
+  <string name="update_failed_title">Aggiornamento non riuscito</string>
+  <string name="update_updating">Aggiornamento in corso\u2026</string>
+  <string name="update_available_message">C\u2019\u00e8 una versione nuova da installare (%1$s).</string>
+  <string name="update_available_message_unsized">C\u2019\u00e8 una versione nuova da installare.</string>
+  <string name="update_skip">Salta questa versione</string>
+  <string name="update_whats_new">Novit\u00e0</string>
+  <string name="update_checked_now">Controllato adesso</string>
+  <string name="update_checked_yesterday">Controllato ieri</string>
+  <plurals name="update_checked_minutes">
+    <item quantity="one">Controllato %d minuto fa</item>
+    <item quantity="other">Controllato %d minuti fa</item>
+  </plurals>
+  <plurals name="update_checked_hours">
+    <item quantity="one">Controllato %d ora fa</item>
+    <item quantity="other">Controllato %d ore fa</item>
+  </plurals>
+  <plurals name="update_checked_days">
+    <item quantity="one">Controllato %d giorno fa</item>
+    <item quantity="other">Controllato %d giorni fa</item>
+  </plurals>
+  <string name="session_search_counter_spoken">%1$d di %2$d</string>
+  <string name="session_search_clear">Svuota il campo</string>
+  <string name="licenses_title">Licenze e crediti</string>
+  <string name="licenses_note">Pampa Notes è software libero (GPL-3.0): i sorgenti sono su github.com/Casual76/Pampa-notes. Il Fluid Engine %1$s include queste opere di terze parti, fra cui codice GPL-3.0 (LibrePods), e l’app si distribuisce con la stessa licenza. Le licenze complete sono nel repository dell’engine, in LICENSES/.</string>
+  <string name="markdown_code_label">codice</string>
+  <string name="markdown_copy">copia</string>
+  <string name="markdown_copied">copiato</string>
+  <string name="markdown_copy_description">Copia il codice</string>
+  <string name="markdown_code_block_description">Blocco di %1$s</string>
+  <string name="player_scrubber_spoken">%1$s di %2$s</string>
 </resources>

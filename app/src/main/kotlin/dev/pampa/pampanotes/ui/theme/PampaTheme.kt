@@ -1,7 +1,6 @@
 package dev.pampa.pampanotes.ui.theme
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
@@ -79,7 +78,7 @@ fun PampaTheme(
  */
 @Composable
 private fun rememberAnimatedAccent(target: AccentPreset): AccentPreset {
-  val light by animateColorAsState(target.light, tween(FluidMotion.DurationExpand), label = "pampaAccentLight")
-  val dark by animateColorAsState(target.dark, tween(FluidMotion.DurationExpand), label = "pampaAccentDark")
+  val light by animateColorAsState(target.light, FluidMotion.color(FluidMotion.DurationExpand), label = "pampaAccentLight")
+  val dark by animateColorAsState(target.dark, FluidMotion.color(FluidMotion.DurationExpand), label = "pampaAccentDark")
   return target.copy(light = light, dark = dark)
 }

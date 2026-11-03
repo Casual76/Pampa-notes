@@ -13,6 +13,18 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.unit.dp
+import dev.pampa.pampanotes.ui.common.rememberAppearanceStrings
+import dev.pampa.pampanotes.ui.common.rememberUpdateStrings
+import dev.pampa.pampanotes.ui.theme.PampaNotesBrand
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import dev.antigravity.fluidengine.ui.fluid.FluidSlider
+import dev.antigravity.fluidengine.ui.fluid.fluidLicensesSection
+import dev.antigravity.fluidengine.ui.fluid.fluidAppearanceSection
+import dev.antigravity.fluidengine.ui.fluid.FluidUpdateStrings
+import dev.antigravity.fluidengine.ui.fluid.FluidAppearanceStrings
+import dev.antigravity.fluidengine.ui.fluid.FluidChoiceRow
+import dev.antigravity.fluidengine.ui.fluid.FluidToggleRow
 import dev.antigravity.fluidengine.ui.fluid.FluidChip
 import dev.pampa.pampanotes.core.audio.ChunkPolicy
 import dev.pampa.pampanotes.core.transcription.CompanionSaveResult
@@ -31,7 +43,6 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.antigravity.fluidengine.foundation.EngineBuild
@@ -56,7 +67,6 @@ import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
 import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.BuildConfig
 import dev.pampa.pampanotes.R
-import dev.pampa.pampanotes.ui.common.LiquidSlider
 import dev.pampa.pampanotes.ui.common.rememberDraft
 import dev.pampa.pampanotes.ui.common.UpdateViewModel
 import dev.pampa.pampanotes.ui.common.updatesSection
@@ -66,7 +76,6 @@ import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.RefinementPreset
 import dev.pampa.pampanotes.core.settings.SpeakerSeparation
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
-import dev.pampa.pampanotes.ui.common.RowIcon
 import dev.pampa.pampanotes.ui.common.jobErrorText
 import dev.pampa.pampanotes.ui.export.ExportChoices
 import androidx.compose.material.icons.Icons
@@ -213,6 +222,17 @@ private fun PreferencesSectionRoute(
   // «Computer di casa, avanzate» aperto o chiuso: resta com'era tornando indietro da un'altra pagina.
   var advancedOpen by rememberSaveable { mutableStateOf(false) }
 
+  // Le parole dei pezzi dell'engine, nella lingua dell'app.
+  val appearanceStrings = rememberAppearanceStrings()
+  val updateStrings = rememberUpdateStrings()
+  val subjectNote = stringResource(R.string.settings_subject_accent_detail)
+  val licensesTitle = stringResource(R.string.licenses_title)
+  val licensesNote = stringResource(R.string.licenses_note, EngineBuild.VERSION)
+  // Android chiede il permesso di installare una volta: di ritorno dalle sue impostazioni l'installazione riparte.
+  if (section == SettingsSection.ABOUT) {
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { updates.onResume() }
+  }
+
   if (section == SettingsSection.REFINEMENT) {
     LaunchedEffect(Unit) { viewModel.loadRefinementModels() }
   }
@@ -261,8 +281,19 @@ private fun PreferencesSectionRoute(
         viewModel = viewModel,
       )
       SettingsSection.REFINEMENT -> refinementSection(settings = settings, services = services, viewModel = viewModel)
-      SettingsSection.APPEARANCE -> appearanceSection(engine = engine, viewModel = viewModel)
-      SettingsSection.ABOUT -> aboutSection(update, updates)
+      SettingsSection.APPEARANCE -> appearanceSection(
+        engine = engine,
+        strings = appearanceStrings,
+        subjectNote = subjectNote,
+        viewModel = viewModel,
+      )
+      SettingsSection.ABOUT -> aboutSection(
+        update = update,
+        updates = updates,
+        updateStrings = updateStrings,
+        licensesTitle = licensesTitle,
+        licensesNote = licensesNote,
+      )
       SettingsSection.EXPORT -> exportSection(defaults = exportDefaults, viewModel = viewModel)
       // Hanno una pagina loro, e qui non ci si arriva mai.
       SettingsSection.BACKUP, SettingsSection.STORAGE, SettingsSection.SYNC, SettingsSection.SHARES, SettingsSection.GUESTS,
@@ -313,8 +344,7 @@ private fun LazyListScope.servicesSection(
       onValueChange = onGroqKeyChange,
       label = stringResource(R.string.settings_groq_key),
       placeholder = "gsk_…",
-      visualTransformation = PasswordVisualTransformation(),
-      keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+      secret = true,
       supportingText = stringResource(R.string.settings_groq_key_hint),
       modifier = Modifier.fillMaxWidth(),
     )
@@ -362,7 +392,8 @@ private fun LazyListScope.servicesSection(
       FluidListRow(
         title = stringResource(R.string.install_title),
         subtitle = stringResource(R.string.install_row_detail),
-        leading = { RowIcon(Icons.Rounded.InstallDesktop, FluidTone.Primary) },
+        tone = FluidTone.Primary,
+        leading = { Icon(Icons.Rounded.InstallDesktop, contentDescription = null) },
         onClick = onInstall,
       )
     }
@@ -395,7 +426,7 @@ private fun LazyListScope.servicesSection(
       onValueChange = onEndpointTokenChange,
       label = stringResource(R.string.settings_endpoint_token),
       placeholder = stringResource(R.string.settings_endpoint_token_hint),
-      visualTransformation = PasswordVisualTransformation(),
+      secret = true,
       modifier = Modifier.fillMaxWidth(),
     )
   }
@@ -473,20 +504,19 @@ private fun LazyListScope.transcriptionSection(
   }
   item {
     FluidListGroup {
-      FluidListRow(
+      FluidToggleRow(
         title = stringResource(R.string.settings_custom_only),
         subtitle = stringResource(if (settings.hasEndpoint || settings.customOnly) R.string.settings_custom_only_detail else R.string.storage_archive_no_endpoint),
-        badge = {
-          FluidSwitch(checked = settings.customOnly, onCheckedChange = viewModel::setCustomOnly, enabled = settings.hasEndpoint || settings.customOnly)
-        },
+        checked = settings.customOnly,
+        onCheckedChange = viewModel::setCustomOnly,
+        enabled = settings.hasEndpoint || settings.customOnly,
       )
       FluidListDivider()
-      FluidListRow(
+      FluidToggleRow(
         title = stringResource(R.string.settings_auto_transcribe),
         subtitle = stringResource(R.string.settings_auto_transcribe_detail),
-        badge = {
-          FluidSwitch(checked = settings.autoTranscribeOnImport, onCheckedChange = viewModel::setAutoTranscribe)
-        },
+        checked = settings.autoTranscribeOnImport,
+        onCheckedChange = viewModel::setAutoTranscribe,
       )
     }
   }
@@ -684,10 +714,11 @@ private fun CustomChunkPicker(settings: PampaSettings, viewModel: SettingsViewMo
     else -> minutes?.let { stringResource(R.string.settings_custom_chunk_title, it) } ?: stringResource(R.string.settings_custom_chunk_whole)
   }
   FluidListGroup {
-    FluidListRow(
+    FluidToggleRow(
       title = stringResource(R.string.settings_custom_chunk_auto),
       subtitle = stringResource(R.string.settings_custom_chunk_auto_detail),
-      badge = { FluidSwitch(checked = auto, onCheckedChange = viewModel::setCustomChunkAuto) },
+      checked = auto,
+      onCheckedChange = viewModel::setCustomChunkAuto,
     )
     FluidListDivider()
     Column(
@@ -705,13 +736,15 @@ private fun CustomChunkPicker(settings: PampaSettings, viewModel: SettingsViewMo
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
-      // Il vetro di Kyant, non lo slider dell'engine: maniglia bianca che si fa lente sotto il dito.
-      LiquidSlider(
+      // Lo slider dell'engine, a gradini: maniglia bianca che si fa lente sotto il dito, e un colpo solo
+      // quando si posa su una fermata (prima era un tick a ogni scatto).
+      FluidSlider(
         value = index,
         onValueChange = { index = it },
         valueRange = 0f..CHUNK_STOPS.lastIndex.toFloat(),
         enabled = !auto,
-        snap = { it.roundToInt().toFloat() },
+        snapValues = CHUNK_STOP_POSITIONS,
+        snapThreshold = 1f,
         onValueChangeFinished = { viewModel.setCustomMaxMinutes(chunkMinutesAt(index.roundToInt())) },
         contentDescription = stringResource(R.string.settings_custom_chunk_slider),
         stateDescription = title,
@@ -722,6 +755,9 @@ private fun CustomChunkPicker(settings: PampaSettings, viewModel: SettingsViewMo
 
 /** Le fermate dello slider: 10–120 minuti a passi di cinque, e in fondo null = intera. */
 private val CHUNK_STOPS: List<Int?> = (10..120 step 5).toList() + listOf(null)
+
+/** Le posizioni delle fermate sullo slider: una per fermata, e la maniglia si posa sempre su una. */
+private val CHUNK_STOP_POSITIONS: List<Float> = CHUNK_STOPS.indices.map { it.toFloat() }
 
 private fun chunkMinutesAt(index: Int): Int? = CHUNK_STOPS[index.coerceIn(0, CHUNK_STOPS.lastIndex)]
 
@@ -862,9 +898,6 @@ private fun LazyListScope.vramSection(companion: CompanionUiState, viewModel: Se
 
   item { FluidSectionHeader(title = stringResource(R.string.settings_vram_model)) }
   item {
-    val chosen: @Composable () -> Unit = {
-      FluidStatusBadge(label = stringResource(R.string.settings_model_chosen), tone = FluidTone.Success)
-    }
     // Un modello scelto sul computer che non e' fra i tre (un «large-v3-turbo») resta visibile:
     // sparire vorrebbe dire far credere che sia stato cambiato.
     val known = vramModels.map { it.first }
@@ -872,11 +905,11 @@ private fun LazyListScope.vramSection(companion: CompanionUiState, viewModel: Se
     FluidListGroup {
       models.forEachIndexed { index, (model, detail) ->
         if (index > 0) FluidListDivider()
-        FluidListRow(
+        FluidChoiceRow(
           title = model,
           subtitle = stringResource(detail),
-          modifier = Modifier.fluidRowPressable(onClick = { viewModel.updateCompanionDraft { it.copy(model = model) } }),
-          badge = if (draft.model == model) chosen else null,
+          selected = draft.model == model,
+          onSelect = { viewModel.updateCompanionDraft { it.copy(model = model) } },
         )
       }
     }
@@ -970,26 +1003,23 @@ private fun LazyListScope.refinementSection(
   }
 
   item {
-    val chosen: @Composable () -> Unit = {
-      FluidStatusBadge(label = stringResource(R.string.settings_model_chosen), tone = FluidTone.Success)
-    }
     FluidListGroup {
-      FluidListRow(
+      FluidChoiceRow(
         title = stringResource(R.string.settings_model_auto),
         subtitle = services.refinementAuto?.let { stringResource(R.string.settings_model_auto_detail, it) }
           ?: stringResource(R.string.settings_refinement_model_detail),
-        modifier = Modifier.fluidRowPressable(onClick = { viewModel.setRefinementModel("") }),
-        badge = if (settings.refinementModel.isBlank()) chosen else null,
+        selected = settings.refinementModel.isBlank(),
+        onSelect = { viewModel.setRefinementModel("") },
       )
       services.refinementModels.forEach { model ->
         FluidListDivider()
-        FluidListRow(
+        FluidChoiceRow(
           // Il nome del modello e' gia' tutto quello che c'e' da dire: «openai/gpt-oss-120b» non
           // ha un sottotitolo che non sia una ripetizione.
           title = model.substringAfterLast('/'),
           subtitle = model,
-          modifier = Modifier.fluidRowPressable(onClick = { viewModel.setRefinementModel(model) }),
-          badge = if (settings.refinementModel == model) chosen else null,
+          selected = settings.refinementModel == model,
+          onSelect = { viewModel.setRefinementModel(model) },
         )
       }
     }
@@ -1017,50 +1047,37 @@ private fun LazyListScope.exportSection(defaults: ExportOptions, viewModel: Sett
 // Aspetto
 // -------------------------------------------------------------------------------------------------
 
-private fun LazyListScope.appearanceSection(engine: EngineSettings, viewModel: SettingsViewModel) {
-  item {
-    val themeLabels = mapOf(
-      ThemeMode.SYSTEM to stringResource(R.string.theme_system),
-      ThemeMode.LIGHT to stringResource(R.string.theme_light),
-      ThemeMode.DARK to stringResource(R.string.theme_dark),
-      ThemeMode.AMOLED to stringResource(R.string.theme_amoled),
-    )
-    FluidSegmentedControl(
-      options = ThemeMode.entries.toList(),
-      selected = engine.themeMode,
-      onSelect = viewModel::setThemeMode,
-      label = { themeLabels.getValue(it) },
-    )
-  }
-  item {
-    FluidListGroup {
-      FluidListRow(
-        title = stringResource(R.string.settings_dynamic_color),
-        subtitle = stringResource(R.string.settings_dynamic_color_detail),
-        badge = { FluidSwitch(checked = engine.dynamicColorEnabled, onCheckedChange = viewModel::setDynamicColor) },
-      )
-      FluidListDivider()
-      FluidListRow(
-        title = stringResource(R.string.settings_amoled),
-        subtitle = stringResource(R.string.settings_amoled_detail),
-        badge = { FluidSwitch(checked = engine.amoledEnabled, onCheckedChange = viewModel::setAmoled) },
-      )
-      FluidListDivider()
-      FluidListRow(
-        title = stringResource(R.string.settings_haptics),
-        subtitle = stringResource(R.string.settings_haptics_detail),
-        badge = { FluidSwitch(checked = engine.hapticsEnabled, onCheckedChange = viewModel::setHaptics) },
-      )
-    }
-  }
-  item { FluidSectionFootnote(text = stringResource(R.string.settings_subject_accent_detail)) }
+private fun LazyListScope.appearanceSection(
+  engine: EngineSettings,
+  strings: FluidAppearanceStrings,
+  subjectNote: String,
+  viewModel: SettingsViewModel,
+) {
+  // La sezione e' dell'engine: tema (con «nero pieno» come interruttore, che prima era anche una quarta
+  // voce del selettore), accento e vibrazione, gia' mappati su `EngineSettings`. L'accento offre il marchio e
+  // i colori di sistema, cioe' quello che faceva l'interruttore «Colori dallo sfondo»: i sei colori di
+  // `pampaAccentPresets` non sono nel selettore (`presets = emptyList()`), e la materia vince solo con il marchio.
+  fluidAppearanceSection(
+    settings = engine,
+    onSettingsChange = viewModel::setEngineSettings,
+    brand = PampaNotesBrand,
+    presets = emptyList(),
+    strings = strings,
+    footnote = subjectNote,
+  )
 }
 
 // -------------------------------------------------------------------------------------------------
 // Informazioni
 // -------------------------------------------------------------------------------------------------
 
-private fun LazyListScope.aboutSection(update: UpdateUiState, updates: UpdateViewModel) {
+private fun LazyListScope.aboutSection(
+  update: UpdateUiState,
+  updates: UpdateViewModel,
+  updateStrings: FluidUpdateStrings,
+  licensesTitle: String,
+  licensesNote: String,
+) {
   item {
     FluidListGroup {
       FluidListRow(
@@ -1070,5 +1087,8 @@ private fun LazyListScope.aboutSection(update: UpdateUiState, updates: UpdateVie
       )
     }
   }
-  updatesSection(update, updates)
+  updatesSection(update, updates, updateStrings)
+  // Dalla 3.0 l'engine porta codice GPL-3.0 (LibrePods) e l'app si distribuisce con la stessa licenza: la
+  // pagina lo dice, con le parole dell'app e con dove stanno i sorgenti.
+  fluidLicensesSection(title = licensesTitle, footnote = licensesNote)
 }

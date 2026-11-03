@@ -145,18 +145,12 @@ class SettingsViewModel @Inject constructor(
   }
 
   // --- Aspetto ---
-  fun setThemeMode(mode: ThemeMode) = viewModelScope.launch { engineSettingsStore.setThemeMode(mode) }
-  fun setDynamicColor(enabled: Boolean) = viewModelScope.launch {
-    engineSettingsStore.setDynamicColorEnabled(enabled)
-    // L'interruttore da solo non basta: con accentMode BRAND il marchio vince comunque, e
-    // l'interruttore sembrerebbe rotto.
-    engineSettingsStore.setAccentMode(
-      if (enabled) dev.antigravity.fluidengine.foundation.AccentMode.DYNAMIC
-      else dev.antigravity.fluidengine.foundation.AccentMode.BRAND,
-    )
-  }
-  fun setAmoled(enabled: Boolean) = viewModelScope.launch { engineSettingsStore.setAmoledEnabled(enabled) }
-  fun setHaptics(enabled: Boolean) = viewModelScope.launch { engineSettingsStore.setHapticsEnabled(enabled) }
+  /**
+   * L'aspetto e' la sezione dell'engine, che consegna le impostazioni intere e nuove: tema, nero pieno,
+   * accento (marchio o colori di sistema) e vibrazione, con le regole fra loro (`FluidAppearance`) che
+   * qui non si riscrivono. Le preferenze salvate non cambiano formato.
+   */
+  fun setEngineSettings(next: EngineSettings) = viewModelScope.launch { engineSettingsStore.update { next } }
 
   // --- Groq ---
   /**
