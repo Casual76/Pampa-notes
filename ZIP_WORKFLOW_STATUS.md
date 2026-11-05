@@ -90,6 +90,20 @@ Configurazione autorizzata: GPT-6.1 Sol, reasoning high, due implementatori e du
 - Engine doctor passato (3.0.5 pulito). APK aggiornato installato sul solo emulator-5580 senza cancellare dati. Versione app invariata 1.1.2/17.
 - Nuove review indipendenti di chiusura da avviare sulla versione congelata. Main ancora a 7e66664; l'unica modifica locale preesistente resta la cancellazione della cache Python.
 
+## Quinto giro
+
+- Due review sullo snapshot 51c7926 completate: i precedenti difetti risultano chiusi; restano P1 alias audio saltato quando la sessione marcata è già condivisa e P2 ricerca globale che può mostrare una storia diversa dalla trascrizione aperta.
+- Correzioni del parent: figli marcati riconciliati anche nelle sessioni già riconosciute, nessun alias della sessione verso se stessa, guardia per lavori attivi quando cambiano solo gli ID audio. Audio locale assente dall'aggiornamento della sessione condivisa conservato.
+- Ricerca FTS limitata alla trascrizione effettivamente visibile aprendo la sessione, con selezione esplicita o fallback RAW più recente; il limite dei risultati si applica dopo il filtro. Restano memorizzate le storie alternative.
+- Nuove regressioni JVM e Room per vecchi ID ordinali → nuovo re-export nativo, reimportazioni ripetute, conservazione dei file/tempi e blocco dei lavori attivi. Regressioni Room per ricerca dopo aggiornamento bundle, RAW/raffinata selezionati e fallback.
+- Verifica integrata in corso su emulator-5580, log %TEMP%/pampa-zip-round5-gradle.log. Nessun gate di approvazione ancora passato.
+
+## Verifica finale del quinto giro
+
+- Snapshot funzionale 18afd60: riconciliazione dei figli indipendente dall'alias della sessione, aggiornamenti delle sessioni condivise solo testuali, guardia dei lavori attivi e ricerca FTS del testo visibile.
+- Build assembleDebug, lintDebug, 806 test JVM core, 25 test JVM app e 116 test Android core passati. Log %TEMP%/pampa-zip-round5-final-gradle.log, BUILD SUCCESSFUL in 2m53s. Le nuove query FTS sono state eseguite nel database Android reale, anche dopo importazione e aggiornamento di uno ZIP con storie conservate.
+- Da sottoporre a due nuove review indipendenti prima dell'integrazione in main. App/engine/schema restano 1.1.2-17 / 3.0.5 / 13.
+
 ## Prossime azioni
 
 1. Congelare la versione e avviare due nuove review indipendenti; correggere ogni rilievo confermato, senza limite di giri autorizzato dall'utente.
