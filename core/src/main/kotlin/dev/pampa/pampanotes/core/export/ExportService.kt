@@ -470,6 +470,8 @@ class ExportService @Inject constructor(
 
   private suspend fun gatherNote(note: NoteEntity, folderPath: List<String>, options: ExportOptions): ExportNote {
     val sessionRows = sessions.byNote(note.id)
+    val versionsBySession = sessionRows.associate { it.session.id to transcripts.bySession(it.session.id) }
+    val segmentsByTranscript = versionsBySession.values.flatten().associate { it.id to segments.byTranscript(it.id) }
     val gatheredSessions = sessionRows.mapIndexed { index, row ->
       val ordered = row.partsSorted
       var offset = 0L
@@ -487,9 +489,9 @@ class ExportService @Inject constructor(
         )
       }
 
-      val versions = transcripts.bySession(row.session.id)
-      // La piu' recente: con due grezze (due dispositivi insieme) la prima dell'elenco era la piu' vecchia.
-      val raw = dev.pampa.pampanotes.core.repo.RawTranscripts.newest(versions)
+      val versions = versionsBySession.getValue(row.session.id)
+      // Text, words and segment timings follow the selected RAW or the selected refinement's parent.
+      val raw = dev.pampa.pampanotes.core.repo.RawTranscripts.forSelection(versions, row.session.activeTranscriptId)
       val chosen = when (options.transcript) {
         TranscriptChoice.RAW -> raw
         // La migliore: quella che l'utente sta guardando nell'app, altrimenti la grezza. Esportare
@@ -505,7 +507,7 @@ class ExportService @Inject constructor(
         parts = parts,
         transcript = chosen,
         raw = raw,
-        segments = raw?.let { segments.byTranscript(it.id) }.orEmpty(),
+        segments = raw?.let { segmentsByTranscript[it.id] }.orEmpty(),
         voiceNames = VoiceNames.decode(row.session.voiceNames),
       )
     }
@@ -527,8 +529,8 @@ class ExportService @Inject constructor(
         note = note, tags = tags.tags(note.id),
         sessions = sessionRows.map { it.session.copy(transcribingOn = null, transcribingSince = null) },
         parts = sessionRows.flatMap { it.partsSorted }.map { it.copy(archivedAt = 0) },
-        transcripts = sessionRows.flatMap { transcripts.bySession(it.session.id) },
-        segments = sessionRows.flatMap { transcripts.bySession(it.session.id) }.flatMap { segments.byTranscript(it.id) },
+        transcripts = versionsBySession.values.flatten(),
+        segments = segmentsByTranscript.values.flatten(),
         sources = allSources.map { it.copy(archivedAt = 0) },
       ),
       handwriting = pages.mapIndexed { index, page ->

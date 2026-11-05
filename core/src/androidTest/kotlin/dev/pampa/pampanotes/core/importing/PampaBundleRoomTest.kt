@@ -9,6 +9,14 @@ import dev.pampa.pampanotes.core.export.*
 import dev.pampa.pampanotes.core.files.AppFiles
 import java.io.File
 import java.util.UUID
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
+import dev.pampa.pampanotes.core.transcription.SessionAssembler
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import kotlinx.coroutines.test.runTest
 import org.junit.*
 import org.junit.Assert.*
@@ -92,9 +100,9 @@ class PampaBundleRoomTest {
     return PampaBundleNote(NoteEntity("note", "folder", "Title", "Base\nMiddle\nEnd", createdAt = 1, updatedAt = 2), sessions = sessions, parts = parts, transcripts = transcripts, segments = segments)
   }
 
-  private fun archive(graph: PampaBundleNote, includeAudio: Boolean = true): File {
+  private fun archive(graph: PampaBundleNote, includeAudio: Boolean = true, content: (AudioPartEntity) -> ByteArray = { byteArrayOf(1, 2, 3) }): File {
     val input = File(directory, "incoming").also { it.mkdirs() }
-    graph.parts.forEach { File(input, it.fileName).writeBytes(byteArrayOf(1, 2, 3)) }
+    graph.parts.forEach { File(input, it.fileName).writeBytes(content(it)) }
     val sessions = graph.sessions.mapIndexed { index, s ->
       val chosen = graph.transcripts.firstOrNull { it.id == s.activeTranscriptId }
       val raw = if (chosen?.kind == TranscriptKind.RAW) chosen else graph.transcripts.firstOrNull { it.id == chosen?.parentId }
@@ -185,6 +193,76 @@ class PampaBundleRoomTest {
     } catch (_: IllegalArgumentException) { }
     assertEquals("foreign", db.audioParts().get("B")!!.sessionId)
     assertEquals(listOf("A"), db.audioParts().bySession("s").map { it.id })
+    assertEquals(before, files.audio.listFiles()!!.map { it.name }.toSet())
+  }
+
+  private fun wav(milliseconds: Int): ByteArray {
+    val dataBytes = milliseconds * 16 // 8kHz mono PCM16, small test fixtures only.
+    return ByteBuffer.allocate(44 + dataBytes).order(ByteOrder.LITTLE_ENDIAN).apply {
+      put("RIFF".toByteArray()); putInt(36 + dataBytes); put("WAVEfmt ".toByteArray()); putInt(16)
+      putShort(1); putShort(1); putInt(8000); putInt(16000); putShort(2); putShort(16)
+      put("data".toByteArray()); putInt(dataBytes)
+    }.array()
+  }
+
+  private fun unknownDurationGraph(): PampaBundleNote = graph("s" to listOf("A", "B")).let { n ->
+    n.copy(parts = n.parts.map { it.copy(fileName = "${it.id}.wav", originalName = "${it.id}.wav", durationMs = 0) },
+      transcripts = emptyList(), segments = emptyList(), sessions = n.sessions.map { it.copy(activeTranscriptId = null) })
+  }
+
+  private fun legacy(file: File, schema: Int): File = File(directory, "legacy-$schema-${UUID.randomUUID()}.zip").also { target ->
+    ZipFile(file).use { source -> ZipOutputStream(target.outputStream()).use { output ->
+      source.entries().asSequence().filterNot { it.isDirectory || it.name.endsWith("/native.json") }.forEach { entry ->
+        output.putNextEntry(ZipEntry(entry.name))
+        if (entry.name.endsWith("/manifest.json")) {
+          val manifest = source.getInputStream(entry).use { Json.decodeFromString(ExportManifest.serializer(), it.readBytes().toString(Charsets.UTF_8)) }
+          output.write(Json.encodeToString(manifest.copy(schema = schema, nativeFile = null)).toByteArray())
+        } else source.getInputStream(entry).use { it.copyTo(output) }
+        output.closeEntry()
+      }
+    } }
+  }
+
+  @Test fun legacy_included_wavs_have_real_player_duration_offsets_and_native_reexport_metadata() = runTest {
+    for (schema in listOf(1, 2)) {
+      val source = archive(unknownDurationGraph(), content = { wav(if (it.id == "A") 1000 else 2000) })
+      val input = legacy(source, schema)
+      assertTrue(PampaBundleArchive.read(input).data.notes.single().parts.all { it.durationMs == 0L })
+      importer.import(input)
+      val session = db.sessions().plainByNote("note").single()
+      val parts = db.audioParts().bySession(session.id)
+      assertEquals(listOf(1000L, 2000L), parts.map { it.durationMs })
+      assertEquals(listOf(0, 1), parts.map { it.position })
+      assertTrue(parts.all { it.mime.startsWith("audio/") && files.audioFile(it.fileName).isFile })
+      val timeline = parts.map { SessionAssembler.Part(it.id, it.durationMs) }
+      assertEquals(3000L, SessionAssembler.totalDurationMs(timeline))
+      assertEquals(1000L, SessionAssembler.offsets(timeline).getValue(parts[1].id))
+      assertEquals(SessionAssembler.Position(1, parts[1].id, 250), SessionAssembler.locate(timeline, 1250))
+      val reexport = PampaBundleArchive.read(archive(storedGraph(), includeAudio = false)).data.notes.single()
+      assertEquals(listOf(1000L, 2000L), reexport.parts.map { it.durationMs })
+      assertTrue(reexport.attachments.all { it.path == null })
+    }
+  }
+
+  @Test fun native_included_unknown_duration_is_probed_but_omitted_files_stay_missing() = runTest {
+    val input = unknownDurationGraph()
+    importer.import(archive(input, content = { wav(if (it.id == "A") 1000 else 2000) }))
+    assertEquals(listOf(1000L, 2000L), db.audioParts().bySession("s").map { it.durationMs })
+    val copy = importer.import(archive(input, includeAudio = false), updateExisting = false)
+    val copiedSession = db.sessions().plainByNote(copy.noteIds.single()).single()
+    val missing = db.audioParts().bySession(copiedSession.id)
+    assertEquals(2, missing.size)
+    assertTrue(missing.all { it.durationMs == 0L && it.archivedAt == 0L && !files.audioFile(it.fileName).exists() })
+  }
+
+  @Test fun unknown_duration_probe_failure_rolls_back_staged_files_before_database_writes() = runTest {
+    val input = unknownDurationGraph()
+    val before = files.audio.listFiles()!!.map { it.name }.toSet()
+    try {
+      importer.import(archive(input)) // Invalid media bytes with unknown duration.
+      fail("Expected probe failure")
+    } catch (_: IllegalArgumentException) { }
+    assertEquals(0, db.notes().count())
     assertEquals(before, files.audio.listFiles()!!.map { it.name }.toSet())
   }
 }

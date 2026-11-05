@@ -12,7 +12,11 @@ import javax.inject.Singleton
 import kotlinx.coroutines.*
 
 @Singleton
-class PampaBundleImporter @Inject constructor(private val db: PampaDatabase, private val files: AppFiles) {
+class PampaBundleImporter @Inject constructor(
+  private val db: PampaDatabase,
+  private val files: AppFiles,
+  private val audioProbe: PampaBundleAudioProbe = PampaBundleAudioProbe(),
+) {
   suspend fun inspect(file: File): PampaBundlePreview = withContext(Dispatchers.IO) {
     val ctx = currentCoroutineContext()
     val read = PampaBundleArchive.read(file) { ctx.ensureActive() }
@@ -53,10 +57,11 @@ class PampaBundleImporter @Inject constructor(private val db: PampaDatabase, pri
         }
       }
       checkpoint()
+      val measured = completeAudioMetadata(data, stored, checkpoint)
       // Keep the commit result and cleanup decision in one cancellation-safe boundary.
       withContext(NonCancellable) {
         val result = db.withTransaction {
-          persist(data, intoFolderId, stored, checkpoint) { p, title -> onProgress(0.7f + 0.3f * p, title) }
+          persist(measured, intoFolderId, stored, checkpoint) { p, title -> onProgress(0.7f + 0.3f * p, title) }
         }
         committed = true
         result.copy(warnings = read.warnings)
@@ -65,6 +70,26 @@ class PampaBundleImporter @Inject constructor(private val db: PampaDatabase, pri
       if (!committed) staged.forEach { it.delete() }
     }
   }
+
+  /** Legacy files have no duration metadata. Probe only verified, included files, before Room
+   * writes. Keep known native durations so exact exported timing is never replaced by a rounded
+   * container estimate. PampaBundleMerge rebases segments against the completed part sequence. */
+  internal fun completeAudioMetadata(
+    data: PampaBundleData,
+    stored: Map<Pair<Boolean, String>, String>,
+    checkpoint: () -> Unit = {},
+  ): PampaBundleData = data.copy(notes = data.notes.map { note ->
+    note.copy(parts = note.parts.map { part ->
+      checkpoint()
+      val name = stored[true to part.id]
+      if (name == null || part.durationMs > 0) part else {
+        val info = audioProbe.probe(files.audioFile(name))
+        checkpoint()
+        require(info.durationMs > 0) { "Cannot determine included audio duration: ${part.id}" }
+        part.copy(durationMs = info.durationMs, mime = info.mime?.takeIf { it.startsWith("audio/") || it == "application/ogg" } ?: "application/octet-stream")
+      }
+    })
+  })
 
   internal suspend fun persist(
     data: PampaBundleData, intoFolderId: String?, stored: Map<Pair<Boolean, String>, String>,

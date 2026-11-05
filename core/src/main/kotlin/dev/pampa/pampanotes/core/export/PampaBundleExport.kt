@@ -25,7 +25,12 @@ internal object PampaBundleExport {
       val byTranscript = native.transcripts.associateBy { it.id }
       val chosen = item.sessions.associate { session ->
         val requested = if (options.transcript == TranscriptChoice.RAW) session.raw else session.transcript
-        session.id to requested?.let { byTranscript[it.id] }
+        val selected = requested?.let { byTranscript[it.id] }
+        if (selected?.kind == TranscriptKind.REFINED && selected.parentId != null) {
+          val parent = byTranscript[selected.parentId]
+          require(parent?.kind == TranscriptKind.RAW && parent.sessionId == selected.sessionId) { "Selected refinement has no valid RAW parent" }
+        }
+        session.id to selected
       }
       val includedIds = chosen.values.filterNotNull().flatMap { t -> listOfNotNull(t.id, t.parentId) }.toSet()
       val paths = layout.of(item)
