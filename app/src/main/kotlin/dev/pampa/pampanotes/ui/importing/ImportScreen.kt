@@ -229,10 +229,10 @@ private fun androidx.compose.foundation.lazy.LazyListScope.bundleStep(
   preview.warnings.forEach { warning -> item { FluidInlineMessage(message = warning, tone = FluidTone.Warning) } }
   item {
     FluidListGroup {
-      FluidListRow(title = stringResource(R.string.import_bundle_update), onClick = { onUpdateExisting(true) },
+      FluidListRow(title = stringResource(R.string.import_bundle_update), subtitle = "", onClick = { onUpdateExisting(true) },
         badge = if (state.updateExisting) { { FluidStatusBadge(label = stringResource(R.string.import_chosen), tone = FluidTone.Primary) } } else null)
       FluidListDivider()
-      FluidListRow(title = stringResource(R.string.import_bundle_copies), onClick = { onUpdateExisting(false) },
+      FluidListRow(title = stringResource(R.string.import_bundle_copies), subtitle = "", onClick = { onUpdateExisting(false) },
         badge = if (!state.updateExisting) { { FluidStatusBadge(label = stringResource(R.string.import_chosen), tone = FluidTone.Primary) } } else null)
     }
   }
@@ -829,7 +829,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.doneStep(
       FluidListGroup {
         state.createdNotes.forEachIndexed { index, note ->
           if (index > 0) FluidListDivider()
-          FluidListRow(title = note.title, onClick = { onOpenNote(note.id) })
+          FluidListRow(title = note.title, subtitle = "", onClick = { onOpenNote(note.id) })
         }
       }
     }
