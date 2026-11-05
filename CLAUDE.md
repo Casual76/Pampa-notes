@@ -767,7 +767,7 @@ cartella di chi lo apre. Dentro, in ordine d'importanza:
 - `SKILL.md` + `instructions.md` — le regole. La `description` della skill si costruisce dai titoli
   veri delle note (una frase generica non viene scelta mai), sotto i 1024 caratteri e senza `<>`, o
   Claude rifiuta la skill.
-- `README-FOR-AI.md`, bilingue, e `manifest.json` (schema 2, con `files[]` per nota).
+- `README-FOR-AI.md`, bilingue, e `manifest.json` (schema 3, con `files[]` per nota e riferimento a `native.json`).
 - `audio/`, `sources/` se chiesti, coi nomi resi unici (`2025-10-09-01-Voce 001.m4a`): Samsung Notes
   chiama «Voce 001» la prima registrazione di ogni nota, e due voci uguali facevano fallire lo ZIP.
 
@@ -810,6 +810,23 @@ Le parole che finiscono dentro il pacchetto passano da `ExportLabels`, riempito 
 stringhe della sua lingua: i writer stanno in `:core` e non possono leggere `res/values`.
 
 ## Import
+
+**Pacchetti Pampa Notes.** Gli ZIP con manifest Pampa entrano nel percorso nativo del wizard:
+anteprima di note, aggiornamenti, audio e immagini, scelta fra aggiornare e creare copie, cartelle
+originali oppure una destinazione. `PampaBundleArchive` valida riferimenti, percorsi, dimensioni e
+impronte prima di scrivere; `PampaBundleImporter` prepara file nuovi e applica il grafo in una
+transazione Room. Il payload nativo dei nuovi ZIP porta identificatori stabili, testo, metadati,
+segmenti/parole e voci: riesportare non cambia l'identità. Il testo esportato segue la scelta
+della trascrizione; una ripulita porta anche la grezza di origine necessaria ai tempi. Gli audio
+seguono le opzioni di allegato, le pagine a mano restano contenuto. Gli ZIP precedenti conservano
+il Markdown e gli allegati disponibili, con un avviso sulle informazioni mancanti.
+
+L'aggiornamento conserva figli e allegati locali assenti dal pacchetto, riconcilia l'ordine delle
+registrazioni e ricalcola gli offset. La colonna nullable `notes.bundleBodyBase` (database 12,
+migrazione automatica 11→12) conserva l'ultimo testo importato per confrontarlo con le modifiche
+locali: segue sync e backup, si esclude dai pacchetti condivisi. Modifiche sovrapposte restano nel
+testo con marcatori di conflitto; importare di nuovo la stessa versione non le duplica. Avvisi e
+progresso sono identificatori tipizzati tradotti dall'app, non stringhe fisse del core.
 
 **Le date vere della nota.** `updatedAt` e' l'ultima modifica *vera*, non l'import: un `.sdocx` la
 porta in `end_tag.bin` (int64 in microsecondi: modifica a +8, creazione a +46; le stesse in
@@ -878,8 +895,10 @@ e non si usano. Un identificatore interno («0com.samsung») passava il filtro d
 il testo di una nota scritta tutta a mano: ora si scarta.
 
 **La stessa nota, una versione dopo.** Gli appunti si prendono in Samsung Notes e si ricondividono
-quando crescono: se il titolo e' quello di una nota gia' importata da un `.sdocx`
-(`ImportCandidate.updateOfNoteId`, cercato all'ispezione) il wizard propone «Aggiorna» per primo.
+quando crescono: si confrontano le fonti `.sdocx` originali, anche se la nota in Pampa è stata
+rinominata o unita ad altre. Titolo Unicode normalizzato, nomi senza suffissi data/ora riconosciuti
+e data di creazione intrinseca guidano il riconoscimento; un risultato ambiguo non sceglie una nota
+arbitrariamente (`ImportCandidate.updateOfNoteId`, cercato all'ispezione). Il wizard propone «Aggiorna» per primo.
 `ImportTarget.UpdateNote`: il testo si **sostituisce**, le registrazioni gia' presenti — stessa impronta, o stesso nome e stessa durata
 (`SdocxUpdate.sameRecording`: Samsung Notes riscrive l'intestazione dei file a ogni condivisione, e
 il 24/09 «Voce 002» e' rientrata come nuova, ritrascritta) — le nuove entrano una sessione per giorno di registrazione (in coda

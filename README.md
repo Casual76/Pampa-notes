@@ -9,9 +9,13 @@ ChatGPT o Gemini come fonte per riassunti, domande e ripasso.
 
 ## Cosa fa
 
-- **Importa** testo, Markdown, PDF, Word, gli archivi `.sdocx` di Samsung Notes e audio in tutti i
+- **Importa** i pacchetti ZIP condivisi da Pampa Notes, testo, Markdown, PDF, Word, gli archivi `.sdocx` di Samsung Notes e audio in tutti i
   formati comuni (m4a, mp3, wav, ogg, flac, opus). Dal selettore file, dalla condivisione di
   un'altra app, o incollando.
+- **Riceve e aggiorna note condivise**: i nuovi ZIP conservano cartelle, appunti, pagine a mano,
+  trascrizioni e tempi audio. Le registrazioni sono riproducibili quando incluse nel pacchetto;
+  i vecchi ZIP si possono importare con i limiti indicati nell'app. Una nuova versione della
+  stessa nota propone l'aggiornamento, conservando le aggiunte locali; si possono anche creare copie.
 - **Trascrive** le registrazioni con Whisper, e bene: Groq nel cloud con la tua chiave, oppure il tuo
   computer in rete locale con WhisperX (il server sta in `companion/`, sono due comandi). Un'ora di
   lezione diventa un testo con i tempi, e il lettore segue la trascrizione mentre scorre.
