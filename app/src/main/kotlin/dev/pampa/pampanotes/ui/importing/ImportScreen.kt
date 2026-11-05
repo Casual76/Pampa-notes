@@ -224,7 +224,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.bundleStep(
         preview.noteCount, preview.updateCount, preview.audioCount, preview.imageCount))
     }
   }
-  item { FluidSectionFootnote(text = preview.titles.joinToString(" ? ")) }
+  item { FluidSectionFootnote(text = preview.titles.joinToString(" · ")) }
   if (!preview.hasPreciseTimings) item { FluidSectionFootnote(text = stringResource(R.string.import_bundle_precision)) }
   preview.warnings.forEach { warning -> item { FluidInlineMessage(message = warning, tone = FluidTone.Warning) } }
   item {
