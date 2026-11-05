@@ -1,6 +1,6 @@
 # Importazione ZIP e aggiornamenti note
 
-Configurazione autorizzata: GPT-6.1 Sol, reasoning high, due implementatori e due reviewer indipendenti per fase. Concorrenza massima quattro agenti incluso l'orchestratore. Massimo tre giri di correzione dopo la review iniziale; terzo e ultimo giro in corso. Se le nuove review confermano ancora rilievi bloccanti, chiedere all'utente come proseguire senza azzerare il contatore.
+Configurazione autorizzata: GPT-6.1 Sol, reasoning high, due implementatori e due reviewer indipendenti per fase. Concorrenza massima quattro agenti incluso l'orchestratore. Tre giri iniziali consumati; l'utente ha poi autorizzato esplicitamente di continuare fino alla chiusura dei difetti, senza limite di giri. Conservare il conteggio e proseguire con le medesime review indipendenti.
 
 ## Criteri
 
@@ -71,9 +71,26 @@ Configurazione autorizzata: GPT-6.1 Sol, reasoning high, due implementatori e du
 - Prova manuale fresca dopo il terzo giro: vecchio ZIP importato, successivo ZIP nativo della stessa nota aggiornato (0 nuove/2 aggiornate), una sola sessione con due WAV da 2s. La nota mantiene il titolo aggiornato e la versione raffinata selezionata. Reimportazione del vecchio pacchetto in verifica.
 - Codice stabilizzato al commit 2005e8b; aggiornamenti successivi in questo passaggio sono soltanto documentazione. Due review finali richieste sul medesimo risultato integrato; tre giri di correzione consumati, nessuna approvazione ancora attribuita.
 
+## Review del terzo giro e prosecuzione autorizzata
+
+- Primo reviewer finale: P1 RawTimelinePlan compone storie RAW non selezionate quando coprono parti disgiunte; P1 legacy→legacy usa identità posizionali e può sostituire l'audio conservando parole di un'altra registrazione dopo riordino/rimozione. Entrambi confermati dai riferimenti del codice; nessun fix ancora applicato alla versione in review f2a4c5c.
+- Prova manuale di reimportazione del vecchio ZIP dopo upgrade nativo passata: titolo aggiornato conservato, una sessione/due parti, nessun downgrade della selezione. Non copre il riordino legacy segnalato dal reviewer.
+- L'utente ha risposto: «Continua fino alla chiusura dei difetti, senza limite di giri». Approvazione aggiuntiva acquisita; attendere il secondo report concordato, poi correggere e ripetere due review sul risultato stabilizzato. Checkout principale non ancora modificato dalle nuove funzioni.
+
+## Quarto giro autorizzato
+
+- Entrambe le review sul terzo giro concordano sui due casi: composizione di RAW alternativi non selezionati e collisioni degli ID legacy dopo riordini/rimozioni.
+- a9b468e del parent: fallback alle storie alternative soltanto in assenza di rami selezionati; regressione per selezione RAW/raffinata parziale, ricostruzione invariata e riordino. Tutti i 12 test RawTimelinePlanTest passati tramite Gradle, comprese le composizioni legittime tra sessioni.
+- 8a3a66f: identità legacy riconciliate per contenuto verificato, chiavi di staging rimappate, audio/fonti locali e versioni conservati, prove ambigue rifiutate. L'implementatore riporta 33 test JVM passati e test Room compilati standalone.
+- Verifica integrata Android/JVM/build/lint in corso sul solo emulator-5580, log %TEMP%/pampa-zip-round4-gradle.log. Nessuna approvazione ancora attribuita.
+
+## Verifica del quarto giro
+
+- Snapshot funzionale 8a3a66f: assembleDebug, lintDebug, 803 test JVM core, 25 test JVM app e 113 test Android core passati, zero fallimenti/errori. I quattro nuovi test Room verificano riordino/rimozione, nuove chiavi di staging, riordino sessioni e rollback dell'identità legacy ambigua o assente. Log %TEMP%/pampa-zip-round4-gradle.log, BUILD SUCCESSFUL in 3m21s.
+- Engine doctor passato (3.0.5 pulito). APK aggiornato installato sul solo emulator-5580 senza cancellare dati. Versione app invariata 1.1.2/17.
+- Nuove review indipendenti di chiusura da avviare sulla versione congelata. Main ancora a 7e66664; l'unica modifica locale preesistente resta la cancellazione della cache Python.
+
 ## Prossime azioni
 
-1. Integrare nel presente worktree il commit bundle quando disponibile.
-2. Compilare e verificare i flussi integrati con buildRoot separato dalle build della release.
-3. Congelare la versione da sottoporre ai due reviewer e risolvere rilievi concreti.
-4. Integrare nel checkout principale soltanto dopo conferma di fine release, conservando ogni modifica preesistente.
+1. Congelare la versione e avviare due nuove review indipendenti; correggere ogni rilievo confermato, senza limite di giri autorizzato dall'utente.
+2. Integrare nel checkout principale dopo le review, conservando ogni modifica preesistente. Nessun bump, push o rilascio richiesto per questa funzionalità.
