@@ -818,7 +818,16 @@ interface SearchDao {
   @Query("SELECT noteId, snippet(notes_fts, '[', ']', '…', -1, 14) AS snippet FROM notes_fts WHERE notes_fts MATCH :query LIMIT :limit")
   suspend fun searchNotes(query: String, limit: Int): List<NoteHit>
 
-  @Query("SELECT transcriptId, sessionId, noteId, snippet(transcripts_fts, '[', ']', '…', -1, 14) AS snippet FROM transcripts_fts WHERE transcripts_fts MATCH :query LIMIT :limit")
+  /** Search the text opening the session displays; retained alternative histories stay out. */
+  @Query("""
+    SELECT transcripts_fts.transcriptId, transcripts_fts.sessionId, transcripts_fts.noteId,
+      snippet(transcripts_fts, '[', ']', '…', -1, 14) AS snippet
+    FROM transcripts_fts JOIN sessions s ON s.id = transcripts_fts.sessionId
+    WHERE transcripts_fts MATCH :query AND transcripts_fts.transcriptId = COALESCE(
+      (SELECT selected.id FROM transcripts selected WHERE selected.id = s.activeTranscriptId AND selected.sessionId = s.id),
+      (SELECT raw.id FROM transcripts raw WHERE raw.sessionId = s.id AND raw.kind = 'RAW' ORDER BY raw.createdAt DESC, raw.id DESC LIMIT 1)
+    ) LIMIT :limit
+  """)
   suspend fun searchTranscripts(query: String, limit: Int): List<TranscriptHit>
 
   @Query("DELETE FROM notes_fts")

@@ -76,6 +76,32 @@ class PampaDatabaseTest {
   }
 
   @Test
+  fun la_ricerca_segue_il_testo_visibile_e_applica_il_limite_dopo_la_selezione() = runTest {
+    val ids = seed()
+    val original = db.transcripts().get(ids.transcriptId)!!
+    db.transcripts().upsert(original.copy(text = "alpha lesson", createdAt = 100))
+    val current = original.copy(id = "current", text = "beta lesson", createdAt = 200)
+    db.transcripts().upsert(current)
+    db.sessions().setActiveTranscript(ids.sessionId, current.id, 200)
+    assertTrue(db.search().searchTranscripts("alpha", 10).isEmpty())
+    assertEquals(listOf(current.id), db.search().searchTranscripts("lesson", 1).map { it.transcriptId })
+    assertNotNull(db.transcripts().get(original.id))
+
+    val refined = current.copy(id = "refined-current", kind = TranscriptKind.REFINED, parentId = current.id, text = "gamma lesson", createdAt = 300)
+    db.transcripts().upsert(refined)
+    db.sessions().setActiveTranscript(ids.sessionId, refined.id, 300)
+    assertTrue(db.search().searchTranscripts("beta", 10).isEmpty())
+    assertEquals(listOf(refined.id), db.search().searchTranscripts("gamma", 10).map { it.transcriptId })
+
+    for (fallback in listOf(null, "missing-selection")) {
+      db.sessions().setActiveTranscript(ids.sessionId, fallback, 400)
+      assertEquals(listOf(current.id), db.search().searchTranscripts("lesson", 1).map { it.transcriptId })
+    }
+    db.sessions().setActiveTranscript(ids.sessionId, original.id, 500)
+    assertEquals(listOf(original.id), db.search().searchTranscripts("alpha", 10).map { it.transcriptId })
+  }
+
+  @Test
   fun modificare_una_nota_aggiorna_l_indice_e_il_vecchio_testo_non_si_trova_piu() = runTest {
     val ids = seed()
 

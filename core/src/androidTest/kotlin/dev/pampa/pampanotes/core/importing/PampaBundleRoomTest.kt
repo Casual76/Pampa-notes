@@ -505,4 +505,56 @@ class PampaBundleRoomTest {
     }
   }
 
+  @Test fun native_reexport_from_fresh_legacy_import_adopts_ordinal_audio_without_duplication() = runTest {
+    val original = publicLegacy("Lecture" to listOf("A", "B"))
+    val fresh = PampaBundleArchive.read(original).data.notes.single()
+    importer.import(original)
+    restoreOldOrdinalIdentities()
+    val (oldA, sessionId) = personalLegacyHistory()
+    val beforeFiles = files.audio.listFiles()!!.map { it.name }.toSet()
+    val native = archive(fresh.copy(note = fresh.note.copy(folderId = "folder"),
+      parts = fresh.parts.map { it.copy(fileName = it.originalName) }), includeAudio = false)
+    val before = storedGraph()
+    db.jobs().upsert(JobEntity("pending-legacy", sessionId, JobType.TRANSCRIBE, "custom", createdAt = 100, updatedAt = 100))
+    try { importer.import(native); fail("Expected active job rejection before rekeying") }
+    catch (_: IllegalArgumentException) { }
+    assertEquals(before, storedGraph())
+    assertEquals(beforeFiles, files.audio.listFiles()!!.map { it.name }.toSet())
+    db.jobs().delete("pending-legacy")
+    repeat(2) { importer.import(native) }
+    assertEquals(listOf(sessionId), db.sessions().plainByNote("note").map { it.id })
+    val parts = db.audioParts().bySession(sessionId)
+    assertEquals(fresh.parts.map { it.id }, parts.map { it.id })
+    assertNull(db.audioParts().get(oldA))
+    assertEquals(2000L, parts.sumOf { it.durationMs })
+    assertEquals(listOf('A', 'B'), parts.map { files.audioFile(it.fileName).readBytes().last().toInt().toChar() })
+    val timing = db.segments().byTranscript("personal-legacy-raw").single()
+    assertEquals(parts.first().id, timing.partId)
+    assertEquals(100L, timing.sessionStartMs)
+    assertEquals("0,700,WordsFromA", timing.wordsJson)
+    assertEquals("personal-legacy-raw", db.transcripts().get("personal-legacy-refined")!!.parentId)
+    assertEquals(beforeFiles, files.audio.listFiles()!!.map { it.name }.toSet())
+  }
+
+  @Test fun search_after_bundle_update_returns_only_the_transcript_opening_the_session_displays() = runTest {
+    fun version(word: String, stamp: Long): PampaBundleNote = graph("s" to listOf("A")).let { n ->
+      val raw = n.transcripts.single().copy(id = "raw-$word", text = word, wordCount = 1, createdAt = stamp)
+      n.copy(sessions = n.sessions.map { it.copy(activeTranscriptId = raw.id) }, transcripts = listOf(raw),
+        segments = n.segments.map { it.copy(transcriptId = raw.id, text = word, wordsJson = "0,700,$word") })
+    }
+    importer.import(archive(version("alpha", 100)))
+    importer.import(archive(version("beta", 200)))
+    assertNotNull(db.transcripts().get("raw-alpha"))
+    assertTrue(db.search().searchTranscripts("alpha", 10).isEmpty())
+    val hit = db.search().searchTranscripts("beta", 10).single()
+    val session = db.sessions().get(hit.sessionId)!!
+    val versions = db.transcripts().bySession(hit.sessionId)
+    val opened = versions.firstOrNull { it.id == session.activeTranscriptId }
+      ?: dev.pampa.pampanotes.core.repo.RawTranscripts.forSelection(versions, session.activeTranscriptId)
+    assertEquals(opened!!.id, hit.transcriptId)
+    assertTrue(opened.text.contains("beta"))
+    assertTrue(hit.snippet.contains("[beta]"))
+    assertEquals(100L, db.segments().byTranscript(opened.id).single().sessionStartMs)
+  }
+
 }

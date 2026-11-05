@@ -116,6 +116,57 @@ class PampaBundleLegacyReconcileTest {
       sessions = note.sessions.map { if (it.id == a.sessionId) it.copy(activeTranscriptId = raw.id) else it })
   }
 
+  @Test fun `native reexport with the same marked session adopts new child identities once`() {
+    val original = positional("Lecture" to listOf("A", "B"))
+    val old = withPersonalTiming(original)
+    val target = original.copy(parts = original.parts.map { p ->
+      p.copy(id = PampaBundleLegacyReconcile.id("part", "note:audio:${p.sha256}:${p.originalName}"))
+    })
+    val plan = PampaBundleLegacyReconcile.plan(old, target, publicLegacy = false)
+    assertTrue(plan.sessions.isEmpty())
+    assertEquals(target.parts.map { it.id }.toSet(), plan.parts.values.toSet())
+    val merged = PampaBundleMerge.merge(plan.local, plan.incoming)
+    assertEquals(1, merged.sessions.size)
+    assertEquals(target.parts.map { it.id }, merged.parts.map { it.id })
+    assertEquals(2000L, merged.parts.sumOf { it.durationMs })
+    assertEquals(target.parts.first().id, merged.segments.single().partId)
+    assertEquals(100L, merged.segments.single().sessionStartMs)
+    assertEquals("0,700,WordsFromA", merged.segments.single().wordsJson)
+    val repeat = PampaBundleLegacyReconcile.plan(merged, target, publicLegacy = false)
+    assertTrue(repeat.sessions.isEmpty())
+    assertTrue(repeat.parts.isEmpty())
+    assertEquals(merged, PampaBundleMerge.merge(repeat.local, repeat.incoming))
+  }
+
+  @Test fun `shared marked session retains unmatched local audio when native update omits it`() {
+    val old = withPersonalTiming(positional("Lecture" to listOf("A", "B")))
+    val b = old.parts.last().copy(id = PampaBundleLegacyReconcile.id("part", "native-B"), position = 0)
+    val target = old.copy(parts = listOf(b), transcripts = emptyList(), segments = emptyList(),
+      sessions = old.sessions.map { it.copy(activeTranscriptId = null) })
+    val plan = PampaBundleLegacyReconcile.plan(old, target, publicLegacy = false)
+    val merged = PampaBundleMerge.merge(plan.local, plan.incoming)
+    assertEquals(listOf(b.id, old.parts.first().id), merged.parts.map { it.id })
+    assertEquals(old.parts.first().id, merged.segments.single().partId)
+    assertEquals(1100L, merged.segments.single().sessionStartMs)
+    assertEquals(1, merged.transcripts.count { it.id == "local-raw" })
+  }
+
+  @Test fun `recognized text-only session can be renamed without rematching its label or personal text`() {
+    val old = positional("Lecture" to emptyList())
+    val personal = TranscriptEntity("personal-text", old.sessions.single().id, TranscriptKind.RAW, "custom", "local",
+      text = "Personal text", wordCount = 2, createdAt = 100)
+    val local = old.copy(transcripts = old.transcripts + personal,
+      sessions = old.sessions.map { it.copy(activeTranscriptId = personal.id) })
+    val target = old.copy(note = old.note.copy(folderId = "native-folder"), transcripts = emptyList(),
+      sessions = old.sessions.map { it.copy(title = "New title", activeTranscriptId = null) })
+    val plan = PampaBundleLegacyReconcile.plan(local, target, publicLegacy = false)
+    val merged = PampaBundleMerge.merge(plan.local, plan.incoming)
+    assertTrue(plan.sessions.isEmpty())
+    assertEquals("New title", merged.sessions.single().title)
+    assertEquals(personal.id, merged.sessions.single().activeTranscriptId)
+    assertEquals(personal, merged.transcripts.single { it.id == personal.id })
+  }
+
   @Test fun `legacy recording reorder preserves A words and maps staging keys by content`() {
     val old = withPersonalTiming(positional("Lecture" to listOf("A", "B")))
     val update = positional("Lecture" to listOf("B", "A"))

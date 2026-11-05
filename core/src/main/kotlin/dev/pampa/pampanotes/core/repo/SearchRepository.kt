@@ -54,8 +54,7 @@ class SearchRepository @Inject constructor(
     val noteHits = runCatching { search.searchNotes(prepared, limit) }.getOrDefault(emptyList())
     val transcriptHits = runCatching { search.searchTranscripts(prepared, limit) }.getOrDefault(emptyList())
 
-    // Una sessione una volta sola: la grezza e la sua raffinata dicono la stessa cosa, e il tocco
-    // porta comunque alla stessa registrazione, nello stesso momento.
+    // L'indice restituisce soltanto il testo selezionato: aprendo si ritrova la stessa versione.
     val sessionHits = transcriptHits.distinctBy { it.sessionId }
     val sessionRows = runCatching { sessions.getAll(sessionHits.map { it.sessionId }.take(MAX_SQL_ARGS)) }
       .getOrDefault(emptyList())

@@ -139,7 +139,8 @@ class PampaBundleImporter @Inject constructor(
       val reconciliation = PampaBundleLegacyReconcile.plan(originalLocal, n, publicLegacy)
       val local = reconciliation.local
       val incoming = reconciliation.incoming
-      (reconciliation.sessions.keys + if (reconciliation.legacyUpdate) incoming.sessions.map { it.id } else emptyList()).forEach { oldId ->
+      val rekeyedPartSessions = originalLocal?.parts.orEmpty().filter { it.id in reconciliation.parts }.map { it.sessionId }
+      (reconciliation.sessions.keys + rekeyedPartSessions + if (reconciliation.legacyUpdate) incoming.sessions.map { it.id } else emptyList()).forEach { oldId ->
         require(db.jobs().activeForSession(oldId) == null) { "Finish the active legacy session job before upgrading" }
       }
       suspend fun sameNote(sessionId: String): Boolean = db.sessions().get(sessionId)?.noteId == n.note.id

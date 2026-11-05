@@ -37,20 +37,24 @@ internal object PampaBundleLegacyReconcile {
     fun text(value: String) = value.trim().replace(Regex("[\\s\\p{Z}]+"), " ")
     fun hash(a: String, b: String) = a.isNotBlank() && b.isNotBlank() && a.equals(b, true)
 
-    old.sessions.filter { isSynthetic(it.id) && target.sessions.none { t -> t.id == it.id } }.forEach { session ->
+    old.sessions.filter { isSynthetic(it.id) }.forEach { session ->
+      // A native re-export may retain the marked session ID while its children have newer IDs.
+      val shared = target.sessions.firstOrNull { it.id == session.id }
       val exportedParts = old.parts.filter { it.sessionId == session.id && isSynthetic(it.id) }
-      val candidates = target.sessions.filterNot { isSynthetic(it.id) }.mapNotNull { candidate ->
+      val candidates = (shared?.let(::listOf) ?: target.sessions.filterNot { isSynthetic(it.id) }).mapNotNull { candidate ->
         val candidatesParts = target.parts.filter { it.sessionId == candidate.id }
         val mapping = linkedMapOf<String, String>()
         if (exportedParts.isNotEmpty()) {
           for (part in exportedParts) {
             var matches = candidatesParts.filter { hash(it.sha256, part.sha256) }
             if (matches.size > 1) matches = matches.filter { text(it.originalName) == text(part.originalName) }
+            // The known session can retain local-only audio omitted by this native update.
+            if (matches.isEmpty() && shared != null) continue
             val match = matches.singleOrNull() ?: return@mapNotNull null
             if (match.id in mapping.values) return@mapNotNull null
             mapping[part.id] = match.id
           }
-        } else {
+        } else if (shared == null) {
           val sameLabel = session.title.isNotBlank() && text(session.title) == text(candidate.title) && session.date == candidate.date
           val oldTexts = old.transcripts.filter { it.sessionId == session.id }.map { text(it.text) }.filter { it.isNotBlank() }
           val sameText = target.transcripts.any { it.sessionId == candidate.id && text(it.text) in oldTexts }
@@ -60,7 +64,7 @@ internal object PampaBundleLegacyReconcile {
       }
       val match = candidates.singleOrNull() ?: error("Legacy session identity is unavailable or ambiguous; use a complete original bundle")
       require(match.first !in sessionAliases.values) { "Ambiguous legacy session identity" }
-      sessionAliases[session.id] = match.first
+      if (session.id != match.first) sessionAliases[session.id] = match.first
       partAliases += match.second.filter { (oldId, newId) -> oldId != newId }
     }
     old.sources.filter { isSynthetic(it.id) && !it.id.startsWith("pampa-legacy-placeholder-") && target.sources.none { t -> t.id == it.id } }.forEach { source ->
