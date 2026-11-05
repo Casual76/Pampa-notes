@@ -61,7 +61,7 @@ class PampaBundleImporter @Inject constructor(
       // Keep the commit result and cleanup decision in one cancellation-safe boundary.
       withContext(NonCancellable) {
         val result = db.withTransaction {
-          persist(measured, intoFolderId, stored, checkpoint) { p, title -> onProgress(0.7f + 0.3f * p, title) }
+          persist(measured, intoFolderId, stored, checkpoint, publicLegacy = PampaBundleWarning.LEGACY_FORMAT in read.warnings) { p, title -> onProgress(0.7f + 0.3f * p, title) }
         }
         committed = true
         // Reconciliation can reuse an existing canonical file instead of a newly staged legacy copy.
@@ -99,7 +99,8 @@ class PampaBundleImporter @Inject constructor(
 
   internal suspend fun persist(
     data: PampaBundleData, intoFolderId: String?, stored: Map<Pair<Boolean, String>, String>,
-    checkpoint: () -> Unit = {}, onProgress: (Float, PampaBundleProgress) -> Unit = { _, _ -> },
+    checkpoint: () -> Unit = {}, publicLegacy: Boolean? = null,
+    onProgress: (Float, PampaBundleProgress) -> Unit = { _, _ -> },
   ): PampaBundleImportResult {
     require(intoFolderId == null || db.folders().get(intoFolderId) != null) { "Destination folder missing" }
     val importedFolders = data.folders.mapTo(HashSet()) { it.id }
@@ -135,10 +136,10 @@ class PampaBundleImporter @Inject constructor(
       val oldTranscripts = oldSessions.flatMap { db.transcripts().bySession(it.id) }
       val originalLocal = oldNote?.let { PampaBundleNote(it, db.tags().tags(it.id), oldSessions, oldParts,
         oldTranscripts, oldTranscripts.flatMap { t -> db.segments().byTranscript(t.id) }, db.sources().byNote(it.id)) }
-      val reconciliation = PampaBundleLegacyReconcile.plan(originalLocal, n)
+      val reconciliation = PampaBundleLegacyReconcile.plan(originalLocal, n, publicLegacy)
       val local = reconciliation.local
       val incoming = reconciliation.incoming
-      reconciliation.sessions.keys.forEach { oldId ->
+      (reconciliation.sessions.keys + if (reconciliation.legacyUpdate) incoming.sessions.map { it.id } else emptyList()).forEach { oldId ->
         require(db.jobs().activeForSession(oldId) == null) { "Finish the active legacy session job before upgrading" }
       }
       suspend fun sameNote(sessionId: String): Boolean = db.sessions().get(sessionId)?.noteId == n.note.id
@@ -149,9 +150,17 @@ class PampaBundleImporter @Inject constructor(
         val old = persisted ?: local?.parts?.firstOrNull { it.id == part.id }
         val name = if (reconciliation.preserveLocalNote && old != null) null
           else stored[true to (reconciliation.incomingPartKeys[part.id] ?: part.id)]
+        if (old != null && PampaBundleLegacyReconcile.isSynthetic(part.id)) {
+          require(part.sha256.isNotBlank() && old.sha256.isNotBlank() && part.sha256.equals(old.sha256, true)) { "Marked audio identity conflicts with retained content" }
+        }
         val adoptedLegacyFile = part.id in reconciliation.parts.values && old != null &&
           part.sha256.isNotBlank() && part.sha256.equals(old.sha256, true) && files.audioFile(old.fileName).isFile
-        if (adoptedLegacyFile) {
+        if (reconciliation.legacyUpdate && old != null && PampaBundleLegacyReconcile.isSynthetic(part.id)) {
+          val localFile = files.audioFile(old.fileName).isFile
+          old.copy(sessionId = part.sessionId, position = part.position,
+            fileName = if (localFile) old.fileName else name ?: old.fileName,
+            durationMs = old.durationMs.takeIf { it > 0 } ?: part.durationMs)
+        } else if (adoptedLegacyFile) {
           // Keep the proven local blob, but adopt native duration/timing metadata rather than MMR rounding.
           part.copy(fileName = old.fileName, archivedAt = old.archivedAt, originalName = old.originalName,
             durationMs = part.durationMs.takeIf { it > 0 } ?: old.durationMs, sizeBytes = old.sizeBytes)
@@ -167,7 +176,12 @@ class PampaBundleImporter @Inject constructor(
         val name = if (old != null && (reconciliation.preserveLocalNote || source.id in reconciliation.sources.values &&
           source.sha256.isNotBlank() && source.sha256.equals(old.sha256, true) && old.storedFileName?.let { files.sourceFile(it).isFile } == true)) null
           else stored[false to (reconciliation.incomingSourceKeys[source.id] ?: source.id)]
-        if (name == null && old != null) {
+        if (old != null && PampaBundleLegacyReconcile.isSynthetic(source.id)) {
+          val placeholder = source.id.startsWith("pampa-legacy-placeholder-") && old.kind == SourceKind.OTHER && source.kind == SourceKind.OTHER &&
+            old.sizeBytes == 0L && source.sizeBytes == 0L && old.sha256.isBlank() && source.sha256.isBlank() && old.storedFileName == null
+          require(placeholder || old.kind == source.kind && old.sha256.isNotBlank() && source.sha256.isNotBlank() && old.sha256.equals(source.sha256, true)) { "Marked source identity conflicts with retained content" }
+        }
+        if (old != null && (name == null || reconciliation.legacyUpdate && PampaBundleLegacyReconcile.isSynthetic(source.id))) {
           require(old.kind == source.kind) { "Omitted source kind conflicts with local content" }
           val sameHash = old.sha256.isNotBlank() && source.sha256.isNotBlank() && old.sha256.equals(source.sha256, true)
           require(old.sha256.isBlank() || source.sha256.isBlank() || sameHash) { "Omitted source conflicts with local content" }
@@ -176,7 +190,8 @@ class PampaBundleImporter @Inject constructor(
             require(old.sdocxCreatedAtMillis == null || old.sdocxCreatedAtMillis == created) { "Conflicting Samsung identity evidence" }
             require(old.sdocxCreatedAtMillis != null || sameHash) { "Cannot identify omitted Samsung original" }
           }
-          old.copy(derivedFromId = source.derivedFromId,
+          old.copy(derivedFromId = if (reconciliation.legacyUpdate && old.derivedFromId != null) old.derivedFromId else source.derivedFromId,
+            storedFileName = if (old.storedFileName?.let { files.sourceFile(it).isFile } == true) old.storedFileName else name ?: old.storedFileName,
             sdocxCreatedAtMillis = old.sdocxCreatedAtMillis ?: source.sdocxCreatedAtMillis)
         } else source.copy(storedFileName = name, archivedAt = 0)
       }

@@ -356,4 +356,153 @@ class PampaBundleRoomTest {
     assertEquals(0, db.notes().count())
     assertEquals(before, files.audio.listFiles()!!.map { it.name }.toSet())
   }
+  private fun publicLegacy(vararg groups: Pair<String, List<String>>, sourceNames: List<String> = emptyList(),
+    includeAudio: Boolean = true, repeatedAudio: Boolean = false): File {
+    var value = graph(*groups)
+    value = value.copy(sessions = value.sessions.map { it.copy(title = it.id) },
+      parts = value.parts.map { it.copy(fileName = "${it.id}.wav", originalName = "${it.id}.wav") },
+      sources = sourceNames.map { name ->
+        val input = File(directory, "$name.txt").apply { writeText("source-$name") }
+        SourceEntity("native-source-$name", "note", SourceKind.TEXT, input.name, "text/plain", input.length(), "", input.name, importedAt = 1)
+      })
+    return legacy(archive(value, includeAudio = includeAudio, includeSources = true, content = { part ->
+      wav(1000).also { if (!repeatedAudio) it[it.lastIndex] = part.id.first().code.toByte() }
+    }), 2)
+  }
+
+  /** Simulate already-installed marked ordinal rows rather than relying on the new reader IDs. */
+  private suspend fun restoreOldOrdinalIdentities() {
+    db.sessions().plainByNote("note").forEach { session ->
+      db.audioParts().bySession(session.id).forEachIndexed { index, part ->
+        val ordinal = PampaBundleLegacyReconcile.id("part", "${session.id}:part:$index")
+        if (ordinal != part.id) { db.audioParts().upsert(part.copy(id = ordinal)); db.audioParts().delete(part.id) }
+      }
+    }
+    db.sources().byNote("note").sortedBy { it.originalName }.forEachIndexed { index, source ->
+      val ordinal = PampaBundleLegacyReconcile.id("source", "note:source:$index")
+      if (ordinal != source.id) { db.sources().upsert(source.copy(id = ordinal)); db.sources().delete(source.id) }
+    }
+  }
+
+  private suspend fun personalLegacyHistory(): Pair<String, String> {
+    val part = db.audioParts().all().single { files.audioFile(it.fileName).readBytes().last() == 'A'.code.toByte() }
+    val raw = TranscriptEntity("personal-legacy-raw", part.sessionId, TranscriptKind.RAW, "custom", "local", text = "WordsFromA", wordCount = 1, createdAt = 100)
+    val refined = raw.copy(id = "personal-legacy-refined", kind = TranscriptKind.REFINED, parentId = raw.id, text = "Personal refined words")
+    db.transcripts().upsert(raw); db.transcripts().upsert(refined)
+    db.segments().insertAll(listOf(SegmentEntity(transcriptId = raw.id, partId = part.id, indexInPart = 0,
+      partStartMs = 100, partEndMs = 800, sessionStartMs = part.position * 1000L + 100, sessionEndMs = part.position * 1000L + 800,
+      text = raw.text, wordsJson = "0,700,WordsFromA", speaker = "PERSONAL")))
+    db.sessions().setActiveTranscript(part.sessionId, refined.id, 100)
+    return part.id to part.sessionId
+  }
+
+  @Test fun legacy_reorder_and_removal_keep_local_words_files_metadata_sources_and_selection() = runTest {
+    val first = publicLegacy("Lecture" to listOf("A", "B"), sourceNames = listOf("A", "B"))
+    importer.import(first)
+    restoreOldOrdinalIdentities()
+    val (aId, sessionId) = personalLegacyHistory()
+    val a = db.audioParts().get(aId)!!.copy(originalName = "Personal audio name", archivedAt = 101)
+    db.audioParts().upsert(a)
+    val sourceA = db.sources().byNote("note").single { it.originalName == "A.txt" }.copy(detail = "Personal source metadata", archivedAt = 201)
+    db.sources().upsert(sourceA)
+    val page = SourceEntity("local-page", "note", SourceKind.IMAGE, "Personal page", "image/png", 3, "local", "local.png", importedAt = 10, derivedFromId = sourceA.id)
+    files.sourceFile(page.storedFileName!!).writeBytes(byteArrayOf(1, 2, 3)); db.sources().upsert(page)
+    db.notes().updateBody("note", db.notes().get("note")!!.body + "\nPersonal appendix", 100)
+    val beforeAudioFiles = files.audio.listFiles()!!.map { it.name }.toSet()
+    val beforeSourceFiles = files.sources.listFiles()!!.map { it.name }.toSet()
+    val reordered = publicLegacy("Lecture" to listOf("B", "A"), sourceNames = listOf("B", "A"))
+    val removedFirst = publicLegacy("Lecture" to listOf("B"), sourceNames = listOf("B"))
+    for (update in listOf(reordered, removedFirst, removedFirst)) {
+      importer.import(update)
+      val parts = db.audioParts().bySession(sessionId)
+      assertEquals(2, parts.size)
+      assertEquals('B'.code.toByte(), files.audioFile(parts[0].fileName).readBytes().last())
+      assertEquals(aId, parts[1].id)
+      assertEquals(a.copy(position = 1), db.audioParts().get(aId))
+      val segment = db.segments().byTranscript("personal-legacy-raw").single()
+      assertEquals(aId, segment.partId); assertEquals(1100L, segment.sessionStartMs)
+      assertEquals("WordsFromA", segment.text); assertEquals("0,700,WordsFromA", segment.wordsJson); assertEquals("PERSONAL", segment.speaker)
+      assertEquals("personal-legacy-refined", db.sessions().get(sessionId)!!.activeTranscriptId)
+      assertEquals("personal-legacy-raw", db.transcripts().get("personal-legacy-refined")!!.parentId)
+      assertEquals(sourceA, db.sources().get(sourceA.id))
+      assertEquals(page, db.sources().get(page.id))
+      assertTrue(db.notes().get("note")!!.body.contains("Personal appendix"))
+      assertEquals(beforeAudioFiles, files.audio.listFiles()!!.map { it.name }.toSet())
+      assertEquals(beforeSourceFiles, files.sources.listFiles()!!.map { it.name }.toSet())
+    }
+    val count = db.transcripts().count()
+    importer.import(removedFirst)
+    assertEquals(count, db.transcripts().count())
+    // An unchanged older public bundle may restore its ordering, never its positional identities.
+    importer.import(first)
+    assertEquals(aId, db.audioParts().bySession(sessionId).first().id)
+    assertEquals(100L, db.segments().byTranscript("personal-legacy-raw").single().sessionStartMs)
+    assertEquals("personal-legacy-refined", db.sessions().get(sessionId)!!.activeTranscriptId)
+    assertEquals(beforeAudioFiles, files.audio.listFiles()!!.map { it.name }.toSet())
+    assertEquals(beforeSourceFiles, files.sources.listFiles()!!.map { it.name }.toSet())
+    val exportGraph = storedGraph().let { it.copy(note = it.note.copy(folderId = "folder")) }
+    val reexport = PampaBundleArchive.read(archive(exportGraph, includeAudio = false)).data.notes.single()
+    assertEquals(aId, reexport.segments.single().partId)
+    assertEquals(100L, reexport.segments.single().sessionStartMs)
+    assertEquals("0,700,WordsFromA", reexport.segments.single().wordsJson)
+    assertEquals("personal-legacy-refined", reexport.sessions.single().activeTranscriptId)
+  }
+
+  @Test fun legacy_new_audio_and_sources_use_their_original_staging_keys_after_reconciliation() = runTest {
+    importer.import(publicLegacy("Lecture" to listOf("A", "B"), sourceNames = listOf("A", "B")))
+    restoreOldOrdinalIdentities()
+    val (aId, sessionId) = personalLegacyHistory()
+    val oldSourceIds = db.sources().byNote("note").map { it.id }.toSet()
+    val update = publicLegacy("Lecture" to listOf("C", "B"), sourceNames = listOf("B", "C"))
+    importer.import(update)
+    val parts = db.audioParts().bySession(sessionId)
+    assertEquals(listOf('C', 'B', 'A'), parts.map { files.audioFile(it.fileName).readBytes().last().toInt().toChar() })
+    assertEquals(aId, parts.last().id)
+    assertEquals(aId, db.segments().byTranscript("personal-legacy-raw").single().partId)
+    assertEquals(2100L, db.segments().byTranscript("personal-legacy-raw").single().sessionStartMs)
+    val sourceC = db.sources().byNote("note").single { it.originalName == "C.txt" }
+    assertTrue(sourceC.id !in oldSourceIds)
+    assertEquals("source-C", files.sourceFile(sourceC.storedFileName!!).readText())
+    val beforeAudioFiles = files.audio.listFiles()!!.map { it.name }.toSet()
+    val beforeSourceFiles = files.sources.listFiles()!!.map { it.name }.toSet()
+    importer.import(update)
+    assertEquals(3, db.audioParts().bySession(sessionId).size)
+    assertEquals(beforeAudioFiles, files.audio.listFiles()!!.map { it.name }.toSet())
+    assertEquals(beforeSourceFiles, files.sources.listFiles()!!.map { it.name }.toSet())
+    assertEquals("personal-legacy-refined", db.sessions().get(sessionId)!!.activeTranscriptId)
+  }
+
+  @Test fun legacy_session_reorder_does_not_transfer_Alpha_transcription_to_Beta() = runTest {
+    importer.import(publicLegacy("Alpha" to listOf("A"), "Beta" to listOf("B")))
+    restoreOldOrdinalIdentities()
+    val (aId, alphaId) = personalLegacyHistory()
+    val betaId = db.sessions().plainByNote("note").single { it.id != alphaId }.id
+    val filesBefore = files.audio.listFiles()!!.map { it.name }.toSet()
+    val update = publicLegacy("Beta" to listOf("B"), "Alpha" to listOf("A"))
+    repeat(2) { importer.import(update) }
+    assertEquals(listOf(betaId, alphaId), db.sessions().plainByNote("note").map { it.id })
+    assertEquals("Alpha", db.sessions().get(alphaId)!!.title)
+    assertEquals("Beta", db.sessions().get(betaId)!!.title)
+    assertEquals("personal-legacy-refined", db.sessions().get(alphaId)!!.activeTranscriptId)
+    assertNotEquals("personal-legacy-refined", db.sessions().get(betaId)!!.activeTranscriptId)
+    assertEquals(alphaId, db.transcripts().get("personal-legacy-raw")!!.sessionId)
+    assertEquals(aId, db.segments().byTranscript("personal-legacy-raw").single().partId)
+    assertEquals(alphaId, db.audioParts().get(aId)!!.sessionId)
+    assertEquals(filesBefore, files.audio.listFiles()!!.map { it.name }.toSet())
+  }
+
+  @Test fun ambiguous_or_unavailable_legacy_identity_rolls_back_rows_and_all_new_staging() = runTest {
+    importer.import(publicLegacy("Lecture" to listOf("A", "B"), repeatedAudio = true))
+    restoreOldOrdinalIdentities()
+    val before = storedGraph()
+    val beforeFiles = files.audio.listFiles()!!.map { it.name }.toSet()
+    for (update in listOf(publicLegacy("Lecture" to listOf("C"), repeatedAudio = true),
+      publicLegacy("Lecture" to listOf("C"), includeAudio = false))) {
+      try { importer.import(update); fail("Expected ambiguous/unavailable legacy identity rejection") }
+      catch (_: IllegalArgumentException) { }
+      assertEquals(before, storedGraph())
+      assertEquals(beforeFiles, files.audio.listFiles()!!.map { it.name }.toSet())
+    }
+  }
+
 }

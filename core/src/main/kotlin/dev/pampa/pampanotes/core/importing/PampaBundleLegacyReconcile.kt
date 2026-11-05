@@ -18,11 +18,16 @@ internal object PampaBundleLegacyReconcile {
     val sources: Map<String, String> = emptyMap(),
     val incomingPartKeys: Map<String, String> = emptyMap(), val incomingSourceKeys: Map<String, String> = emptyMap(),
     val preserveLocalNote: Boolean = false,
+    /** Reuse verified local files/metadata while applying a public legacy graph's new ordering. */
+    val legacyUpdate: Boolean = false,
   )
 
-  fun plan(local: PampaBundleNote?, incoming: PampaBundleNote): Plan {
+  fun plan(local: PampaBundleNote?, incoming: PampaBundleNote, publicLegacy: Boolean? = null): Plan {
     require(local == null || local.note.id == incoming.note.id) { "Legacy note identity conflict" }
-    if (local == null || legacy(local) == legacy(incoming)) return Plan(local, incoming)
+    if (local == null) return Plan(null, incoming)
+    val incomingLegacy = publicLegacy ?: legacy(incoming)
+    if (legacy(local) && incomingLegacy) return legacyUpdate(local, incoming)
+    if (!legacy(local) && !incomingLegacy) return Plan(local, incoming)
     val forward = legacy(local)
     val old = if (forward) local else incoming
     val target = if (forward) incoming else local
@@ -88,6 +93,119 @@ internal object PampaBundleLegacyReconcile {
       Plan(local, adopted, incomingPartKeys = partAliases.entries.associate { it.value to it.key },
         incomingSourceKeys = sourceAliases.entries.filterNot { it.key.startsWith("pampa-legacy-placeholder-") }.associate { it.value to it.key }, preserveLocalNote = true)
     }
+  }
+
+  /** Public manifests have no child identities. Even equal marked IDs are only positional hints. */
+  private fun legacyUpdate(local: PampaBundleNote, incoming: PampaBundleNote): Plan {
+    fun text(value: String) = value.trim().replace(Regex("[\\s\\p{Z}]+"), " ")
+    val sha256 = Regex("[a-fA-F0-9]{64}")
+    fun hash(a: String, b: String) = a.matches(sha256) && b.matches(sha256) && a.equals(b, true)
+    val partIds = linkedMapOf<String, String>()
+    val sessionIds = linkedMapOf<String, String>()
+    val sourceIds = linkedMapOf<String, String>()
+    val transcriptIds = linkedMapOf<String, String>()
+    val localParts = local.parts.associateBy { it.id }
+    val localSessions = local.sessions.associateBy { it.id }
+
+    incoming.parts.forEach { part ->
+      if (!isSynthetic(part.id)) { partIds[part.id] = part.id; return@forEach }
+      require(part.sha256.matches(sha256)) { "Legacy audio identity is unavailable" }
+      var matches = local.parts.filter { isSynthetic(it.id) && hash(it.sha256, part.sha256) }
+      if (matches.size > 1) {
+        matches = matches.filter { text(it.originalName) == text(part.originalName) }
+        require(matches.size == 1) { "Ambiguous repeated legacy audio" }
+      }
+      require(matches.size <= 1) { "Ambiguous legacy audio identity" }
+      val canonical = matches.singleOrNull()?.id ?: id("part", "${incoming.note.id}:audio:${part.sha256.lowercase()}:${text(part.originalName)}")
+      require(canonical !in partIds.values) { "Repeated legacy audio has no unique identity" }
+      require(localParts[canonical]?.let { hash(it.sha256, part.sha256) } != false) { "Legacy audio identity collision" }
+      partIds[part.id] = canonical
+    }
+
+    incoming.sessions.forEach { session ->
+      if (!isSynthetic(session.id)) { sessionIds[session.id] = session.id; return@forEach }
+      val parts = incoming.parts.filter { it.sessionId == session.id }
+      val owners = parts.mapNotNull { localParts[partIds.getValue(it.id)]?.sessionId }.distinct()
+      require(owners.size <= 1) { "Legacy session regrouping has conflicting identity evidence" }
+      val matched = owners.singleOrNull() ?: if (parts.isEmpty()) {
+        val versions = incoming.transcripts.filter { it.sessionId == session.id }.map { text(it.text) }.filter { it.isNotBlank() }
+        val candidates = local.sessions.filter { old -> isSynthetic(old.id) && session.title.isNotBlank() &&
+          text(old.title) == text(session.title) && old.date == session.date &&
+          (local.transcripts.any { it.sessionId == old.id && isSynthetic(it.id) && text(it.text) in versions } ||
+            versions.isEmpty() && local.parts.none { it.sessionId == old.id } && local.transcripts.none { it.sessionId == old.id && isSynthetic(it.id) }) }
+        require(candidates.size <= 1) { "Ambiguous legacy text-only session identity" }
+        if (local.sessions.isNotEmpty()) require(candidates.isNotEmpty()) { "Legacy session identity is unavailable" }
+        candidates.singleOrNull()?.id
+      } else null
+      val canonical = matched ?: id("session", "${incoming.note.id}:session-content:${session.date}:${text(session.title)}:" + parts.map { partIds.getValue(it.id) }.sorted().joinToString(","))
+      require(canonical !in sessionIds.values) { "Two legacy sessions claim the same local session" }
+      require(matched != null || canonical !in localSessions) { "Conflicting legacy session identity" }
+      sessionIds[session.id] = canonical
+    }
+
+    fun placeholder(source: SourceEntity) = source.id.startsWith("pampa-legacy-placeholder-") &&
+      source.kind == SourceKind.OTHER && source.sizeBytes == 0L && source.sha256.isBlank() && source.storedFileName == null
+    incoming.sources.forEach { source ->
+      if (!isSynthetic(source.id)) { sourceIds[source.id] = source.id; return@forEach }
+      if (placeholder(source)) {
+        require(local.sources.firstOrNull { it.id == source.id }?.let(::placeholder) != false) { "Legacy placeholder identity conflict" }
+        sourceIds[source.id] = source.id
+        return@forEach
+      }
+      require(source.sha256.matches(sha256)) { "Legacy source identity is unavailable" }
+      var matches = local.sources.filter { isSynthetic(it.id) && it.kind == source.kind &&
+        (it.derivedFromId == null) == (source.derivedFromId == null) && hash(it.sha256, source.sha256) }
+      if (matches.size > 1) {
+        matches = matches.filter { text(it.originalName) == text(source.originalName) }
+        require(matches.size == 1) { "Ambiguous repeated legacy source" }
+      }
+      require(matches.size <= 1) { "Ambiguous legacy source identity" }
+      val role = if (source.derivedFromId != null) "page" else "source"
+      val canonical = matches.singleOrNull()?.id ?: id(role, "${incoming.note.id}:source-content:${source.kind}:${source.sha256.lowercase()}:${text(source.originalName)}")
+      require(canonical !in sourceIds.values) { "Repeated legacy sources have no unique identity" }
+      require(local.sources.firstOrNull { it.id == canonical }?.let { it.kind == source.kind && hash(it.sha256, source.sha256) } != false) { "Legacy source identity collision" }
+      sourceIds[source.id] = canonical
+    }
+
+    // Reuse only equivalent versions, and never let a public document erase retained local timings.
+    incoming.transcripts.sortedBy { if (it.kind == TranscriptKind.RAW) 0 else 1 }.forEach { transcript ->
+      if (!isSynthetic(transcript.id)) { transcriptIds[transcript.id] = transcript.id; return@forEach }
+      val moved = transcript.copy(sessionId = sessionIds.getValue(transcript.sessionId), parentId = transcript.parentId?.let { transcriptIds[it] ?: it })
+      fun content(value: TranscriptEntity) = value.copy(id = "", createdAt = 0)
+      val matches = local.transcripts.filter { isSynthetic(it.id) && content(it) == content(moved) }
+      val exact = matches.firstOrNull { it.id == transcript.id }
+      require(exact != null || matches.size <= 1) { "Ambiguous legacy transcript identity" }
+      var canonical = exact?.id ?: matches.singleOrNull()?.id ?: id("transcript", "${incoming.note.id}:version:${content(moved)}")
+      if (local.transcripts.any { it.id == canonical && content(it) != content(moved) }) {
+        // A locally edited old version keeps its ID; the original public text becomes a new history.
+        canonical = id("transcript", "${incoming.note.id}:public-version:${content(moved)}")
+        require(local.transcripts.none { it.id == canonical && content(it) != content(moved) }) { "Legacy transcript identity collision" }
+      }
+      require(canonical !in transcriptIds.values) { "Repeated legacy transcript identity" }
+      transcriptIds[transcript.id] = canonical
+    }
+    require(partIds.values.distinct().size == incoming.parts.size && sessionIds.values.distinct().size == incoming.sessions.size &&
+      sourceIds.values.distinct().size == incoming.sources.size && transcriptIds.values.distinct().size == incoming.transcripts.size) { "Legacy reconciliation would merge distinct identities" }
+    val sessions = incoming.sessions.map { session ->
+      val canonical = sessionIds.getValue(session.id)
+      val old = localSessions[canonical]?.takeIf { isSynthetic(session.id) }
+      val active = old?.activeTranscriptId?.takeIf { id -> local.transcripts.any { it.id == id && it.sessionId == canonical } }
+        ?: session.activeTranscriptId?.let { transcriptIds.getValue(it) }
+      (old ?: session.copy(id = canonical)).copy(position = session.position, activeTranscriptId = active,
+        voiceNames = VoiceNames.encode(VoiceNames.decode(session.voiceNames).mapKeys { (key, _) ->
+          (partIds[key.substringBefore('|')] ?: key.substringBefore('|')) + "|" + key.substringAfter('|') } + VoiceNames.decode(old?.voiceNames)))
+    }
+    val transcripts = incoming.transcripts.map { t -> t.copy(id = transcriptIds.getValue(t.id), sessionId = sessionIds.getValue(t.sessionId), parentId = t.parentId?.let { transcriptIds[it] ?: it }) }
+      .filter { t -> !isSynthetic(t.id) || local.transcripts.none { it.id == t.id } }
+    val moved = incoming.copy(sessions = sessions,
+      parts = incoming.parts.map { it.copy(id = partIds.getValue(it.id), sessionId = sessionIds.getValue(it.sessionId)) },
+      sources = incoming.sources.map { it.copy(id = sourceIds.getValue(it.id), derivedFromId = it.derivedFromId?.let { parent -> sourceIds.getValue(parent) }) },
+      transcripts = transcripts,
+      segments = incoming.segments.filter { s -> !isSynthetic(s.transcriptId) || local.transcripts.none { it.id == transcriptIds[s.transcriptId] } }.map { s ->
+        s.copy(transcriptId = transcriptIds.getValue(s.transcriptId), partId = partIds.getValue(s.partId)) },
+      attachments = incoming.attachments.map { it.copy(id = if (it.audio) partIds.getValue(it.id) else sourceIds.getValue(it.id)) })
+    return Plan(local, moved, incomingPartKeys = partIds.entries.associate { it.value to it.key },
+      incomingSourceKeys = sourceIds.entries.associate { it.value to it.key }, legacyUpdate = true)
   }
 
   private fun rekey(note: PampaBundleNote, sessions: Map<String, String>, parts: Map<String, String>, sources: Map<String, String>): PampaBundleNote {
