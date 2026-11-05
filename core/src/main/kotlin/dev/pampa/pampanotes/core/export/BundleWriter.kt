@@ -52,7 +52,8 @@ class BundleWriter(
     onProgress: (Float) -> Unit = {},
   ): ExportManifest {
     val layout = BundleLayout(set, options)
-    val manifest = manifest(layout, options)
+    val native = PampaBundleExport.build(set, layout, options, audioDir, sourcesDir, checkpoint)
+    val manifest = manifest(layout, options).copy(nativeFile = "native.json")
     val root = layout.root + "/"
     val progress = Progress(set, options, onProgress, checkpoint)
 
@@ -75,6 +76,7 @@ class BundleWriter(
       zip.writeText(root + IndexWriter.INDEX, indexWriter.index(layout))
       if (options.includeSkill) zip.writeText(root + "instructions.md", skillWriter.instructions(set))
       zip.writeText(root + "manifest.json", json.encodeToString(manifest))
+      zip.writeText(root + "native.json", json.encodeToString(native))
 
       set.notes.forEach { note ->
         val files = layout.of(note)
@@ -274,7 +276,7 @@ class BundleWriter(
           },
           files = buildList {
             add(ManifestFile(path = files.notes, kind = "notes", words = note.note.body.wordCount()))
-            files.images.forEach { add(ManifestFile(path = it, kind = "handwriting")) }
+            files.images.forEachIndexed { i, path -> if (File(sourcesDir, note.handwriting[i].storedFileName).isFile) add(ManifestFile(path = path, kind = "handwriting")) }
             note.sessions.forEach { session ->
               files.transcripts[session.id]?.forEach { piece ->
                 add(

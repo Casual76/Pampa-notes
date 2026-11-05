@@ -517,6 +517,7 @@ class ExportWritersTest {
         "pampa-notes-storia/INDEX.md",
         "pampa-notes-storia/instructions.md",
         "pampa-notes-storia/manifest.json",
+        "pampa-notes-storia/native.json",
         "pampa-notes-storia/notes/",
         "pampa-notes-storia/notes/universita--storia--lezione-monti.md",
         "pampa-notes-storia/notes/universita--storia--lezione-monti--2025-10-09.md",
@@ -619,7 +620,7 @@ class ExportWritersTest {
     val json = Json { ignoreUnknownKeys = true }
     val manifest = json.decodeFromString<ExportManifest>(entriesOf(out.toByteArray()).getValue("pampa-notes-storia/manifest.json"))
 
-    assertEquals(2, manifest.schema)
+    assertEquals(3, manifest.schema)
     assertEquals("Storia", manifest.scope)
     assertEquals(1, manifest.stats.notes)
     assertEquals(1, manifest.stats.sessions)

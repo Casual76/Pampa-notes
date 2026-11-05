@@ -1,0 +1,51 @@
+package dev.pampa.pampanotes.core.export
+
+import dev.pampa.pampanotes.core.db.*
+import dev.pampa.pampanotes.core.importing.*
+import dev.pampa.pampanotes.core.transcription.VoiceNames
+import java.io.File
+import java.security.MessageDigest
+
+internal object PampaBundleExport {
+  fun build(set: ExportSet, layout: BundleLayout, options: ExportOptions, audio: File, sources: File, checkpoint: () -> Unit): PampaBundleData {
+    val folders = set.folders.associateBy { it.id }.toMutableMap()
+    val notes = set.notes.map { item ->
+      val n = item.note
+      if (n.folderId !in folders) folders[n.folderId] = FolderEntity(n.folderId, item.folderName, createdAt = n.createdAt, updatedAt = n.updatedAt,
+        kind = if (set.personal) FolderEntity.KIND_PERSONAL else FolderEntity.KIND_SCHOOL)
+      val native = item.native ?: PampaBundleNote(
+        note = n, tags = item.tags,
+        sessions = item.sessions.map { SessionEntity(it.id, n.id, it.title, it.date, it.number - 1, it.transcript?.id, n.createdAt, n.updatedAt, voiceNames = VoiceNames.encode(it.voiceNames)) },
+        parts = item.sessions.flatMap { session -> session.parts.mapIndexed { index, p -> AudioPartEntity(p.id, session.id, index, p.fileName, p.originalName, "audio/mp4", p.sizeBytes, p.durationMs, "", n.createdAt) } },
+        transcripts = item.sessions.flatMap { listOfNotNull(it.raw, it.transcript) }.distinctBy { it.id },
+        segments = item.sessions.flatMap { it.segments },
+        sources = item.sources.map { SourceEntity(it.id.ifBlank { "${n.id}:source:${it.originalName}" }, n.id, it.kind, it.originalName, "application/octet-stream", it.sizeBytes, it.sha256, it.storedFileName, it.extractedChars, it.status, importedAt = n.createdAt) } +
+          item.handwriting.map { SourceEntity(it.id.ifBlank { "${n.id}:page:${it.page}" }, n.id, SourceKind.IMAGE, "Page ${it.page}", "image/png", it.sizeBytes, "", it.storedFileName, importedAt = n.createdAt, derivedFromId = item.sources.firstOrNull()?.id) },
+      )
+      val paths = layout.of(item)
+      fun attachment(id: String, isAudio: Boolean, name: String?, path: String?, enabled: Boolean): PampaBundleAttachment {
+        val file = name?.let { File(if (isAudio) audio else sources, it) }
+        if (!enabled || path == null || file?.isFile != true) return PampaBundleAttachment(id, isAudio)
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input -> val buffer = ByteArray(65536); while (true) { checkpoint(); val count = input.read(buffer); if (count < 0) break; digest.update(buffer, 0, count) } }
+        return PampaBundleAttachment(id, isAudio, path, file.length(), digest.digest().joinToString("") { "%02x".format(it) })
+      }
+      val attachments = native.parts.map { attachment(it.id, true, it.fileName, paths.audio[it.id], options.includeAudio) } + native.sources.map { source ->
+          val page = item.handwriting.indexOfFirst { it.id == source.id || it.storedFileName == source.storedFileName }
+          val original = item.sources.indexOfFirst { it.id == source.id || it.storedFileName == source.storedFileName }
+          attachment(source.id, false, source.storedFileName, if (page >= 0) paths.images[page] else paths.sources.getOrNull(original), page >= 0 || options.includeSources)
+        }
+      native.copy(
+        sessions = native.sessions.map { it.copy(transcribingOn = null, transcribingSince = null) },
+        parts = native.parts.map { row -> val a = attachments.first { it.audio && it.id == row.id }; row.copy(archivedAt = 0, sizeBytes = if (a.path != null) a.bytes else row.sizeBytes, sha256 = a.sha256 ?: row.sha256) },
+        sources = native.sources.map { row -> val a = attachments.first { !it.audio && it.id == row.id }; row.copy(archivedAt = 0, sizeBytes = if (a.path != null) a.bytes else row.sizeBytes, sha256 = a.sha256 ?: row.sha256) },
+        attachments = attachments,
+      )
+    }
+    // Export only ancestors of selected notes, never unrelated private folders.
+    val used = mutableSetOf<String>()
+    fun visit(id: String) { if (used.add(id)) folders[id]?.parentId?.let(::visit) }
+    notes.forEach { visit(it.note.folderId) }
+    return PampaBundleData(folders = folders.values.filter { it.id in used }, notes = notes)
+  }
+}

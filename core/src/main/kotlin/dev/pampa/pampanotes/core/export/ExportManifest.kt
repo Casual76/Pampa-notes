@@ -20,13 +20,15 @@ data class ExportManifest(
   val options: ExportOptions,
   val stats: ExportStats,
   val notes: List<ManifestNote>,
+  val nativeFile: String? = null,
 ) {
   companion object {
     /**
+     * 3: payload nativo versionato (`nativeFile`) per il roundtrip senza perdita di metadati.
      * 2: una cartella in cima, le trascrizioni in file loro (`files`), le pagine scritte a mano.
      * Nell'1 ogni nota era un file solo con dentro anche le trascrizioni.
      */
-    const val SCHEMA = 2
+    const val SCHEMA = 3
   }
 }
 

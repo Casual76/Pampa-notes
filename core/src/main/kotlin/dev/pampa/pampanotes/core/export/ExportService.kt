@@ -194,6 +194,7 @@ class ExportService @Inject constructor(
       notes = gathered,
       generator = generator,
       exportedAtMillis = System.currentTimeMillis(),
+      folders = all.values.toList(),
       personal = selected.isNotEmpty() && selected.all { it.folderId in personalFolders },
     )
   }
@@ -522,6 +523,14 @@ class ExportService @Inject constructor(
       note = note,
       folderPath = folderPath,
       tags = tags.tags(note.id),
+      native = dev.pampa.pampanotes.core.importing.PampaBundleNote(
+        note = note, tags = tags.tags(note.id),
+        sessions = sessionRows.map { it.session.copy(transcribingOn = null, transcribingSince = null) },
+        parts = sessionRows.flatMap { it.partsSorted }.map { it.copy(archivedAt = 0) },
+        transcripts = sessionRows.flatMap { transcripts.bySession(it.session.id) },
+        segments = sessionRows.flatMap { transcripts.bySession(it.session.id) }.flatMap { segments.byTranscript(it.id) },
+        sources = allSources.map { it.copy(archivedAt = 0) },
+      ),
       handwriting = pages.mapIndexed { index, page ->
         ExportImage(page.storedFileName!!, index + 1, page.sizeBytes, id = page.id, archived = page.archivedAt > 0)
       },

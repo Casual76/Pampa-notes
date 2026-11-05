@@ -239,6 +239,7 @@ data class ExportNote(
   val sources: List<ExportSource>,
   val sessions: List<ExportSession>,
   val handwriting: List<ExportImage> = emptyList(),
+  val native: dev.pampa.pampanotes.core.importing.PampaBundleNote? = null,
 ) {
   val folderName: String get() = folderPath.lastOrNull().orEmpty()
   val audioDurationMs: Long get() = sessions.sumOf { it.durationMs }
@@ -259,6 +260,7 @@ data class ExportSet(
    * un professore e' letta come una lezione.
    */
   val personal: Boolean = false,
+  val folders: List<dev.pampa.pampanotes.core.db.FolderEntity> = emptyList(),
 ) {
   val folderCount: Int get() = notes.map { it.folderPath.joinToString("/") }.distinct().size
   val audioDurationMs: Long get() = notes.sumOf { it.audioDurationMs }
