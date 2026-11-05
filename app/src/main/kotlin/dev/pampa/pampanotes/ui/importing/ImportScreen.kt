@@ -1,6 +1,7 @@
 package dev.pampa.pampanotes.ui.importing
 
 import androidx.activity.compose.BackHandler
+import dev.pampa.pampanotes.core.importing.PampaBundleWarning
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
@@ -211,6 +212,12 @@ private fun stepSubtitle(state: ImportUiState): String? = when (state.step) {
   ImportStep.DONE -> null
 }
 
+@Composable
+private fun bundleWarningText(warning: PampaBundleWarning): String = stringResource(when (warning) {
+  PampaBundleWarning.LEGACY_FORMAT -> R.string.import_bundle_legacy_warning
+  PampaBundleWarning.OMITTED_ATTACHMENTS -> R.string.import_bundle_omitted_warning
+})
+
 private fun androidx.compose.foundation.lazy.LazyListScope.bundleStep(
   state: ImportUiState,
   onSelectFolder: (String) -> Unit,
@@ -225,8 +232,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.bundleStep(
     }
   }
   item { FluidSectionFootnote(text = preview.titles.joinToString(" · ")) }
-  if (!preview.hasPreciseTimings) item { FluidSectionFootnote(text = stringResource(R.string.import_bundle_precision)) }
-  preview.warnings.forEach { warning -> item { FluidInlineMessage(message = warning, tone = FluidTone.Warning) } }
+  if (preview.audioCount > 0 && !preview.hasPreciseTimings && PampaBundleWarning.LEGACY_FORMAT !in preview.warnings) item { FluidSectionFootnote(text = stringResource(R.string.import_bundle_precision)) }
+  preview.warnings.forEach { warning -> item { FluidInlineMessage(message = bundleWarningText(warning), tone = FluidTone.Warning) } }
   item {
     FluidListGroup {
       FluidListRow(title = stringResource(R.string.import_bundle_update), subtitle = "", onClick = { onUpdateExisting(true) },
@@ -824,7 +831,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.doneStep(
   if (state.bundleResult != null) {
     val result = state.bundleResult
     item { FluidSectionFootnote(text = stringResource(R.string.import_bundle_done, result.importedNotes, result.updatedNotes, result.recordings)) }
-    result.warnings.forEach { warning -> item { FluidInlineMessage(message = warning, tone = FluidTone.Warning) } }
+    result.warnings.forEach { warning -> item { FluidInlineMessage(message = bundleWarningText(warning), tone = FluidTone.Warning) } }
     item {
       FluidListGroup {
         state.createdNotes.forEachIndexed { index, note ->
@@ -837,7 +844,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.doneStep(
     item {
       FluidEmptyState(
         title = stringResource(R.string.import_failed_title),
-        detail = state.error ?: stringResource(R.string.import_failed_detail),
+        detail = state.error ?: stringResource(state.errorRes ?: R.string.import_failed_detail),
       )
     }
   } else {

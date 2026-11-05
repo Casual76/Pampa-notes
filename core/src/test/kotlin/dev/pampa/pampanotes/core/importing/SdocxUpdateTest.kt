@@ -81,7 +81,7 @@ class SdocxUpdateTest {
 
   @Test
   fun `unica fonte, il corpo e' il testo nuovo`() {
-    assertEquals("Nuovo.", SdocxUpdate.mergeBody("Vecchio.\n\nMie aggiunte.", "Vecchio.", "Fichte", "Nuovo.", onlySource = true))
+    assertEquals("Nuovo.", SdocxUpdate.mergeBody("Vecchio.", "Vecchio.", "Fichte", "Nuovo.", onlySource = true))
   }
 
   @Test
@@ -92,10 +92,10 @@ class SdocxUpdateTest {
   }
 
   @Test
-  fun `senza il testo vecchio, si sostituisce il paragrafo col suo titolo`() {
+  fun `senza il testo vecchio un titolo non autorizza a cancellare il paragrafo`() {
     val body = "Appunti miei.\n\n## Fichte\n\nVersione uno.\n\n## Kant\n\nCritica."
     val merged = SdocxUpdate.mergeBody(body, oldBody = null, title = "Fichte", newBody = "Versione due.", onlySource = false)
-    assertEquals("Appunti miei.\n\n## Fichte\n\nVersione due.\n\n## Kant\n\nCritica.", merged)
+    assertEquals("$body\n\n## Fichte\n\nVersione due.", merged)
   }
 
   @Test
@@ -110,6 +110,35 @@ class SdocxUpdateTest {
     assertNull(SdocxUpdate.mergeBody("## Kant\n\nCritica.", "Fichte.", "Fichte", "", onlySource = false))
     // Uguale a prima: niente da scrivere.
     assertNull(SdocxUpdate.mergeBody("Fichte.\n\n## Kant", "Fichte.", "Fichte", "Fichte.", onlySource = false))
+  }
+
+  @Test fun `sole source preserves personal text before and after imported body`() {
+    val current = "Introduzione mia.\n\nVecchio.\n\nMie aggiunte."
+    assertEquals("Introduzione mia.\n\nNuovo.\n\nMie aggiunte.",
+      SdocxUpdate.mergeBody(current, "Vecchio.", "Fichte", "Nuovo.", onlySource = true))
+  }
+
+  @Test fun `edited body or unavailable baseline appends without deleting personal sections`() {
+    val current = "## Fichte\n\nVecchio riscritto da me.\n\nCommento personale."
+    for (baseline in listOf(null, "Vecchio.")) {
+      assertEquals("$current\n\n## Fichte\n\nNuovo.",
+        SdocxUpdate.mergeBody(current, baseline, "Fichte", "Nuovo.", onlySource = true))
+    }
+  }
+
+  @Test fun `handwriting update clears untouched text but preserves personal additions`() {
+    assertEquals("", SdocxUpdate.mergeBody("Vecchio.", "Vecchio.", "Fichte", "", onlySource = true))
+    for (current in listOf("Vecchio.\n\nMie aggiunte.", "Riscritto da me.")) {
+      assertNull(SdocxUpdate.mergeBody(current, "Vecchio.", "Fichte", "", onlySource = true))
+    }
+    assertNull(SdocxUpdate.mergeBody("Mie aggiunte.", null, "Fichte", "", onlySource = true))
+  }
+
+  @Test fun `repeated baseline and inline personal quotation are not arbitrarily replaced`() {
+    for (current in listOf("Vecchio.\n\nVecchio.", "Citazione: Vecchio. scritto da me.")) {
+      assertEquals("$current\n\n## Fichte\n\nNuovo.",
+        SdocxUpdate.mergeBody(current, "Vecchio.", "Fichte", "Nuovo.", onlySource = true))
+    }
   }
 
   // --- la stessa registrazione con l'intestazione riscritta ---

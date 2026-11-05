@@ -418,21 +418,32 @@ object SdocxParser {
     // legge come «0» — ha solo lettere e punti e passa il resto dei controlli. In una nota scritta
     // tutta a mano era l'unica «frase» trovata, e diventava il testo della nota: «0com.samsung».
     if (PACKAGE_NAME.containsMatchIn(text)) return false
+    // Validate a normalized view only. The original body keeps its spacing and Unicode form.
+    val normalized = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFC)
     var letters = 0
     var acceptable = 0
-    for (c in text) {
+    var followsLetter = false
+    for (c in normalized) {
+      val type = Character.getType(c)
       when {
         c.isLetter() -> {
           val script = Character.UnicodeScript.of(c.code)
-          if (script == Character.UnicodeScript.LATIN || script == Character.UnicodeScript.GREEK || script == Character.UnicodeScript.CYRILLIC) {
+          followsLetter = script == Character.UnicodeScript.LATIN || script == Character.UnicodeScript.GREEK || script == Character.UnicodeScript.CYRILLIC
+          if (followsLetter) {
             letters++
             acceptable++
           }
         }
-        c.isDigit() || c.isWhitespace() || c in PUNCTUATION -> acceptable++
+        type == Character.NON_SPACING_MARK.toInt() || type == Character.COMBINING_SPACING_MARK.toInt() || type == Character.ENCLOSING_MARK.toInt() -> {
+          if (followsLetter) acceptable++
+        }
+        else -> {
+          followsLetter = false
+          if (c.isDigit() || c.isWhitespace() || Character.isSpaceChar(c) || c in PUNCTUATION) acceptable++
+        }
       }
     }
-    return acceptable * 100 / text.length >= 95 && letters * 100 / text.length >= 35
+    return acceptable * 100 / normalized.length >= 95 && letters * 100 / normalized.length >= 35
   }
 
   private fun parseDuration(text: String): Long {

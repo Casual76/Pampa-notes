@@ -208,7 +208,23 @@ class ImportCoordinatorTest {
     assertEquals(note.id, coordinator.inspect(listOf(android.net.Uri.fromFile(incoming))).single().updateOfNoteId)
   }
 
-  private fun samsungFile(name: String, title: String, createdAt: Long? = null): File {
+  @Test
+  fun samsung_update_preserves_personal_editor_additions() = runTest {
+    val folder = seedFolder()
+    val original = samsungFile("personal-old.sdocx", "Samsung personal notes", body = "Original imported body.")
+    val first = coordinator.importAll(coordinator.inspect(listOf(android.net.Uri.fromFile(original))),
+      ImportTarget.NewNote(folder, "Samsung personal notes"))
+    val note = db.notes().get(first.noteId)!!
+    db.notes().upsert(note.copy(body = note.body + "\n\nMy personal editor additions."))
+    val revised = samsungFile("personal-new.sdocx", "Samsung personal notes", body = "Revised imported body.")
+    val candidates = coordinator.inspect(listOf(android.net.Uri.fromFile(revised)))
+    assertEquals(note.id, candidates.single().updateOfNoteId)
+    coordinator.importAll(candidates, ImportTarget.UpdateNote(note.id))
+    assertEquals("Revised imported body.\n\nMy personal editor additions.", db.notes().get(note.id)!!.body)
+    assertEquals(1, db.sources().byNote(note.id).count { it.kind == SourceKind.SDOCX })
+  }
+
+  private fun samsungFile(name: String, title: String, createdAt: Long? = null, body: String? = null): File {
     val file = File(workDir, name)
     java.util.zip.ZipOutputStream(file.outputStream()).use { zip ->
       zip.putNextEntry(java.util.zip.ZipEntry("note.note"))
@@ -219,6 +235,10 @@ class ImportCoordinatorTest {
       val bytes = title.toByteArray(Charsets.UTF_16LE)
       zip.write(java.nio.ByteBuffer.allocate(4).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(title.length).array())
       zip.write(bytes)
+      if (body != null) {
+        zip.write(java.nio.ByteBuffer.allocate(4).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(body.length).array())
+        zip.write(body.toByteArray(Charsets.UTF_16LE))
+      }
       zip.closeEntry()
     }
     return file

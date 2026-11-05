@@ -16,6 +16,8 @@ import dev.pampa.pampanotes.core.importing.ImportOutcome
 import dev.pampa.pampanotes.core.importing.SdocxUpdate
 import dev.pampa.pampanotes.core.importing.PampaBundleImporter
 import dev.pampa.pampanotes.core.importing.PampaBundleImportResult
+import dev.pampa.pampanotes.core.importing.PampaBundleProgress
+import dev.pampa.pampanotes.core.importing.PampaBundlePhase
 import dev.pampa.pampanotes.core.importing.ImportTarget
 import dev.pampa.pampanotes.core.model.Dates
 import dev.pampa.pampanotes.core.repo.FolderRepository
@@ -424,7 +426,7 @@ class ImportViewModel @Inject constructor(
     viewModelScope.launch {
       try {
         val result = bundleImporter.import(requireNotNull(candidate.file), state.updateExisting, state.selectedFolderId) { progress, label ->
-          _uiState.update { it.copy(progress = progress, progressLabel = label) }
+          _uiState.update { it.copy(progress = progress, progressLabel = bundleProgressLabel(label)) }
         }
         val imported = result.noteIds.mapNotNull { id -> notes.get(id)?.let { CreatedNote(id, it.title, 0) } }
         _uiState.update { it.copy(step = ImportStep.DONE, bundleResult = result, createdNotes = imported, progress = 1f) }
@@ -433,11 +435,20 @@ class ImportViewModel @Inject constructor(
         if (settings.syncEnabled) scheduler.syncNow()
       } catch (error: Exception) {
         if (error is kotlinx.coroutines.CancellationException) throw error
-        _uiState.update { it.copy(step = ImportStep.DONE, error = error.message, errorRes = dev.pampa.pampanotes.R.string.import_error_failed) }
+        android.util.Log.w("PampaNotes", "Bundle import failed", error)
+        _uiState.update { it.copy(step = ImportStep.DONE, error = null, errorRes = dev.pampa.pampanotes.R.string.import_bundle_failed_detail) }
       } finally {
         candidate.file?.delete()
       }
     }
+  }
+
+  private fun bundleProgressLabel(progress: PampaBundleProgress): String = when (progress.phase) {
+    PampaBundlePhase.VALIDATING -> context.getString(dev.pampa.pampanotes.R.string.import_bundle_validating)
+    PampaBundlePhase.STAGING_ATTACHMENTS -> context.getString(dev.pampa.pampanotes.R.string.import_bundle_staging)
+    PampaBundlePhase.IMPORTING_NOTES -> progress.noteTitle?.takeIf { it.isNotBlank() }?.let {
+      context.getString(dev.pampa.pampanotes.R.string.import_bundle_importing_note, it)
+    } ?: context.getString(dev.pampa.pampanotes.R.string.import_bundle_importing_notes)
   }
 
   override fun onCleared() {
@@ -493,10 +504,8 @@ class ImportViewModel @Inject constructor(
         outcomes.map { it.noteId }.distinct().forEach { transcribeIfAsked(it) }
       }.onFailure { error ->
         if (error is kotlinx.coroutines.CancellationException) throw error
-        _uiState.update {
-          if (error.message.isNullOrBlank()) it.copy(step = ImportStep.DONE, errorRes = dev.pampa.pampanotes.R.string.import_error_failed)
-          else it.copy(step = ImportStep.DONE, error = error.message)
-        }
+        android.util.Log.w("PampaNotes", "Import failed", error)
+        _uiState.update { it.copy(step = ImportStep.DONE, error = null, errorRes = dev.pampa.pampanotes.R.string.import_error_failed) }
       }
     }
   }

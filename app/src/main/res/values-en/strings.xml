@@ -1194,7 +1194,7 @@
   <string name="export_summary_audio">Recordings: %1$s</string>
   <string name="export_summary_sources">Originals: %1$s</string>
   <string name="export_summary_no_rules">no rules</string>
-  <string name="export_transcript_best_effect">The one you see in the app: the cleaned-up one if there is one, otherwise the raw one.</string>
+  <string name="export_transcript_best_effect">The one you see in the app: the cleaned-up one if there is one, otherwise the raw one. In ZIP bundles, exporting a refined transcript also includes its original raw transcript when needed for audio timing.</string>
   <string name="export_transcript_raw_effect">Always Whisper\'s: the only one with timestamps, and one no model has rewritten.</string>
   <string name="export_skill_effect">They tell the assistant what notes and transcripts are, and how to cite them. SKILL.md for Claude, instructions.md for the others.</string>
   <string name="export_audio_effect">The audio files, for whoever wants to listen again. They are heavy; the ones on your home computer are downloaded first.</string>
@@ -1619,7 +1619,7 @@
   <string name="player_scrubber_spoken">%1$s of %2$s</string>
   <string name="import_bundle_title">Pampa Notes bundle</string>
   <string name="import_bundle_counts">%1$d notes · %2$d updatable · %3$d included recordings · %4$d images</string>
-  <string name="import_bundle_precision">This bundle does not guarantee precise word timings. Omitted audio cannot be played.</string>
+  <string name="import_bundle_precision">This bundle has no precise timings for highlighting individual words during audio playback.</string>
   <string name="import_bundle_update">Update recognized notes</string>
   <string name="import_bundle_copies">Create new copies</string>
   <string name="import_bundle_destination">Bundle destination</string>
@@ -1628,4 +1628,11 @@
   <string name="import_bundle_done">%1$d notes imported · %2$d updated · %3$d recordings</string>
   <string name="import_bundle_combination">Open one Pampa bundle at a time from the main screen or a folder. It cannot be combined with additional files or imported inside a note.</string>
   <string name="import_input_failed">One or more files cannot be read or the bundle is unsupported. Close and select the files again: no partial selection will be imported.</string>
+  <string name="import_bundle_legacy_warning">This bundle comes from an older version. Its text is preserved, but some original note information and exact word timings are missing.</string>
+  <string name="import_bundle_omitted_warning">Some attachments are not included in the bundle. Missing audio cannot be played unless it is already on this device.</string>
+  <string name="import_bundle_validating">Checking bundle…</string>
+  <string name="import_bundle_staging">Preparing attachments…</string>
+  <string name="import_bundle_importing_notes">Importing notes…</string>
+  <string name="import_bundle_importing_note">Importing %1$s</string>
+  <string name="import_bundle_failed_detail">The bundle could not be imported. Check that it is a complete, supported Pampa Notes export, then try again.</string>
 </resources>

@@ -55,52 +55,36 @@ object SdocxUpdate {
 
   /**
    * La fonte aggiornata era l'unica da cui la nota ha preso del testo? Le pagine a mano (ricavate) e
-   * i file che non hanno portato testo non contano: allora la versione nuova *e'* la nota, e il
-   * corpo si sostituisce tutto, come prima.
+   * i file che non hanno portato testo non contano. Questo non prova che il corpo sia intatto:
+   * [mergeBody] confronta anche il testo precedente, per conservare le aggiunte personali.
    */
   fun onlyTextSource(sources: List<SourceEntity>, replacedId: String): Boolean =
     sources.none { it.id != replacedId && it.derivedFromId == null && it.extractedChars > 0 && it.kind != SourceKind.AUDIO }
 
   /**
-   * Il corpo dopo l'aggiornamento, o null se resta com'e'.
-   *
-   * - La fonte era l'unica con del testo ([onlyTextSource]): il corpo e' il testo nuovo.
-   * - Il testo che aveva portato ([oldBody], riletto dal suo `.sdocx`) sta ancora tutto nel corpo:
-   *   si sostituisce quel pezzo e basta, dovunque sia.
-   * - C'e' un paragrafo `## <titolo>` solo — quello che «Importa qui» scrive: si sostituisce dal
-   *   titolo al paragrafo `## ` dopo.
-   * - Altrimenti non si sa dove finisce il testo vecchio, e indovinare vuol dire cancellare quello di
-   *   un altro: il testo nuovo si aggiunge in fondo, col suo titolo. Un doppione si toglie a mano,
-   *   un appunto perso no.
-   *
-   * Un testo nuovo vuoto (una versione tutta a mano) non cancella niente se ci sono altre fonti: le
-   * pagine a mano arrivano lo stesso.
+   * Replace only a reliably identified imported body. Source count alone says nothing about
+   * personal edits: without the old baseline, or when it was edited/occurs twice, append instead.
+   * A heading alone cannot delimit imported text from personal additions underneath it.
+   * Empty handwritten updates preserve personal text; only an untouched sole body can be cleared.
    */
   fun mergeBody(current: String, oldBody: String?, title: String?, newBody: String, onlySource: Boolean): String? {
     val fresh = newBody.trim()
-    if (onlySource) return fresh.takeIf { it != current }
-    if (fresh.isEmpty()) return null
     val old = oldBody?.trim().orEmpty()
-    if (old == fresh && current.contains(old)) return null
+    if (onlySource && old.isNotEmpty() && current.trim() == old) return fresh.takeIf { it != current }
+    if (fresh.isEmpty()) return null
     if (old.isNotEmpty()) {
       val at = current.indexOf(old)
-      if (at >= 0) return current.substring(0, at) + fresh + current.substring(at + old.length)
-    }
-    val heading = title?.trim()?.takeIf { it.isNotEmpty() }?.let { "## $it" }
-    if (heading != null) {
-      val lines = current.lines()
-      val starts = lines.indices.filter { lines[it].trim().equals(heading, ignoreCase = true) }
-      if (starts.size == 1) {
-        val start = starts.single()
-        val end = (start + 1 until lines.size).firstOrNull { lines[it].startsWith("## ") } ?: lines.size
-        val before = lines.subList(0, start)
-        val after = lines.subList(end, lines.size)
-        val section = listOf(lines[start], "", fresh) + if (after.isNotEmpty()) listOf("") else emptyList()
-        return (before + section + after).joinToString("\n")
+      val end = at + old.length
+      val unique = at >= 0 && current.indexOf(old, at + 1) < 0
+      val wholeBlock = at >= 0 && (at == 0 || current[at - 1] == '\n') && (end == current.length || current[end] == '\n')
+      if (unique && wholeBlock) {
+        if (old == fresh) return null
+        return current.substring(0, at) + fresh + current.substring(end)
       }
     }
     if (current.isBlank()) return fresh
-    return current.trimEnd() + "\n\n" + (heading?.let { "$it\n\n" } ?: "") + fresh
+    val heading = title?.trim()?.takeIf { it.isNotEmpty() }?.let { "## $it\n\n" }.orEmpty()
+    return current.trimEnd() + "\n\n" + heading + fresh
   }
 
   /**

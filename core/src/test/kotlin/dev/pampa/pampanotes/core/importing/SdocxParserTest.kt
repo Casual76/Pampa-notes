@@ -181,6 +181,25 @@ class SdocxParserTest {
   }
 
   @Test
+  fun `decomposed Unicode title survives byte parsing without normalizing body spacing`() {
+    val title = "Cafe\u0301\u00a0filosofia"
+    val body = "Appunti con cafe\u0301\u00a0e spazi.\n  Riga indentata\n\tRiga con tabulazione."
+    val bytes = utf16Record(title) + utf16Record(body)
+    val doc = SdocxParser.assemble(bytes, null, null, emptyList())
+    assertEquals("Caf\u00e9 filosofia", doc.title)
+    assertEquals(body, doc.body)
+    assertEquals(listOf(title, body), SdocxParser.readProse(bytes))
+  }
+
+  @Test
+  fun `combining marks are accepted on letters but not as prose noise`() {
+    val title = "Filosofia a\u0301\u0323 e pensiero"
+    val doc = SdocxParser.assemble(utf16Record(title), null, null, emptyList())
+    assertEquals(SdocxUpdate.cleanTitle(title), doc.title)
+    assertFalse(SdocxParser.looksLikeProse("\u0301".repeat(20)))
+  }
+
+  @Test
   fun `i tratti di penna non passano per testo`() {
     // Coppie di byte qualsiasi che decodificano a caratteri CJK: lettere per Character.isLetter,
     // ma non di un alfabeto che uno scriva a mano in una nota italiana.

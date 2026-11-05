@@ -1229,7 +1229,7 @@
   <string name="export_summary_audio">Registrazioni: %1$s</string>
   <string name="export_summary_sources">Originali: %1$s</string>
   <string name="export_summary_no_rules">senza regole</string>
-  <string name="export_transcript_best_effect">Quella che vedi nell\'app: la ripulita se c\'è, altrimenti la grezza.</string>
+  <string name="export_transcript_best_effect">Quella che vedi nell\'app: la ripulita se c\'è, altrimenti la grezza. Negli ZIP, se esporti una trascrizione ripulita, viene inclusa anche la grezza di origine necessaria per i tempi audio.</string>
   <string name="export_transcript_raw_effect">Sempre quella di Whisper: l\'unica con i tempi, e che nessun modello ha riscritto.</string>
   <string name="export_skill_effect">Dicono all\'assistente cosa sono appunti e trascrizioni, e come citarli. SKILL.md per Claude, instructions.md per gli altri.</string>
   <string name="export_audio_effect">I file audio, per chi vuole riascoltare. Pesano; quelli che stanno sul computer di casa li scarico prima.</string>
@@ -1654,7 +1654,7 @@
   <string name="player_scrubber_spoken">%1$s di %2$s</string>
   <string name="import_bundle_title">Pacchetto Pampa Notes</string>
   <string name="import_bundle_counts">%1$d note · %2$d aggiornabili · %3$d audio presenti · %4$d immagini</string>
-  <string name="import_bundle_precision">Questo pacchetto non garantisce tempi precisi per ogni parola. Gli audio omessi non sono riproducibili.</string>
+  <string name="import_bundle_precision">Questo pacchetto non contiene tempi precisi per evidenziare le singole parole durante la riproduzione audio.</string>
   <string name="import_bundle_update">Aggiorna le note riconosciute</string>
   <string name="import_bundle_copies">Crea copie nuove</string>
   <string name="import_bundle_destination">Destinazione del pacchetto</string>
@@ -1663,4 +1663,11 @@
   <string name="import_bundle_done">%1$d note importate · %2$d aggiornate · %3$d registrazioni</string>
   <string name="import_bundle_combination">Apri un solo pacchetto Pampa alla volta, dalla schermata principale o da una cartella. Non si combina con altri file e non si importa dentro una nota.</string>
   <string name="import_input_failed">Uno o più file non sono leggibili o il pacchetto non è supportato. Chiudi e seleziona di nuovo i file: nessun elemento verrà importato parzialmente.</string>
+  <string name="import_bundle_legacy_warning">Questo pacchetto proviene da una versione precedente. Il testo viene conservato, ma mancano alcune informazioni sulle note originali e sui tempi esatti delle parole.</string>
+  <string name="import_bundle_omitted_warning">Alcuni allegati non sono inclusi nel pacchetto. Gli audio mancanti non saranno riproducibili, a meno che siano già presenti su questo dispositivo.</string>
+  <string name="import_bundle_validating">Verifica del pacchetto…</string>
+  <string name="import_bundle_staging">Preparazione degli allegati…</string>
+  <string name="import_bundle_importing_notes">Importazione delle note…</string>
+  <string name="import_bundle_importing_note">Importazione di %1$s</string>
+  <string name="import_bundle_failed_detail">Impossibile importare il pacchetto. Verifica che sia un export Pampa Notes completo e supportato, poi riprova.</string>
 </resources>
