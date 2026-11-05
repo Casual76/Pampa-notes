@@ -104,7 +104,55 @@ Configurazione autorizzata: GPT-6.1 Sol, reasoning high, due implementatori e du
 - Build assembleDebug, lintDebug, 806 test JVM core, 25 test JVM app e 116 test Android core passati. Log %TEMP%/pampa-zip-round5-final-gradle.log, BUILD SUCCESSFUL in 2m53s. Le nuove query FTS sono state eseguite nel database Android reale, anche dopo importazione e aggiornamento di uno ZIP con storie conservate.
 - Da sottoporre a due nuove review indipendenti prima dell'integrazione in main. App/engine/schema restano 1.1.2-17 / 3.0.5 / 13.
 
+## Sesto giro
+
+- Due review sul quinto giro completate. Ricerca e duplicazione nel caso di sessione condivisa semplice risultano corrette; emersi P1 downgrade di corpo/titolo/cartella dopo legacy → native con ID marcati ereditati → vecchio legacy, P1 sessioni ordinali scambiate prima del nuovo re-export nativo, P2 rifiuto di una sessione interamente omessa e P2 audio nativo identico con ID esplicito già riconosciuto.
+- Il parent riserva gli ID audio esatti compatibili prima degli alias per contenuto, mantenendo distinta la registrazione nativa aggiuntiva identica; regressione con reimportazione ripetuta passata tramite Gradle.
+- Da correggere insieme provenienza nativa persistente indipendente dagli ID ereditati e riconciliazione globale dei grafi/sessioni, con conservazione delle sessioni locali omesse e gestione sicura di alias incrociati. Nessun gate di approvazione passato.
+
+## Aggiornamento della skill e quadro corrente
+
+- Letta la skill agentic-workflow aggiornata e references/runtime.md. Configurazione confermata: GPT-6.1 Sol/high per implementazione e review; massimo 2 implementatori contemporanei, 2 reviewer distinti per giro; massimo complessivo 4 agenti incluso orchestratore. Correzioni senza limite di giri per autorizzazione dell'utente. Il sesto giro è in implementazione; una sola unità sostanziale attiva perché le modifiche condividono lo stesso riconciliatore.
+- Dal prossimo giro di review: tabella individuale obbligatoria 0–10 per reviewer e riepilogo generale con media/minimo soltanto di voti verificati comparabili. Nessuna nuova soglia numerica: passaggio soltanto a criteri obbligatori soddisfatti, con entrambi i report e nessun difetto concreto aperto.
+- Identificatori condivisi, corrispondenti ai criteri già concordati: C1 importazione nativa completa e flusso utente; C2 roundtrip audio/trascrizioni/tempi e selezione; C3 identità/aggiornamenti/conservazione locale; C4 riconoscimento e titoli Samsung; C5 validazione, errori, cancellazione e rollback; C6 verifiche integrate e prove d'uso.
+- Rubrica comune: 0–2 criterio sostanzialmente non soddisfatto; 3–4 funzionalità parziale con difetti gravi; 5–6 implementazione presente ma requisito ancora violato; 7–8 criterio soddisfatto nelle verifiche dichiarate con limiti espliciti; 9–10 criterio soddisfatto con copertura solida dei casi pertinenti. NV per non verificato, NA per non applicabile; provvisorio escluso dagli aggregati. Ogni voto deve avere evidenze e limiti. I voti non compensano requisiti falliti.
+
+### Riepilogo dell'ultima review completa, precedente all'aggiornamento
+
+Fase: integrazione ZIP e aggiornamenti. Giro: 5. Versione: d6cce25 (codice 18afd60). R1 identità/persistenza e R2 ricerca/flussi: entrambi GPT-6.1 Sol, reasoning high. I report storici sono qualitativi e non contengono voti; NF significa voto non fornito, non criterio non verificato. Nessun voto ricostruito dall'orchestratore; aggregati su 0/2 voti disponibili. Le altre review storiche restano documentate nelle sezioni precedenti senza attribuzione retroattiva di voti.
+
+| Criterio | R1 | R2 | Media | Minimo | Esito e problemi aperti alla versione esaminata |
+|---|---|---|---|---|---|
+| C1 Importazione nativa e flussi | NF | NF | — | — | Implementata e provata dal parent; approvazione finale pendente. |
+| C2 Audio, versioni e tempi | NF | NF | — | — | Prove passate; riordino tra sessioni legacy può duplicare audio e spostare tempi (P1, C3). |
+| C3 Identità, aggiornamenti e conservazione | NF | NF | — | — | Due P1: downgrade del contenuto nativo e sessioni ordinali scambiate. Due P2: sessione omessa e audio identico con ID esatto. |
+| C4 Samsung e titoli | NF | NF | — | — | Implementato con regressioni; nessun nuovo rilievo nei due report. |
+| C5 Validazione e rollback | NF | NF | — | — | Prove parent passate; nessun nuovo rilievo specifico nei due report. |
+| C6 Verifiche integrate | NF | NF | — | — | Parent: 831 test JVM, 116 Android, assembleDebug e lintDebug passati. I reviewer non hanno eseguito Gradle/Android. |
+
+Decisione: correggere, non integrare ancora in main. Stato successivo alla review: P2 ID audio esatto corretto con f369b81 e 19 test mirati passati; altri tre rilievi in lavorazione nel sesto giro. La suite completa del quinto giro non certifica le modifiche ancora in corso.
+
+## Nuovo limite e autorizzazione alla release stable
+
+- Ultima istruzione utente: «Imposto un limite di altri 3 giri di sistemamente difetti, poi prosegui con la publish sul pampa store canale stable».
+- Il nuovo limite sostituisce quello illimitato: massimo tre giri da questo punto, contando il sesto attualmente in corso come primo; quindi giri 6, 7 e 8. Dopo il giro 6 restano al massimo due ulteriori giri, senza azzerare il contatore. Se i criteri si chiudono prima, non inventare altri giri.
+- Pubblicazione Pampa Store canale stable esplicitamente autorizzata: predisporre integrazione main, versione superiore a 1.1.2/code17, build release, firma coerente, verifiche e pubblicazione. Il precedente vincolo «nessun bump/push/rilascio richiesto» è superato da questa istruzione; mantenere intatte le modifiche preesistenti.
+- Letta la skill pampa-store-publish-direct. Probe del checkout principale in preparazione; la release si esegue dopo le correzioni/verifiche, senza prolungare i giri oltre il nuovo limite. I report di review successivi devono includere le tabelle dei voti aggiornate.
+
+## Sesto giro: implementazione consegnata
+
+- 4afe8e0: riconciliazione globale degli audio, sessioni incrociate/cicliche e sessioni omesse con conservazione di file, storie, voci, job e statistiche. Provenienza privata nullable bundleNativeAdopted, automigrazione 13→14, sync monotono e rimozione dagli export portabili. Le note migrate senza provenienza conservano corpo/baseline negli import legacy fino a prova nativa.
+- Implementatore: 78 test JVM standalone passati, test Room/sync/migrazione compilati ma non eseguiti. Parent: generazione schema 14 e verifica integrata in corso, log %TEMP%/pampa-zip-round6-gradle.log. Le modifiche non sono ancora approvate.
+- Il giro 6 è il primo dei tre consentiti (6–8). Dopo la verifica integrata seguiranno due nuove review indipendenti con tabella individuale dei voti e riepilogo generale. Pubblicazione stable autorizzata dopo la fase di correzione/verifica.
+
+## Verifica integrata del sesto giro
+
+- Codice 4afe8e0: 818 test JVM core + 25 app (843 totali), 126 test Android core, assembleDebug e lintDebug passati. Log %TEMP%/pampa-zip-round6-final-gradle.log, BUILD SUCCESSFUL in 1m30s. Il primo tentativo aveva un solo errore di asset del nuovo schema 14 generato durante la build; ripetizione con schema presente passata senza modifiche applicative aggiuntive.
+- Schema 14 generato: unica modifica di tabella rispetto al 13 è notes.bundleNativeAdopted, INTEGER nullable con default NULL. Engine doctor passato, versione 3.0.5 pulita.
+- APK installato con aggiornamento senza cancellazione dati sul solo emulator-5580. Avvio e migrazione reale dell'archivio QA passati: schema14, quattro note QA riconosciute, sessioni/parti/baseline conservate, durate 2s e audio omessi distinti da quelli presenti. Buffer crash vuoto. Evidenze %TEMP%/pampa-zip-qa/round6-avvio.xml e state-verification.json.
+- Due nuove review del giro 6 da avviare sullo snapshot congelato con rubrica e tabelle aggiornate. È il primo dei tre giri consentiti: eventuali correzioni successive solo nei giri 7 e 8, poi release stable autorizzata.
+
 ## Prossime azioni
 
-1. Congelare la versione e avviare due nuove review indipendenti; correggere ogni rilievo confermato, senza limite di giri autorizzato dall'utente.
-2. Integrare nel checkout principale dopo le review, conservando ogni modifica preesistente. Nessun bump, push o rilascio richiesto per questa funzionalità.
+1. Completare il giro 6, verificare e avviare due nuove review indipendenti con rubriche e tabelle. Proseguire soltanto entro il limite aggiornato dei giri 6–8.
+2. Integrare nel checkout principale conservando ogni modifica preesistente e preparare/pubblicare la release Pampa Store stable autorizzata.
