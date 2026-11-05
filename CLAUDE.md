@@ -828,6 +828,13 @@ locali: segue sync e backup, si esclude dai pacchetti condivisi. Modifiche sovra
 testo con marcatori di conflitto; importare di nuovo la stessa versione non le duplica. Avvisi e
 progresso sono identificatori tipizzati tradotti dall'app, non stringhe fisse del core.
 
+Database 13 aggiunge `sources.sdocxCreatedAtMillis`: la creazione intrinseca di un originale
+Samsung resta disponibile dopo «Libera spazio». Si acquisisce all'import, dalle fonti locali
+pregresse e prima di rimuoverle; per un originale già sul computer si usa `/meta`, senza scaricare
+l'archivio intero. Un payload sync vecchio non cancella un'identità già nota. Gli audio inclusi in
+vecchi ZIP, privi di durata precisa nel manifest, si misurano prima della scrittura; un audio
+omesso resta dichiarato mancante e il lettore non promette l'arrivo dal computer di casa.
+
 **Le date vere della nota.** `updatedAt` e' l'ultima modifica *vera*, non l'import: un `.sdocx` la
 porta in `end_tag.bin` (int64 in microsecondi: modifica a +8, creazione a +46; le stesse in
 `note.note` a +32 e +24 — le date dello zip sono quelle della condivisione). Una nota importata
