@@ -7,7 +7,6 @@ import java.io.InputStream
 import java.security.MessageDigest
 import java.time.LocalDate
 import java.time.ZoneOffset
-import java.util.UUID
 import java.util.zip.ZipFile
 import kotlinx.serialization.json.*
 
@@ -67,7 +66,31 @@ object PampaBundleArchive {
       if (manifest.schema < 3) add(PampaBundleWarning.LEGACY_FORMAT)
       if (data.notes.any { n -> n.attachments.any { it.path == null } }) add(PampaBundleWarning.OMITTED_ATTACHMENTS)
     }
-    Read(data, root, warnings, manifest.schema == 3 && data.notes.any { it.segments.isNotEmpty() })
+    Read(data, root, warnings, manifest.schema == 3 && hasPreciseWordCoverage(data))
+  }
+
+  /** Every recording needs its selected RAW's words; one timed segment cannot describe a bundle. */
+  private fun hasPreciseWordCoverage(data: PampaBundleData): Boolean {
+    if (data.notes.none { it.parts.isNotEmpty() }) return false
+    return data.notes.all { note ->
+      note.parts.all { part ->
+        val session = note.sessions.first { it.id == part.sessionId }
+        val raw = dev.pampa.pampanotes.core.repo.RawTranscripts.forSelection(
+          note.transcripts.filter { it.sessionId == session.id }, session.activeTranscriptId)
+        val segments = note.segments.filter { it.partId == part.id && it.transcriptId == raw?.id }
+        segments.isNotEmpty() && segments.all { segment ->
+          val words = dev.pampa.pampanotes.core.transcription.WordTimings.decode(segment.wordsJson, 0)
+          val tokens = segment.text.split(Regex("\\s+")).filter { it.isNotBlank() }
+          !segment.wordsEstimated && words.isNotEmpty() && tokens.size == words.size &&
+            tokens.zip(words).all { (token, word) ->
+              // Ignore punctuation/case, but never claim precise coverage for unrelated words.
+              val expected = java.text.Normalizer.normalize(token, java.text.Normalizer.Form.NFC).filter { it.isLetterOrDigit() }
+              val actual = java.text.Normalizer.normalize(word.text, java.text.Normalizer.Form.NFC).filter { it.isLetterOrDigit() }
+              expected.isNotEmpty() && expected.equals(actual, true)
+            }
+        }
+      }
+    }
   }
 
   internal fun safePath(path: String) {
@@ -145,13 +168,13 @@ object PampaBundleArchive {
   }
 
   private fun legacy(manifest: ExportManifest, zip: ZipFile, root: String, checkpoint: () -> Unit): PampaBundleData {
-    fun id(value: String) = UUID.nameUUIDFromBytes(value.toByteArray()).toString()
+    fun id(kind: String, value: String) = PampaBundleLegacyReconcile.id(kind, value)
     val folders = linkedMapOf<String, FolderEntity>()
     val notes = manifest.notes.map { n ->
       fun date(value: String) = runCatching { LocalDate.parse(value).atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli() }.getOrDefault(0)
       var parent: String? = null; var path = ""
       n.path.split('/').filter { it.isNotBlank() }.ifEmpty { listOf(n.folder.ifBlank { "Imported" }) }.forEach { name ->
-        path += "/$name"; val key = id("legacy-folder:$path")
+        path += "/$name"; val key = id("folder", "legacy-folder:$path")
         folders.putIfAbsent(key, FolderEntity(key, name, parent, createdAt = date(n.created), updatedAt = date(n.updated))); parent = key
       }
       // Keep the entire document: stripping localized headings can destroy user Markdown.
@@ -164,26 +187,28 @@ object PampaBundleArchive {
         zip.getInputStream(entry).use { input -> val b = ByteArray(65536); while (true) { checkpoint(); val count = input.read(b); if (count < 0) break; digest.update(b, 0, count) } }
         return PampaBundleAttachment(key, audio, path, entry.size, digest.digest().joinToString("") { "%02x".format(it) })
       }
-      n.sources.forEachIndexed { i, s -> val key = id("${n.id}:source:$i"); sources += SourceEntity(key, n.id, runCatching { SourceKind.valueOf(s.kind.uppercase()) }.getOrDefault(SourceKind.OTHER), s.name, "application/octet-stream", s.bytes, s.sha256, importedAt = date(n.created)); attachments += attach(key, false, s.file) }
+      n.sources.forEachIndexed { i, s -> val key = id("source", "${n.id}:source:$i"); val attachment = attach(key, false, s.file); sources += SourceEntity(key, n.id, runCatching { SourceKind.valueOf(s.kind.uppercase()) }.getOrDefault(SourceKind.OTHER), s.name, "application/octet-stream", s.bytes, s.sha256.ifBlank { attachment.sha256.orEmpty() }, importedAt = date(n.created)); attachments += attachment }
       val pages = n.files.filter { it.kind == "handwriting" }
       // Handwriting must remain derived content even when its original was not exported.
       val pageParent = if (pages.isEmpty()) null else {
         sources.firstOrNull { it.kind == SourceKind.SDOCX }?.id
-          ?: id("${n.id}:handwriting-origin").also { key ->
+          ?: id("placeholder", "${n.id}:handwriting-origin").also { key ->
             sources += SourceEntity(key, n.id, SourceKind.OTHER, n.title, "application/octet-stream", 0, "", importedAt = date(n.created))
             attachments += PampaBundleAttachment(key, false)
           }
       }
       pages.forEach { f ->
-        val key = id("${n.id}:page:${f.path}")
-        sources += SourceEntity(key, n.id, SourceKind.IMAGE, f.path.substringAfterLast('/'), "image/png", zip.getEntry(root + f.path).size, "", importedAt = date(n.created), derivedFromId = pageParent)
-        attachments += attach(key, false, f.path)
+        val key = id("page", "${n.id}:page:${f.path}")
+        val attachment = attach(key, false, f.path)
+        sources += SourceEntity(key, n.id, SourceKind.IMAGE, f.path.substringAfterLast('/'), "image/png", zip.getEntry(root + f.path).size, attachment.sha256.orEmpty(), importedAt = date(n.created), derivedFromId = pageParent)
+        attachments += attachment
       }
-      val sessions = n.sessions.mapIndexed { i, s -> SessionEntity(id("${n.id}:session:$i"), n.id, s.title.orEmpty(), s.date, i, createdAt = date(n.created), updatedAt = date(n.updated)) }
-      val parts = n.sessions.flatMapIndexed { i, s -> s.audio.mapIndexed { j, path -> val key = id("${sessions[i].id}:part:$j"); val a = attach(key, true, path); attachments += a; AudioPartEntity(key, sessions[i].id, j, "", path.substringAfterLast('/'), "audio/mp4", a.bytes, 0, a.sha256.orEmpty(), date(n.created)) } }
+      val sessions = n.sessions.mapIndexed { i, s -> SessionEntity(id("session", "${n.id}:session:$i"), n.id, s.title.orEmpty(), s.date, i, createdAt = date(n.created), updatedAt = date(n.updated)) }
+      val parts = n.sessions.flatMapIndexed { i, s -> s.audio.mapIndexed { j, path -> val key = id("part", "${sessions[i].id}:part:$j"); val a = attach(key, true, path); attachments += a; AudioPartEntity(key, sessions[i].id, j, "", path.substringAfterLast('/'), "audio/mp4", a.bytes, 0, a.sha256.orEmpty(), date(n.created)) } }
       val transcripts = n.sessions.mapIndexedNotNull { i, s ->
         val pieces = n.files.filter { it.kind == "transcript" && it.session == i + 1 }.sortedBy { it.piece ?: 0 }
-        if (pieces.isEmpty()) null else TranscriptEntity(id("${sessions[i].id}:text"), sessions[i].id, if (s.transcript == "refined") TranscriptKind.REFINED else TranscriptKind.RAW, s.provider.orEmpty(), s.model.orEmpty(), text = pieces.joinToString("\n\n") { readText(zip, root + it.path) }, wordCount = s.words, createdAt = date(n.created))
+        val text = pieces.joinToString("\n\n") { readText(zip, root + it.path) }
+        if (pieces.isEmpty()) null else TranscriptEntity(id("transcript", "${sessions[i].id}:text:${dev.pampa.pampanotes.core.files.Hashing.sha256(text)}"), sessions[i].id, if (s.transcript == "refined") TranscriptKind.REFINED else TranscriptKind.RAW, s.provider.orEmpty(), s.model.orEmpty(), text = text, wordCount = s.words, createdAt = date(n.created))
       }
       PampaBundleNote(NoteEntity(n.id, parent!!, n.title, body, language = n.language, createdAt = date(n.created), updatedAt = date(n.updated)), n.tags, sessions.map { s -> s.copy(activeTranscriptId = transcripts.find { it.sessionId == s.id }?.id) }, parts, transcripts, sources = sources, attachments = attachments)
     }

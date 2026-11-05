@@ -51,20 +51,4 @@ class RawTranscriptsTest {
     assertEquals(null, RawTranscripts.forSelection(listOf(transcript("other", 100).copy(sessionId = "elsewhere"), selected), selected.id))
   }
 
-  @Test
-  fun `di troppo sono le grezze che la piu' recente copre gia'`() {
-    val raws = listOf(transcript("vecchia", 100), transcript("parziale", 150), transcript("nuova", 200))
-    val parts = mapOf(
-      "vecchia" to setOf("p1", "p2"),
-      // Ha una registrazione che la nuova non ha: le sue parole sono le sole di quella parte, e resta.
-      "parziale" to setOf("p3"),
-      "nuova" to setOf("p1", "p2"),
-    )
-    assertEquals(listOf("vecchia"), RawTranscripts.redundant(raws, parts).map { it.id })
-  }
-
-  @Test
-  fun `una grezza sola non ha niente di troppo`() {
-    assertEquals(emptyList<TranscriptEntity>(), RawTranscripts.redundant(listOf(transcript("sola", 100)), mapOf("sola" to setOf("p1"))))
-  }
 }

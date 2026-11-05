@@ -4,7 +4,7 @@ import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.db.TranscriptKind
 
 /**
- * Una grezza per sessione, e quale.
+ * La grezza da mostrare fra le versioni conservate di una sessione.
  *
  * La regola c'era gia' ([SessionRepository.saveTranscription] sostituisce la grezza di prima), ma non
  * reggeva a due dispositivi che trascrivono la stessa sessione insieme: col sync ne arrivavano due, e
@@ -28,17 +28,4 @@ object RawTranscripts {
     return transcripts.firstOrNull { it.id == selected.parentId && it.kind == TranscriptKind.RAW && it.sessionId == selected.sessionId }
   }
 
-  /**
-   * Le grezze di troppo, che si possono togliere senza perdere niente: tutte quelle che non sono la
-   * piu' recente e le cui parti la piu' recente copre gia'. Una grezza con una parte che l'altra non
-   * ha (una registrazione arrivata qui prima che l'altro dispositivo trascrivesse) resta: le sue
-   * parole sono le sole di quella parte, e la schermata mostra lo stesso la piu' recente.
-   *
-   * @param partsOf le parti coperte da ogni grezza, per id: quelle dei suoi segmenti.
-   */
-  fun redundant(raws: List<TranscriptEntity>, partsOf: Map<String, Set<String>>): List<TranscriptEntity> {
-    val winner = newest(raws) ?: return emptyList()
-    val covered = partsOf[winner.id].orEmpty()
-    return raws.filter { it.kind == TranscriptKind.RAW && it.id != winner.id && covered.containsAll(partsOf[it.id].orEmpty()) }
-  }
 }

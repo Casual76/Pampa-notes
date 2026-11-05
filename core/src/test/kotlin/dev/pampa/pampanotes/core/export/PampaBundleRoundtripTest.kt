@@ -38,6 +38,52 @@ class PampaBundleRoundtripTest {
     return temp.newFile().also { file -> file.outputStream().use { BundleWriter(audio, sources).write(set, ExportOptions(includeAudio = include, includeSources = include, transcript = choice), it) } }
   }
 
+  private fun writeCoverage(values: List<PampaBundleNote>): File {
+    val exports = values.map { value ->
+      val sessions = value.sessions.mapIndexed { index, session ->
+        val selected = value.transcripts.firstOrNull { it.id == session.activeTranscriptId }
+        val selectedRaw = dev.pampa.pampanotes.core.repo.RawTranscripts.forSelection(value.transcripts.filter { it.sessionId == session.id }, selected?.id)
+        ExportSession(session.id, index + 1, session.title, session.date,
+          value.parts.filter { it.sessionId == session.id }.map { ExportPart(it.id, it.originalName, it.fileName, it.durationMs, it.position * 1000L, it.sizeBytes) },
+          selected, selectedRaw, value.segments.filter { it.transcriptId == selectedRaw?.id })
+      }
+      ExportNote(value.note, listOf("School"), emptyList(), emptyList(), sessions, native = value)
+    }
+    val folders = values.map { FolderEntity(it.note.folderId, "School", createdAt = 1, updatedAt = 2) }.distinctBy { it.id }
+    return temp.newFile().also { file -> file.outputStream().use {
+      BundleWriter(temp.newFolder(), temp.newFolder()).write(ExportSet("School", "school", exports, "Pampa Notes test", 1000, folders = folders),
+        ExportOptions(includeAudio = false), it)
+    } }
+  }
+
+  @Test fun `precision requires actual nonestimated word timings for every recording`() {
+    val complete = native()
+    val incomplete = listOf(
+      complete.copy(segments = complete.segments.map { it.copy(wordsJson = null) }),
+      complete.copy(segments = complete.segments.map { it.copy(wordsEstimated = true) }),
+      complete.copy(segments = complete.segments.map { it.copy(wordsJson = "") }),
+      complete.copy(segments = complete.segments.take(1)),
+      complete.copy(segments = complete.segments.mapIndexed { index, segment -> if (index == 0) segment else segment.copy(wordsJson = null) }),
+      complete.copy(segments = complete.segments.map { it.copy(text = "Hello world") }),
+      complete.copy(segments = complete.segments.map { it.copy(wordsJson = "0,321,Unrelated") }),
+    )
+    incomplete.forEach { value -> assertFalse(PampaBundleArchive.read(write(value = value)).precise) }
+    assertTrue(PampaBundleArchive.read(write(value = complete)).precise)
+  }
+
+  @Test fun `one precise note cannot mask another untimed recording while text only notes need no timing`() {
+    val complete = native()
+    val second = PampaBundleImporter.remap(PampaBundleData(folders = listOf(folder), notes = listOf(complete)), "second").notes.single()
+    assertTrue(PampaBundleArchive.read(writeCoverage(listOf(complete, second))).precise)
+    assertFalse(PampaBundleArchive.read(writeCoverage(listOf(complete, second.copy(segments = emptyList())))).precise)
+    assertFalse(PampaBundleArchive.read(writeCoverage(listOf(complete, second.copy(segments = second.segments.map { it.copy(wordsEstimated = true) })))).precise)
+    val textOnly = second.copy(sessions = emptyList(), parts = emptyList(), transcripts = emptyList(), segments = emptyList())
+    assertTrue(PampaBundleArchive.read(writeCoverage(listOf(complete, textOnly))).precise)
+    val onlyText = PampaBundleArchive.read(writeCoverage(listOf(textOnly)))
+    assertFalse(onlyText.precise)
+    assertTrue(onlyText.warnings.isEmpty())
+  }
+
   @Test fun `writer reader keeps both texts and exact multipart word and speaker timing`() {
     val file = write(); assertTrue(PampaBundleArchive.isBundle(file))
     val read = PampaBundleArchive.read(file)

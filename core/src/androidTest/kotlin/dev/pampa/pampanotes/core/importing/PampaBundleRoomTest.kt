@@ -100,7 +100,7 @@ class PampaBundleRoomTest {
     return PampaBundleNote(NoteEntity("note", "folder", "Title", "Base\nMiddle\nEnd", createdAt = 1, updatedAt = 2), sessions = sessions, parts = parts, transcripts = transcripts, segments = segments)
   }
 
-  private fun archive(graph: PampaBundleNote, includeAudio: Boolean = true, content: (AudioPartEntity) -> ByteArray = { byteArrayOf(1, 2, 3) }): File {
+  private fun archive(graph: PampaBundleNote, includeAudio: Boolean = true, includeSources: Boolean = false, content: (AudioPartEntity) -> ByteArray = { byteArrayOf(1, 2, 3) }): File {
     val input = File(directory, "incoming").also { it.mkdirs() }
     graph.parts.forEach { File(input, it.fileName).writeBytes(content(it)) }
     val sessions = graph.sessions.mapIndexed { index, s ->
@@ -111,11 +111,42 @@ class PampaBundleRoomTest {
         ExportPart(p.id, p.originalName, p.fileName, p.durationMs, offset, p.sizeBytes).also { offset += p.durationMs }
       }, chosen, raw, graph.segments.filter { it.transcriptId == raw?.id })
     }
-    val export = ExportNote(graph.note, listOf("Subject"), graph.tags, emptyList(), sessions, native = graph)
+    val originals = graph.sources.filter { it.derivedFromId == null }.map { ExportSource(it.originalName, it.kind, it.sha256, it.sizeBytes, it.storedFileName, it.status, it.extractedChars, id = it.id) }
+    val pages = graph.sources.filter { it.derivedFromId != null }.mapIndexed { index, source -> ExportImage(source.storedFileName!!, index + 1, source.sizeBytes, id = source.id) }
+    val export = ExportNote(graph.note, listOf("Subject"), graph.tags, originals, sessions, handwriting = pages, native = graph)
     val folder = FolderEntity("folder", "Subject", createdAt = 1, updatedAt = 2)
     return File(directory, "${UUID.randomUUID()}.zip").also { zip -> zip.outputStream().use {
-      BundleWriter(input, directory).write(ExportSet("Subject", "subject", listOf(export), "Pampa Notes test", 1000, folders = listOf(folder)), ExportOptions(includeAudio = includeAudio), it)
+      BundleWriter(input, directory).write(ExportSet("Subject", "subject", listOf(export), "Pampa Notes test", 1000, folders = listOf(folder)), ExportOptions(includeAudio = includeAudio, includeSources = includeSources), it)
     } }
+  }
+
+  @Test fun omitted_original_update_learns_creation_without_clobbering_retained_file_or_archive_state() = runTest {
+    val originalFile = File(directory, "samsung.sdocx").apply { writeBytes(byteArrayOf(4, 5, 6)) }
+    val source = SourceEntity("samsung", "note", SourceKind.SDOCX, "Alpha.sdocx", "application/sdoc", 3, "", originalFile.name, importedAt = 1)
+    val initial = graph().copy(sources = listOf(source))
+    importer.import(archive(initial, includeSources = true))
+    val old = db.sources().get(source.id)!!.copy(archivedAt = 100)
+    db.sources().upsert(old)
+    val omittedUpdate = initial.copy(sources = listOf(old.copy(storedFileName = null, archivedAt = 0, sdocxCreatedAtMillis = 1_700_000_000_000L)))
+    importer.import(archive(omittedUpdate, includeSources = false))
+    val learned = db.sources().get(source.id)!!
+    assertEquals(old.copy(sdocxCreatedAtMillis = 1_700_000_000_000L), learned)
+    assertTrue(files.sourceFile(learned.storedFileName!!).readBytes().contentEquals(originalFile.readBytes()))
+    val beforeFiles = files.sources.listFiles()!!.map { it.name }.toSet()
+    val beforeNote = db.notes().get("note")
+    val contradictions = listOf(
+      learned.copy(sdocxCreatedAtMillis = 1_700_000_001_000L),
+      learned.copy(sha256 = "a".repeat(64)),
+      learned.copy(kind = SourceKind.PDF),
+    )
+    for (contradiction in contradictions) {
+      val incoming = omittedUpdate.copy(note = initial.note.copy(title = "Must rollback"), sources = listOf(contradiction))
+      try { importer.import(archive(incoming, includeSources = false)); fail("Expected conflicting identity to be rejected") }
+      catch (_: IllegalArgumentException) { }
+      assertEquals(learned, db.sources().get(source.id))
+      assertEquals(beforeNote, db.notes().get("note"))
+      assertEquals(beforeFiles, files.sources.listFiles()!!.map { it.name }.toSet())
+    }
   }
 
   private suspend fun storedGraph(): PampaBundleNote {
@@ -123,6 +154,66 @@ class PampaBundleRoomTest {
     val transcripts = sessions.flatMap { db.transcripts().bySession(it.id) }
     return PampaBundleNote(db.notes().get("note")!!, sessions = sessions, parts = sessions.flatMap { db.audioParts().bySession(it.id) }, transcripts = transcripts,
       segments = transcripts.flatMap { db.segments().byTranscript(it.id) })
+  }
+
+  @Test fun legacy_to_native_upgrade_adopts_children_without_losing_local_history_or_reimporting_duplicates() = runTest {
+    var canonical = graph("canonical" to listOf("A", "B"))
+    canonical = canonical.copy(parts = canonical.parts.map { it.copy(fileName = "${it.id}.wav", originalName = "${it.id}.wav", durationMs = 2000) },
+      segments = canonical.segments.map { segment -> val position = canonical.parts.single { it.id == segment.partId }.position
+        segment.copy(sessionStartMs = position * 2000L + segment.partStartMs, sessionEndMs = position * 2000L + segment.partEndMs) })
+    val authorRaw = canonical.transcripts.single()
+    val authorRefined = authorRaw.copy(id = "canonical-refined", kind = TranscriptKind.REFINED, parentId = authorRaw.id, text = "Author cleaned text")
+    File(directory, "original.txt").writeText("Original source")
+    File(directory, "page.png").writeBytes(byteArrayOf(1, 2, 3))
+    canonical = canonical.copy(transcripts = canonical.transcripts + authorRefined,
+      sessions = canonical.sessions.map { it.copy(activeTranscriptId = authorRefined.id) },
+      sources = listOf(SourceEntity("canonical-source", "note", SourceKind.TEXT, "original.txt", "text/plain", 15, "", "original.txt", importedAt = 1),
+        SourceEntity("canonical-page", "note", SourceKind.IMAGE, "page.png", "image/png", 3, "", "page.png", importedAt = 1, derivedFromId = "canonical-source")))
+    val native = archive(canonical, includeSources = true, content = { part -> wav(2000).also { it[it.lastIndex] = if (part.id == "A") 1 else 2 } })
+    val older = legacy(native, 2)
+    importer.import(older)
+    val oldSession = db.sessions().plainByNote("note").single()
+    val oldParts = db.audioParts().bySession(oldSession.id)
+    assertTrue(PampaBundleLegacyReconcile.isSynthetic(oldSession.id))
+    assertEquals(listOf(2000L, 2000L), oldParts.map { it.durationMs })
+    val history = TranscriptEntity("personal-raw", oldSession.id, TranscriptKind.RAW, "custom", "local", text = "My own words", wordCount = 3, createdAt = 10)
+    val personalRefined = history.copy(id = "personal-refined", kind = TranscriptKind.REFINED, parentId = history.id, text = "My local refinement")
+    db.transcripts().upsert(history); db.transcripts().upsert(personalRefined)
+    val personalSegments = oldParts.mapIndexed { index, part -> SegmentEntity(transcriptId = history.id, partId = part.id, indexInPart = 0,
+      partStartMs = 0, partEndMs = 500, sessionStartMs = index * 2000L, sessionEndMs = index * 2000L + 500,
+      text = "Personal", wordsJson = "0,500,Personal", speaker = "LOCAL") }
+    db.segments().insertAll(personalSegments)
+    db.notes().updateBody("note", db.notes().get("note")!!.body + "\nMy personal appendix", 100)
+    // Native identity and timing must also reconcile when the new package omits the actual audio.
+    val known = PampaBundleArchive.read(native).data.notes.single()
+    val update = archive(known, includeAudio = false, includeSources = false)
+    repeat(2) {
+      val result = importer.import(update)
+      assertEquals(0, result.importedNotes); assertEquals(1, result.updatedNotes)
+      val sessions = db.sessions().plainByNote("note")
+      assertEquals(listOf("canonical"), sessions.map { it.id })
+      assertEquals(listOf("A", "B"), db.audioParts().bySession("canonical").map { it.id })
+      assertEquals(listOf(2000L, 2000L), db.audioParts().bySession("canonical").map { it.durationMs })
+      assertEquals(authorRefined.id, sessions.single().activeTranscriptId)
+      assertEquals(authorRaw.id, dev.pampa.pampanotes.core.repo.RawTranscripts.forSelection(db.transcripts().bySession("canonical"), sessions.single().activeTranscriptId)?.id)
+      assertEquals("canonical", db.transcripts().get(history.id)!!.sessionId)
+      assertEquals(history.text, db.transcripts().get(history.id)!!.text)
+      assertEquals(personalRefined.text, db.transcripts().get(personalRefined.id)!!.text)
+      assertEquals(setOf("A", "B"), db.segments().byTranscript(history.id).map { it.partId }.toSet())
+      assertTrue(db.notes().get("note")!!.body.contains("My personal appendix"))
+      assertEquals(setOf("canonical-source", "canonical-page"), db.sources().byNote("note").map { it.id }.toSet())
+      assertTrue(db.folders().all().none { PampaBundleLegacyReconcile.isFolder(it.id) })
+    }
+    val before = db.notes().get("note")!!
+    val beforeParts = db.audioParts().bySession("canonical")
+    val fileNames = files.audio.listFiles()!!.map { it.name }.toSet()
+    importer.import(older)
+    assertEquals(before, db.notes().get("note"))
+    assertEquals(beforeParts, db.audioParts().bySession("canonical"))
+    assertEquals(authorRefined.id, db.sessions().get("canonical")!!.activeTranscriptId)
+    assertEquals(fileNames, files.audio.listFiles()!!.map { it.name }.toSet())
+    assertEquals(1, db.sessions().plainByNote("note").size)
+    assertTrue(db.folders().all().none { PampaBundleLegacyReconcile.isFolder(it.id) })
   }
 
   @Test fun competing_append_split_merge_and_reexport_preserve_local_audio() = runTest {

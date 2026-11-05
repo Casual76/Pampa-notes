@@ -94,6 +94,41 @@ class SyncApplierTest {
     assertNotNull(db.sync().outboxEntry("sources", known.id))
   }
 
+  @Test fun incoming_RAW_retains_selected_older_RAW_and_its_refinement() = runBlocking {
+    retainsSelectedHistory(refinedSelected = false)
+  }
+
+  @Test fun incoming_RAW_retains_selected_refinement_and_its_older_RAW_parent() = runBlocking {
+    retainsSelectedHistory(refinedSelected = true)
+  }
+
+  private suspend fun retainsSelectedHistory(refinedSelected: Boolean) {
+    val author = transcript("author", "s").copy(text = "Author words", wordCount = 2, createdAt = 100)
+    val refined = author.copy(id = "refined", kind = TranscriptKind.REFINED, parentId = author.id, text = "Author, refined.", createdAt = 150)
+    val newer = author.copy(id = "newer", text = "Different local words", wordCount = 3, createdAt = 200)
+    val selected = if (refinedSelected) refined.id else author.id
+    val authorSegment = SegmentEntity(transcriptId = author.id, partId = "p", indexInPart = 0,
+      partStartMs = 0, partEndMs = 900, sessionStartMs = 0, sessionEndMs = 900,
+      text = author.text, wordsJson = "0,400,Author\n400,900,words", speaker = "SPEAKER_AUTHOR")
+    val newerSegment = authorSegment.copy(transcriptId = newer.id, text = newer.text,
+      wordsJson = "0,300,Different\n300,600,local\n600,900,words", speaker = "SPEAKER_LOCAL")
+    apply(upFolder(folder("f"), 1), upNote(note("n", "f"), 2), upSession(session("s", "n").copy(activeTranscriptId = selected), 3),
+      up("audio_parts", "p", 4, AudioPartEntity.serializer(), part("p", "s").copy(durationMs = 1000)),
+      up("transcripts", author.id, 5, TranscriptEntity.serializer(), author).copy(segments = listOf(authorSegment)),
+      up("transcripts", refined.id, 6, TranscriptEntity.serializer(), refined))
+    clean()
+    apply(up("transcripts", newer.id, 7, TranscriptEntity.serializer(), newer).copy(segments = listOf(newerSegment)))
+    val history = db.transcripts().bySession("s")
+    assertEquals(setOf(author.id, refined.id, newer.id), history.map { it.id }.toSet())
+    assertEquals(selected, db.sessions().get("s")!!.activeTranscriptId)
+    assertNotNull(db.transcripts().get(selected))
+    assertEquals(author.id, dev.pampa.pampanotes.core.repo.RawTranscripts.forSelection(history, selected)?.id)
+    assertEquals(refined, db.transcripts().get(refined.id))
+    assertEquals(listOf(authorSegment), db.segments().byTranscript(author.id).map { it.copy(id = 0) })
+    assertEquals(listOf(newerSegment), db.segments().byTranscript(newer.id).map { it.copy(id = 0) })
+    for (id in listOf(author.id, refined.id, newer.id)) assertNull(db.sync().outboxEntry("transcripts", id))
+  }
+
   private fun apply(vararg changes: WireChange) = runBlocking { applier.apply(changes.toList(), ownerId = "me", deviceName = "questo") }
 
   /** Come se tutto quello che c'e' fosse gia' stato sincronizzato: niente di sporco. */

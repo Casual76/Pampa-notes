@@ -64,6 +64,12 @@ class PampaBundleImporter @Inject constructor(
           persist(measured, intoFolderId, stored, checkpoint) { p, title -> onProgress(0.7f + 0.3f * p, title) }
         }
         committed = true
+        // Reconciliation can reuse an existing canonical file instead of a newly staged legacy copy.
+        runCatching {
+          val usedAudio = db.audioParts().all().mapTo(HashSet()) { it.fileName }
+          val usedSources = db.sources().all().mapNotNullTo(HashSet()) { it.storedFileName }
+          staged.filter { if (it.parentFile == files.audio) it.name !in usedAudio else it.name !in usedSources }.forEach { it.delete() }
+        }.onFailure { android.util.Log.w("PampaNotes", "Unused bundle staging cleanup", it) }
         result.copy(warnings = read.warnings)
       }
     } finally {
@@ -113,35 +119,69 @@ class PampaBundleImporter @Inject constructor(
         updatedAt = maxOf(next.updatedAt, old?.updatedAt ?: 0)))
       done += next.id; pending.remove(next)
     }
+    val cleanupFolders = data.folders.filter { PampaBundleLegacyReconcile.isFolder(it.id) }.mapTo(HashSet()) { it.id }
     var imported = 0; var updated = 0
     data.notes.forEachIndexed { index, n ->
       checkpoint()
       val oldNote = db.notes().get(n.note.id)
       if (oldNote == null) imported++ else updated++
+      var previousFolder = oldNote?.folderId?.let { db.folders().get(it) }
+      while (previousFolder != null && PampaBundleLegacyReconcile.isFolder(previousFolder.id)) {
+        cleanupFolders += previousFolder.id
+        previousFolder = previousFolder.parentId?.let { db.folders().get(it) }
+      }
       val oldSessions = db.sessions().plainByNote(n.note.id)
       val oldParts = oldSessions.flatMap { db.audioParts().bySession(it.id) }
       val oldTranscripts = oldSessions.flatMap { db.transcripts().bySession(it.id) }
-      val local = oldNote?.let { PampaBundleNote(it, db.tags().tags(it.id), oldSessions, oldParts,
+      val originalLocal = oldNote?.let { PampaBundleNote(it, db.tags().tags(it.id), oldSessions, oldParts,
         oldTranscripts, oldTranscripts.flatMap { t -> db.segments().byTranscript(t.id) }, db.sources().byNote(it.id)) }
+      val reconciliation = PampaBundleLegacyReconcile.plan(originalLocal, n)
+      val local = reconciliation.local
+      val incoming = reconciliation.incoming
+      reconciliation.sessions.keys.forEach { oldId ->
+        require(db.jobs().activeForSession(oldId) == null) { "Finish the active legacy session job before upgrading" }
+      }
       suspend fun sameNote(sessionId: String): Boolean = db.sessions().get(sessionId)?.noteId == n.note.id
-      n.sessions.forEach { s -> require(db.sessions().get(s.id)?.noteId.let { it == null || it == n.note.id }) { "Session belongs to another note" } }
-      val incomingParts = n.parts.map { part ->
-        val old = db.audioParts().get(part.id)
-        require(old == null || sameNote(old.sessionId)) { "Audio belongs to another note" }
-        val name = stored[true to part.id]
-        if (name == null && old != null) {
+      incoming.sessions.forEach { s -> require(db.sessions().get(s.id)?.noteId.let { it == null || it == n.note.id }) { "Session belongs to another note" } }
+      val incomingParts = incoming.parts.map { part ->
+        val persisted = db.audioParts().get(part.id)
+        require(persisted == null || sameNote(persisted.sessionId)) { "Audio belongs to another note" }
+        val old = persisted ?: local?.parts?.firstOrNull { it.id == part.id }
+        val name = if (reconciliation.preserveLocalNote && old != null) null
+          else stored[true to (reconciliation.incomingPartKeys[part.id] ?: part.id)]
+        val adoptedLegacyFile = part.id in reconciliation.parts.values && old != null &&
+          part.sha256.isNotBlank() && part.sha256.equals(old.sha256, true) && files.audioFile(old.fileName).isFile
+        if (adoptedLegacyFile) {
+          // Keep the proven local blob, but adopt native duration/timing metadata rather than MMR rounding.
+          part.copy(fileName = old.fileName, archivedAt = old.archivedAt, originalName = old.originalName,
+            durationMs = part.durationMs.takeIf { it > 0 } ?: old.durationMs, sizeBytes = old.sizeBytes)
+        } else if (name == null && old != null) {
           require(part.sha256.isBlank() || old.sha256.isBlank() || part.sha256.equals(old.sha256, true)) { "Omitted audio conflicts with local content" }
           old.copy(sessionId = part.sessionId, position = part.position)
         } else part.copy(fileName = name ?: "missing-${UUID.nameUUIDFromBytes(part.id.toByteArray(Charsets.UTF_8))}", archivedAt = 0)
       }
-      val incomingSources = n.sources.map { source ->
-        val old = db.sources().get(source.id)
-        require(old == null || old.noteId == n.note.id) { "Source belongs to another note" }
-        val name = stored[false to source.id]
-        if (name == null && old != null) old.copy(derivedFromId = source.derivedFromId)
-        else source.copy(storedFileName = name, archivedAt = 0)
+      val incomingSources = incoming.sources.map { source ->
+        val persisted = db.sources().get(source.id)
+        require(persisted == null || persisted.noteId == n.note.id) { "Source belongs to another note" }
+        val old = persisted ?: local?.sources?.firstOrNull { it.id == source.id }
+        val name = if (old != null && (reconciliation.preserveLocalNote || source.id in reconciliation.sources.values &&
+          source.sha256.isNotBlank() && source.sha256.equals(old.sha256, true) && old.storedFileName?.let { files.sourceFile(it).isFile } == true)) null
+          else stored[false to (reconciliation.incomingSourceKeys[source.id] ?: source.id)]
+        if (name == null && old != null) {
+          require(old.kind == source.kind) { "Omitted source kind conflicts with local content" }
+          val sameHash = old.sha256.isNotBlank() && source.sha256.isNotBlank() && old.sha256.equals(source.sha256, true)
+          require(old.sha256.isBlank() || source.sha256.isBlank() || sameHash) { "Omitted source conflicts with local content" }
+          source.sdocxCreatedAtMillis?.let { created ->
+            require(source.kind == SourceKind.SDOCX && created > 0) { "Invalid Samsung identity evidence" }
+            require(old.sdocxCreatedAtMillis == null || old.sdocxCreatedAtMillis == created) { "Conflicting Samsung identity evidence" }
+            require(old.sdocxCreatedAtMillis != null || sameHash) { "Cannot identify omitted Samsung original" }
+          }
+          old.copy(derivedFromId = source.derivedFromId,
+            sdocxCreatedAtMillis = old.sdocxCreatedAtMillis ?: source.sdocxCreatedAtMillis)
+        } else source.copy(storedFileName = name, archivedAt = 0)
       }
-      val merged = PampaBundleMerge.merge(local, n.copy(parts = incomingParts, sources = incomingSources))
+      val graph = PampaBundleMerge.merge(local, incoming.copy(parts = incomingParts, sources = incomingSources))
+      val merged = if (reconciliation.preserveLocalNote) graph.copy(note = originalLocal!!.note) else graph
       // Includes synthesized RAW histories; reject any global ID collision before graph writes.
       merged.transcripts.forEach { t ->
         val old = db.transcripts().get(t.id)
@@ -159,10 +199,47 @@ class PampaBundleImporter @Inject constructor(
         db.segments().deleteByTranscript(t.id)
         db.segments().insertAll(merged.segments.filter { it.transcriptId == t.id }.map { it.copy(id = 0) })
       }
+      // Rekeying is complete before retiring synthetic parents, so cascades cannot lose history.
+      if (reconciliation.sessions.isNotEmpty()) {
+        db.jobs().all().filter { it.sessionId in reconciliation.sessions }.forEach { job ->
+          db.jobs().upsert(job.copy(sessionId = reconciliation.sessions.getValue(job.sessionId)))
+        }
+        reconciliation.sessions.forEach { (oldId, newId) ->
+          db.openHelper.writableDatabase.execSQL("UPDATE transcription_runs SET sessionId = ? WHERE sessionId = ?", arrayOf(newId, oldId))
+        }
+      }
+      reconciliation.parts.keys.forEach { db.audioParts().delete(it) }
+      reconciliation.sources.keys.forEach { db.sources().delete(it) }
+      reconciliation.sessions.keys.forEach { oldId ->
+        require(db.audioParts().bySession(oldId).isEmpty() && db.transcripts().bySession(oldId).isEmpty()) { "Legacy children were not fully adopted" }
+        db.sessions().delete(oldId)
+      }
       onProgress((index + 1f) / data.notes.size.coerceAtLeast(1), PampaBundleProgress(PampaBundlePhase.IMPORTING_NOTES, n.note.title))
     }
+    removeEmptyLegacyFolders(ancestors, cleanupFolders)
     checkpoint()
     return PampaBundleImportResult(data.notes.map { it.note.id }, imported, updated, data.notes.sumOf { n -> n.attachments.count { it.audio && it.path != null } })
+  }
+
+  /** Reserved, unedited synthetic folders only; never cascade through notes or children. */
+  private suspend fun removeEmptyLegacyFolders(protected: Set<String>, candidates: Set<String>) {
+    if (candidates.isEmpty()) return
+    do {
+      var removed = false
+      val folders = db.folders().all().associateBy { it.id }
+      folders.values.filter { it.id in candidates && PampaBundleLegacyReconcile.isFolder(it.id) && it.id !in protected &&
+        it.tone == null && it.icon == null && it.sortOrder == 0 && it.kind == FolderEntity.KIND_SCHOOL }.forEach { folder ->
+        val names = mutableListOf<String>()
+        var current: FolderEntity? = folder
+        while (current != null && PampaBundleLegacyReconcile.isFolder(current.id)) {
+          names += current.name; current = current.parentId?.let { folders[it] }
+        }
+        val expected = PampaBundleLegacyReconcile.id("folder", "legacy-folder:/" + names.reversed().joinToString("/"))
+        if (expected == folder.id && db.notes().byFolder(folder.id).isEmpty() && db.folders().children(folder.id).isEmpty()) {
+          db.folders().delete(folder.id); removed = true
+        }
+      }
+    } while (removed)
   }
 
   companion object {

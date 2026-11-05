@@ -1619,7 +1619,7 @@
   <string name="player_scrubber_spoken">%1$s of %2$s</string>
   <string name="import_bundle_title">Pampa Notes bundle</string>
   <string name="import_bundle_counts">%1$d notes · %2$d updatable · %3$d included recordings · Images: %4$d</string>
-  <string name="import_bundle_precision">This bundle has no precise timings for highlighting individual words during audio playback.</string>
+  <string name="import_bundle_precision">Precise word timings are missing or incomplete for some recordings in this bundle.</string>
   <string name="import_bundle_update">Update recognized notes</string>
   <string name="import_bundle_copies">Create new copies</string>
   <string name="import_bundle_destination">Bundle destination</string>
