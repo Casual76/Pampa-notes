@@ -152,6 +152,71 @@ Decisione: correggere, non integrare ancora in main. Stato successivo alla revie
 - APK installato con aggiornamento senza cancellazione dati sul solo emulator-5580. Avvio e migrazione reale dell'archivio QA passati: schema14, quattro note QA riconosciute, sessioni/parti/baseline conservate, durate 2s e audio omessi distinti da quelli presenti. Buffer crash vuoto. Evidenze %TEMP%/pampa-zip-qa/round6-avvio.xml e state-verification.json.
 - Due nuove review del giro 6 da avviare sullo snapshot congelato con rubrica e tabelle aggiornate. È il primo dei tre giri consentiti: eventuali correzioni successive solo nei giri 7 e 8, poi release stable autorizzata.
 
+## Review giro 6: R1 ricevuto, riepilogo parziale
+
+Fase integrazione, giro 6, versione f667cb1ef93e9d0b8d824fdfcf8e53075215c15f. R1: GPT-6.1 Sol/high, dati/provenienza/audio. R2: GPT-6.1 Sol/high, import/Samsung/uso, ancora in attesa. Nessuna approvazione: confermato dal parent il percorso che mette in quarantena file ancora referenziati dopo retirement degli alias. Nessuna modifica applicativa durante la review ancora aperta.
+
+Tabella individuale R1 (voti trascritti dal report; motivazioni sintetizzate):
+
+| Criterio | Voto | Stato della verifica | Motivazione ed evidenze | Problemi e gravità |
+|---|---|---|---|---|
+| C1 | NA | Fuori ambito | Nessuna valutazione completa del flusso UI e della gerarchia. | Non valutati. |
+| C2 | 8/10 | Sorgenti e artefatti parent verificati | Export selezionato/RAW, offset del merge, limiti dei tempi parola; XML parent senza fallimenti. | Nessun nuovo difetto locale; P1 sync compromette disponibilità audio successiva. |
+| C3 | 6/10 | Verificato, requisito ancora violato | Provenienza, baseline, riconciliazione globale/omissioni/scambi, sync monotono ed esclusione metadati privati esaminati. | P1: sync rimuove dalla posizione attiva un file conservato sotto il nuovo ID. |
+| C4 | NA | Fuori ambito | Nessuna review completa Samsung/normalizzazione. | Non valutati. |
+| C5 | 6/10 | Verificato, requisito ancora violato | Validazione/staging/transazione/cleanup/checkpoint e confine NonCancellable esaminati. | P1: quarantena post-transazione senza controllo dei riferimenti vivi. |
+| C6 | 8/10 | Artefatti verificati; esecuzioni del parent | Ricontati 818 core JVM, 25 app JVM e 126 Android, zero fallimenti/errori/skipped; log/lint/schema14/QA verificati. | Manca regressione di sync dopo retirement alias; nessuna esecuzione Gradle/Android del reviewer. |
+
+| Criterio | R1 | R2 | Media | Minimo | Esito e problemi aperti |
+|---|---|---|---|---|---|
+| C1 | NA | in attesa | — | — | 0/2 voti validi, criterio ancora in attesa di R2. |
+| C2 | 8 | in attesa | 8 (1/2) | 8 | Locale verificato; disponibilità audio successiva compromessa dal P1 sync. |
+| C3 | 6 | in attesa | 6 (1/2) | 6 | P1 file ancora referenziato dal nuovo ID spostato nel cestino. |
+| C4 | NA | in attesa | — | — | 0/2 voti validi, criterio ancora in attesa di R2. |
+| C5 | 6 | in attesa | 6 (1/2) | 6 | Stesso P1: controllo dei riferimenti assente prima della quarantena. |
+| C6 | 8 | in attesa | 8 (1/2) | 8 | Artefatti passati, necessaria nuova regressione sync. |
+
+Rilievo R1: SyncApplier.apply usa trash.forEach(::quarantine) dopo il commit; delete audio/source raccoglie il vecchio file senza verificare se il nuovo record lo usa. Esempio B riceve upsert N e tombstone L, entrambi con shared.wav: resta N valido, ma il file viene spostato. Rilievo source-derived e modello SQL, non esecuzione Kotlin. Da coprire sia audio sia fonti con regressione Room e verifica byte. Decisione: attendere R2, poi correggere nel giro 7 (secondo dei tre consentiti); al massimo successivo giro 8 prima della release stable.
+
+## Review completa del giro 6
+
+R2: GPT-6.1 Sol/high, integrazione, giro 6, f667cb1ef93e9d0b8d824fdfcf8e53075215c15f. Secondo report ricevuto. Voti individuali R2 trascritti; motivazioni sintetizzate dal report.
+
+| Criterio | Voto | Stato della verifica | Motivazione ed evidenze | Problemi e gravità |
+|---|---|---|---|---|
+| C1 | 6/10 | Sorgenti e artefatti UI parent ispezionati | Payload, gerarchia, allegati, preview, update/copy e IT/EN implementati. | P2: import dalla cartella inclusa nel bundle propone una destinazione che persistence rifiuta; errore generico fuorviante. |
+| C2 | NA | Fuori ambito completo assegnato | Consumer selezionati esaminati incidentalmente, nessuna certificazione completa del roundtrip. | Nessun verdetto separato. |
+| C3 | 8/10 | Sorgenti/test e XML parent verificati | Provenienza e riconciliazione globale/cicli/omissioni; regressioni Room con parole, file, job, statistiche e FK. | Nessun nuovo difetto nelle sequenze esaminate; nessuna prova runtime propria. |
+| C4 | 8/10 | Sorgenti/test e risultati Android parent verificati | Identità Samsung originale/intrinseca, ambiguità, eviction e normalizzazione conservativa dei suffissi. | Nessun rilievo; nessuna prova indipendente su dispositivo Samsung. |
+| C5 | NA | Fuori ambito completo assegnato | Validazione destinazione esaminata incidentalmente. | Nessun verdetto separato. |
+| C6 | 8/10 | Verifica indipendente degli artefatti parent | 818+25 JVM e 126 Android senza errori/fallimenti/skips; log/schema14 e DB QA schema14/4 note/FK verificati. | UI precedente non copre il nuovo flusso difettoso; engine doctor/install/crash restano dichiarazioni parent. |
+
+Riepilogo generale completo: stessa fase/giro/versione; R1 e R2 entrambi GPT-6.1 Sol/high. NA esclusi dagli aggregati. Tra parentesi i voti comparabili su due reviewer.
+
+| Criterio | R1 | R2 | Media | Minimo | Esito e problemi aperti |
+|---|---|---|---|---|---|
+| C1 | NA | 6 | 6 (1/2) | 6 | P2 destinazione del wizard incompatibile con aggiornamento nella propria gerarchia. |
+| C2 | 8 | NA | 8 (1/2) | 8 | Roundtrip locale verificato; il P1 sync può compromettere disponibilità audio successiva. |
+| C3 | 6 | 8 | 7 (2/2) | 6 | P1 file ancora referenziati spostati nel cestino: il voto R2 sulle identità locali non annulla il difetto. |
+| C4 | NA | 8 | 8 (1/2) | 8 | Nessun rilievo aperto. |
+| C5 | 6 | NA | 6 (1/2) | 6 | P1 cleanup del sync senza controllo dei riferimenti correnti. |
+| C6 | 8 | 8 | 8 (2/2) | 8 | Artefatti verificati, necessarie regressioni per i due nuovi casi. |
+
+Decisione: giro 6 non approvato; due difetti confermati, correzione nel giro 7. Non mescolare questi voti con la versione aggiornata del giro successivo.
+
+## Settimo giro (secondo dei tre consentiti)
+
+- Parent: quarantena del sync protetta dai riferimenti correnti ad audio/fonti, con lettura e spostamento serializzati rispetto agli altri writer Room. Regressione con upsert canonico e tombstone alias: byte conservati finché referenziati e quarantena soltanto dopo l'ultima cancellazione.
+- Preview espone gli ID delle cartelle importate. Il wizard normalizza destinazione iniziale, selezione manuale e cambio copia→aggiornamento, esclude gerarchia importata e discendenti dalle destinazioni degli aggiornamenti; le copie conservano destinazioni valide grazie ai propri ID rimappati. Guard persistence anti-ciclo invariata.
+- Build, test JVM/Android e lint in corso, log %TEMP%/pampa-zip-round7-gradle.log. Seguiranno due nuove review sul risultato stabilizzato. Rimane al massimo un ulteriore giro 8 prima della release stable autorizzata.
+
+## Verifica integrata del settimo giro
+
+- Passati 818 test JVM core e 28 app (846 totali), 127 test Android core senza fallimenti/errori/skips, assembleDebug e lintDebug. Log %TEMP%/pampa-zip-round7-gradle.log, BUILD SUCCESSFUL in 3m29s. Inclusa regressione reale SyncApplier con conservazione byte di audio/fonti e quarantena solo dopo rimozione dell'ultimo riferimento.
+- APK aggiornato installato senza cancellare dati su emulator-5580. Prova UI del percorso segnalato: aperta la cartella originale Capitolo, menu Importa, picker del medesimo ZIP nativo; preview con 2 note aggiornabili e default «Mantieni le cartelle originali», import senza cambiare opzioni riuscito: 0 nuove / 2 aggiornate / 2 registrazioni. Evidenze %TEMP%/pampa-zip-qa/round7-anteprima.xml/png e round7-risultato.xml/png.
+- Tre regressioni JVM app verificano cartella importata e discendenti esclusi dagli aggiornamenti, copie consentite e cambio copia→aggiornamento, conservazione di destinazione esterna e rimozione di cartella inesistente. Guard persistence invariata.
+- Da congelare per due nuove review con tabelle dei voti: giro 7, secondo dei tre consentiti; al massimo un ulteriore giro 8 prima della pubblicazione stable autorizzata.
+
 ## Prossime azioni
 
 1. Completare il giro 6, verificare e avviare due nuove review indipendenti con rubriche e tabelle. Proseguire soltanto entro il limite aggiornato dei giri 6–8.

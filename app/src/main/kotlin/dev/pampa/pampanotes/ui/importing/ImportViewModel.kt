@@ -77,10 +77,19 @@ data class ImportUiState(
   val included: List<ImportCandidate> get() = candidates.filterNot { it.id in excluded }
 
   /** Le materie, nell'ordine di sempre. */
-  val schoolFolders: List<FolderEntity> get() = folders.filterNot { it.id in personalFolderIds }
+  val schoolFolders: List<FolderEntity> get() = destinationFolders.filterNot { it.id in personalFolderIds }
 
   /** Le cartelle di Registrazioni: un gruppo loro, cosi' un audio che non e' una lezione ha dove andare. */
-  val personalFolders: List<FolderEntity> get() = folders.filter { it.id in personalFolderIds }
+  val personalFolders: List<FolderEntity> get() = destinationFolders.filter { it.id in personalFolderIds }
+
+  private val destinationFolders: List<FolderEntity> get() = bundleCandidate?.bundle?.let { preview ->
+    folders.filter { preview.canImportInto(it.id, folders, updateExisting) }
+  } ?: folders
+
+  internal fun withCompatibleBundleDestination(): ImportUiState {
+    val preview = bundleCandidate?.bundle ?: return this
+    return if (preview.canImportInto(selectedFolderId, folders, updateExisting)) this else copy(selectedFolderId = null)
+  }
 
   /** Va in Registrazioni: le parole della scuola («lezione») li' non valgono. */
   val toPersonal: Boolean get() = selectedFolderId != null && selectedFolderId in personalFolderIds
@@ -261,7 +270,7 @@ class ImportViewModel @Inject constructor(
             else -> (guessedFolder ?: allFolders.firstOrNull { it.id !in personal } ?: allFolders.firstOrNull())?.id
           },
           newNoteTitle = defaultTitle,
-        )
+        ).withCompatibleBundleDestination()
       }
       if (intoNoteId != null) loadSessions(intoNoteId)
       val chosen = _uiState.value.selectedFolderId
@@ -280,7 +289,7 @@ class ImportViewModel @Inject constructor(
 
   fun selectFolder(folderId: String) {
     if (_uiState.value.bundleCandidate != null) {
-      _uiState.update { it.copy(selectedFolderId = folderId.takeUnless { id -> id == it.selectedFolderId }) }
+      _uiState.update { it.copy(selectedFolderId = folderId.takeUnless { id -> id == it.selectedFolderId }).withCompatibleBundleDestination() }
       return
     }
     // Le sessioni erano quelle della nota scelta prima: con una nota nuova non c'e' dove accodare,
@@ -299,7 +308,7 @@ class ImportViewModel @Inject constructor(
 
   fun setNewNoteTitle(title: String) = _uiState.update { it.copy(newNoteTitle = title) }
 
-  fun setUpdateExisting(update: Boolean) = _uiState.update { it.copy(updateExisting = update) }
+  fun setUpdateExisting(update: Boolean) = _uiState.update { it.copy(updateExisting = update).withCompatibleBundleDestination() }
 
   fun setAppendToSession(sessionId: String?) = _uiState.update { it.copy(appendToSessionId = sessionId) }
 

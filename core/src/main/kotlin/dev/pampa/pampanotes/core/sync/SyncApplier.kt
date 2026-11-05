@@ -158,7 +158,13 @@ class SyncApplier @Inject constructor(
         sync.setApplying(0)
       }
     }
-    trash.forEach(::quarantine)
+    if (trash.isNotEmpty()) db.withTransaction {
+      // Alias retirement may leave another row using the same immutable local blob.
+      // Serialize the reference check and moves with other Room writers.
+      val retained = db.audioParts().fileNames().map { files.audioFile(it).canonicalFile }.toSet() +
+        db.sources().storedFileNames().map { files.sourceFile(it).canonicalFile }
+      trash.distinctBy { it.canonicalFile }.filterNot { it.canonicalFile in retained }.forEach(::quarantine)
+    }
     return outcome
   }
 

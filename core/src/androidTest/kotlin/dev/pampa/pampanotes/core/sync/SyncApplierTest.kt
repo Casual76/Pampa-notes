@@ -295,6 +295,41 @@ class SyncApplierTest {
     File(trash, "p.m4a").delete(); File(trash, "x.pdf").delete()
   }
 
+  @Test fun alias_tombstones_preserve_audio_and_source_bytes_used_by_canonical_rows(): Unit = runBlocking {
+    val suffix = java.util.UUID.randomUUID().toString()
+    val original = part("legacy-audio", "s").copy(fileName = "shared-$suffix.wav")
+    val source = SourceEntity("legacy-source", "n", SourceKind.PDF, "original.pdf", "application/pdf", 4, "source-hash",
+      storedFileName = "shared-$suffix.pdf", importedAt = 1)
+    apply(upFolder(folder("f"), 1), upNote(note("n", "f"), 2), upSession(session("s", "n"), 3),
+      up("audio_parts", original.id, 4, AudioPartEntity.serializer(), original),
+      up("sources", source.id, 5, SourceEntity.serializer(), source))
+    val audio = files.audioFile(original.fileName).apply { writeText("original audio bytes") }
+    val document = files.sourceFile(source.storedFileName!!).apply { writeText("original source bytes") }
+    try {
+      clean()
+      val canonical = original.copy(id = "native-audio")
+      val canonicalSource = source.copy(id = "native-source")
+      apply(up("audio_parts", canonical.id, 6, AudioPartEntity.serializer(), canonical),
+        up("sources", canonicalSource.id, 7, SourceEntity.serializer(), canonicalSource),
+        del("audio_parts", original.id, 8), del("sources", source.id, 9))
+      assertNull(db.audioParts().get(original.id)); assertNull(db.sources().get(source.id))
+      assertEquals(canonical.fileName, db.audioParts().get(canonical.id)!!.fileName)
+      assertEquals(canonicalSource.storedFileName, db.sources().get(canonicalSource.id)!!.storedFileName)
+      assertEquals("original audio bytes", audio.readText())
+      assertEquals("original source bytes", document.readText())
+      clean()
+      apply(del("audio_parts", canonical.id, 10), del("sources", canonicalSource.id, 11))
+      assertFalse(audio.exists()); assertFalse(document.exists())
+      val trash = File(files.root, "trash/" + SimpleDateFormat("yyyyMMdd", Locale.US).format(Date()))
+      assertEquals("original audio bytes", File(trash, audio.name).readText())
+      assertEquals("original source bytes", File(trash, document.name).readText())
+    } finally {
+      audio.delete(); document.delete()
+      val trash = File(files.root, "trash/" + SimpleDateFormat("yyyyMMdd", Locale.US).format(Date()))
+      File(trash, audio.name).delete(); File(trash, document.name).delete()
+    }
+  }
+
   @Test
   fun una_corsa_arrivata_da_un_altro_dispositivo_entra_senza_la_sua_sessione_e_non_torna_indietro(): Unit = runBlocking {
     val run = TranscriptionRunEntity(

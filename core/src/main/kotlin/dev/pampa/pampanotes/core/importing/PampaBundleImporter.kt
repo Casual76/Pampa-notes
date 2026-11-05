@@ -24,7 +24,7 @@ class PampaBundleImporter @Inject constructor(
       read.data.notes.count { db.notes().get(originId(it.note.id)) != null },
       read.data.notes.sumOf { n -> n.attachments.count { it.audio && it.path != null } },
       read.data.notes.sumOf { n -> n.sources.count { s -> s.kind == SourceKind.IMAGE && n.attachments.any { it.id == s.id && !it.audio && it.path != null } } },
-      read.data.notes.map { it.note.title }, read.precise, read.warnings)
+      read.data.notes.map { it.note.title }, read.precise, read.warnings, read.data.folders.mapTo(HashSet()) { it.id })
   }
 
   suspend fun import(

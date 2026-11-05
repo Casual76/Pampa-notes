@@ -41,7 +41,23 @@ data class PampaBundlePreview(
   val titles: List<String>,
   val hasPreciseTimings: Boolean,
   val warnings: List<PampaBundleWarning> = emptyList(),
-)
+  val folderIds: Set<String> = emptySet(),
+) {
+  /** Updates cannot nest a hierarchy below itself; copies receive independent IDs. */
+  fun canImportInto(folderId: String?, folders: List<FolderEntity>, updateExisting: Boolean): Boolean {
+    if (folderId == null) return true
+    if (folders.none { it.id == folderId }) return false
+    if (!updateExisting) return true
+    val parents = folders.associate { it.id to it.parentId }
+    val seen = mutableSetOf<String>()
+    var current: String? = folderId
+    while (current != null) {
+      if (current in folderIds || !seen.add(current)) return false
+      current = parents[current]
+    }
+    return true
+  }
+}
 
 data class PampaBundleImportResult(
   val noteIds: List<String>,
