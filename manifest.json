@@ -15,22 +15,30 @@
       "ref": "main"
     },
     "stable": {
-      "version": "1.1.2",
+      "version": "1.2.0",
       "releaseDate": "2026-11-05",
-      "changelog": "Corretto il problema che lasciava vuoti i pulsanti della barra durante il cambio pagina: le icone ora scompaiono e ricompaiono con la dissolvenza prevista.",
-      "releaseTag": "stable-pampa-notes-v1.1.2",
-      "apkAsset": "pampa-notes-1.1.2.apk",
-      "sizeBytes": 12940332
+      "changelog": "Importazione dei pacchetti ZIP Pampa Notes direttamente nell'app, con cartelle, note, immagini, registrazioni e trascrizioni disponibili.\nAggiornamento delle note riconosciute o creazione di copie, con conservazione dei contenuti e delle trascrizioni locali.\nMigliorato il riconoscimento degli aggiornamenti Samsung Notes e la pulizia dei titoli dai suffissi di esportazione.\nCorretta la coerenza tra versione selezionata, ricerca, riproduzione audio e tempi delle parole.\nMigliorata la conservazione degli allegati durante importazione e sincronizzazione.",
+      "releaseTag": "stable-pampa-notes-v1.2.0",
+      "apkAsset": "pampa-notes-1.2.0.apk",
+      "sizeBytes": 13018187
     },
     "beta": {
-      "version": "1.1.2",
+      "version": "1.2.0",
       "releaseDate": "2026-11-05",
-      "changelog": "Corretto il problema che lasciava vuoti i pulsanti della barra durante il cambio pagina: le icone ora scompaiono e ricompaiono con la dissolvenza prevista.",
-      "releaseTag": "stable-pampa-notes-v1.1.2",
-      "apkAsset": "pampa-notes-1.1.2.apk",
-      "sizeBytes": 12940332
+      "changelog": "Importazione dei pacchetti ZIP Pampa Notes direttamente nell'app, con cartelle, note, immagini, registrazioni e trascrizioni disponibili.\nAggiornamento delle note riconosciute o creazione di copie, con conservazione dei contenuti e delle trascrizioni locali.\nMigliorato il riconoscimento degli aggiornamenti Samsung Notes e la pulizia dei titoli dai suffissi di esportazione.\nCorretta la coerenza tra versione selezionata, ricerca, riproduzione audio e tempi delle parole.\nMigliorata la conservazione degli allegati durante importazione e sincronizzazione.",
+      "releaseTag": "stable-pampa-notes-v1.2.0",
+      "apkAsset": "pampa-notes-1.2.0.apk",
+      "sizeBytes": 13018187
     },
     "history": [
+      {
+        "version": "1.1.2",
+        "releaseDate": "2026-11-05",
+        "changelog": "Corretto il problema che lasciava vuoti i pulsanti della barra durante il cambio pagina: le icone ora scompaiono e ricompaiono con la dissolvenza prevista.",
+        "releaseTag": "stable-pampa-notes-v1.1.2",
+        "apkAsset": "pampa-notes-1.1.2.apk",
+        "sizeBytes": 12940332
+      },
       {
         "version": "1.1.1",
         "releaseDate": "2026-11-03",
