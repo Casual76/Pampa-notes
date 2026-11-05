@@ -58,6 +58,29 @@ class RawTimelinePlanTest {
     validate(result, parts)
   }
 
+  @Test fun `partial selected RAW never incorporates a disjoint alternative during rebuild or reorder`() {
+    for (refined in listOf(false, true)) {
+      val before = seed(refined).let { b -> b.copy(
+        transcripts = b.transcripts.map { when (it.id) {
+          "R" -> it.copy(text = "author A")
+          "L" -> it.copy(text = "local B")
+          else -> it
+        } },
+        segments = b.segments.filter { it.transcriptId == "R" && it.partId == "A" || it.transcriptId == "L" && it.partId == "B" }
+      ) }
+      for (order in listOf(before.parts, before.parts.reversed().mapIndexed { index, p -> p.copy(position = index) })) {
+        val result = RawTimelinePlan.build(before, before.sessions, order, 500)
+        assertEquals(if (refined) "F" else "R", result.active["s"])
+        assertEquals(setOf("R", "L") + if (refined) setOf("F") else emptySet<String>(), result.transcripts.map { it.id }.toSet())
+        assertEquals("author A", result.transcripts.single { it.id == "R" }.text)
+        assertEquals("local B", result.transcripts.single { it.id == "L" }.text)
+        assertEquals(listOf("A"), result.segments.filter { it.transcriptId == "R" }.map { it.partId })
+        assertEquals(listOf("B"), result.segments.filter { it.transcriptId == "L" }.map { it.partId })
+        validate(result, order)
+      }
+    }
+  }
+
   @Test fun `whole move preserves RAW ids and refinement before source cascade`() {
     val before = seed(true)
     val target = session("t", 1, null)

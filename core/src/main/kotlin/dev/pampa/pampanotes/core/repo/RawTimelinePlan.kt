@@ -103,7 +103,7 @@ internal object RawTimelinePlan {
         }
       }.distinct()
       val explicitWithoutRaw = originalSession?.activeTranscriptId?.let { oldById[it] } != null && selectedRaw == null
-      val fallback = if (explicitWithoutRaw) emptyList() else rows.values.filter { it.kind == TranscriptKind.RAW && it.sessionId == session.id }
+      val fallback = if (explicitWithoutRaw || preferred.isNotEmpty()) emptyList() else rows.values.filter { it.kind == TranscriptKind.RAW && it.sessionId == session.id }
         .sortedWith(compareByDescending<TranscriptEntity> { it.createdAt }.thenBy { it.id }).map { it.id }
       val candidates = (preferred + fallback).distinct()
       val chosen = mutableListOf<String>()
