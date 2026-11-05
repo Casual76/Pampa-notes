@@ -531,7 +531,7 @@ private fun TabBarScaffold(
   val tabBarScroll = rememberFluidFloatingTabBarScrollConnection()
   val backdrop = chromeController.activeBackdrop.value ?: fallbackBackdrop
 
-  BoxWithConstraints(
+  Box(
     modifier = Modifier
       .fillMaxSize()
       .then(if (hasTabBar) Modifier.nestedScroll(tabBarScroll) else Modifier),
