@@ -13,7 +13,6 @@ import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import javax.sound.sampled.AudioSystem
 
 class PampaBundleAudioMetadataTest {
   @get:Rule val temp = TemporaryFolder()
@@ -38,13 +37,18 @@ class PampaBundleAudioMetadataTest {
     every { files.audioFile(first.name) } returns first
     every { files.audioFile(second.name) } returns second
     val probe = mockk<PampaBundleAudioProbe>()
-    // JVM adapter measures actual WAV frames; production Android MediaMetadataRetriever is
-    // exercised by PampaBundleRoomTest on a target, never by a JVM Android stub.
+    // The JVM adapter reads the PCM fixture header without Java Desktop APIs, which Android
+    // compilation excludes. PampaBundleRoomTest exercises the real Android media probe.
     every { probe.probe(any()) } answers {
       val file = firstArg<File>()
-      AudioSystem.getAudioInputStream(file).use { stream ->
-        AudioInfo((stream.frameLength * 1000 / stream.format.frameRate).toLong(), file.length(), "audio/x-wav", 8000, 1, 128000)
-      }
+      val bytes = ByteArray(44)
+      java.io.DataInputStream(file.inputStream()).use { it.readFully(bytes) }
+      require(String(bytes, 0, 4, Charsets.US_ASCII) == "RIFF" && String(bytes, 8, 4, Charsets.US_ASCII) == "WAVE")
+      val header = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+      val byteRate = header.getInt(28).toLong() and 0xffffffffL
+      val dataBytes = header.getInt(40).toLong() and 0xffffffffL
+      require(byteRate > 0 && dataBytes == file.length() - 44)
+      AudioInfo(dataBytes * 1000 / byteRate, file.length(), "audio/x-wav", header.getInt(24), header.getShort(22).toInt(), (byteRate * 8).toInt())
     }
     val data = PampaBundleData(folders = listOf(FolderEntity("f", "Subject", createdAt = 1, updatedAt = 2)), notes = listOf(
       PampaBundleNote(note, sessions = listOf(session), parts = listOf(part("A", 0), part("B", 1)))))
