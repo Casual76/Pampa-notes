@@ -14,6 +14,11 @@ import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.transcription.SessionSegment
 import dev.pampa.pampanotes.core.transcription.SessionTranscript
 import dev.pampa.pampanotes.core.transcription.VoiceNames
+import dev.pampa.pampanotes.core.export.*
+import dev.pampa.pampanotes.core.importing.PampaBundleArchive
+import dev.pampa.pampanotes.core.importing.PampaBundleNote
+import java.io.File
+import java.util.UUID
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -255,9 +260,8 @@ class SessionRepositoryTest {
 
     repository.movePart("seconda", -1)
 
-    // Il testo grezzo e' cambiato, quindi la raffinata non lo descrive piu': se ne va, e quello che
-    // si guarda torna a essere la grezza.
-    assertNull(db.transcripts().get("raffinata"))
+    // Keep the refinement as history, but show its own reordered RAW parent, not another version.
+    assertEquals(refined, db.transcripts().get("raffinata"))
     assertEquals(raw, db.sessions().get(session)!!.activeTranscriptId)
   }
 
@@ -404,6 +408,248 @@ class SessionRepositoryTest {
     assertEquals("2026-09-19", db.sessions().get(first)!!.date)
     // In ordine di data: il 19 prima del 24.
     assertEquals(listOf(first, created), db.sessions().plainByNote(noteId).sortedBy { it.position }.map { it.id })
+  }
+
+  private data class Histories(val session: String, val author: String, val local: String, val refined: String)
+
+  private suspend fun histories(id: String, ids: List<String> = listOf("A", "B"), position: Int = 0, refinedActive: Boolean = true): Histories {
+    seedSession(id, ids.map { it to 10L }, position)
+    val ordered = db.audioParts().bySession(id)
+    val rawIds = listOf("$id-R" to "author", "$id-L" to "local")
+    rawIds.forEachIndexed { index, (rawId, label) ->
+      db.transcripts().upsert(TranscriptEntity(rawId, id, TranscriptKind.RAW, "custom", label,
+        text = ids.joinToString("\n\n") { "$label $it" }, wordCount = ids.size * 2, createdAt = if (index == 0) 100 else 200))
+      db.segments().insertAll(ordered.map { part -> SegmentEntity(transcriptId = rawId, partId = part.id, indexInPart = 3,
+        partStartMs = 1000, partEndMs = 3000, sessionStartMs = part.position * 600000L + 1000, sessionEndMs = part.position * 600000L + 3000,
+        text = "$label ${part.id}", wordsJson = "0,1000,$label\n1000,2000,${part.id}", speaker = "SPEAKER_00", noSpeechProb = 0.1f, avgLogProb = -0.2f) })
+    }
+    val refined = "$id-F"
+    db.transcripts().upsert(TranscriptEntity(refined, id, TranscriptKind.REFINED, "custom", "refiner", text = "refined author", parentId = rawIds[0].first, wordCount = 2, createdAt = 300))
+    db.sessions().setActiveTranscript(id, if (refinedActive) refined else rawIds[0].first, 0)
+    return Histories(id, rawIds[0].first, rawIds[1].first, refined)
+  }
+
+  private suspend fun assertVersion(id: String, session: String, label: String, orderedIds: List<String>) {
+    val raw = db.transcripts().get(id)!!
+    assertEquals(session, raw.sessionId)
+    assertEquals(orderedIds.joinToString("\n\n") { "$label $it" }, raw.text)
+    val own = db.segments().byTranscript(id)
+    assertEquals(orderedIds, own.map { it.partId })
+    val parts = db.audioParts().bySession(session)
+    own.forEach { segment ->
+      val offset = parts.takeWhile { it.id != segment.partId }.sumOf { it.durationMs }
+      assertEquals(offset + 1000, segment.sessionStartMs)
+      assertEquals(offset + 3000, segment.sessionEndMs)
+      assertEquals(1000L, segment.partStartMs)
+      assertEquals(3000L, segment.partEndMs)
+      assertEquals(3, segment.indexInPart)
+      assertEquals("0,1000,$label\n1000,2000,${segment.partId}", segment.wordsJson)
+      assertEquals("SPEAKER_00", segment.speaker)
+      assertEquals(0.1f, segment.noSpeechProb)
+      assertEquals(-0.2f, segment.avgLogProb)
+    }
+  }
+
+  private suspend fun assertConsistentHistories() {
+    db.segments().all().forEach { segment ->
+      assertEquals(db.audioParts().get(segment.partId)!!.sessionId, db.transcripts().get(segment.transcriptId)!!.sessionId)
+    }
+    db.transcripts().all().filter { it.parentId != null }.forEach { child ->
+      val parent = db.transcripts().get(child.parentId!!)!!
+      assertEquals(TranscriptKind.RAW, parent.kind)
+      assertEquals(child.sessionId, parent.sessionId)
+    }
+    db.sessions().all().forEach { session ->
+      session.activeTranscriptId?.let { assertEquals(session.id, db.transcripts().get(it)!!.sessionId) }
+    }
+    // Validate the actual writer->reader graph after each operation, with the active RAW only.
+    val sessions = db.sessions().plainByNote(noteId)
+    val versions = sessions.flatMap { db.transcripts().bySession(it.id) }
+    val allParts = sessions.flatMap { db.audioParts().bySession(it.id) }
+    val allSegments = versions.flatMap { db.segments().byTranscript(it.id) }
+    val exportSessions = sessions.mapIndexed { index, session ->
+      val raw = RawTranscripts.forSelection(versions.filter { it.sessionId == session.id }, session.activeTranscriptId)
+      var offset = 0L
+      ExportSession(session.id, index + 1, session.title, session.date, allParts.filter { it.sessionId == session.id }.map { part ->
+        ExportPart(part.id, part.originalName, part.fileName, part.durationMs, offset, part.sizeBytes).also { offset += part.durationMs }
+      }, raw, raw, allSegments.filter { it.transcriptId == raw?.id }, VoiceNames.decode(session.voiceNames))
+    }
+    val note = db.notes().get(noteId)!!
+    val folder = db.folders().get(note.folderId)!!
+    val export = ExportNote(note, listOf(folder.name), emptyList(), emptyList(), exportSessions,
+      native = PampaBundleNote(note, sessions = sessions, parts = allParts, transcripts = versions, segments = allSegments))
+    val zip = File(files.temp, "raw-timeline-${UUID.randomUUID()}.zip")
+    try {
+      zip.outputStream().use { BundleWriter(files.audio, files.sources).write(ExportSet(folder.name, "raw-timeline", listOf(export), "Pampa Notes test", 1,
+        folders = listOf(folder)), ExportOptions(transcript = TranscriptChoice.RAW), it) }
+      val restored = PampaBundleArchive.read(zip).data.notes.single()
+      assertEquals(exportSessions.mapNotNull { it.raw?.id }.toSet(), restored.transcripts.map { it.id }.toSet())
+      assertEquals(exportSessions.sumOf { it.segments.size }, restored.segments.size)
+    } finally { zip.delete() }
+  }
+
+  @Test fun multiple_raw_reorder_keeps_selected_R_and_all_L_timings() = runTest {
+    val h = histories("s", refinedActive = false)
+    repository.movePart("B", -1)
+    assertVersion(h.author, "s", "author", listOf("B", "A"))
+    assertVersion(h.local, "s", "local", listOf("B", "A"))
+    assertEquals(h.author, db.sessions().get("s")!!.activeTranscriptId)
+    assertEquals(4, db.segments().all().size)
+    assertEquals(h.author, db.transcripts().get(h.refined)!!.parentId)
+    assertConsistentHistories()
+  }
+
+  @Test fun multiple_raw_reorder_preserves_refinement_but_selects_its_own_parent() = runTest {
+    val h = histories("s")
+    repository.movePart("B", -1)
+    assertEquals(h.author, db.sessions().get("s")!!.activeTranscriptId)
+    assertEquals("refined author", db.transcripts().get(h.refined)!!.text)
+    assertVersion(h.author, "s", "author", listOf("B", "A"))
+    assertVersion(h.local, "s", "local", listOf("B", "A"))
+    assertConsistentHistories()
+  }
+
+  @Test fun multiple_raw_split_keeps_two_independent_histories_in_each_session() = runTest {
+    val h = histories("s")
+    val created = repository.splitAt("B")!!
+    assertVersion(h.author, "s", "author", listOf("A"))
+    assertVersion(h.local, "s", "local", listOf("A"))
+    val branches = db.transcripts().bySession(created.id).filter { it.kind == TranscriptKind.RAW }
+    assertEquals(2, branches.size)
+    val author = branches.single { it.model == "author" }
+    val local = branches.single { it.model == "local" }
+    assertVersion(author.id, created.id, "author", listOf("B"))
+    assertVersion(local.id, created.id, "local", listOf("B"))
+    assertEquals(author.id, created.activeTranscriptId)
+    assertEquals(h.author, db.sessions().get("s")!!.activeTranscriptId)
+    assertEquals("s", db.transcripts().get(h.refined)!!.sessionId)
+    assertEquals(4, db.segments().all().size)
+    assertConsistentHistories()
+  }
+
+  @Test fun multiple_raw_move_composes_independent_C_with_author_B_without_local_B() = runTest {
+    val h = histories("source")
+    seedSession("target", listOf("C" to 10L), 1)
+    val q = transcribe("target", listOf("C" to "independent C"))
+    repository.movePartTo("B", "target")
+    assertVersion(h.author, "source", "author", listOf("A"))
+    assertVersion(h.local, "source", "local", listOf("A"))
+    val selected = RawTranscripts.forSelection(db.transcripts().bySession("target"), db.sessions().get("target")!!.activeTranscriptId)!!
+    assertEquals("independent C\n\nauthor B", selected.text)
+    assertEquals(2, db.segments().byTranscript(selected.id).size)
+    val target = db.transcripts().bySession("target")
+    assertVersion(target.single { it.model == "author" }.id, "target", "author", listOf("B"))
+    assertVersion(target.single { it.model == "local" }.id, "target", "local", listOf("B"))
+    assertEquals("independent C", db.transcripts().get(q)!!.text)
+    assertEquals(7, db.segments().all().size)
+    assertConsistentHistories()
+  }
+
+  @Test fun multiple_raw_merge_preserves_original_ids_and_refinement_before_source_cascade() = runTest {
+    seedSession("target", listOf("C" to 10L))
+    val q = transcribe("target", listOf("C" to "independent C"))
+    val h = histories("source", position = 1)
+    repository.mergeIntoPrevious("source")
+    assertNull(db.sessions().get("source"))
+    assertVersion(h.author, "target", "author", listOf("A", "B"))
+    assertVersion(h.local, "target", "local", listOf("A", "B"))
+    assertEquals("target", db.transcripts().get(h.refined)!!.sessionId)
+    assertEquals(h.author, db.transcripts().get(h.refined)!!.parentId)
+    assertEquals("refined author", db.transcripts().get(h.refined)!!.text)
+    assertEquals("independent C", db.transcripts().get(q)!!.text)
+    val active = RawTranscripts.forSelection(db.transcripts().bySession("target"), db.sessions().get("target")!!.activeTranscriptId)!!
+    assertEquals("independent C\n\nauthor A\n\nauthor B", active.text)
+    assertEquals(3, db.segments().byTranscript(active.id).size)
+    assertEquals(8, db.segments().all().size)
+    assertConsistentHistories()
+  }
+
+  @Test fun moving_last_part_preserves_selected_refinement_and_both_raw_ids() = runTest {
+    val h = histories("source", listOf("A"))
+    seedSession("target", listOf("C" to 10L), 1)
+    repository.movePartTo("A", "target")
+    assertNull(db.sessions().get("source"))
+    assertVersion(h.author, "target", "author", listOf("A"))
+    assertVersion(h.local, "target", "local", listOf("A"))
+    assertEquals(h.refined, db.sessions().get("target")!!.activeTranscriptId)
+    assertEquals(h.author, db.transcripts().get(h.refined)!!.parentId)
+    assertEquals(2, db.segments().all().size)
+    assertConsistentHistories()
+  }
+
+  @Test fun selected_coverage_and_inflight_save_do_not_mix_or_delete_other_histories() = runTest {
+    val h = histories("s", refinedActive = false)
+    val saved = repository.saveTranscription("s", listOf("A"), result("A" to "fresh A"))!!
+    assertEquals("fresh A\n\nauthor B", saved.transcript!!.text)
+    assertVersion(h.author, "s", "author", listOf("A", "B"))
+    assertVersion(h.local, "s", "local", listOf("A", "B"))
+    assertNotNull(db.transcripts().get(h.refined))
+    assertEquals(6, db.segments().all().size)
+    assertConsistentHistories()
+    db.segments().deleteByTranscript(saved.transcript!!.id)
+    db.segments().insertAll(db.segments().byTranscript(h.author).filter { it.partId == "A" }.map { it.copy(id = 0, transcriptId = saved.transcript!!.id) })
+    assertEquals(listOf("B"), repository.untranscribedParts("s").map { it.id })
+  }
+
+  @Test fun moving_all_selected_words_does_not_select_unrelated_remaining_history() = runTest {
+    val h = histories("source", refinedActive = false)
+    db.segments().deleteByTranscript(h.author)
+    db.segments().insertAll(db.segments().byTranscript(h.local).filter { it.partId == "A" }.map {
+      it.copy(id = 0, transcriptId = h.author, text = "author A", wordsJson = "0,1000,author\n1000,2000,A")
+    })
+    db.transcripts().updateText(h.author, "author A", 2)
+    seedSession("target", emptyList(), 1)
+    repository.movePartTo("A", "target")
+    val selected = db.sessions().get("source")!!.activeTranscriptId!!
+    assertTrue(selected != h.local)
+    assertEquals("", db.transcripts().get(selected)!!.text)
+    assertTrue(db.segments().byTranscript(selected).isEmpty())
+    assertEquals(listOf("B"), repository.untranscribedParts("source").map { it.id })
+    assertVersion(h.author, "target", "author", listOf("A"))
+    assertVersion(h.local, "source", "local", listOf("B"))
+    assertConsistentHistories()
+  }
+
+  @Test fun repair_swaps_parts_without_combining_alternative_histories() = runTest {
+    val first = histories("s1", listOf("A", "B"))
+    val second = histories("s2", listOf("C", "D"), position = 1)
+    repository.applyRepair(noteId, dev.pampa.pampanotes.core.importing.SdocxRepair.Plan(
+      layout = mapOf("s1" to listOf("A", "C"), "s2" to listOf("B", "D"))))
+    assertVersion(first.author, "s1", "author", listOf("A"))
+    assertVersion(first.local, "s1", "local", listOf("A"))
+    assertVersion(second.author, "s2", "author", listOf("D"))
+    assertVersion(second.local, "s2", "local", listOf("D"))
+    val raw1 = RawTranscripts.forSelection(db.transcripts().bySession("s1"), db.sessions().get("s1")!!.activeTranscriptId)!!
+    val raw2 = RawTranscripts.forSelection(db.transcripts().bySession("s2"), db.sessions().get("s2")!!.activeTranscriptId)!!
+    assertEquals("author A\n\nauthor C", raw1.text)
+    assertEquals("author B\n\nauthor D", raw2.text)
+    assertEquals(2, db.segments().byTranscript(raw1.id).size)
+    assertEquals(2, db.segments().byTranscript(raw2.id).size)
+    assertNotNull(db.transcripts().get(first.refined))
+    assertNotNull(db.transcripts().get(second.refined))
+    assertEquals(0L, db.notes().get(noteId)!!.updatedAt)
+    assertConsistentHistories()
+  }
+
+  @Test fun empty_transcription_result_keeps_nullable_saved_transcript_contract() = runTest {
+    val session = seedSession("silent", listOf("A" to 10L))
+    val saved = repository.saveTranscription(session, listOf("A"), SessionTranscript("", emptyList(), "it", "test", "custom"))!!
+    assertNull(saved.transcript)
+  }
+
+  @Test fun deleting_audio_preserves_other_parts_in_each_raw_until_session_is_explicitly_empty() = runTest {
+    val h = histories("s")
+    repository.deletePart("A")
+    assertVersion(h.author, "s", "author", listOf("B"))
+    assertVersion(h.local, "s", "local", listOf("B"))
+    assertEquals(h.author, db.sessions().get("s")!!.activeTranscriptId)
+    assertNotNull(db.transcripts().get(h.refined))
+    assertEquals(2, db.segments().all().size)
+    assertConsistentHistories()
+    repository.deletePart("B")
+    assertNull(db.sessions().get("s"))
+    assertTrue(db.transcripts().all().isEmpty())
+    assertTrue(db.segments().all().isEmpty())
   }
 
   private fun result(vararg texts: Pair<String, String>) = SessionTranscript(

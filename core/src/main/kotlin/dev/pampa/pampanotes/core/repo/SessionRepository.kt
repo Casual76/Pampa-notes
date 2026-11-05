@@ -17,8 +17,6 @@ import dev.pampa.pampanotes.core.importing.SdocxRepair
 import dev.pampa.pampanotes.core.model.Dates
 import dev.pampa.pampanotes.core.model.Ids
 import dev.pampa.pampanotes.core.model.wordCount
-import dev.pampa.pampanotes.core.transcription.SessionAssembler
-import dev.pampa.pampanotes.core.transcription.SessionSegment
 import dev.pampa.pampanotes.core.transcription.SessionTranscript
 import dev.pampa.pampanotes.core.transcription.TranscriptPlacement
 import dev.pampa.pampanotes.core.transcription.VoiceNames
@@ -30,8 +28,8 @@ import kotlinx.coroutines.flow.Flow
 /**
  * Le sessioni e le loro parti: come si raggruppano, si riordinano, si separano e si uniscono.
  *
- * Una regola sola, e tutto il resto ne discende: **i segmenti appartengono alla parte, non alla
- * trascrizione**. La trascrizione di una sessione e' quello che si ottiene mettendo in fila i
+ * I tempi dentro una parte appartengono al file; parole e segmenti appartengono anche alla
+ * specifica versione RAW. La trascrizione di una sessione e' quello che si ottiene mettendo in fila i
  * segmenti delle parti che ha in quel momento, e si rifa' da capo dopo ogni cambiamento con
  * [rebuildRaw]. Per questo spostare una parte da una sessione all'altra non costa una richiesta di
  * rete: i tempi dentro il file non sono cambiati, e' cambiato solo chi viene prima.
@@ -117,20 +115,20 @@ class SessionRepository @Inject constructor(
    * @return true se si e' mossa: in cima non si sale, in fondo non si scende, e dirlo permette alla
    *   UI di non far vibrare un tasto che non ha fatto niente.
    */
-  suspend fun movePart(partId: String, delta: Int): Boolean {
-    if (delta == 0) return false
-    val part = parts.get(partId) ?: return false
+  suspend fun movePart(partId: String, delta: Int): Boolean = db.withTransaction {
+    if (delta == 0) return@withTransaction false
+    val part = parts.get(partId) ?: return@withTransaction false
     val ordered = parts.bySession(part.sessionId)
     val from = ordered.indexOfFirst { it.id == partId }
     val to = from + delta
-    if (from < 0 || to !in ordered.indices) return false
-
+    if (from < 0 || to !in ordered.indices) return@withTransaction false
+    val before = captureTimelines(setOf(part.sessionId))
     val reordered = ordered.toMutableList()
     reordered.add(to, reordered.removeAt(from))
     renumber(reordered)
-    rebuildRaw(part.sessionId)
+    rebuildTimelines(before, setOf(part.sessionId))
     touchNote(part.sessionId)
-    return true
+    true
   }
 
   /**
@@ -140,21 +138,19 @@ class SessionRepository @Inject constructor(
    * quella che la prende perche' il suo si allunga e i tempi di tutto quello che viene dopo si
    * spostano in avanti.
    */
-  suspend fun movePartTo(partId: String, targetSessionId: String) {
-    val part = parts.get(partId) ?: return
-    if (part.sessionId == targetSessionId) return
+  suspend fun movePartTo(partId: String, targetSessionId: String) = db.withTransaction {
+    val part = parts.get(partId) ?: return@withTransaction
+    if (part.sessionId == targetSessionId) return@withTransaction
+    require(sessions.get(targetSessionId) != null) { "Missing destination session" }
     val source = part.sessionId
+    val before = captureTimelines(setOf(source, targetSessionId))
     parts.move(partId, targetSessionId, parts.nextPosition(targetSessionId))
     carryVoiceNames(source, targetSessionId, listOf(partId))
     renumber(parts.bySession(source))
     renumber(parts.bySession(targetSessionId))
-    // Prima chi riceve, poi chi perde: e' l'ordine che salva i segmenti. Ricomporre prima la
-    // sessione svuotata cancellerebbe la sua trascrizione, e la cancellazione si porta dietro i
-    // segmenti — compresi quelli della parte appena arrivata dall'altra parte.
-    rebuildRaw(targetSessionId)
-    rebuildRaw(source)
+    rebuildTimelines(before, setOf(source, targetSessionId))
+    before.sessions.forEach { notes.touch(it.noteId, System.currentTimeMillis()) }
     deleteIfEmpty(source)
-    touchNote(targetSessionId)
   }
 
   /**
@@ -166,23 +162,21 @@ class SessionRepository @Inject constructor(
    *
    * @return la sessione nuova, o null se non c'era niente da separare.
    */
-  suspend fun splitAt(partId: String): SessionEntity? {
-    val part = parts.get(partId) ?: return null
-    val source = sessions.get(part.sessionId) ?: return null
+  suspend fun splitAt(partId: String): SessionEntity? = db.withTransaction {
+    val part = parts.get(partId) ?: return@withTransaction null
+    val source = sessions.get(part.sessionId) ?: return@withTransaction null
     val ordered = parts.bySession(part.sessionId)
     val index = ordered.indexOfFirst { it.id == partId }
-    // Separare dalla prima parte vorrebbe dire spostare tutto e lasciare un guscio vuoto.
-    if (index <= 0) return null
-
+    if (index <= 0) return@withTransaction null
+    val before = captureTimelines(setOf(source.id))
     val moving = ordered.drop(index)
     val created = insertAfter(source, title = "", date = source.date)
     moving.forEachIndexed { position, item -> parts.move(item.id, created.id, position) }
     carryVoiceNames(source.id, created.id, moving.map { it.id })
     renumber(parts.bySession(source.id))
-    rebuildRaw(created.id)
-    rebuildRaw(source.id)
+    rebuildTimelines(before, setOf(source.id, created.id))
     touchNote(source.id)
-    return created
+    sessions.get(created.id)
   }
 
   /**
@@ -193,45 +187,38 @@ class SessionRepository @Inject constructor(
    *
    * @return la sessione che le ha assorbite, o null se questa e' la prima.
    */
-  suspend fun mergeIntoPrevious(sessionId: String): SessionEntity? {
-    val session = sessions.get(sessionId) ?: return null
-    val previous = sessions.previous(session.noteId, session.position) ?: return null
-
+  suspend fun mergeIntoPrevious(sessionId: String): SessionEntity? = db.withTransaction {
+    val session = sessions.get(sessionId) ?: return@withTransaction null
+    val previous = sessions.previous(session.noteId, session.position) ?: return@withTransaction null
+    val before = captureTimelines(setOf(sessionId, previous.id))
     var position = parts.nextPosition(previous.id)
     val moving = parts.bySession(sessionId)
-    moving.forEach { part ->
-      parts.move(part.id, previous.id, position)
-      position++
-    }
+    moving.forEach { part -> parts.move(part.id, previous.id, position++) }
     carryVoiceNames(sessionId, previous.id, moving.map { it.id })
-    // Prima la ricomposizione, poi la cancellazione, e non e' un dettaglio: cancellare la sessione
-    // porta via le sue trascrizioni, e con loro i segmenti delle parti appena spostate. Ricomporre
-    // adesso li riadotta sotto la trascrizione della sessione che resta.
-    rebuildRaw(previous.id)
+    rebuildTimelines(before, setOf(sessionId, previous.id), relocatedSessions = mapOf(sessionId to previous.id))
+    // Every history and refinement is reparented before the source's FK cascade runs.
     sessions.delete(sessionId)
     renumberSessions(session.noteId)
     touchNote(previous.id)
-    return previous
+    sessions.get(previous.id)
   }
 
   /** Cancella una parte, il suo file e i suoi segmenti; la sessione si ricompone senza di lei. */
   suspend fun deletePart(partId: String) {
-    val part = parts.get(partId) ?: return
-    val sessionId = part.sessionId
-    segments.deleteByPart(partId)
-    parts.delete(partId)
-    runCatching { files.audioFile(part.fileName).delete() }
-    // I nomi dati alle voci di quella registrazione se ne vanno con lei: la chiave e' della parte
-    // (`VoiceNames.key`), e restati nella colonna non li mostrava nessuno ma viaggiavano col sync e
-    // tornavano fra le scorciatoie di «Chi e' Voce 2?» come se qualcuno parlasse ancora.
-    sessions.get(sessionId)?.let { session ->
+    val name = db.withTransaction {
+      val part = parts.get(partId) ?: return@withTransaction null
+      val session = sessions.get(part.sessionId) ?: return@withTransaction null
+      val before = captureTimelines(setOf(part.sessionId))
+      parts.delete(partId)
       val kept = VoiceNames.forget(session.voiceNames, listOf(partId))
-      if (kept != session.voiceNames) sessions.setVoiceNames(sessionId, kept, System.currentTimeMillis())
+      if (kept != session.voiceNames) sessions.setVoiceNames(session.id, kept, System.currentTimeMillis())
+      renumber(parts.bySession(session.id))
+      rebuildTimelines(before, setOf(session.id))
+      deleteIfEmpty(session.id)
+      notes.touch(session.noteId, System.currentTimeMillis())
+      part.fileName
     }
-    renumber(parts.bySession(sessionId))
-    rebuildRaw(sessionId)
-    deleteIfEmpty(sessionId)
-    touchNote(sessionId)
+    name?.let { runCatching { files.audioFile(it).delete() } }
   }
 
   suspend fun deleteSession(sessionId: String) {
@@ -270,6 +257,8 @@ class SessionRepository @Inject constructor(
     db.withTransaction {
       val now = System.currentTimeMillis()
       val before = sessions.plainByNote(noteId)
+      val timelineIds = (plan.layout.keys + plan.layout.values.flatten().mapNotNull { parts.get(it)?.sessionId }).toSet()
+      val timelines = captureTimelines(timelineIds)
       val wasByDate = before.sortedBy { it.position }.zipWithNext().all { (a, b) -> a.date <= b.date }
 
       plan.newSessions.forEach { (id, date) ->
@@ -303,8 +292,7 @@ class SessionRepository @Inject constructor(
       losers.filter { it !in plan.layout }.forEach { renumber(parts.bySession(it)) }
 
       val touched = (plan.layout.keys + losers).toList()
-      touched.forEach { rebuildRawNow(it, newRawId = SdocxRepair.rawId(it), adoptOnly = true) }
-      touched.forEach { rebuildRawNow(it, newRawId = SdocxRepair.rawId(it)) }
+      rebuildTimelines(timelines, touched.toSet(), touched.associateWith { SdocxRepair.rawId(it) })
       losers.forEach { deleteIfEmpty(it) }
 
       plan.redates.forEach { (sessionId, date) ->
@@ -326,88 +314,39 @@ class SessionRepository @Inject constructor(
   // La ricomposizione
   // ---------------------------------------------------------------------------------------------
 
-  /**
-   * Rifa' la trascrizione grezza di una sessione dai segmenti delle parti che ha adesso.
-   *
-   * Tre casi:
-   *
-   *  * **nessun segmento**: la trascrizione grezza sparisce, e con lei le raffinate che ne venivano.
-   *    Una sessione rimasta senza parole non deve continuare a mostrarne.
-   *  * **c'era gia' una grezza**: si aggiorna sul posto, cosi' le raffinate che la citano restano
-   *    attaccate a un genitore che esiste. Se pero' il testo e' cambiato, le raffinate se ne vanno:
-   *    un testo ripulito che descrive una versione precedente e' un testo di cui nessuno sa piu' da
-   *    dove viene.
-   *  * **non c'era**: ne nasce una, perche' i segmenti sono arrivati da un'altra sessione. Provider,
-   *    modello e lingua li si eredita da dove venivano.
-   */
-  suspend fun rebuildRaw(sessionId: String) {
-    // In una transazione sola: fra la cancellazione dei segmenti e la loro riscrittura la
-    // trascrizione e' vuota, e un giro di sync (o il lettore) che la legge li' in mezzo manderebbe
-    // agli altri dispositivi una lezione senza tempi. Chi la rilegge vede prima o dopo, mai durante.
-    db.withTransaction { rebuildRawNow(sessionId) }
+  /** Rebase every RAW independently. Selection follows its own version or refinement parent. */
+  suspend fun rebuildRaw(sessionId: String) = db.withTransaction { rebuildRawNow(sessionId) }
+
+  private suspend fun rebuildRawNow(sessionId: String) {
+    // Some callers already moved parts. Capture their actual RAW owners as well, but never
+    // concatenate the unpartitioned byParts result into a single transcript.
+    val ids = parts.bySession(sessionId).map { it.id }
+    val owners = if (ids.isEmpty()) emptyList() else segments.byParts(ids).map { it.transcriptId }.distinct()
+      .mapNotNull { transcripts.get(it)?.sessionId }
+    val sessions = (owners + sessionId).toSet()
+    rebuildTimelines(captureTimelines(sessions), sessions)
   }
 
-  /**
-   * @param newRawId l'id della grezza, se ne nasce una: la riparazione lo vuole deterministico, come
-   *   le sue sessioni ([dev.pampa.pampanotes.core.importing.SdocxRepair.rawId]).
-   * @param adoptOnly prende i segmenti delle parti che ha adesso e basta: non cancella quelli delle
-   *   parti che se ne sono andate, e non butta la grezza se non le resta niente. Serve quando piu'
-   *   sessioni si scambiano parti in un colpo solo ([applyRepair]): chi le perde non deve portarsi
-   *   via i segmenti prima che chi le riceve li abbia adottati.
-   */
-  private suspend fun rebuildRawNow(sessionId: String, newRawId: String? = null, adoptOnly: Boolean = false) {
-    val ordered = parts.bySession(sessionId)
-    val existing = transcripts.rawForSession(sessionId)
-    val stored = if (ordered.isEmpty()) emptyList() else segments.byParts(ordered.map { it.id })
+  private suspend fun captureTimelines(ids: Set<String>): RawTimelineSnapshot {
+    val rows = ids.mapNotNull { sessions.get(it) }
+    val versions = rows.flatMap { transcripts.bySession(it.id) }
+    return RawTimelineSnapshot(rows, rows.flatMap { parts.bySession(it.id) }, versions,
+      versions.flatMap { segments.byTranscript(it.id) })
+  }
 
-    if (stored.isEmpty()) {
-      if (!adoptOnly) existing?.let { dropTranscript(sessionId, it) }
-      return
+  private suspend fun rebuildTimelines(before: RawTimelineSnapshot, ids: Set<String>, newRawIds: Map<String, String> = emptyMap(), relocatedSessions: Map<String, String> = emptyMap()) {
+    val current = ids.mapNotNull { sessions.get(it) }
+    val plan = RawTimelinePlan.build(before, current, current.flatMap { parts.bySession(it.id) }, System.currentTimeMillis(), newRawIds, relocatedSessions)
+    val originalIds = before.transcripts.mapTo(HashSet()) { it.id }
+    plan.transcripts.filter { it.id !in originalIds }.forEach { require(transcripts.get(it.id) == null) { "RAW identity conflict" } }
+    // Upsert every destination first. Only then remove/reinsert each version's own segments.
+    // No deleteByPart and no parent REPLACE: alternative histories remain separate.
+    plan.transcripts.forEach { transcripts.upsert(it) }
+    before.transcripts.forEach { segments.deleteByTranscript(it.id) }
+    segments.insertAll(plan.segments)
+    plan.active.forEach { (sessionId, id) ->
+      if (sessions.get(sessionId)?.activeTranscriptId != id) sessions.setActiveTranscript(sessionId, id, System.currentTimeMillis())
     }
-
-    val assembled = SessionAssembler.reassemble(
-      parts = ordered.map { SessionAssembler.Part(it.id, it.durationMs) },
-      segments = stored.map(::toSessionSegment),
-    )
-
-    val target = existing ?: inheritedTranscript(sessionId, stored, assembled.text, newRawId)
-    val changed = existing == null || existing.text != assembled.text
-
-    if (existing == null) {
-      transcripts.upsert(target)
-    } else if (changed) {
-      transcripts.updateText(target.id, assembled.text, assembled.text.wordCount())
-      transcripts.deleteChildren(target.id)
-    }
-
-    // I segmenti si riscrivono comunque: anche a testo uguale i tempi di sessione possono essere
-    // cambiati, ed e' su quelli che il lettore salta.
-    if (!adoptOnly) segments.deleteByTranscript(target.id)
-    ordered.forEach { part -> segments.deleteByPart(part.id) }
-    segments.insertAll(
-      assembled.segments.map { segment ->
-        SegmentEntity(
-          transcriptId = target.id,
-          partId = segment.partId,
-          indexInPart = segment.indexInPart,
-          partStartMs = segment.partStartMs,
-          partEndMs = segment.partEndMs,
-          sessionStartMs = segment.sessionStartMs,
-          sessionEndMs = segment.sessionEndMs,
-          text = segment.text,
-          noSpeechProb = segment.noSpeechProb,
-          avgLogProb = segment.avgLogProb,
-          wordsJson = segment.wordsEncoded,
-          wordsEstimated = segment.wordsEstimated,
-          speaker = segment.speaker,
-        )
-      },
-    )
-
-    val session = sessions.get(sessionId) ?: return
-    val activeIsGone = session.activeTranscriptId == null ||
-      (changed && session.activeTranscriptId != target.id)
-    if (activeIsGone) sessions.setActiveTranscript(sessionId, target.id, System.currentTimeMillis())
   }
 
   /**
@@ -418,8 +357,9 @@ class SessionRepository @Inject constructor(
    * essere cambiata. Per ogni sessione che ha ancora almeno una di quelle parti: una grezza nuova,
    * con provider, modello e lingua del risultato, che prende i segmenti nuovi delle parti del lavoro
    * e **riadotta** quelli delle altre parti della sessione (arrivate nel frattempo, o gia' trascritte
-   * altrove); la grezza di prima se ne va con le sue raffinate, come ha sempre fatto una
-   * ritrascrizione; poi [rebuildRaw] rifa' testo e tempi dall'ordine di adesso. Una parte cancellata
+   * altrove). La singola grezza precedente si sostituisce come prima; se ci sono cronologie
+   * alternative si conservano, ciascuna con le sue parole. [rebuildRaw] rifa' testo e tempi
+   * dall'ordine di adesso. Una parte cancellata
    * nel frattempo non riceve niente: i suoi segmenti sarebbero orfani, e prima facevano fallire il
    * salvataggio.
    *
@@ -445,9 +385,11 @@ class SessionRepository @Inject constructor(
       val written = target.partIds.toSet()
       val inSession = parts.bySession(target.sessionId)
       val others = inSession.filterNot { it.id in written }
-      // Le parole delle altre parti, da qualunque trascrizione vengano: vanno sotto la grezza nuova
-      // prima che quella vecchia se ne vada, o la cascata le porterebbe via con lei.
-      val kept = if (others.isEmpty()) emptyList() else segments.byParts(others.map { it.id })
+      // Only the selected version contributes retained words to the new result. Other RAW
+      // histories must never be concatenated or destroyed by a partial in-flight result.
+      val selected = RawTranscripts.forSelection(transcripts.bySession(target.sessionId), sessions.get(target.sessionId)?.activeTranscriptId)
+      val otherIds = others.mapTo(HashSet()) { it.id }
+      val kept = selected?.let { segments.byTranscript(it.id).filter { row -> row.partId in otherIds } }.orEmpty()
       // Tutte le grezze di prima, non solo la piu' recente: due dispositivi che l'hanno trascritta
       // insieme ne lasciavano due, e la schermata mostrava la piu' vecchia (vedi [RawTranscripts]).
       val previous = transcripts.bySession(target.sessionId).filter { it.kind == TranscriptKind.RAW }
@@ -464,7 +406,7 @@ class SessionRepository @Inject constructor(
         wordCount = 0,
         createdAt = now,
       )
-      inSession.forEach { segments.deleteByPart(it.id) }
+      if (previous.size <= 1) inSession.forEach { segments.deleteByPart(it.id) }
       transcripts.upsert(transcript)
       segments.insertAll(
         kept.map { it.copy(id = 0, transcriptId = transcript.id) } +
@@ -486,7 +428,7 @@ class SessionRepository @Inject constructor(
             )
           },
       )
-      previous.forEach {
+      if (previous.size <= 1) previous.forEach {
         transcripts.deleteChildren(it.id)
         transcripts.delete(it.id)
       }
@@ -507,7 +449,7 @@ class SessionRepository @Inject constructor(
     val main = targets.last().sessionId
     SavedTranscription(
       sessionId = main,
-      transcript = transcripts.rawForSession(main),
+      transcript = RawTranscripts.forSelection(transcripts.bySession(main), sessions.get(main)?.activeTranscriptId)?.takeIf { it.text.isNotBlank() },
       sessionIds = targets.map { it.sessionId },
     )
   }
@@ -516,56 +458,12 @@ class SessionRepository @Inject constructor(
   suspend fun untranscribedParts(sessionId: String): List<AudioPartEntity> {
     val ordered = parts.bySession(sessionId)
     if (ordered.isEmpty()) return emptyList()
-    val covered = segments.byParts(ordered.map { it.id }).mapTo(mutableSetOf()) { it.partId }
+    val selected = RawTranscripts.forSelection(transcripts.bySession(sessionId), sessions.get(sessionId)?.activeTranscriptId)
+    val covered = selected?.let { segments.byTranscript(it.id).mapTo(mutableSetOf()) { row -> row.partId } }.orEmpty()
     return ordered.filterNot { it.id in covered }
   }
 
   // ---------------------------------------------------------------------------------------------
-
-  private fun toSessionSegment(entity: SegmentEntity) = SessionSegment(
-    partId = entity.partId,
-    indexInPart = entity.indexInPart,
-    partStartMs = entity.partStartMs,
-    partEndMs = entity.partEndMs,
-    sessionStartMs = entity.sessionStartMs,
-    sessionEndMs = entity.sessionEndMs,
-    text = entity.text,
-    noSpeechProb = entity.noSpeechProb,
-    avgLogProb = entity.avgLogProb,
-    // Le parole restano com'erano: i loro tempi sono relativi al segmento dentro la parte, e
-    // ricomporre una sessione non cambia nulla di quel riferimento.
-    wordsEncoded = entity.wordsJson,
-    wordsEstimated = entity.wordsEstimated,
-    speaker = entity.speaker,
-  )
-
-  /** Una grezza nuova che eredita l'anagrafica dalle trascrizioni da cui i segmenti vengono. */
-  private suspend fun inheritedTranscript(
-    sessionId: String,
-    stored: List<SegmentEntity>,
-    text: String,
-    id: String? = null,
-  ): TranscriptEntity {
-    val origins = stored.map { it.transcriptId }.distinct().mapNotNull { transcripts.get(it) }
-    return TranscriptEntity(
-      id = id ?: Ids.newId(),
-      sessionId = sessionId,
-      kind = TranscriptKind.RAW,
-      provider = origins.firstOrNull()?.provider.orEmpty(),
-      // Due modelli diversi in una sessione sola sono un fatto, e va detto invece di scegliere.
-      model = origins.map { it.model }.distinct().filter { it.isNotBlank() }.joinToString(" + "),
-      language = origins.firstNotNullOfOrNull { it.language },
-      text = text,
-      wordCount = text.wordCount(),
-      createdAt = System.currentTimeMillis(),
-    )
-  }
-
-  private suspend fun dropTranscript(sessionId: String, transcript: TranscriptEntity) {
-    transcripts.deleteChildren(transcript.id)
-    transcripts.delete(transcript.id)
-    sessions.setActiveTranscript(sessionId, null, System.currentTimeMillis())
-  }
 
   /** Una sessione rimasta senza parti e senza parole non serve piu' a niente: se ne va da sola. */
   private suspend fun deleteIfEmpty(sessionId: String) {
