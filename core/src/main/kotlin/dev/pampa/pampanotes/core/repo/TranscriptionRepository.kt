@@ -138,7 +138,7 @@ class TranscriptionRepository @Inject constructor(
   suspend fun enqueueRefinement(sessionId: String, optionsJson: String): JobEntity? {
     jobs.activeForSession(sessionId)?.let { return it }
     // Senza una grezza non c'e' niente da ripulire, e un lavoro che fallisce subito e' rumore.
-    transcripts.rawForSession(sessionId) ?: return null
+    rawFor(sessionId) ?: return null
 
     val now = System.currentTimeMillis()
     val job = JobEntity(
@@ -607,11 +607,11 @@ class TranscriptionRepository @Inject constructor(
    * sono ancora da fare.
    */
   suspend fun arrivedFromElsewhere(job: JobEntity): Boolean {
-    val raw = transcripts.rawForSession(job.sessionId) ?: return false
+    val raw = rawFor(job.sessionId) ?: return false
     if (raw.createdAt <= job.createdAt) return false
     val ids = parts.bySession(job.sessionId).map { it.id }
     if (ids.isEmpty()) return false
-    val covered = segments.byParts(ids).mapTo(mutableSetOf()) { it.partId }
+    val covered = segments.byTranscript(raw.id).mapTo(mutableSetOf()) { it.partId }
     return covered.containsAll(ids)
   }
 
@@ -662,7 +662,8 @@ class TranscriptionRepository @Inject constructor(
   suspend fun recordRun(job: JobEntity, startedAt: Long, transcript: TranscriptEntity): TranscriptionRunEntity? =
     stats.recordTranscription(job, startedAt, transcript)
 
-  suspend fun rawFor(sessionId: String): TranscriptEntity? = transcripts.rawForSession(sessionId)
+  suspend fun rawFor(sessionId: String): TranscriptEntity? =
+    RawTranscripts.forSelection(transcripts.bySession(sessionId), sessions.get(sessionId)?.activeTranscriptId)
 
   // ---------------------------------------------------------------------------------------------
   // In trascrizione su un altro dispositivo (vedi TranscribingMarker)

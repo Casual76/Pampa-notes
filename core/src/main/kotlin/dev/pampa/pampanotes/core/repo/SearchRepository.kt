@@ -96,7 +96,8 @@ class SearchRepository @Inject constructor(
    * ([TranscriptSearch.firstHit]), cosi' l'occorrenza da cui la sessione parte e' una delle sue.
    */
   suspend fun momentOf(sessionId: String, query: String): TranscriptSearch.Moment? = withContext(Dispatchers.IO) {
-    val raw = transcripts.rawForSession(sessionId) ?: return@withContext null
+    val raw = RawTranscripts.forSelection(transcripts.bySession(sessionId), sessions.get(sessionId)?.activeTranscriptId)
+      ?: return@withContext null
     val light = segments.byTranscriptWithoutWords(raw.id)
     val paragraphs = TranscriptParagraphs.split(light, TranscriptParagraphs.MAX_SEGMENTS_ON_SCREEN)
     val hit = withContext(Dispatchers.Default) { TranscriptSearch.firstHit(paragraphs, query) } ?: return@withContext null
