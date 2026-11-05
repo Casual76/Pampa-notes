@@ -170,6 +170,60 @@ class ImportCoordinatorTest {
     assertTrue(files.sourceFile(source.storedFileName!!).exists())
   }
 
+  @Test
+  fun samsung_update_follows_original_source_after_note_rename_and_rejects_ambiguity() = runTest {
+    val folder = seedFolder()
+    val now = System.currentTimeMillis()
+    val note = dev.pampa.pampanotes.core.db.NoteEntity(id = "renamed", folderId = folder, title = "My merged notes", createdAt = now, updatedAt = now)
+    db.notes().upsert(note)
+    val original = samsungFile("original.sdocx", "Caf\u00e9 filosofia")
+    val storedName = "old-source.sdocx"
+    original.copyTo(files.sourceFile(storedName), overwrite = true)
+    val source = dev.pampa.pampanotes.core.db.SourceEntity(id = "old-source", noteId = note.id,
+      kind = SourceKind.SDOCX, originalName = "dirty_260921_101530.sdocx", mime = "application/sdoc",
+      sizeBytes = original.length(), sha256 = "old", storedFileName = storedName, importedAt = now)
+    db.sources().upsert(source)
+    val incoming = samsungFile("new_260921_101531.sdocx", "Cafe\u0301\u00a0filosofia")
+    val candidate = coordinator.inspect(listOf(android.net.Uri.fromFile(incoming))).single()
+    assertEquals(note.id, candidate.updateOfNoteId)
+    assertEquals(source.id, candidate.updateOfSourceId)
+    db.notes().upsert(note.copy(id = "ambiguous"))
+    db.sources().upsert(source.copy(id = "another-source", noteId = "ambiguous"))
+    val ambiguous = coordinator.inspect(listOf(android.net.Uri.fromFile(incoming))).single()
+    assertEquals(null, ambiguous.updateOfNoteId)
+  }
+
+  @Test
+  fun samsung_creation_matches_even_after_original_title_changes() = runTest {
+    val folder = seedFolder()
+    val now = System.currentTimeMillis()
+    val note = dev.pampa.pampanotes.core.db.NoteEntity(id = "renamed-source", folderId = folder, title = "Merged notes", createdAt = now, updatedAt = now)
+    db.notes().upsert(note)
+    val original = samsungFile("old.sdocx", "Original title", 1_700_000_000_000L)
+    original.copyTo(files.sourceFile("renamed-source.sdocx"), overwrite = true)
+    db.sources().upsert(dev.pampa.pampanotes.core.db.SourceEntity(id = "renamed-original", noteId = note.id,
+      kind = SourceKind.SDOCX, originalName = "old.sdocx", mime = "application/sdoc", sizeBytes = original.length(),
+      sha256 = "old", storedFileName = "renamed-source.sdocx", importedAt = now))
+    val incoming = samsungFile("new.sdocx", "Completely renamed title", 1_700_000_000_000L)
+    assertEquals(note.id, coordinator.inspect(listOf(android.net.Uri.fromFile(incoming))).single().updateOfNoteId)
+  }
+
+  private fun samsungFile(name: String, title: String, createdAt: Long? = null): File {
+    val file = File(workDir, name)
+    java.util.zip.ZipOutputStream(file.outputStream()).use { zip ->
+      zip.putNextEntry(java.util.zip.ZipEntry("note.note"))
+      if (createdAt != null) {
+        zip.write(java.nio.ByteBuffer.allocate(64).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+          .putLong(24, createdAt * 1000).putLong(32, (createdAt + 1000) * 1000).array())
+      }
+      val bytes = title.toByteArray(Charsets.UTF_16LE)
+      zip.write(java.nio.ByteBuffer.allocate(4).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(title.length).array())
+      zip.write(bytes)
+      zip.closeEntry()
+    }
+    return file
+  }
+
   private suspend fun seedFolder(): String {
     val now = System.currentTimeMillis()
     val folder = FolderEntity(id = "folder-test", name = "Filosofia", createdAt = now, updatedAt = now)

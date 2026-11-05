@@ -36,6 +36,9 @@ data class ImportCandidate(
    * paragrafi, due registrazioni» e proporre titolo e cartella, invece di mostrare un nome di file.
    */
   val sdocx: SdocxDocument? = null,
+  val bundle: PampaBundlePreview? = null,
+  /** Inspection failed; never silently drop a URI in a mixed selection. */
+  val inspectionError: String? = null,
   /**
    * La nota gia' importata da Samsung Notes con lo stesso titolo, se c'e': una versione nuova
    * dello stesso file. Con lo stesso contenuto e' un doppione ([duplicateOfNoteId]); con un

@@ -26,6 +26,17 @@ class SdocxParserTest {
   }
 
   @Test
+  fun `export filename does not override the internal title or dates`() {
+    val original = fixture()
+    val exported = File(original.parentFile, "Wrong title_261105_102030.sdocx")
+    original.copyTo(exported)
+    val parsed = SdocxParser.parse(exported)
+    assertEquals("Johann Gottlieh Fichte", parsed.title)
+    assertEquals(SdocxParser.readDates(original), parsed.dates)
+    assertEquals(SdocxParser.readText(original), SdocxParser.readText(exported))
+  }
+
+  @Test
   fun `il titolo e' la prima stringa, corta`() {
     val doc = SdocxParser.parse(fixture())
 

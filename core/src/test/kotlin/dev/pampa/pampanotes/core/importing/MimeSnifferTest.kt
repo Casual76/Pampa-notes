@@ -36,7 +36,7 @@ class MimeSnifferTest {
   @Test
   fun `quando nome e mime non dicono niente si guardano i byte`() {
     assertEquals(SourceKind.PDF, MimeSniffer.sniff("allegato", null, pdfHead))
-    assertEquals(SourceKind.SDOCX, MimeSniffer.sniff("allegato", "application/octet-stream", zipHead))
+    assertEquals(SourceKind.OTHER, MimeSniffer.sniff("allegato", "application/octet-stream", zipHead))
     assertEquals(SourceKind.TEXT, MimeSniffer.sniff("allegato", null, "# Titolo\n\nUn paragrafo.".toByteArray()))
   }
 
@@ -49,7 +49,8 @@ class MimeSnifferTest {
   @Test
   fun `un archivio con word document xml e' un docx`() {
     assertEquals(SourceKind.DOCX, ArchiveSniffer.classify(listOf("[Content_Types].xml", "word/document.xml", "docProps/app.xml")))
-    assertEquals(SourceKind.SDOCX, ArchiveSniffer.classify(listOf("content.xml", "media/voice_001.m4a")))
+    assertEquals(SourceKind.OTHER, ArchiveSniffer.classify(listOf("content.xml", "media/voice_001.m4a")))
+    assertEquals(SourceKind.SDOCX, ArchiveSniffer.classify(listOf("note.note", "media/mediaInfo.dat")))
   }
 
   @Test

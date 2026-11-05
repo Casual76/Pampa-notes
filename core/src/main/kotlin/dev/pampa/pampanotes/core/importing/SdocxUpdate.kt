@@ -21,22 +21,37 @@ object SdocxUpdate {
   /**
    * Il `.sdocx` della nota che la versione nuova sostituisce.
    *
-   * Quello col titolo uguale ([titleOf]: dal file se e' qui, altrimenti dal nome del file); fra piu'
-   * d'uno, il piu' recente. Se nessuno si riconosce vale solo un `.sdocx` che sia l'unico della
-   * nota: fra «Kant» e un file dal nome che non dice niente, tirare a indovinare vorrebbe dire
-   * cancellare Kant. Null, e non se ne va nessuno.
+   * Solo un titolo corrispondente e non ambiguo. Una fonte unica con un altro titolo non e'
+   * una prova: potrebbe essere l'originale di una nota diversa aggiunta con Importa qui.
    */
   fun pick(sources: List<SourceEntity>, title: String, titleOf: (SourceEntity) -> String?): SourceEntity? {
-    val sdocx = sources.filter { it.kind == SourceKind.SDOCX }.sortedByDescending { it.importedAt }
-    val wanted = title.trim()
-    return sdocx.firstOrNull { titleOf(it)?.trim()?.equals(wanted, ignoreCase = true) == true } ?: sdocx.singleOrNull()
+    return sources.filter { it.kind == SourceKind.SDOCX && normalizeTitle(title).isNotBlank() && normalizeTitle(titleOf(it).orEmpty()) == normalizeTitle(title) }
+      .singleOrNull()
   }
 
-  /**
-   * Il nome del file senza estensione: quando l'originale non e' su questo dispositivo e' l'unico
-   * indizio del titolo, e Samsung Notes condivide «Fichte.sdocx» per la nota «Fichte».
-   */
-  fun titleFromName(originalName: String): String = originalName.substringBeforeLast('.').trim()
+  /** NFC and Unicode spacing without changing meaningful numbers or punctuation. */
+  fun normalizeTitle(title: String): String = cleanTitle(title).lowercase(java.util.Locale.ROOT)
+
+  fun cleanTitle(title: String): String = java.text.Normalizer.normalize(title, java.text.Normalizer.Form.NFC)
+    .replace(Regex("[\\s\\p{Z}]+"), " ").trim()
+
+  /** Samsung's exporter appends a calendar date and time, never a bare lesson number. */
+  fun titleFromName(originalName: String): String {
+    val title = cleanTitle(originalName.substringBeforeLast('.'))
+    val match = Regex("^(.*?)_([0-9]{8}|[0-9]{6})_([0-9]{6})$").matchEntire(title) ?: return title
+    val date = match.groupValues[2].let { if (it.length == 6) "20$it" else it }
+    val valid = runCatching {
+      java.time.LocalDateTime.parse(date + match.groupValues[3],
+        java.time.format.DateTimeFormatter.ofPattern("uuuuMMddHHmmss").withResolverStyle(java.time.format.ResolverStyle.STRICT))
+    }.isSuccess
+    return if (valid && match.groupValues[1].isNotBlank()) match.groupValues[1] else title
+  }
+
+  /** Creation time is intrinsic to the original, unlike ZIP export time or the Pampa note title. */
+  fun matchScore(title: String, createdAt: Long?, oldTitle: String, oldCreatedAt: Long?): Int {
+    if (createdAt != null && oldCreatedAt != null) return if (createdAt == oldCreatedAt) 2 else 0
+    return if (normalizeTitle(title).isNotBlank() && normalizeTitle(title) == normalizeTitle(oldTitle)) 1 else 0
+  }
 
   /**
    * La fonte aggiornata era l'unica da cui la nota ha preso del testo? Le pagine a mano (ricavate) e

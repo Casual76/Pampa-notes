@@ -62,6 +62,7 @@ data class ImportRequest(
       "audio/*",
       "image/*",
       "application/zip",
+      "application/x-zip-compressed",
       "application/octet-stream",
       // Samsung Notes: il tipo che il sistema assegna a un .sdocx.
       "application/sdoc",

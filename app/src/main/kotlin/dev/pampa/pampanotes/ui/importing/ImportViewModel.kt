@@ -13,6 +13,9 @@ import dev.pampa.pampanotes.core.importing.AudioPlacement
 import dev.pampa.pampanotes.core.importing.ImportCandidate
 import dev.pampa.pampanotes.core.importing.ImportCoordinator
 import dev.pampa.pampanotes.core.importing.ImportOutcome
+import dev.pampa.pampanotes.core.importing.SdocxUpdate
+import dev.pampa.pampanotes.core.importing.PampaBundleImporter
+import dev.pampa.pampanotes.core.importing.PampaBundleImportResult
 import dev.pampa.pampanotes.core.importing.ImportTarget
 import dev.pampa.pampanotes.core.model.Dates
 import dev.pampa.pampanotes.core.repo.FolderRepository
@@ -57,6 +60,7 @@ data class ImportUiState(
   val progressLabel: String = "",
   val progress: Float = 0f,
   val outcome: ImportOutcome? = null,
+  val bundleResult: PampaBundleImportResult? = null,
   /** Le note toccate dall'import, nell'ordine: piu' di una quando le registrazioni sono state divise. */
   val createdNotes: List<CreatedNote> = emptyList(),
   val error: String? = null,
@@ -65,6 +69,9 @@ data class ImportUiState(
   /** Come dividere le registrazioni. Nasce entrando nel passo audio, e segue le esclusioni. */
   val grouping: AudioGrouping? = null,
 ) {
+  val bundleCandidate: ImportCandidate? get() = candidates.singleOrNull()?.takeIf { it.bundle != null }
+  val blocked: Boolean get() = candidates.any { it.inspectionError != null } ||
+    (candidates.any { it.bundle != null } && (candidates.size != 1 || targetIsFixed))
   val included: List<ImportCandidate> get() = candidates.filterNot { it.id in excluded }
 
   /** Le materie, nell'ordine di sempre. */
@@ -160,6 +167,7 @@ class ImportViewModel @Inject constructor(
   private val requests: ImportRequestHolder,
   private val settingsStore: dev.pampa.pampanotes.core.settings.PampaSettingsStore,
   private val transcription: dev.pampa.pampanotes.core.repo.TranscriptionRepository,
+  private val bundleImporter: PampaBundleImporter,
   private val scheduler: dev.pampa.pampanotes.work.WorkScheduler,
 ) : ViewModel() {
 
@@ -196,10 +204,12 @@ class ImportViewModel @Inject constructor(
     viewModelScope.launch {
       _uiState.value = ImportUiState(step = ImportStep.INSPECTING, selectedNoteId = intoNoteId, preferPersonal = preferPersonal)
       val fromFiles = coordinator.inspect(uris)
+      _uiState.update { it.copy(candidates = fromFiles) }
       val fromText = sharedText?.takeIf { it.isNotBlank() }?.let {
         listOf(coordinator.inspectText(it, defaultTextName(it)))
       }.orEmpty()
       val all = fromFiles + fromText
+      _uiState.update { it.copy(candidates = all) }
 
       val allFolders = folders.all()
       val paths = allFolders.associate { it.id to folders.parentPathString(it.id) }
@@ -213,7 +223,8 @@ class ImportViewModel @Inject constructor(
 
       // Una nota di Samsung Notes porta il suo titolo: e' quello, non il nome del file.
       val samsung = all.singleOrNull()?.sdocx?.takeIf { !it.isEmpty }
-      val defaultTitle = samsung?.title?.takeIf { it.isNotBlank() }
+      val defaultTitle = samsung?.title?.takeIf { it.isNotBlank() }?.let(SdocxUpdate::cleanTitle)
+        ?: all.singleOrNull()?.takeIf { it.sdocx != null }?.let { SdocxUpdate.titleFromName(it.displayName) }
         ?: all.firstOrNull { !it.isAudio }?.displayName?.substringBeforeLast('.')
         ?: all.first().displayName.substringBeforeLast('.')
       // E dal titolo si indovina la materia: «Fichte» da solo non basta, ma «Storia» o «Filosofia»
@@ -240,6 +251,7 @@ class ImportViewModel @Inject constructor(
           // caso in Registrazioni sparirebbe dalla home e dalle statistiche della scuola. Dalla
           // scheda Registrazioni il contrario: la prima di Registrazioni, in ordine di elenco.
           selectedFolderId = when {
+            all.any { it.bundle != null } -> startFolder
             intoNoteId != null -> null
             startFolder != null -> startFolder
             preferPersonal -> (allFolders.filter { it.parentId == null && it.id in personal }.minByOrNull { it.sortOrder }
@@ -265,6 +277,10 @@ class ImportViewModel @Inject constructor(
   }
 
   fun selectFolder(folderId: String) {
+    if (_uiState.value.bundleCandidate != null) {
+      _uiState.update { it.copy(selectedFolderId = folderId.takeUnless { id -> id == it.selectedFolderId }) }
+      return
+    }
     // Le sessioni erano quelle della nota scelta prima: con una nota nuova non c'e' dove accodare,
     // e un «accoda alla lezione di oggi» rimasto indietro metterebbe l'audio nella nota sbagliata.
     _uiState.update { it.copy(selectedFolderId = folderId, selectedNoteId = null, existingSessions = emptyList(), appendToSessionId = null) }
@@ -335,7 +351,12 @@ class ImportViewModel @Inject constructor(
   fun next() {
     val state = _uiState.value
     // Un secondo tocco prima che la schermata cambi faceva partire un secondo import degli stessi file.
-    if (state.step == ImportStep.RUNNING || state.step == ImportStep.DONE) return
+    if (state.step == ImportStep.RUNNING || state.step == ImportStep.DONE || state.blocked) return
+    if (state.bundleCandidate != null) {
+      _uiState.update { it.copy(step = ImportStep.RUNNING) }
+      runBundle(state)
+      return
+    }
     when (state.step) {
       ImportStep.REVIEW -> _uiState.update {
         it.copy(
@@ -398,6 +419,32 @@ class ImportViewModel @Inject constructor(
     }
   }
 
+  private fun runBundle(state: ImportUiState) {
+    val candidate = state.bundleCandidate ?: return
+    viewModelScope.launch {
+      try {
+        val result = bundleImporter.import(requireNotNull(candidate.file), state.updateExisting, state.selectedFolderId) { progress, label ->
+          _uiState.update { it.copy(progress = progress, progressLabel = label) }
+        }
+        val imported = result.noteIds.mapNotNull { id -> notes.get(id)?.let { CreatedNote(id, it.title, 0) } }
+        _uiState.update { it.copy(step = ImportStep.DONE, bundleResult = result, createdNotes = imported, progress = 1f) }
+        val settings = settingsStore.current()
+        if (settings.archiveEnabled) scheduler.archiveNow(settings.archiveOnlyUnmetered)
+        if (settings.syncEnabled) scheduler.syncNow()
+      } catch (error: Exception) {
+        if (error is kotlinx.coroutines.CancellationException) throw error
+        _uiState.update { it.copy(step = ImportStep.DONE, error = error.message, errorRes = dev.pampa.pampanotes.R.string.import_error_failed) }
+      } finally {
+        candidate.file?.delete()
+      }
+    }
+  }
+
+  override fun onCleared() {
+    _uiState.value.candidates.forEach { it.file?.delete() }
+    super.onCleared()
+  }
+
   private fun run() {
     val state = _uiState.value
     val items = state.included
@@ -445,6 +492,7 @@ class ImportViewModel @Inject constructor(
         }
         outcomes.map { it.noteId }.distinct().forEach { transcribeIfAsked(it) }
       }.onFailure { error ->
+        if (error is kotlinx.coroutines.CancellationException) throw error
         _uiState.update {
           if (error.message.isNullOrBlank()) it.copy(step = ImportStep.DONE, errorRes = dev.pampa.pampanotes.R.string.import_error_failed)
           else it.copy(step = ImportStep.DONE, error = error.message)

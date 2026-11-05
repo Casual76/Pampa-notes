@@ -149,7 +149,11 @@ private fun ImportScreen(
         // [ImportUiState.samsungNote] e' null quando la nota e' gia' scelta: un `.sdocx` importato
         // dentro una nota passa dall'elenco normale, e il suo testo si accoda come ogni documento.
         val samsung = state.samsungNote
-        if (samsung != null) {
+        if (state.blocked) {
+          item { FluidInlineMessage(message = stringResource(if (state.candidates.any { it.inspectionError != null }) R.string.import_input_failed else R.string.import_bundle_combination), tone = FluidTone.Danger) }
+        } else if (state.bundleCandidate != null) {
+          bundleStep(state, onSelectFolder, onUpdateExisting, onNext)
+        } else if (samsung != null) {
           samsungStep(state, samsung, onSelectFolder, onTitleChange, onUpdateExisting, onNext, { creatingFolder = true })
         } else {
           reviewStep(state, onToggle, onNext, onClose)
@@ -205,6 +209,37 @@ private fun stepSubtitle(state: ImportUiState): String? = when (state.step) {
   ImportStep.AUDIO -> stringResource(R.string.import_step_audio)
   ImportStep.RUNNING -> state.progressLabel.takeIf { it.isNotBlank() }
   ImportStep.DONE -> null
+}
+
+private fun androidx.compose.foundation.lazy.LazyListScope.bundleStep(
+  state: ImportUiState,
+  onSelectFolder: (String) -> Unit,
+  onUpdateExisting: (Boolean) -> Unit,
+  onNext: () -> Unit,
+) {
+  val preview = state.bundleCandidate?.bundle ?: return
+  item {
+    FluidListGroup {
+      FluidListRow(title = stringResource(R.string.import_bundle_title), subtitle = stringResource(R.string.import_bundle_counts,
+        preview.noteCount, preview.updateCount, preview.audioCount, preview.imageCount))
+    }
+  }
+  item { FluidSectionFootnote(text = preview.titles.joinToString(" ? ")) }
+  if (!preview.hasPreciseTimings) item { FluidSectionFootnote(text = stringResource(R.string.import_bundle_precision)) }
+  preview.warnings.forEach { warning -> item { FluidInlineMessage(message = warning, tone = FluidTone.Warning) } }
+  item {
+    FluidListGroup {
+      FluidListRow(title = stringResource(R.string.import_bundle_update), onClick = { onUpdateExisting(true) },
+        badge = if (state.updateExisting) { { FluidStatusBadge(label = stringResource(R.string.import_chosen), tone = FluidTone.Primary) } } else null)
+      FluidListDivider()
+      FluidListRow(title = stringResource(R.string.import_bundle_copies), onClick = { onUpdateExisting(false) },
+        badge = if (!state.updateExisting) { { FluidStatusBadge(label = stringResource(R.string.import_chosen), tone = FluidTone.Primary) } } else null)
+    }
+  }
+  item { FluidSectionHeader(title = stringResource(R.string.import_bundle_destination)) }
+  item { FluidSectionFootnote(text = stringResource(if (state.selectedFolderId == null) R.string.import_bundle_hierarchy else R.string.import_bundle_selected_folder)) }
+  folderChoices(state, onSelectFolder)
+  item { FluidButton(text = stringResource(R.string.action_import), onClick = onNext, enabled = preview.noteCount > 0, fillWidth = true) }
 }
 
 private fun androidx.compose.foundation.lazy.LazyListScope.reviewStep(
@@ -786,7 +821,19 @@ private fun androidx.compose.foundation.lazy.LazyListScope.doneStep(
   onOpenNote: (String) -> Unit,
 ) {
   val outcome = state.outcome
-  if (outcome == null) {
+  if (state.bundleResult != null) {
+    val result = state.bundleResult
+    item { FluidSectionFootnote(text = stringResource(R.string.import_bundle_done, result.importedNotes, result.updatedNotes, result.recordings)) }
+    result.warnings.forEach { warning -> item { FluidInlineMessage(message = warning, tone = FluidTone.Warning) } }
+    item {
+      FluidListGroup {
+        state.createdNotes.forEachIndexed { index, note ->
+          if (index > 0) FluidListDivider()
+          FluidListRow(title = note.title, onClick = { onOpenNote(note.id) })
+        }
+      }
+    }
+  } else if (outcome == null) {
     item {
       FluidEmptyState(
         title = stringResource(R.string.import_failed_title),

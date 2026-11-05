@@ -111,20 +111,29 @@ class ImportCoordinator @Inject constructor(
   private val repairer: javax.inject.Provider<SdocxRepairer>,
 ) {
 
+  @Inject lateinit var bundleImporter: dagger.Lazy<PampaBundleImporter>
+
   /**
    * Copia, riconosce e cerca i doppioni. Non tocca il database delle note.
    *
-   * Un elemento che non si riesce nemmeno a leggere non finisce nella lista: se ne accorge chi
-   * chiama, confrontando le dimensioni, e l'utente vede solo quello su cui puo' decidere.
+   * Ogni URI resta visibile: un errore blocca la selezione anziche' importarne solo una parte.
    */
-  suspend fun inspect(uris: List<Uri>): List<ImportCandidate> = withContext(Dispatchers.IO) {
-    uris.mapNotNull { uri ->
-      runCatching { inspectOne(uri) }
-        // Il fallimento resta silenzioso per l'utente, che vede «niente da importare», ma non per
-        // chi legge il log: un URI che non si apre e' quasi sempre un permesso, e senza la riga qui
-        // sotto si passa un pomeriggio a cercare il difetto nel posto sbagliato.
-        .onFailure { android.util.Log.w("PampaNotes", "import: non riesco a leggere $uri", it) }
-        .getOrNull()
+  suspend fun inspect(uris: List<Uri>): List<ImportCandidate> {
+    val inspected = mutableListOf<ImportCandidate>()
+    try {
+      return withContext(Dispatchers.IO) {
+        uris.forEach { uri ->
+          inspected += try { inspectOne(uri) } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            ImportCandidate(Ids.newId(), uri, null, runCatching { queryDisplayName(uri) }.getOrNull() ?: "import", SourceKind.OTHER,
+              "application/octet-stream", 0, "", inspectionError = error.message ?: "Unable to read file")
+          }
+        }
+        inspected
+      }
+    } catch (error: Exception) {
+      inspected.forEach { it.file?.delete() }
+      throw error
     }
   }
 
@@ -153,76 +162,88 @@ class ImportCoordinator @Inject constructor(
     val declaredMime = context.contentResolver.getType(uri)
 
     val temp = files.tempFile(prefix = "import", suffix = ".part")
-    val (sha, size) = context.contentResolver.openInputStream(uri)?.use { input ->
-      Hashing.copyHashing(input, temp)
-    } ?: throw IllegalStateException("non si apre: $uri")
+    try {
+      val (sha, size) = context.contentResolver.openInputStream(uri)?.use { input ->
+        Hashing.copyHashing(input, temp)
+      } ?: throw IllegalStateException("non si apre: $uri")
 
-    val head = temp.inputStream().use { input ->
-      val buffer = ByteArray(512)
-      val read = input.read(buffer)
-      if (read <= 0) ByteArray(0) else buffer.copyOf(read)
-    }
-    var kind = MimeSniffer.sniff(displayName, declaredMime, head)
-    // Uno ZIP senza estensione parlante: si guarda dentro per distinguere Word da Samsung Notes.
-    if (kind == SourceKind.SDOCX && !displayName.endsWith(".sdocx", ignoreCase = true) && !displayName.endsWith(".sdoc", ignoreCase = true)) {
-      kind = runCatching { ArchiveSniffer.classify(zipEntryNames(temp)) }.getOrDefault(kind)
-    }
-
-    // Un doppione: un documento gia' importato, oppure — per l'audio, che non ha una fonte — una
-    // parte con lo stesso contenuto, da cui si risale alla nota passando per la sua sessione.
-    val duplicateNoteId = sources.findBySha(sha)?.noteId
-      ?: audioParts.findBySha(sha)?.let { part -> sessions.get(part.sessionId)?.noteId }
-
-    val sdocx = if (kind == SourceKind.SDOCX) runCatching { SdocxParser.parse(temp) }.getOrNull() else null
-    // Una nota Samsung con lo stesso titolo di una gia' importata da Samsung Notes: quasi sempre
-    // e' la stessa nota, aggiornata. Si propone di aggiornarla, non si decide. Si segna anche quale
-    // dei suoi `.sdocx` e' la versione vecchia: e' lui solo che l'aggiornamento sostituisce.
-    var updateOfSource: SourceEntity? = null
-    val updateOf = sdocx?.title?.trim()?.takeIf { it.isNotEmpty() }?.let { title ->
-      noteDao.byExactTitle(title).firstOrNull { note ->
-        val noteSources = sources.byNote(note.id)
-        updateOfSource = previousVersion(noteSources, title)
-        noteSources.any { it.kind == SourceKind.SDOCX }
+      val head = temp.inputStream().use { input ->
+        val buffer = ByteArray(512)
+        val read = input.read(buffer)
+        if (read <= 0) ByteArray(0) else buffer.copyOf(read)
       }
+      var kind = MimeSniffer.sniff(displayName, declaredMime, head)
+      val isBundle = PampaBundleArchive.isBundle(temp)
+      val bundle = if (isBundle) bundleImporter.get().inspect(temp) else null
+      if (bundle != null) kind = SourceKind.OTHER
+      else if (kind == SourceKind.SDOCX || (head.size >= 2 && head[0] == 0x50.toByte() && head[1] == 0x4b.toByte())) {
+        kind = runCatching { ArchiveSniffer.classify(zipEntryNames(temp)) }.getOrDefault(SourceKind.OTHER)
+      }
+
+      require(!(kind == SourceKind.OTHER && bundle == null && (displayName.endsWith(".zip", true) || declaredMime in setOf("application/zip", "application/x-zip-compressed") || (head.size >= 2 && head[0] == 0x50.toByte() && head[1] == 0x4b.toByte())))) { "Unsupported ZIP archive" }
+
+      // Un doppione: un documento gia' importato, oppure — per l'audio, che non ha una fonte — una
+      // parte con lo stesso contenuto, da cui si risale alla nota passando per la sua sessione.
+      val duplicateNoteId = sources.findBySha(sha)?.noteId
+        ?: audioParts.findBySha(sha)?.let { part -> sessions.get(part.sessionId)?.noteId }
+
+      val sdocx = if (kind == SourceKind.SDOCX) runCatching { SdocxParser.parse(temp) }.getOrNull() else null
+      val match = sdocx?.let { matchingSource(sources.byKind(SourceKind.SDOCX), it, displayName) }
+      val updateOfSource = match
+      val updateOf = match?.let { noteDao.get(it.noteId) }
+
+      // Per l'audio, durata e giorno della registrazione in una lettura sola. La data di modifica si
+      // chiede adesso al provider: dopo, l'unico file che resta e' la copia nostra, che e' di oggi.
+      val probe = if (kind == SourceKind.AUDIO) audioImporter.probe(temp) else null
+      val lastModified = if (probe != null) queryLastModified(uri) else null
+      val recordedOn = probe?.let { RecordingDate.resolve(it.metadataDate, displayName, lastModified, durationMs = it.durationMs) }
+      val recordedAt = recordedOn?.let { RecordingDate.momentOf(it, probe?.metadataDate, lastModified) }
+
+      return ImportCandidate(
+        id = Ids.newId(),
+        uri = uri,
+        file = temp,
+        displayName = displayName,
+        kind = kind,
+        mime = MimeSniffer.mimeFor(kind, declaredMime),
+        sizeBytes = size,
+        sha256 = sha,
+        duplicateOfNoteId = duplicateNoteId,
+        duplicateOfNoteTitle = duplicateNoteId?.let { noteDao.get(it)?.title },
+        durationMs = probe?.durationMs ?: 0,
+        // Si legge subito, all'ispezione: un file che non si capisce resta un allegato, e uno che si
+        // capisce diventa una nota con un titolo, prima ancora di premere niente.
+        sdocx = sdocx,
+        bundle = bundle,
+        updateOfNoteId = updateOf?.id,
+        updateOfNoteTitle = updateOf?.title,
+        updateOfSourceId = updateOf?.let { updateOfSource?.id },
+        recordedOn = recordedOn,
+        recordedAtMillis = recordedAt,
+      )
+    } catch (error: Exception) {
+      temp.delete()
+      throw error
     }
-
-    // Per l'audio, durata e giorno della registrazione in una lettura sola. La data di modifica si
-    // chiede adesso al provider: dopo, l'unico file che resta e' la copia nostra, che e' di oggi.
-    val probe = if (kind == SourceKind.AUDIO) audioImporter.probe(temp) else null
-    val lastModified = if (probe != null) queryLastModified(uri) else null
-    val recordedOn = probe?.let { RecordingDate.resolve(it.metadataDate, displayName, lastModified, durationMs = it.durationMs) }
-    val recordedAt = recordedOn?.let { RecordingDate.momentOf(it, probe?.metadataDate, lastModified) }
-
-    return ImportCandidate(
-      id = Ids.newId(),
-      uri = uri,
-      file = temp,
-      displayName = displayName,
-      kind = kind,
-      mime = MimeSniffer.mimeFor(kind, declaredMime),
-      sizeBytes = size,
-      sha256 = sha,
-      duplicateOfNoteId = duplicateNoteId,
-      duplicateOfNoteTitle = duplicateNoteId?.let { noteDao.get(it)?.title },
-      durationMs = probe?.durationMs ?: 0,
-      // Si legge subito, all'ispezione: un file che non si capisce resta un allegato, e uno che si
-      // capisce diventa una nota con un titolo, prima ancora di premere niente.
-      sdocx = sdocx,
-      updateOfNoteId = updateOf?.id,
-      updateOfNoteTitle = updateOf?.title,
-      updateOfSourceId = updateOf?.let { updateOfSource?.id },
-      recordedOn = recordedOn,
-      recordedAtMillis = recordedAt,
-    )
   }
 
   /**
-   * Il `.sdocx` fra [noteSources] di cui [title] e' la versione nuova ([SdocxUpdate.pick]), o null
+   * Il `.sdocx` fra [noteSources] di cui [doc] e' la versione nuova ([SdocxUpdate.pick]), o null
    * se non se ne riconosce uno. Il titolo si rilegge dal file quando e' qui; quando sta solo sul
    * computer resta il nome del file.
    */
-  private fun previousVersion(noteSources: List<SourceEntity>, title: String): SourceEntity? =
-    SdocxUpdate.pick(noteSources, title) { source -> textOf(source)?.first ?: SdocxUpdate.titleFromName(source.originalName) }
+  private fun matchingSource(noteSources: List<SourceEntity>, doc: SdocxDocument, name: String): SourceEntity? {
+    val title = doc.title?.takeIf { it.isNotBlank() } ?: SdocxUpdate.titleFromName(name)
+    val ranked = noteSources.filter { it.kind == SourceKind.SDOCX }.map { source ->
+      val local = source.storedFileName?.let { files.sourceFile(it) }?.takeIf { it.exists() }
+      val oldTitle = local?.let { SdocxParser.readText(it)?.first }?.takeIf { it.isNotBlank() }
+        ?: SdocxUpdate.titleFromName(source.originalName)
+      val oldCreated = local?.let { SdocxParser.readDates(it)?.createdAtMillis }
+      source to SdocxUpdate.matchScore(title, doc.dates?.createdAtMillis, oldTitle, oldCreated)
+    }
+    val best = ranked.maxOfOrNull { it.second } ?: return null
+    return ranked.filter { it.second == best && best > 0 }.singleOrNull()?.first
+  }
 
   /** Titolo e testo di un `.sdocx` gia' importato, se il file e' su questo dispositivo. */
   private fun textOf(source: SourceEntity): Pair<String?, String>? =
@@ -239,6 +260,7 @@ class ImportCoordinator @Inject constructor(
     audioPlacement: AudioPlacement = AudioPlacement.NewSession(),
     onProgress: (done: Int, total: Int, label: String) -> Unit = { _, _, _ -> },
   ): ImportOutcome = withContext(Dispatchers.IO) {
+    require(candidates.none { it.bundle != null || it.inspectionError != null }) { "Use the native bundle import route" }
     val noteId = when (target) {
       is ImportTarget.ExistingNote -> target.noteId
       is ImportTarget.UpdateNote -> target.noteId
@@ -415,7 +437,7 @@ class ImportCoordinator @Inject constructor(
     val noteSources = if (replace) sources.byNote(noteId) else emptyList()
     val old: SourceEntity? = if (replace) {
       noteSources.firstOrNull { it.id == candidate.updateOfSourceId && it.kind == SourceKind.SDOCX }
-        ?: previousVersion(noteSources, doc.title ?: candidate.displayName.substringBeforeLast('.'))
+        ?: matchingSource(noteSources, doc, candidate.displayName)
     } else {
       null
     }
@@ -441,7 +463,7 @@ class ImportCoordinator @Inject constructor(
     //    l'unico a darle del testo; altrimenti solo il pezzo che aveva portato ([SdocxUpdate.mergeBody]).
     if (replace) {
       val current = noteDao.get(noteId)?.body.orEmpty()
-      val onlySource = SdocxUpdate.onlyTextSource(noteSources, old?.id.orEmpty())
+      val onlySource = old != null && SdocxUpdate.onlyTextSource(noteSources, old.id)
       SdocxUpdate.mergeBody(current, oldText?.second, oldText?.first ?: doc.title, body, onlySource)
         ?.let { notes.setBody(noteId, it) }
     } else if (body.isNotEmpty()) {

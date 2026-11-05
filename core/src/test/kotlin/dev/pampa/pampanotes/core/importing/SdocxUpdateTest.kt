@@ -40,13 +40,13 @@ class SdocxUpdateTest {
   }
 
   @Test
-  fun `fra due uguali il piu' recente, fra due diversi nessuno`() {
+  fun `titoli ambigui o estranei non scelgono una fonte`() {
     val again = source("c", "Fichte.sdocx", at = 5)
-    assertEquals("c", SdocxUpdate.pick(listOf(fichte, again, kant), "Fichte") { SdocxUpdate.titleFromName(it.originalName) }?.id)
+    assertNull(SdocxUpdate.pick(listOf(fichte, again, kant), "Fichte") { SdocxUpdate.titleFromName(it.originalName) })
     // Nessun titolo riconosciuto e due candidati: tirare a indovinare cancellerebbe Kant.
     assertNull(SdocxUpdate.pick(listOf(fichte, kant), "Hegel") { SdocxUpdate.titleFromName(it.originalName) })
-    // Uno solo: e' lui, anche col nome cambiato.
-    assertEquals("a", SdocxUpdate.pick(listOf(fichte, page), "Hegel") { SdocxUpdate.titleFromName(it.originalName) }?.id)
+    // Un titolo diverso da solo non prova che sia la stessa fonte.
+    assertNull(SdocxUpdate.pick(listOf(fichte, page), "Hegel") { SdocxUpdate.titleFromName(it.originalName) } )
     assertNull(SdocxUpdate.pick(listOf(page), "Fichte") { null })
   }
 
@@ -56,6 +56,25 @@ class SdocxUpdateTest {
     assertFalse(SdocxUpdate.onlyTextSource(listOf(fichte, kant, page), "a"))
     // Un PDF senza testo estratto non ha portato niente nel corpo.
     assertTrue(SdocxUpdate.onlyTextSource(listOf(fichte, source("pdf", "x.pdf", SourceKind.PDF, at = 4, chars = 0)), "a"))
+  }
+
+  @Test fun `export timestamps only are stripped and validated`() {
+    assertEquals("Fichte", SdocxUpdate.titleFromName("Fichte_20260921_101530.sdocx"))
+    assertEquals("Fichte", SdocxUpdate.titleFromName("Fichte_260921_101530.sdocx"))
+    for (name in listOf("Lezione 12", "1984", "Lezione_12", "Title_20260230_101530", "Title_20260101_251530")) {
+      assertEquals(name, SdocxUpdate.titleFromName("$name.sdocx"))
+    }
+  }
+
+  @Test fun `Unicode and spacing compare canonically`() {
+    assertEquals(SdocxUpdate.normalizeTitle("Caf\u00e9  filosofia"), SdocxUpdate.normalizeTitle(" Cafe\u0301\u00a0filosofia "))
+  }
+
+  @Test fun `intrinsic creation recognizes renamed sources but rejects conflicting dates`() {
+    assertEquals(2, SdocxUpdate.matchScore("Renamed", 1000, "Old title", 1000))
+    assertEquals(0, SdocxUpdate.matchScore("Same title", 1000, "Same title", 2000))
+    assertEquals(1, SdocxUpdate.matchScore("Fichte", null, "Fichte", 2000))
+    assertEquals(0, SdocxUpdate.matchScore("", null, "", null))
   }
 
   // --- il corpo ---

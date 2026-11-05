@@ -31,6 +31,7 @@ object MimeSniffer {
 
     // 1. L'estensione, quando dice qualcosa di preciso.
     when (extension) {
+      "zip" -> return SourceKind.OTHER
       "pdf" -> return SourceKind.PDF
       "docx" -> return SourceKind.DOCX
       "sdocx", "sdoc" -> return SourceKind.SDOCX
@@ -42,6 +43,7 @@ object MimeSniffer {
 
     // 2. Il MIME dichiarato, se non e' il generico che non dice niente.
     when {
+      mime == "application/zip" || mime == "application/x-zip-compressed" -> return SourceKind.OTHER
       mime.startsWith("audio/") -> return SourceKind.AUDIO
       mime.startsWith("image/") -> return SourceKind.IMAGE
       mime == "application/pdf" -> return SourceKind.PDF
@@ -56,7 +58,7 @@ object MimeSniffer {
     if (head != null) {
       if (head.startsWith(PDF_MAGIC)) return SourceKind.PDF
       // Uno ZIP senza un'estensione che lo spieghi: la distinzione docx/sdocx la fa chi lo apre.
-      if (head.startsWith(ZIP_MAGIC)) return SourceKind.SDOCX
+      if (head.startsWith(ZIP_MAGIC)) return SourceKind.OTHER
       if (looksLikeText(head)) return SourceKind.TEXT
     }
 
@@ -102,8 +104,12 @@ object MimeSniffer {
 object ArchiveSniffer {
   /**
    * @param entryNames i nomi delle voci dell'archivio.
-   * @return [SourceKind.DOCX] se dentro c'e' `word/document.xml`, [SourceKind.SDOCX] altrimenti.
+   * @return [SourceKind.DOCX] se dentro c'e' `word/document.xml`, [SourceKind.SDOCX] con `note.note`, [SourceKind.OTHER] altrimenti.
    */
   fun classify(entryNames: List<String>): SourceKind =
-    if (entryNames.any { it.equals("word/document.xml", ignoreCase = true) }) SourceKind.DOCX else SourceKind.SDOCX
+    when {
+      entryNames.any { it.equals("word/document.xml", ignoreCase = true) } -> SourceKind.DOCX
+      entryNames.any { it == "note.note" } -> SourceKind.SDOCX
+      else -> SourceKind.OTHER
+    }
 }

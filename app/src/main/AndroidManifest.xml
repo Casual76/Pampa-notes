@@ -79,6 +79,7 @@
         <data android:mimeType="audio/*" />
         <data android:mimeType="video/mp4" />
         <data android:mimeType="application/zip" />
+        <data android:mimeType="application/x-zip-compressed" />
         <data android:mimeType="application/octet-stream" />
         <!-- Samsung Notes condivide i suoi .sdocx cosi', e senza questa riga l'app non compare fra quelle proposte. -->
         <data android:mimeType="application/sdoc" />
@@ -97,6 +98,7 @@
         <data android:mimeType="audio/*" />
         <data android:mimeType="video/mp4" />
         <data android:mimeType="application/zip" />
+        <data android:mimeType="application/x-zip-compressed" />
         <data android:mimeType="application/octet-stream" />
         <!-- Samsung Notes condivide i suoi .sdocx cosi', e senza questa riga l'app non compare fra quelle proposte. -->
         <data android:mimeType="application/sdoc" />
@@ -117,6 +119,9 @@
         <data android:mimeType="text/markdown" />
         <data android:mimeType="text/x-markdown" />
         <data android:mimeType="audio/*" />
+        <data android:mimeType="application/zip" />
+        <data android:mimeType="application/x-zip-compressed" />
+        <data android:mimeType="application/octet-stream" />
       </intent-filter>
 
       <!-- Il QR stampato dal server companion: pampanotes://endpoint?url=...&token=... -->

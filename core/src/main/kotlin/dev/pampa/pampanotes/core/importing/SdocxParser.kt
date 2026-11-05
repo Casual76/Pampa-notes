@@ -152,7 +152,7 @@ object SdocxParser {
    */
   private fun titleAndBody(note: ByteArray): Pair<String?, String> {
     val prose = readProse(note)
-    val title = prose.firstOrNull()?.takeIf { it.length <= TITLE_MAX_CHARS && !it.contains('\n') }
+    val title = prose.firstOrNull()?.takeIf { it.length <= TITLE_MAX_CHARS && !it.contains('\n') }?.let(SdocxUpdate::cleanTitle)
     val body = (if (title != null) prose.drop(1) else prose).joinToString("\n\n").trim()
     return title to body
   }

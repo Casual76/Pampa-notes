@@ -344,7 +344,7 @@
   <string name="more_section_app">App</string>
   <string name="more_search_detail">Nelle note e nelle trascrizioni</string>
   <string name="more_jobs_detail">Trascrizioni e raffinamenti</string>
-  <string name="more_import_detail">Da file, da un\'altra app, dagli appunti</string>
+  <string name="more_import_detail">Da ZIP Pampa Notes, file, altre app e appunti</string>
   <string name="more_export_detail">Bundle Markdown per Claude, ChatGPT, Gemini</string>
   <string name="more_settings_detail">Servizi, trascrizione, aspetto</string>
 
@@ -1652,4 +1652,15 @@
   <string name="markdown_copy_description">Copia il codice</string>
   <string name="markdown_code_block_description">Blocco di %1$s</string>
   <string name="player_scrubber_spoken">%1$s di %2$s</string>
+  <string name="import_bundle_title">Pacchetto Pampa Notes</string>
+  <string name="import_bundle_counts">%1$d note · %2$d aggiornabili · %3$d audio presenti · %4$d immagini</string>
+  <string name="import_bundle_precision">Questo pacchetto non garantisce tempi precisi per ogni parola. Gli audio omessi non sono riproducibili.</string>
+  <string name="import_bundle_update">Aggiorna le note riconosciute</string>
+  <string name="import_bundle_copies">Crea copie nuove</string>
+  <string name="import_bundle_destination">Destinazione del pacchetto</string>
+  <string name="import_bundle_hierarchy">Mantieni le cartelle originali. Seleziona una cartella per importare il pacchetto al suo interno.</string>
+  <string name="import_bundle_selected_folder">Importa nella cartella selezionata. Toccala di nuovo per mantenere le cartelle originali.</string>
+  <string name="import_bundle_done">%1$d note importate · %2$d aggiornate · %3$d registrazioni</string>
+  <string name="import_bundle_combination">Apri un solo pacchetto Pampa alla volta, dalla schermata principale o da una cartella. Non si combina con altri file e non si importa dentro una nota.</string>
+  <string name="import_input_failed">Uno o più file non sono leggibili o il pacchetto non è supportato. Chiudi e seleziona di nuovo i file: nessun elemento verrà importato parzialmente.</string>
 </resources>

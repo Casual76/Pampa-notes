@@ -334,7 +334,7 @@
   <string name="more_section_app">App</string>
   <string name="more_search_detail">In notes and transcripts</string>
   <string name="more_jobs_detail">Transcriptions and refinements</string>
-  <string name="more_import_detail">From files, another app, the clipboard</string>
+  <string name="more_import_detail">From Pampa Notes ZIP bundles, files, other apps and clipboard</string>
   <string name="more_export_detail">Markdown bundles for Claude, ChatGPT, Gemini</string>
   <string name="more_settings_detail">Services, transcription, appearance</string>
 
@@ -1617,4 +1617,15 @@
   <string name="markdown_copy_description">Copy the code</string>
   <string name="markdown_code_block_description">Block of %1$s</string>
   <string name="player_scrubber_spoken">%1$s of %2$s</string>
+  <string name="import_bundle_title">Pampa Notes bundle</string>
+  <string name="import_bundle_counts">%1$d notes · %2$d updatable · %3$d included recordings · %4$d images</string>
+  <string name="import_bundle_precision">This bundle does not guarantee precise word timings. Omitted audio cannot be played.</string>
+  <string name="import_bundle_update">Update recognized notes</string>
+  <string name="import_bundle_copies">Create new copies</string>
+  <string name="import_bundle_destination">Bundle destination</string>
+  <string name="import_bundle_hierarchy">Keep the original folders. Select a folder to import the bundle inside it.</string>
+  <string name="import_bundle_selected_folder">Import into the selected folder. Tap it again to keep the original folders.</string>
+  <string name="import_bundle_done">%1$d notes imported · %2$d updated · %3$d recordings</string>
+  <string name="import_bundle_combination">Open one Pampa bundle at a time from the main screen or a folder. It cannot be combined with additional files or imported inside a note.</string>
+  <string name="import_input_failed">One or more files cannot be read or the bundle is unsupported. Close and select the files again: no partial selection will be imported.</string>
 </resources>
