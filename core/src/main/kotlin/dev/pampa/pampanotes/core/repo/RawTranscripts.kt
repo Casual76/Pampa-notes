@@ -21,6 +21,13 @@ object RawTranscripts {
   fun newest(transcripts: List<TranscriptEntity>): TranscriptEntity? =
     transcripts.filter { it.kind == TranscriptKind.RAW }.maxWithOrNull(NEWEST_LAST)
 
+  /** The timing source follows the selected version, even when newer RAW histories are retained. */
+  fun forSelection(transcripts: List<TranscriptEntity>, activeId: String?): TranscriptEntity? {
+    val selected = transcripts.firstOrNull { it.id == activeId } ?: return newest(transcripts)
+    if (selected.kind == TranscriptKind.RAW) return selected
+    return transcripts.firstOrNull { it.id == selected.parentId && it.kind == TranscriptKind.RAW && it.sessionId == selected.sessionId }
+  }
+
   /**
    * Le grezze di troppo, che si possono togliere senza perdere niente: tutte quelle che non sono la
    * piu' recente e le cui parti la piu' recente copre gia'. Una grezza con una parte che l'altra non

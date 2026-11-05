@@ -36,6 +36,22 @@ class RawTranscriptsTest {
   }
 
   @Test
+  fun `selected older RAW and refinement parent keep their own timing source`() {
+    val list = listOf(transcript("author", 100), transcript("local", 200), transcript("refined", 300, TranscriptKind.REFINED, "author"))
+    assertEquals("author", RawTranscripts.forSelection(list, "author")?.id)
+    assertEquals("author", RawTranscripts.forSelection(list, "refined")?.id)
+    assertEquals("local", RawTranscripts.forSelection(list, null)?.id)
+    assertEquals("local", RawTranscripts.forSelection(list, "missing")?.id)
+  }
+
+  @Test
+  fun `missing or unrelated refinement parent never borrows another RAW timing`() {
+    val selected = transcript("refined", 300, TranscriptKind.REFINED, "other")
+    assertEquals(null, RawTranscripts.forSelection(listOf(transcript("local", 200), selected), selected.id))
+    assertEquals(null, RawTranscripts.forSelection(listOf(transcript("other", 100).copy(sessionId = "elsewhere"), selected), selected.id))
+  }
+
+  @Test
   fun `di troppo sono le grezze che la piu' recente copre gia'`() {
     val raws = listOf(transcript("vecchia", 100), transcript("parziale", 150), transcript("nuova", 200))
     val parts = mapOf(

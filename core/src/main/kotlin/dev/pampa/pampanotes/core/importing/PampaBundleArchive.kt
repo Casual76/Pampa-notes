@@ -122,7 +122,8 @@ object PampaBundleArchive {
         require(s.sessionStartMs == offset + s.partStartMs && s.sessionEndMs == offset + s.partEndMs) { "Inconsistent session offsets" }
         s.wordsJson?.let { encoded ->
           val words = dev.pampa.pampanotes.core.transcription.WordTimings.decode(encoded, 0)
-          require(words.size == encoded.lineSequence().count { it.isNotBlank() } && words.all { it.startMs >= 0 && it.endMs >= it.startMs }) { "Invalid word timings" }
+          val duration = s.partEndMs - s.partStartMs
+          require(words.size == encoded.lineSequence().count { it.isNotBlank() } && words.all { it.startMs >= 0 && it.endMs >= it.startMs && it.endMs <= duration }) { "Invalid word timings" }
         }
       }
       n.sessions.forEach { session ->

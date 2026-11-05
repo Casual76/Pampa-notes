@@ -122,6 +122,16 @@ class PampaBundleRoundtripTest {
 
   private fun rejected(file: File) { try { PampaBundleArchive.read(file); fail("Expected rejection") } catch (_: IllegalArgumentException) {} catch (_: IllegalStateException) {} }
 
+  @Test fun `word timings must remain inside their segment including exact boundaries`() {
+    val value = native()
+    val duration = value.segments.first().partEndMs - value.segments.first().partStartMs
+    val exact = value.copy(segments = value.segments.map { it.copy(wordsJson = "0,$duration,Hello") })
+    assertEquals(exact.segments, PampaBundleArchive.read(write(value = exact)).data.notes.single().segments)
+    listOf("900000,900001,Hello", "0,${duration + 1},Hello", "-1,0,Hello").forEach { timings ->
+      rejected(write(value = value.copy(segments = value.segments.map { it.copy(wordsJson = timings, wordsEstimated = false) })))
+    }
+  }
+
   @Test fun `reject traversal missing reference incompatible schema and corrupt attachment before writes`() {
     val file = write()
     rejected(rewrite(file) { n, b -> (if (n.endsWith("native.json")) "../native.json" else n) to b })
