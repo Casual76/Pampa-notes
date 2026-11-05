@@ -557,4 +557,178 @@ class PampaBundleRoomTest {
     assertEquals(100L, db.segments().byTranscript(opened.id).single().sessionStartMs)
   }
 
+  private fun nativeFromPublic(file: File): PampaBundleNote = PampaBundleArchive.read(file).data.notes.single().let { graph ->
+    graph.copy(note = graph.note.copy(folderId = "folder", title = "Native title", body = "Native corrected body"),
+      parts = graph.parts.map { it.copy(fileName = it.originalName, durationMs = 1000) })
+  }
+
+  /** Personal histories, aliases, terminal jobs and independent statistics on both sides of a swap. */
+  private suspend fun personalHistoriesForBothSessions(): Map<Char, AudioPartEntity> {
+    val parts = db.audioParts().all().associateBy { files.audioFile(it.fileName).readBytes().last().toInt().toChar() }
+    for ((letter, part) in parts) {
+      val raw = TranscriptEntity("personal-raw-$letter", part.sessionId, TranscriptKind.RAW, "custom", "local",
+        text = "WordsFrom$letter", wordCount = 1, createdAt = 100)
+      val refined = raw.copy(id = "personal-refined-$letter", kind = TranscriptKind.REFINED, parentId = raw.id)
+      db.transcripts().upsert(raw); db.transcripts().upsert(refined)
+      db.segments().insertAll(listOf(SegmentEntity(transcriptId = raw.id, partId = part.id, indexInPart = 0,
+        partStartMs = 100, partEndMs = 800, sessionStartMs = 100, sessionEndMs = 800,
+        text = raw.text, wordsJson = "0,700,WordsFrom$letter", speaker = "PERSONAL")))
+      val session = db.sessions().get(part.sessionId)!!
+      db.sessions().upsert(session.copy(activeTranscriptId = refined.id,
+        voiceNames = dev.pampa.pampanotes.core.transcription.VoiceNames.encode(mapOf("${part.id}|PERSONAL" to "Speaker $letter"))))
+      db.jobs().upsert(JobEntity("job-$letter", part.sessionId, JobType.TRANSCRIBE, "custom", state = JobState.DONE, createdAt = 1, updatedAt = 2))
+      db.stats().insert(TranscriptionRunEntity("run-$letter", "job-$letter", part.sessionId, "note", "custom", "test",
+        audioMs = 1000, wallMs = 100, words = 1, segments = 1, finishedAt = 100))
+    }
+    return parts
+  }
+
+  private suspend fun assertPersonalHistoriesStillDescribe(parts: Map<Char, AudioPartEntity>) {
+    val finalParts = db.audioParts().all()
+    assertEquals(parts.size, finalParts.size)
+    for ((letter, original) in parts) {
+      val current = finalParts.single { it.sha256 == original.sha256 }
+      assertEquals(original.fileName, current.fileName)
+      assertEquals(letter, files.audioFile(current.fileName).readBytes().last().toInt().toChar())
+      val raw = db.transcripts().get("personal-raw-$letter")!!
+      assertEquals(current.sessionId, raw.sessionId)
+      val refined = db.transcripts().get("personal-refined-$letter")!!
+      assertEquals(raw.id, refined.parentId); assertEquals(current.sessionId, refined.sessionId)
+      val segment = db.segments().byTranscript(raw.id).single()
+      assertEquals(current.id, segment.partId); assertEquals("0,700,WordsFrom$letter", segment.wordsJson)
+      assertEquals(100L, segment.sessionStartMs); assertEquals("PERSONAL", segment.speaker)
+      val names = dev.pampa.pampanotes.core.transcription.VoiceNames.decode(db.sessions().get(current.sessionId)!!.voiceNames)
+      assertEquals("Speaker $letter", names["${current.id}|PERSONAL"])
+      assertEquals(current.sessionId, db.jobs().get("job-$letter")!!.sessionId)
+      assertEquals(current.sessionId, db.stats().get("run-$letter")!!.sessionId)
+      assertNotNull(db.sessions().get(current.sessionId))
+    }
+    db.openHelper.writableDatabase.query("PRAGMA foreign_key_check").use { assertFalse(it.moveToFirst()) }
+  }
+
+  @Test fun native_shared_marked_session_provenance_preserves_body_baseline_and_selection_after_older_legacy_reimport() = runTest {
+    val original = publicLegacy("Lecture" to listOf("A", "B"))
+    importer.import(original); restoreOldOrdinalIdentities()
+    personalLegacyHistory()
+    val native = nativeFromPublic(publicLegacy("Lecture" to listOf("B", "A")))
+    importer.import(archive(native, includeAudio = false))
+    val nativeNote = db.notes().get("note")!!
+    assertEquals(true, nativeNote.bundleNativeAdopted); assertEquals(native.note.body, nativeNote.bundleBodyBase)
+    assertEquals("Native title", nativeNote.title); assertEquals("folder", nativeNote.folderId)
+    db.notes().updateBody("note", nativeNote.body + "\nPersonal native appendix", 100)
+    val session = db.sessions().plainByNote("note").single()
+    db.sessions().setActiveTranscript(session.id, "personal-legacy-refined", 100)
+    val before = storedGraph()
+    // Sync/backup retain the private evidence even after its original archive is no longer around.
+    val encoded = dev.pampa.pampanotes.core.sync.SyncCodec.json.encodeToString(dev.pampa.pampanotes.core.sync.NotePayload.serializer(),
+      dev.pampa.pampanotes.core.sync.NotePayload(before.note))
+    val reloaded = dev.pampa.pampanotes.core.sync.SyncCodec.json.decodeFromString(dev.pampa.pampanotes.core.sync.NotePayload.serializer(), encoded).note
+    assertEquals(before.note, reloaded)
+    db.notes().upsert(reloaded)
+    repeat(2) {
+      importer.import(original)
+      val after = storedGraph()
+      assertEquals(before.note, after.note)
+      assertEquals(before.sessions, after.sessions); assertEquals(before.parts, after.parts)
+      assertEquals(before.transcripts, after.transcripts); assertEquals(before.segments.map { it.copy(id = 0) }, after.segments.map { it.copy(id = 0) })
+    }
+  }
+
+  @Test fun native_reordered_marked_sessions_reconcile_global_audio_and_preserve_jobs_runs_and_word_histories() = runTest {
+    importer.import(publicLegacy("Alpha" to listOf("A"), "Beta" to listOf("B")))
+    restoreOldOrdinalIdentities()
+    val originals = personalHistoriesForBothSessions()
+    val beforeFiles = files.audio.listFiles()!!.map { it.name }.toSet()
+    val native = nativeFromPublic(publicLegacy("Beta" to listOf("B"), "Alpha" to listOf("A")))
+    val update = archive(native, includeAudio = true, content = { part -> files.audioFile(originals.values.single { it.sha256 == part.sha256 }.fileName).readBytes() })
+    repeat(2) {
+      importer.import(update)
+      assertEquals(listOf("Beta", "Alpha"), db.sessions().plainByNote("note").map { it.title })
+      assertEquals(native.parts.map { it.id }.toSet(), db.audioParts().all().map { it.id }.toSet())
+      assertPersonalHistoriesStillDescribe(originals)
+      assertEquals(beforeFiles, files.audio.listFiles()!!.map { it.name }.toSet())
+    }
+  }
+
+  @Test fun native_session_and_part_alias_cycles_do_not_retire_live_destinations_or_double_move_statistics() = runTest {
+    importer.import(publicLegacy("Alpha" to listOf("A"), "Beta" to listOf("B")))
+    restoreOldOrdinalIdentities()
+    val originals = personalHistoriesForBothSessions()
+    val oldIdsBySession = originals.values.associate { it.sessionId to it.id }
+    val native = nativeFromPublic(publicLegacy("Beta" to listOf("B"), "Alpha" to listOf("A"))).let { graph ->
+      graph.copy(parts = graph.parts.map { it.copy(id = oldIdsBySession.getValue(it.sessionId)) })
+    }
+    repeat(2) { importer.import(archive(native, includeAudio = false)); assertPersonalHistoriesStillDescribe(originals) }
+    assertEquals(oldIdsBySession.keys, db.sessions().plainByNote("note").map { it.id }.toSet())
+    assertEquals(originals.values.map { it.id }.toSet(), db.audioParts().all().map { it.id }.toSet())
+  }
+
+  @Test fun native_omits_first_legacy_session_without_rejecting_or_overwriting_retained_audio_and_statistics() = runTest {
+    assertEntireSessionOmission("Beta", "B")
+  }
+
+  @Test fun native_omits_last_legacy_session_without_rejecting_or_overwriting_retained_audio_and_statistics() = runTest {
+    assertEntireSessionOmission("Alpha", "A")
+  }
+
+  private suspend fun assertEntireSessionOmission(title: String, recording: String) {
+    importer.import(publicLegacy("Alpha" to listOf("A"), "Beta" to listOf("B")))
+    restoreOldOrdinalIdentities()
+    val originals = personalHistoriesForBothSessions()
+    val filesBefore = files.audio.listFiles()!!.map { it.name }.toSet()
+    val native = nativeFromPublic(publicLegacy(title to listOf(recording)))
+    val update = archive(native, includeAudio = false)
+    repeat(2) {
+      importer.import(update)
+      val sessions = db.sessions().plainByNote("note")
+      assertEquals(2, sessions.size); assertEquals(title, sessions.first().title)
+      assertEquals(2, sessions.map { it.id }.distinct().size)
+      assertPersonalHistoriesStillDescribe(originals)
+      assertEquals(filesBefore, files.audio.listFiles()!!.map { it.name }.toSet())
+      val omitted = originals.getValue(if (recording == "A") 'B' else 'A')
+      val retainedPart = db.audioParts().all().single { it.sha256 == omitted.sha256 }
+      assertEquals("personal-refined-${if (recording == "A") 'B' else 'A'}", db.sessions().get(retainedPart.sessionId)!!.activeTranscriptId)
+    }
+  }
+
+  @Test fun migrated_unknown_format_is_not_inferred_from_marked_IDs_or_body_and_only_native_schema_establishes_it() = runTest {
+    val original = publicLegacy("Lecture" to listOf("A"))
+    importer.import(original); restoreOldOrdinalIdentities(); personalLegacyHistory()
+    val old = db.notes().get("note")!!
+    // Exactly the NULL state produced by migration 13->14: the historical archive format was
+    // never stored, so neither a marked ID nor the current body can prove which format it was.
+    db.notes().upsert(old.copy(title = "Previous title", body = "Previous body\nLocal additions",
+      bundleBodyBase = "Previous imported baseline", bundleNativeAdopted = null))
+    val before = storedGraph()
+    repeat(2) {
+      importer.import(original)
+      val after = storedGraph()
+      assertEquals(before.note, after.note); assertEquals(before.parts, after.parts)
+      assertEquals(before.sessions, after.sessions)
+      assertNull(after.note.bundleNativeAdopted)
+      assertEquals("0,700,WordsFromA", db.segments().byTranscript("personal-legacy-raw").single().wordsJson)
+    }
+    importer.import(archive(nativeFromPublic(original), includeAudio = false))
+    assertEquals(true, db.notes().get("note")!!.bundleNativeAdopted)
+    assertTrue(db.notes().get("note")!!.body.contains("Local additions"))
+  }
+
+  @Test fun older_public_hierarchy_cannot_rename_or_move_an_inherited_native_folder() = runTest {
+    val original = publicLegacy("Lecture" to listOf("A"))
+    importer.import(original)
+    val inheritedFolder = db.notes().get("note")!!.folderId
+    val native = nativeFromPublic(original).let { it.copy(note = it.note.copy(folderId = inheritedFolder)) }
+    importer.import(archive(native, includeAudio = false))
+    val destination = FolderEntity("personal-destination", "Local destination", createdAt = 1, updatedAt = 10)
+    db.folders().upsert(destination)
+    val localFolder = db.folders().get(inheritedFolder)!!.copy(name = "Native renamed folder", parentId = destination.id, updatedAt = 100)
+    db.folders().upsert(localFolder)
+    val before = db.notes().get("note")!!
+    repeat(2) {
+      importer.import(original)
+      assertEquals(before, db.notes().get("note"))
+      assertEquals(localFolder, db.folders().get(inheritedFolder))
+    }
+  }
+
 }

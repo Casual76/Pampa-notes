@@ -47,7 +47,7 @@ internal object PampaBundleExport {
           attachment(source.id, false, source.storedFileName, if (page >= 0) paths.images[page] else paths.sources.getOrNull(original), page >= 0 || options.includeSources)
         }
       native.copy(
-        note = native.note.copy(bundleBodyBase = null),
+        note = native.note.copy(bundleBodyBase = null, bundleNativeAdopted = null),
         sessions = native.sessions.map { it.copy(activeTranscriptId = chosen[it.id]?.id, transcribingOn = null, transcribingSince = null) },
         transcripts = native.transcripts.filter { it.id in includedIds },
         segments = native.segments.filter { it.transcriptId in includedIds },

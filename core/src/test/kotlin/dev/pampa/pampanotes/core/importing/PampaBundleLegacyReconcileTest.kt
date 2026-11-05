@@ -14,7 +14,7 @@ class PampaBundleLegacyReconcileTest {
   private fun legacy(value: PampaBundleNote): PampaBundleNote {
     val sid = PampaBundleLegacyReconcile.id("session", "session")
     val session = value.sessions.single().copy(id = sid, activeTranscriptId = "personal-history")
-    return value.copy(note = value.note.copy(folderId = PampaBundleLegacyReconcile.id("folder", "legacy-folder:/Subject"), body = "Legacy body", bundleBodyBase = "Legacy body"),
+    return value.copy(note = value.note.copy(folderId = PampaBundleLegacyReconcile.id("folder", "legacy-folder:/Subject"), body = "Legacy body", bundleBodyBase = "Legacy body", bundleNativeAdopted = false),
       sessions = listOf(session), parts = value.parts.map { it.copy(id = PampaBundleLegacyReconcile.id("part", it.id), sessionId = sid) },
       transcripts = listOf(value.transcripts.single().copy(id = "personal-history", sessionId = sid, text = "Personal words")))
   }
@@ -102,7 +102,7 @@ class PampaBundleLegacyReconcileTest {
       sessions[i].id, TranscriptKind.RAW, "legacy", "test", text = "Exported ${group.second}", wordCount = 1, createdAt = 1) }
     val sources = sourceNames.mapIndexed { i, name -> SourceEntity(PampaBundleLegacyReconcile.id("source", "note:source:$i"), "note", SourceKind.TEXT,
       "$name.txt", "text/plain", 100, name.repeat(64), "$name.txt", importedAt = 1) }
-    return PampaBundleNote(NoteEntity("note", PampaBundleLegacyReconcile.id("folder", "legacy-folder:/Subject"), "Title", "Body", createdAt = 1, updatedAt = 1, bundleBodyBase = "Body"),
+    return PampaBundleNote(NoteEntity("note", PampaBundleLegacyReconcile.id("folder", "legacy-folder:/Subject"), "Title", "Body", createdAt = 1, updatedAt = 1, bundleBodyBase = "Body", bundleNativeAdopted = false),
       sessions = sessions.mapIndexed { i, session -> session.copy(activeTranscriptId = transcripts[i].id) }, parts = parts, transcripts = transcripts, sources = sources,
       attachments = parts.map { PampaBundleAttachment(it.id, true, "audio/${it.originalName}") } + sources.map { PampaBundleAttachment(it.id, false, "sources/${it.originalName}") })
   }
@@ -290,6 +290,149 @@ class PampaBundleLegacyReconcileTest {
     val plan = PampaBundleLegacyReconcile.plan(old, native, publicLegacy = false)
     assertFalse(plan.legacyUpdate)
     assertEquals(native.segments, PampaBundleMerge.merge(plan.local, plan.incoming).segments)
+  }
+
+  private fun freshNative(vararg groups: Pair<String, List<String>>): PampaBundleNote = positional(*groups).let { graph ->
+    graph.copy(note = graph.note.copy(folderId = "native-folder", title = "Native title", body = "Native replacement"),
+      parts = graph.parts.map { it.copy(id = PampaBundleLegacyReconcile.id("part", "fresh:${it.sha256}:${it.originalName}")) })
+  }
+
+  @Test fun `native adoption is independent of shared marked children and older public flags`() {
+    val original = positional("Alpha" to listOf("A", "B"))
+    val target = freshNative("Alpha" to listOf("B", "A"))
+    val plan = PampaBundleLegacyReconcile.plan(withPersonalTiming(original), target, publicLegacy = false)
+    var current = PampaBundleMerge.merge(plan.local, plan.incoming)
+    assertEquals(true, current.note.bundleNativeAdopted)
+    current = current.copy(note = current.note.copy(body = current.note.body + "\nPersonal appendix"),
+      sessions = current.sessions.map { it.copy(activeTranscriptId = "local-raw") })
+    repeat(2) {
+      // A public bundle cannot establish or clear provenance by carrying a private exported flag.
+      val older = original.copy(note = original.note.copy(bundleNativeAdopted = true))
+      val reverse = PampaBundleLegacyReconcile.plan(current, older, publicLegacy = true)
+      assertTrue(reverse.preserveLocalNote)
+      val result = PampaBundleMerge.merge(reverse.local, reverse.incoming, reverse.preserveLocalNote)
+      assertEquals(current.note, result.note)
+      assertEquals(current.parts, result.parts)
+      assertEquals(current.sessions, result.sessions)
+      assertEquals(current.segments, result.segments)
+      current = result
+    }
+    val publicOnly = PampaBundleLegacyReconcile.plan(null, original.copy(note = original.note.copy(bundleNativeAdopted = true)), true)
+    assertEquals(false, publicOnly.incoming.note.bundleNativeAdopted)
+  }
+
+  @Test fun `global content evidence reconciles reordered marked sessions before shared ordinal IDs`() {
+    val original = withPersonalTiming(positional("Alpha" to listOf("A"), "Beta" to listOf("B")))
+    val a = original.parts.first()
+    val target = freshNative("Beta" to listOf("B"), "Alpha" to listOf("A"))
+    val plan = PampaBundleLegacyReconcile.plan(original, target, publicLegacy = false)
+    assertEquals(mapOf(original.sessions[0].id to target.sessions[1].id, original.sessions[1].id to target.sessions[0].id), plan.sessions)
+    var current = PampaBundleMerge.merge(plan.local, plan.incoming)
+    assertEquals(2, current.parts.size)
+    assertEquals(listOf("Beta", "Alpha"), current.sessions.map { it.title })
+    val personal = current.transcripts.single { it.id == "local-raw" }
+    assertEquals(target.sessions[1].id, personal.sessionId)
+    val timed = current.segments.single()
+    assertEquals("A".repeat(64), current.parts.single { it.id == timed.partId }.sha256)
+    assertEquals("0,700,WordsFromA", timed.wordsJson)
+    assertEquals(a.fileName, plan.local!!.parts.single { it.id == timed.partId }.fileName)
+    repeat(2) {
+      val again = PampaBundleLegacyReconcile.plan(current, target, false)
+      assertTrue(again.sessions.isEmpty()); assertTrue(again.parts.isEmpty())
+      assertEquals(current, PampaBundleMerge.merge(again.local, again.incoming))
+    }
+  }
+
+  @Test fun `entire first or last omitted legacy session retains audio history and an unclaimed ID`() {
+    for (remaining in listOf("A", "B")) {
+      val original = withPersonalTiming(positional("Alpha" to listOf("A"), "Beta" to listOf("B")))
+      val target = freshNative((if (remaining == "A") "Alpha" else "Beta") to listOf(remaining))
+      val plan = PampaBundleLegacyReconcile.plan(original, target, false)
+      var current = PampaBundleMerge.merge(plan.local, plan.incoming)
+      assertEquals(2, current.parts.size); assertEquals(2, current.sessions.size)
+      assertEquals(target.sessions.single().title, current.sessions.first().title)
+      assertEquals(2, current.sessions.map { it.id }.distinct().size)
+      val timed = current.segments.single()
+      assertEquals("A".repeat(64), current.parts.single { it.id == timed.partId }.sha256)
+      assertEquals(current.parts.single { it.id == timed.partId }.sessionId, current.transcripts.single { it.id == timed.transcriptId }.sessionId)
+      assertEquals("0,700,WordsFromA", timed.wordsJson)
+      repeat(2) {
+        val again = PampaBundleLegacyReconcile.plan(current, target, false)
+        val merged = PampaBundleMerge.merge(again.local, again.incoming)
+        assertEquals(current, merged); current = merged
+      }
+    }
+  }
+
+  @Test fun `simultaneous marked part cycles preserve content associations`() {
+    val original = withPersonalTiming(positional("Alpha" to listOf("A"), "Beta" to listOf("B")))
+    val target = positional("Beta" to listOf("B"), "Alpha" to listOf("A"))
+    val plan = PampaBundleLegacyReconcile.plan(original, target, false)
+    assertEquals(original.parts[1].id, plan.parts[original.parts[0].id])
+    assertEquals(original.parts[0].id, plan.parts[original.parts[1].id])
+    val merged = PampaBundleMerge.merge(plan.local, plan.incoming)
+    assertEquals(2, merged.parts.size)
+    assertEquals("A".repeat(64), merged.parts.single { it.id == merged.segments.single().partId }.sha256)
+  }
+
+  @Test fun `native authority does not prevent later adoption of retained marked audio in a real native session`() {
+    val original = legacy(native()).let { graph -> graph.copy(note = graph.note.copy(folderId = "native-folder", bundleNativeAdopted = true),
+      sessions = graph.sessions.map { it.copy(id = "real-native-session") },
+      parts = graph.parts.map { it.copy(sessionId = "real-native-session") },
+      transcripts = graph.transcripts.map { it.copy(sessionId = "real-native-session") }) }
+    val target = native().let { graph -> graph.copy(sessions = graph.sessions.map { it.copy(id = "real-native-session") },
+      parts = graph.parts.map { it.copy(sessionId = "real-native-session") },
+      transcripts = graph.transcripts.map { it.copy(sessionId = "real-native-session") }) }
+    val plan = PampaBundleLegacyReconcile.plan(original, target, false)
+    assertEquals(setOf("A", "B"), plan.parts.values.toSet())
+    assertEquals(true, PampaBundleMerge.merge(plan.local, plan.incoming).note.bundleNativeAdopted)
+    assertEquals(2, PampaBundleMerge.merge(plan.local, plan.incoming).parts.size)
+  }
+
+  @Test fun `text content also precedes shared ordinal session IDs when text-only sessions reorder`() {
+    val old = positional("Alpha" to emptyList(), "Beta" to emptyList()).let { n -> n.copy(
+      transcripts = n.transcripts.mapIndexed { i, t -> t.copy(text = "Original words $i") }) }
+    val reordered = old.copy(sessions = old.sessions.mapIndexed { i, session -> session.copy(title = old.sessions[1-i].title) },
+      transcripts = old.transcripts.mapIndexed { i, t -> t.copy(id = "new-$i", text = "Original words ${1-i}") })
+    val plan = PampaBundleLegacyReconcile.plan(old, reordered, false)
+    assertEquals(old.sessions[1].id, plan.sessions[old.sessions[0].id])
+    assertEquals(old.sessions[0].id, plan.sessions[old.sessions[1].id])
+    val merged = PampaBundleMerge.merge(plan.local, plan.incoming)
+    old.transcripts.forEachIndexed { i, original ->
+      assertEquals("Original words $i", merged.transcripts.single { it.id == original.id }.text)
+      assertEquals(old.sessions[1-i].id, merged.transcripts.single { it.id == original.id }.sessionId)
+    }
+  }
+
+  @Test fun `older public extras append safely without replacing native session order or note metadata`() {
+    val current = freshNative("Beta" to listOf("B")).let { n -> n.copy(note = n.note.copy(bundleNativeAdopted = true, bundleBodyBase = "Native replacement")) }
+    val oldPublic = withPersonalTiming(positional("Alpha" to listOf("A"), "Beta" to listOf("B")))
+    val plan = PampaBundleLegacyReconcile.plan(current, oldPublic, true)
+    val result = PampaBundleMerge.merge(plan.local, plan.incoming, plan.preserveLocalNote)
+    assertEquals(current.note, result.note)
+    assertEquals(listOf("Beta", "Alpha"), result.sessions.map { it.title })
+    assertEquals(2, result.parts.size)
+    val timing = result.segments.single()
+    assertEquals("A".repeat(64), result.parts.single { it.id == timing.partId }.sha256)
+    assertEquals(result.parts.single { it.id == timing.partId }.sessionId, result.transcripts.single { it.id == timing.transcriptId }.sessionId)
+    val repeated = PampaBundleLegacyReconcile.plan(result, oldPublic, true)
+    assertEquals(result, PampaBundleMerge.merge(repeated.local, repeated.incoming, repeated.preserveLocalNote))
+  }
+
+  @Test fun `migrated unknown provenance preserves current body and baseline until a native archive verifies it`() {
+    val original = positional("Alpha" to listOf("A"))
+    var unknown = withPersonalTiming(original).let { it.copy(note = it.note.copy(title = "Existing title", body = "Existing body and additions",
+      bundleBodyBase = "Existing baseline", bundleNativeAdopted = null)) }
+    repeat(2) {
+      val plan = PampaBundleLegacyReconcile.plan(unknown, original, true)
+      assertTrue(plan.preserveLocalNote)
+      val merged = PampaBundleMerge.merge(plan.local, plan.incoming, plan.preserveLocalNote)
+      assertEquals(unknown.note, merged.note); assertEquals(unknown.parts, merged.parts)
+      assertNull(merged.note.bundleNativeAdopted); unknown = merged
+    }
+    val native = freshNative("Alpha" to listOf("A"))
+    val verified = PampaBundleLegacyReconcile.plan(unknown, native, false)
+    assertEquals(true, PampaBundleMerge.merge(verified.local, verified.incoming).note.bundleNativeAdopted)
   }
 
 }

@@ -77,6 +77,10 @@ data class NoteEntity(
   /** Last imported bundle body, private account metadata for three-way reimport merge.
    * Normal sync/backup retain it; portable exports always remove it. */
   @ColumnInfo(defaultValue = "NULL") val bundleBodyBase: String? = null,
+  /** Private format provenance: true = native verified, false = public legacy verified,
+   * null = unknown (including migrated rows). Positive native evidence is monotonic.
+   * Account sync/backup retain it; portable bundles always strip it. */
+  @ColumnInfo(defaultValue = "NULL") val bundleNativeAdopted: Boolean? = null,
 )
 
 @Serializable

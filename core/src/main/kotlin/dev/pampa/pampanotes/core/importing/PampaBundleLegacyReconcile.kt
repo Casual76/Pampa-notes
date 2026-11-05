@@ -10,7 +10,11 @@ internal object PampaBundleLegacyReconcile {
   fun id(kind: String, seed: String): String = "pampa-legacy-$kind-${UUID.nameUUIDFromBytes(seed.toByteArray(Charsets.UTF_8))}"
   fun isSynthetic(value: String): Boolean = marker.matches(value)
   fun isFolder(value: String): Boolean = value.startsWith("pampa-legacy-folder-") && isSynthetic(value)
+  // Only a fallback for internal callers without an archive-format argument. Public imports
+  // always supply the actual schema; a native payload may inherit any of these marked IDs.
   private fun legacy(note: PampaBundleNote) = isFolder(note.note.folderId) || note.sessions.any { isSynthetic(it.id) }
+  private fun markedChildren(note: PampaBundleNote) = legacy(note) ||
+    note.parts.any { isSynthetic(it.id) } || note.sources.any { isSynthetic(it.id) }
 
   data class Plan(
     val local: PampaBundleNote?, val incoming: PampaBundleNote,
@@ -24,54 +28,100 @@ internal object PampaBundleLegacyReconcile {
 
   fun plan(local: PampaBundleNote?, incoming: PampaBundleNote, publicLegacy: Boolean? = null): Plan {
     require(local == null || local.note.id == incoming.note.id) { "Legacy note identity conflict" }
-    if (local == null) return Plan(null, incoming)
     val incomingLegacy = publicLegacy ?: legacy(incoming)
-    if (legacy(local) && incomingLegacy) return legacyUpdate(local, incoming)
-    if (!legacy(local) && !incomingLegacy) return Plan(local, incoming)
-    val forward = legacy(local)
-    val old = if (forward) local else incoming
-    val target = if (forward) incoming else local
+    // Trust the format read from the archive, never a portable note's private flags.
+    val received = incoming.copy(note = incoming.note.copy(bundleNativeAdopted = if (!incomingLegacy) true else if (local != null) local.note.bundleNativeAdopted else false))
+    if (local == null) return Plan(null, received)
+    if (legacy(local) && incomingLegacy && local.note.bundleNativeAdopted == false) return legacyUpdate(local, received)
+    if (!markedChildren(local) && !incomingLegacy) return Plan(local, received)
+    // Body authority and child identity are independent: a native-adopted note can still have
+    // marked children that need reconciliation on every later native update.
+    val forward = !incomingLegacy
+    val old = if (forward) local else received
+    val target = if (forward) received else local
     val partAliases = linkedMapOf<String, String>()
     val sessionAliases = linkedMapOf<String, String>()
     val sourceAliases = linkedMapOf<String, String>()
     fun text(value: String) = value.trim().replace(Regex("[\\s\\p{Z}]+"), " ")
     fun hash(a: String, b: String) = a.isNotBlank() && b.isNotBlank() && a.equals(b, true)
 
-    old.sessions.filter { isSynthetic(it.id) }.forEach { session ->
-      // A native re-export may retain the marked session ID while its children have newer IDs.
-      val shared = target.sessions.firstOrNull { it.id == session.id }
-      val exportedParts = old.parts.filter { it.sessionId == session.id && isSynthetic(it.id) }
-      val candidates = (shared?.let(::listOf) ?: target.sessions.filterNot { isSynthetic(it.id) }).mapNotNull { candidate ->
-        val candidatesParts = target.parts.filter { it.sessionId == candidate.id }
-        val mapping = linkedMapOf<String, String>()
-        if (exportedParts.isNotEmpty()) {
-          // Reserve compatible explicit identities before matching indistinguishable recordings.
-          for (part in exportedParts) {
-            val exact = candidatesParts.firstOrNull { it.id == part.id } ?: continue
-            if (!hash(exact.sha256, part.sha256)) return@mapNotNull null
-            mapping[part.id] = exact.id
-          }
-          for (part in exportedParts.filterNot { it.id in mapping }) {
-            var matches = candidatesParts.filter { it.id !in mapping.values && hash(it.sha256, part.sha256) }
-            if (matches.size > 1) matches = matches.filter { text(it.originalName) == text(part.originalName) }
-            // The known session can retain local-only audio omitted by this native update.
-            if (matches.isEmpty() && shared != null) continue
-            val match = matches.singleOrNull() ?: return@mapNotNull null
-            if (match.id in mapping.values) return@mapNotNull null
-            mapping[part.id] = match.id
-          }
-        } else if (shared == null) {
-          val sameLabel = session.title.isNotBlank() && text(session.title) == text(candidate.title) && session.date == candidate.date
-          val oldTexts = old.transcripts.filter { it.sessionId == session.id }.map { text(it.text) }.filter { it.isNotBlank() }
-          val sameText = target.transcripts.any { it.sessionId == candidate.id && text(it.text) in oldTexts }
-          if (!sameLabel || candidatesParts.isNotEmpty() && !sameText) return@mapNotNull null
-        }
-        candidate.id to mapping
+    // Reserve ALL compatible exact child identities first. In particular a distinct real
+    // native recording must never be consumed as a content alias for a marked recording.
+    val reservedParts = target.parts.filter { candidate -> old.parts.any { it.id == candidate.id && hash(it.sha256, candidate.sha256) } }
+      .mapTo(mutableSetOf()) { it.id }
+    val matchedParts = linkedMapOf<String, String>()
+    old.parts.forEach { part ->
+      target.parts.firstOrNull { it.id == part.id && hash(it.sha256, part.sha256) }?.let { matchedParts[part.id] = it.id }
+    }
+    old.parts.filter { isSynthetic(it.id) && it.id !in matchedParts }.forEach { part ->
+      val available = target.parts.filter { it.id !in reservedParts }
+      var matches = available.filter { hash(it.sha256, part.sha256) }
+      if (matches.size > 1) {
+        matches = matches.filter { text(it.originalName) == text(part.originalName) }
+        check(matches.size == 1) { "Ambiguous repeated legacy audio identity" }
       }
-      val match = candidates.singleOrNull() ?: error("Legacy session identity is unavailable or ambiguous; use a complete original bundle")
-      require(match.first !in sessionAliases.values) { "Ambiguous legacy session identity" }
-      if (session.id != match.first) sessionAliases[session.id] = match.first
-      partAliases += match.second.filter { (oldId, newId) -> oldId != newId }
+      check(matches.size <= 1) { "Ambiguous legacy audio identity" }
+      if (matches.isEmpty()) {
+        // No matching content is omission, not permission to reuse an occupied positional ID.
+        // Unknown hashes, however, cannot distinguish omission from an unidentified recording.
+        check(target.parts.none { it.sha256.isBlank() } && (target.parts.isEmpty() || part.sha256.isNotBlank())) { "Legacy audio identity is unavailable" }
+      } else {
+        val match = matches.single()
+        matchedParts[part.id] = match.id
+        reservedParts += match.id
+      }
+    }
+    partAliases += matchedParts.filter { (oldId, newId) -> oldId != newId }
+
+    val matchedSessions = linkedMapOf<String, String>()
+    old.sessions.filter { isSynthetic(it.id) }.forEach { session ->
+      val exportedParts = old.parts.filter { it.sessionId == session.id }
+      val owners = exportedParts.mapNotNull { matchedParts[it.id] }.map { id -> target.parts.single { it.id == id }.sessionId }.distinct()
+      check(owners.size <= 1) { "Legacy session regrouping has conflicting identity evidence" }
+      val matched = owners.singleOrNull() ?: if (exportedParts.isEmpty()) {
+        val oldVersions = old.transcripts.filter { it.sessionId == session.id }
+        val oldTexts = oldVersions.map { text(it.text) }.filter { it.isNotBlank() }
+        fun sameLabel(candidate: SessionEntity) = session.title.isNotBlank() && text(session.title) == text(candidate.title) && session.date == candidate.date
+        var candidates = target.sessions.filter { candidate -> target.transcripts.any { version ->
+          version.sessionId == candidate.id && (text(version.text).isNotBlank() && text(version.text) in oldTexts ||
+            oldVersions.any { it.id == version.id && it.kind == version.kind }) } }
+        if (candidates.size > 1) {
+          candidates = candidates.filter(::sameLabel)
+          check(candidates.size == 1) { "Ambiguous repeated legacy text identity" }
+        }
+        check(candidates.size <= 1) { "Ambiguous legacy text-only session identity" }
+        if (candidates.isEmpty()) {
+          candidates = target.sessions.filter { candidate -> sameLabel(candidate) && target.parts.none { it.sessionId == candidate.id } }
+          check(candidates.size <= 1) { "Ambiguous legacy text-only session identity" }
+        }
+        // A sole text-only container may be renamed with no exported transcript. Multiple
+        // positional containers require actual content/label evidence before trusting a shared ID.
+        candidates.singleOrNull()?.id ?: target.sessions.singleOrNull()?.takeIf {
+          old.sessions.size == 1 && it.id == session.id && target.parts.isEmpty()
+        }?.id
+      } else null
+      if (matched != null) {
+        check(matched !in matchedSessions.values) { "Ambiguous legacy session identity" }
+        matchedSessions[session.id] = matched
+        if (session.id != matched) sessionAliases[session.id] = matched
+      }
+    }
+    // If an incoming positional ID now belongs to another session/recording, retain the omitted
+    // local content under a deterministic fresh ID. Swaps are simultaneous maps, never merges.
+    val claimedSessions = old.sessions.associate { it.id to (sessionAliases[it.id] ?: it.id) }
+    old.sessions.filter { isSynthetic(it.id) && it.id !in matchedSessions }.forEach { session ->
+      val claimedByOther = claimedSessions.any { (oldId, newId) -> oldId != session.id && newId == session.id }
+      val conflictingShared = target.sessions.any { it.id == session.id }
+      if (claimedByOther || conflictingShared) {
+        val retained = id("session", "${old.note.id}:retained-session:${session.id}")
+        check(retained !in old.sessions.map { it.id } && retained !in target.sessions.map { it.id } && retained !in sessionAliases.values) { "Retained legacy session identity collision" }
+        sessionAliases[session.id] = retained
+      }
+    }
+    old.parts.filter { isSynthetic(it.id) && it.id !in matchedParts && target.parts.any { targetPart -> targetPart.id == it.id } }.forEach { part ->
+      val retained = id("part", "${old.note.id}:retained-audio:${part.id}:${part.sha256}")
+      check(retained !in old.parts.map { it.id } && retained !in target.parts.map { it.id } && retained !in partAliases.values) { "Retained legacy audio identity collision" }
+      partAliases[part.id] = retained
     }
     old.sources.filter { isSynthetic(it.id) && !it.id.startsWith("pampa-legacy-placeholder-") && target.sources.none { t -> t.id == it.id } }.forEach { source ->
       var matches = target.sources.filter { it.kind == source.kind && hash(it.sha256, source.sha256) }
@@ -90,14 +140,21 @@ internal object PampaBundleLegacyReconcile {
     val changed = rekey(old, sessionAliases, partAliases, sourceAliases)
     return if (forward) {
       // Legacy exports contain no voice aliases, so any local names were explicitly added here.
-      val withLocalVoices = incoming.copy(sessions = incoming.sessions.map { session ->
+      val withLocalVoices = received.copy(sessions = received.sessions.map { session ->
         val localSession = changed.sessions.firstOrNull { it.id == session.id }
         session.copy(voiceNames = VoiceNames.encode(VoiceNames.decode(session.voiceNames) + VoiceNames.decode(localSession?.voiceNames)))
       })
       Plan(changed, withLocalVoices, sessionAliases, partAliases, sourceAliases)
     } else {
       // Public legacy Markdown has no native body boundaries. Never downgrade native content or selection.
-      val adopted = changed.copy(note = target.note, sessions = target.sessions, parts = target.parts,
+      val retainedSessions = (target.sessions.sortedBy { it.position } + changed.sessions.filter { s -> target.sessions.none { it.id == s.id } }.sortedBy { it.position })
+        .mapIndexed { index, session -> session.copy(position = index) }
+      val retainedParts = retainedSessions.flatMap { session ->
+        (target.parts.filter { it.sessionId == session.id }.sortedBy { it.position } +
+          changed.parts.filter { part -> part.sessionId == session.id && target.parts.none { it.id == part.id } }.sortedBy { it.position })
+          .mapIndexed { index, part -> part.copy(position = index) }
+      }
+      val adopted = changed.copy(note = target.note, sessions = retainedSessions, parts = retainedParts,
         sources = target.sources + changed.sources.filter { source -> target.sources.none { it.id == source.id } },
         transcripts = changed.transcripts.filter { transcript -> target.transcripts.none { it.id == transcript.id } })
       Plan(local, adopted, incomingPartKeys = partAliases.entries.associate { it.value to it.key },

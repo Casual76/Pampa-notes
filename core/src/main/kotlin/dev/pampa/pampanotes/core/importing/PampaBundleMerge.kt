@@ -8,7 +8,7 @@ import java.util.UUID
  * Incoming order wins; local-only siblings follow in their existing relative order.
  * All timelines use this final sequence, including local-only RAW histories. */
 internal object PampaBundleMerge {
-  fun merge(local: PampaBundleNote?, incoming: PampaBundleNote): PampaBundleNote {
+  fun merge(local: PampaBundleNote?, incoming: PampaBundleNote, preserveLocalNote: Boolean = false): PampaBundleNote {
     val n = incoming.note
     require(local == null || local.note.id == n.id) { "Note identity conflict" }
     val oldSessions = local?.sessions.orEmpty().associateBy { it.id }
@@ -84,7 +84,13 @@ internal object PampaBundleMerge {
       s.copy(activeTranscriptId = active, voiceNames = VoiceNames.encode(names.filterKeys { partMap[it.substringBefore('|')]?.sessionId == s.id }))
     }
     return incoming.copy(
-      note = n.copy(body = PampaBundleBodyMerge.merge(local?.note?.bundleBodyBase, local?.note?.body ?: n.body, n.body), bundleBodyBase = n.body),
+      note = if (preserveLocalNote) requireNotNull(local).note else n.copy(
+        body = PampaBundleBodyMerge.merge(local?.note?.bundleBodyBase, local?.note?.body ?: n.body, n.body), bundleBodyBase = n.body,
+        bundleNativeAdopted = when {
+          n.bundleNativeAdopted == true || local?.note?.bundleNativeAdopted == true -> true
+          local != null -> local.note.bundleNativeAdopted
+          else -> n.bundleNativeAdopted
+        }),
       tags = (local?.tags.orEmpty() + incoming.tags).distinct(),
       sessions = finalSessions, parts = parts, transcripts = transcripts.values.toList(), segments = rebased,
       sources = (local?.sources.orEmpty().associateBy { it.id } + incoming.sources.associateBy { it.id }).values.toList(),

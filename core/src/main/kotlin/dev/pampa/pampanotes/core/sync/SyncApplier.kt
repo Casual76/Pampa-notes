@@ -223,6 +223,7 @@ class SyncApplier @Inject constructor(
         if (change.isDelete && local == null && entry != null) sync.forgetOutbox(change.tbl, change.id)
         if (local != null) {
           if (change.tbl == "sessions" && !change.isDelete) adoptRemoteMarker(change, tally.deviceName)
+          if (change.tbl == "notes" && !change.isDelete) adoptRemoteNoteProvenance(change)
           rebase(change, tally.ownerId)
         } else if (!change.isDelete && view.pendingDelete) {
           // Cancellata qui, e il remoto non ha niente di nuovo: la cancellazione resta, e sale
@@ -232,6 +233,7 @@ class SyncApplier @Inject constructor(
         tally.skipped++
       }
       Decision.KEEP_AND_FORK_REMOTE -> {
+        if (change.tbl == "notes" && !change.isDelete) adoptRemoteNoteProvenance(change)
         forkRemote(change, tally.deviceNames)
         rebase(change, tally.ownerId)
         tally.skipped++
@@ -416,18 +418,33 @@ class SyncApplier @Inject constructor(
     if (on != local.transcribingOn || since != local.transcribingSince) db.sessions().setMarker(change.id, on, since)
   }
 
-  /**
-   * @return vero se la riga scritta non e' quella remota: una sessione a cui si e' tenuto il segno
-   *   «in trascrizione su» di qui (vedi [TranscribingMarker.merge]).
-   */
+  /** Native-format evidence is monotonic even when a newer local body wins the sync merge. */
+  private suspend fun adoptRemoteNoteProvenance(change: WireChange) {
+    val remote = change.payload?.let { decode(NotePayload.serializer(), it).note } ?: return
+    val local = db.notes().get(change.id) ?: return
+    if (remote.bundleNativeAdopted == true && local.bundleNativeAdopted != true) {
+      db.notes().upsert(local.copy(bundleNativeAdopted = true))
+      db.sync().markDirty(SyncOutboxEntity(tbl = "notes", rowId = local.id, op = WireChange.OP_UPSERT))
+    }
+  }
+
+  /** True when private local metadata enriches the remote row and must be pushed back. */
   private suspend fun upsert(change: WireChange, deviceName: String): Boolean {
     val payload = change.payload ?: return false
     when (change.tbl) {
       "folders" -> db.folders().upsert(decode(FolderEntity.serializer(), payload))
       "notes" -> {
         val note = decode(NotePayload.serializer(), payload)
-        db.notes().upsert(note.note)
+        val local = db.notes().get(note.note.id)
+        // An older client omits this private evidence; it cannot undo an actual native adoption.
+        val merged = note.note.copy(bundleNativeAdopted = when {
+          note.note.bundleNativeAdopted == true || local?.bundleNativeAdopted == true -> true
+          local != null -> local.bundleNativeAdopted
+          else -> note.note.bundleNativeAdopted
+        }, bundleBodyBase = note.note.bundleBodyBase ?: local?.bundleBodyBase)
+        db.notes().upsert(merged)
         db.tags().replace(note.note.id, note.tags)
+        return merged != note.note
       }
       "sessions" -> {
         // Solo chi trascrive sa se il suo lavoro c'e' ancora: il segno di questo dispositivo non lo

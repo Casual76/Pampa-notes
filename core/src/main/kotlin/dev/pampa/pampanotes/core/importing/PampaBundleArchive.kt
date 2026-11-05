@@ -222,7 +222,7 @@ object PampaBundleArchive {
         val text = pieces.joinToString("\n\n") { readText(zip, root + it.path) }
         if (pieces.isEmpty()) null else TranscriptEntity(id("transcript", "${sessions[i].id}:text:${dev.pampa.pampanotes.core.files.Hashing.sha256(text)}"), sessions[i].id, if (s.transcript == "refined") TranscriptKind.REFINED else TranscriptKind.RAW, s.provider.orEmpty(), s.model.orEmpty(), text = text, wordCount = s.words, createdAt = date(n.created))
       }
-      PampaBundleNote(NoteEntity(n.id, parent!!, n.title, body, language = n.language, createdAt = date(n.created), updatedAt = date(n.updated)), n.tags, sessions.map { s -> s.copy(activeTranscriptId = transcripts.find { it.sessionId == s.id }?.id) }, parts, transcripts, sources = sources, attachments = attachments)
+      PampaBundleNote(NoteEntity(n.id, parent!!, n.title, body, language = n.language, createdAt = date(n.created), updatedAt = date(n.updated), bundleNativeAdopted = false), n.tags, sessions.map { s -> s.copy(activeTranscriptId = transcripts.find { it.sessionId == s.id }?.id) }, parts, transcripts, sources = sources, attachments = attachments)
     }
     return PampaBundleData(folders = folders.values.toList(), notes = notes)
   }

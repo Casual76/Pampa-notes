@@ -246,6 +246,7 @@ object SyncCodec {
           key == "sdocxCreatedAtMillis" && value is JsonNull -> Unit
           // An absent import baseline keeps old note hashes stable; a present baseline syncs.
           key == "bundleBodyBase" && value is JsonNull -> Unit
+          key == "bundleNativeAdopted" && value is JsonNull -> Unit
           // Lo stesso per il segno «in trascrizione su» delle sessioni: vuoto, la sessione e' quella
           // di prima (senza, l'aggiornamento avrebbe sporcato tutte le sessioni di tutti). Pieno,
           // conta: e' cosi' che il segno sale e arriva agli altri.

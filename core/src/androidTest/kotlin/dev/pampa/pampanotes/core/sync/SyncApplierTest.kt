@@ -21,6 +21,8 @@ import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -79,6 +81,38 @@ class SyncApplierTest {
   private fun upFolder(f: FolderEntity, seq: Long) = up("folders", f.id, seq, FolderEntity.serializer(), f)
   private fun upNote(n: NoteEntity, seq: Long) = up("notes", n.id, seq, NotePayload.serializer(), NotePayload(n))
   private fun upSession(s: SessionEntity, seq: Long) = up("sessions", s.id, seq, SessionEntity.serializer(), s)
+
+  @Test fun older_note_payload_preserves_native_provenance_and_requeues_private_evidence() = runBlocking {
+    val known = note("n", "f").copy(bundleNativeAdopted = true, bundleBodyBase = "Native baseline")
+    // The first application exercises the normal account/backup serializer, not a direct DB write.
+    apply(upFolder(folder("f"), 1), upNote(known, 2))
+    assertEquals(known, db.notes().get("n"))
+    clean()
+    val older = upNote(known.copy(title = "Title from an older client", bundleNativeAdopted = false, bundleBodyBase = null), 3)
+    val payload = older.payload!!.jsonObject
+    val withoutMetadata = JsonObject(payload + ("note" to JsonObject(payload.getValue("note").jsonObject - "bundleNativeAdopted" - "bundleBodyBase")))
+    apply(older.copy(payload = withoutMetadata))
+    val reloaded = db.notes().get("n")!!
+    assertEquals(true, reloaded.bundleNativeAdopted)
+    assertEquals("Native baseline", reloaded.bundleBodyBase)
+    assertEquals("Title from an older client", reloaded.title)
+    assertNotNull(db.sync().outboxEntry("notes", "n"))
+    clean()
+    apply(upNote(known.copy(title = "Older default null metadata", bundleNativeAdopted = false, bundleBodyBase = null), 4))
+    assertEquals(true, db.notes().get("n")!!.bundleNativeAdopted)
+    assertEquals("Native baseline", db.notes().get("n")!!.bundleBodyBase)
+    assertNotNull(db.sync().outboxEntry("notes", "n"))
+  }
+
+  @Test fun native_provenance_is_learned_even_when_a_newer_local_note_wins_sync() = runBlocking {
+    apply(upFolder(folder("f"), 1), upNote(note("n", "f"), 2))
+    clean()
+    db.notes().updateBody("n", "Newer personal body", 1000)
+    apply(upNote(note("n", "f").copy(body = "Remote native body", bundleNativeAdopted = true), 3))
+    assertEquals("Newer personal body", db.notes().get("n")!!.body)
+    assertEquals(true, db.notes().get("n")!!.bundleNativeAdopted)
+    assertNotNull(db.sync().outboxEntry("notes", "n"))
+  }
 
   @Test
   fun older_source_payload_preserves_intrinsic_identity_and_requeues_enrichment() = runBlocking {

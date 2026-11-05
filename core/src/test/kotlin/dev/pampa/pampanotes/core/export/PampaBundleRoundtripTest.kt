@@ -222,12 +222,13 @@ class PampaBundleRoundtripTest {
   @Test fun `native selection excludes unrelated histories and private body baseline`() {
     val historicalRaw = raw.copy(id = "history-raw", text = "PRIVATE_OLD_RAW")
     val historicalRefined = refined.copy(id = "history-refined", parentId = historicalRaw.id, text = "PRIVATE_OLD_REFINED")
-    val input = native().copy(note = note.copy(bundleBodyBase = "PRIVATE_BASELINE"),
+    val input = native().copy(note = note.copy(bundleBodyBase = "PRIVATE_BASELINE", bundleNativeAdopted = true),
       transcripts = listOf(raw, refined, historicalRaw, historicalRefined))
     val best = write(value = input)
     val bestNote = PampaBundleArchive.read(best).data.notes.single()
     assertEquals(setOf(raw.id, refined.id), bestNote.transcripts.map { it.id }.toSet())
     assertNull(bestNote.note.bundleBodyBase)
+    assertNull(bestNote.note.bundleNativeAdopted)
     val rawOnly = write(value = input, choice = TranscriptChoice.RAW)
     assertEquals(listOf(raw), PampaBundleArchive.read(rawOnly).data.notes.single().transcripts)
     ZipFile(rawOnly).use { zip ->

@@ -323,6 +323,27 @@ class MigrationTest {
     }
   }
 
+  @Test fun migrazione13a14_conserva_corpo_baseline_e_identita_con_provenienza_sconosciuta() {
+    helper.createDatabase(NAME, 13).use { db ->
+      db.execSQL("INSERT INTO folders (id, name, sortOrder, createdAt, updatedAt, kind) VALUES ('f', 'Subject', 0, 1, 1, 'school')")
+      db.execSQL("INSERT INTO notes (id, folderId, title, body, pinned, createdAt, updatedAt, bundleBodyBase) VALUES ('n', 'f', 'Title', 'Personal body', 0, 1, 7, 'Imported baseline')")
+      db.execSQL("INSERT INTO sources (id, noteId, kind, originalName, mime, sizeBytes, sha256, extractedChars, status, importedAt, archivedAt, sdocxCreatedAtMillis) VALUES ('src', 'n', 'SDOCX', 'Alpha.sdocx', 'application/sdoc', 120, 'sha', 10, 'OK', 5, 6, 1700000000000)")
+    }
+    helper.runMigrationsAndValidate(NAME, 14, true).use { db ->
+      db.query("SELECT body, bundleBodyBase, updatedAt, bundleNativeAdopted FROM notes WHERE id = 'n'").use { c ->
+        assertTrue(c.moveToFirst()); assertEquals("Personal body", c.getString(0))
+        assertEquals("Imported baseline", c.getString(1)); assertEquals(7L, c.getLong(2)); assertTrue(c.isNull(3))
+      }
+      db.query("SELECT sdocxCreatedAtMillis, archivedAt FROM sources WHERE id = 'src'").use { c ->
+        assertTrue(c.moveToFirst()); assertEquals(1_700_000_000_000L, c.getLong(0)); assertEquals(6L, c.getLong(1))
+      }
+      db.execSQL("UPDATE notes SET bundleNativeAdopted = 1 WHERE id = 'n'")
+      db.query("SELECT body, bundleBodyBase, bundleNativeAdopted FROM notes WHERE id = 'n'").use { c ->
+        assertTrue(c.moveToFirst()); assertEquals("Personal body", c.getString(0)); assertEquals("Imported baseline", c.getString(1)); assertEquals(1, c.getInt(2))
+      }
+    }
+  }
+
   private companion object {
     const val NAME = "migration-test.db"
   }
