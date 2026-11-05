@@ -167,6 +167,24 @@ class PampaBundleLegacyReconcileTest {
     assertEquals(personal, merged.transcripts.single { it.id == personal.id })
   }
 
+  @Test fun `exact marked audio ID wins over identical content in a distinct native recording`() {
+    val old = withPersonalTiming(positional("Lecture" to listOf("A")))
+    val original = old.parts.single()
+    val duplicate = original.copy(id = "native-duplicate", position = 1, fileName = "duplicate.wav")
+    val target = old.copy(parts = old.parts + duplicate)
+    var current = old
+    repeat(2) {
+      val plan = PampaBundleLegacyReconcile.plan(current, target, publicLegacy = false)
+      assertTrue(plan.sessions.isEmpty())
+      assertTrue(plan.parts.isEmpty())
+      current = PampaBundleMerge.merge(plan.local, plan.incoming)
+      assertEquals(listOf(original.id, duplicate.id), current.parts.map { it.id })
+      assertEquals(2000L, current.parts.sumOf { it.durationMs })
+      assertEquals(original.id, current.segments.single().partId)
+      assertEquals(100L, current.segments.single().sessionStartMs)
+    }
+  }
+
   @Test fun `legacy recording reorder preserves A words and maps staging keys by content`() {
     val old = withPersonalTiming(positional("Lecture" to listOf("A", "B")))
     val update = positional("Lecture" to listOf("B", "A"))

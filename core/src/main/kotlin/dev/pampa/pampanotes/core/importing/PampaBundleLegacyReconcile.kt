@@ -45,8 +45,14 @@ internal object PampaBundleLegacyReconcile {
         val candidatesParts = target.parts.filter { it.sessionId == candidate.id }
         val mapping = linkedMapOf<String, String>()
         if (exportedParts.isNotEmpty()) {
+          // Reserve compatible explicit identities before matching indistinguishable recordings.
           for (part in exportedParts) {
-            var matches = candidatesParts.filter { hash(it.sha256, part.sha256) }
+            val exact = candidatesParts.firstOrNull { it.id == part.id } ?: continue
+            if (!hash(exact.sha256, part.sha256)) return@mapNotNull null
+            mapping[part.id] = exact.id
+          }
+          for (part in exportedParts.filterNot { it.id in mapping }) {
+            var matches = candidatesParts.filter { it.id !in mapping.values && hash(it.sha256, part.sha256) }
             if (matches.size > 1) matches = matches.filter { text(it.originalName) == text(part.originalName) }
             // The known session can retain local-only audio omitted by this native update.
             if (matches.isEmpty() && shared != null) continue
