@@ -545,6 +545,10 @@ interface SourceDao {
   @Query("SELECT * FROM sources WHERE kind = :kind ORDER BY importedAt")
   suspend fun byKind(kind: SourceKind): List<SourceEntity>
 
+  /** Never overwrite identity learned concurrently or rewrite attachment/archive state. */
+  @Query("UPDATE sources SET sdocxCreatedAtMillis = :createdAt WHERE id = :id AND kind = 'SDOCX' AND sdocxCreatedAtMillis IS NULL")
+  suspend fun rememberSdocxCreation(id: String, createdAt: Long): Int
+
   @Upsert
   suspend fun upsert(source: SourceEntity)
 

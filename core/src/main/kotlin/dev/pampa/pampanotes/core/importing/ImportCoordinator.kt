@@ -100,6 +100,7 @@ class ImportCoordinator @Inject constructor(
   private val notes: NoteRepository,
   private val noteDao: NoteDao,
   private val sources: SourceDao,
+  private val sourceIdentity: SdocxSourceIdentity,
   private val audioParts: AudioPartDao,
   private val sessions: SessionDao,
   private val extractors: TextExtractorRegistry,
@@ -232,13 +233,13 @@ class ImportCoordinator @Inject constructor(
    * se non se ne riconosce uno. Il titolo si rilegge dal file quando e' qui; quando sta solo sul
    * computer resta il nome del file.
    */
-  private fun matchingSource(noteSources: List<SourceEntity>, doc: SdocxDocument, name: String): SourceEntity? {
+  private suspend fun matchingSource(noteSources: List<SourceEntity>, doc: SdocxDocument, name: String): SourceEntity? {
     val title = doc.title?.takeIf { it.isNotBlank() } ?: SdocxUpdate.titleFromName(name)
-    val ranked = noteSources.filter { it.kind == SourceKind.SDOCX }.map { source ->
+    val ranked = sourceIdentity.refresh(noteSources.filter { it.kind == SourceKind.SDOCX }).map { source ->
       val local = source.storedFileName?.let { files.sourceFile(it) }?.takeIf { it.exists() }
       val oldTitle = local?.let { SdocxParser.readText(it)?.first }?.takeIf { it.isNotBlank() }
         ?: SdocxUpdate.titleFromName(source.originalName)
-      val oldCreated = local?.let { SdocxParser.readDates(it)?.createdAtMillis }
+      val oldCreated = source.sdocxCreatedAtMillis
       source to SdocxUpdate.matchScore(title, doc.dates?.createdAtMillis, oldTitle, oldCreated)
     }
     val best = ranked.maxOfOrNull { it.second } ?: return null
@@ -454,6 +455,7 @@ class ImportCoordinator @Inject constructor(
       storedFileName = storedName,
       extractedChars = body.length,
       status = SourceStatus.PARTIAL,
+      sdocxCreatedAtMillis = doc.dates?.createdAtMillis,
       importedAt = System.currentTimeMillis(),
     )
     sources.upsert(entity)

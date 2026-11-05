@@ -1618,7 +1618,7 @@
   <string name="markdown_code_block_description">Block of %1$s</string>
   <string name="player_scrubber_spoken">%1$s of %2$s</string>
   <string name="import_bundle_title">Pampa Notes bundle</string>
-  <string name="import_bundle_counts">%1$d notes · %2$d updatable · %3$d included recordings · %4$d images</string>
+  <string name="import_bundle_counts">%1$d notes · %2$d updatable · %3$d included recordings · Images: %4$d</string>
   <string name="import_bundle_precision">This bundle has no precise timings for highlighting individual words during audio playback.</string>
   <string name="import_bundle_update">Update recognized notes</string>
   <string name="import_bundle_copies">Create new copies</string>
@@ -1635,4 +1635,7 @@
   <string name="import_bundle_importing_notes">Importing notes…</string>
   <string name="import_bundle_importing_note">Importing %1$s</string>
   <string name="import_bundle_failed_detail">The bundle could not be imported. Check that it is a complete, supported Pampa Notes export, then try again.</string>
+  <string name="note_part_omitted_bundle">not included in the bundle</string>
+  <string name="session_bundle_omitted_title">Audio not included in the bundle</string>
+  <string name="session_bundle_omitted_detail">Ask the person who shared these notes for a bundle that includes the recordings, then import it and choose to update the notes. These files will not arrive automatically from your computer.</string>
 </resources>

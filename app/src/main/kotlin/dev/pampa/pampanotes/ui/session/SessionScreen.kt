@@ -775,7 +775,14 @@ private fun LazyListScope.jobItem(
  * ancora archiviate, non c'e' niente da chiedere a nessuno, e lo si dice.
  */
 private fun LazyListScope.remoteAudioItem(state: SessionUiState, onFetch: () -> Unit) {
-  val missing = state.missing?.takeIf { it.isNotEmpty() } ?: return
+  val allMissing = state.missing?.takeIf { it.isNotEmpty() } ?: return
+  if (dev.pampa.pampanotes.core.importing.PampaBundleOmissions.omitted(allMissing).isNotEmpty()) {
+    item(key = "bundle-omitted-audio") {
+      FluidInlineMessage(title = stringResource(R.string.session_bundle_omitted_title),
+        message = stringResource(R.string.session_bundle_omitted_detail), tone = FluidTone.Warning)
+    }
+  }
+  val missing = dev.pampa.pampanotes.core.importing.PampaBundleOmissions.remote(allMissing).takeIf { it.isNotEmpty() } ?: return
   item(key = "remote-audio") {
     val fetch = state.fetch
     val bytes = missing.sumOf { it.sizeBytes }
@@ -789,7 +796,7 @@ private fun LazyListScope.remoteAudioItem(state: SessionUiState, onFetch: () -> 
           )
           FluidProgressBar(progress = { fetch.fraction }, modifier = Modifier.padding(horizontal = 4.dp))
         }
-        state.fetchable -> {
+        missing.all { it.archivedAt > 0 } -> {
           val detail = pluralStringResource(R.plurals.session_remote_detail, missing.size, missing.size, Formats.bytes(bytes))
           FluidInlineMessage(
             title = stringResource(R.string.session_remote_title),

@@ -24,6 +24,7 @@ import dev.pampa.pampanotes.core.db.SessionWithParts
 import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.db.JobType
 import dev.pampa.pampanotes.core.repo.RawTranscripts
+import dev.pampa.pampanotes.core.importing.PampaBundleOmissions
 import dev.pampa.pampanotes.core.repo.TranscribeOptions
 import dev.pampa.pampanotes.core.db.TranscriptionRunEntity
 import dev.pampa.pampanotes.core.repo.StatsRepository
@@ -133,7 +134,7 @@ data class SessionUiState(
   val durationMs: Long get() = parts.sumOf { it.durationMs }
 
   /** Tutti i file ci sono: il lettore ha qualcosa da suonare. */
-  val playable: Boolean get() = parts.isNotEmpty() && missing?.isEmpty() == true
+  val playable: Boolean get() = parts.isNotEmpty() && parts.none(PampaBundleOmissions::isOmitted) && missing?.isEmpty() == true
 
   /** Quello che manca sta sul computer di casa, tutto: si puo' scaricare. */
   val fetchable: Boolean get() = !missing.isNullOrEmpty() && missing.all { it.archivedAt > 0 }
@@ -143,9 +144,9 @@ data class SessionUiState(
    * sola). Una registrazione che sta solo sull'altro dispositivo si trascrive da li': offrire il
    * tasto qui vuol dire un lavoro che fallisce per forza.
    */
-  val transcribableHere: Boolean get() = missing.isNullOrEmpty() || fetchable
-  /** La grezza che vale: la piu' recente ([RawTranscripts]), anche quando il sync ne ha portate due. */
-  val raw: TranscriptEntity? get() = RawTranscripts.newest(transcripts)
+  val transcribableHere: Boolean get() = parts.none(PampaBundleOmissions::isOmitted) && (missing.isNullOrEmpty() || fetchable)
+  /** La grezza selezionata, o il genitore della raffinata che si sta leggendo. */
+  val raw: TranscriptEntity? get() = RawTranscripts.forSelection(transcripts, session?.activeTranscriptId)
 
   /** Le parti di cui la trascrizione non dice niente: importate dopo, o arrivate da un'altra sessione. */
   val untranscribed: List<AudioPartEntity>
@@ -327,16 +328,13 @@ class SessionViewModel @Inject constructor(
    * da un LLM non ha piu' un cronometro suo. Per questo il lettore segue sempre la grezza, anche
    * quando a schermo c'e' la versione raffinata.
    */
-  @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-  private val segmentsFlow: Flow<List<SegmentEntity>> = transcriptsFlow.flatMapLatest { list ->
-    val raw = RawTranscripts.newest(list) ?: return@flatMapLatest flowOf(emptyList())
-    repository.observeSegments(raw.id)
-  }
+  private val segmentsFlow: Flow<SessionTranscriptSelection> = sessionTranscriptSelection(
+    sessionFlow.map { it?.session }, transcriptsFlow, repository::observeSegments,
+  )
 
   val uiState: StateFlow<SessionUiState> = combine(
     sessionFlow,
     noteFlow,
-    transcriptsFlow,
     segmentsFlow,
     transcription.observeBySession(sessionId),
     siblingsFlow,
@@ -349,33 +347,35 @@ class SessionViewModel @Inject constructor(
   ) { values ->
     @Suppress("UNCHECKED_CAST")
     val withParts = values[0] as SessionWithParts?
-    val transcripts = values[2] as List<TranscriptEntity>
     val session = withParts?.session
+    val selection = (values[2] as SessionTranscriptSelection).takeIf {
+      it.sessionId == session?.id && it.requestedActiveId == session?.activeTranscriptId
+    }
+    val transcripts = selection?.transcripts.orEmpty()
     SessionUiState(
       session = session,
       note = values[1] as NoteEntity?,
-      folder = values[6] as FolderEntity?,
+      folder = values[5] as FolderEntity?,
       parts = withParts?.partsSorted.orEmpty(),
       transcripts = transcripts,
-      activeTranscript = transcripts.firstOrNull { it.id == session?.activeTranscriptId }
-        ?: RawTranscripts.newest(transcripts),
-      segments = values[3] as List<SegmentEntity>,
-      job = (values[4] as List<JobEntity>).firstOrNull { it.state.isActive },
+      activeTranscript = selection?.active,
+      segments = selection?.segments.orEmpty(),
+      job = (values[3] as List<JobEntity>).firstOrNull { it.state.isActive },
       // Una grezza (o una raffinata) arrivata dopo il fallimento — dal sync, da un altro dispositivo,
       // da un altro tentativo — lo supera: la stessa regola di «Riprova tutti» (FailedJobs).
-      failedJob = (values[4] as List<JobEntity>).firstOrNull()?.takeIf { failed ->
+      failedJob = (values[3] as List<JobEntity>).firstOrNull()?.takeIf { failed ->
         failed.state == JobState.FAILED &&
-          FailedJobs.standing(failed, sessionExists = true, transcripts, values[4] as List<JobEntity>) != FailureStanding.SUPERSEDED
+          FailedJobs.standing(failed, sessionExists = true, transcripts, values[3] as List<JobEntity>) != FailureStanding.SUPERSEDED
       },
-      siblings = values[5] as List<SessionEntity>,
-      missing = values[7] as List<AudioPartEntity>?,
-      fetch = values[8] as FetchState?,
-      lastRun = values[9] as TranscriptionRunEntity?,
-      elsewhere = values[10] as RemoteTranscribing?,
-      partial = values[11] as dev.pampa.pampanotes.core.transcription.SessionPartial?,
+      siblings = values[4] as List<SessionEntity>,
+      missing = values[6] as List<AudioPartEntity>?,
+      fetch = values[7] as FetchState?,
+      lastRun = values[8] as TranscriptionRunEntity?,
+      elsewhere = values[9] as RemoteTranscribing?,
+      partial = values[10] as dev.pampa.pampanotes.core.transcription.SessionPartial?,
       // Dall'ultima trascrizione finita qui: una piu' vecchia parlava di parti che nel frattempo
       // possono essere state rifatte (e allora non sono piu' senza testo, e non si mostrano).
-      emptyPartIds = (values[4] as List<JobEntity>)
+      emptyPartIds = (values[3] as List<JobEntity>)
         .firstOrNull { it.type == JobType.TRANSCRIBE && it.state == JobState.DONE }
         ?.let { TranscribeOptions.decode(it.optionsJson).emptyParts.toSet() }
         .orEmpty(),

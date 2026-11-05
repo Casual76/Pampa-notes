@@ -52,6 +52,7 @@ class RealDatesBackfill @Inject constructor(
   private val audio: AudioImporter,
   private val meta: FileMetaApi,
   private val settingsStore: PampaSettingsStore,
+  private val sourceIdentity: SdocxSourceIdentity,
 ) {
   private val oneAtATime = Mutex()
 
@@ -63,8 +64,9 @@ class RealDatesBackfill @Inject constructor(
     val failures: Int = 0,
     /** Il giro non e' partito: fatto una volta e niente in attesa. */
     val skipped: Boolean = false,
+    val sourcesChanged: Int = 0,
   ) {
-    val changed: Boolean get() = notesChanged + sessionsChanged > 0
+    val changed: Boolean get() = notesChanged + sessionsChanged + sourcesChanged > 0
   }
 
   private enum class Outcome { CHANGED, UNCHANGED, PENDING }
@@ -79,8 +81,9 @@ class RealDatesBackfill @Inject constructor(
 
   suspend fun run(zone: ZoneId = ZoneId.systemDefault()): Summary = withContext(Dispatchers.IO) {
     oneAtATime.withLock {
+      val identitiesChanged = sourceIdentity.backfill()
       val previous = settingsStore.realDatesPending()
-      if (previous != null && previous.isEmpty()) return@withLock Summary(skipped = true)
+      if (previous != null && previous.isEmpty()) return@withLock Summary(skipped = true, sourcesChanged = identitiesChanged)
       // Le voci fallite tornano con quante volte hanno fallito ([PendingKeys]).
       val failedBefore = previous.orEmpty().mapNotNull(PendingKeys::failed).toMap()
       // Null: il primo giro, su tutto. Poi solo quello che aspettava il computer, o che era fallito.
@@ -132,7 +135,7 @@ class RealDatesBackfill @Inject constructor(
       }
 
       settingsStore.setRealDatesPending(pending)
-      Summary(notesChanged, sessionsChanged, pending.size, failures).also {
+      Summary(notesChanged, sessionsChanged, pending.size, failures, sourcesChanged = identitiesChanged).also {
         android.util.Log.i(TAG, "date vere: ${it.notesChanged} note, ${it.sessionsChanged} sessioni ridatate, ${it.pending} in attesa del computer, ${it.failures} errori")
       }
     }

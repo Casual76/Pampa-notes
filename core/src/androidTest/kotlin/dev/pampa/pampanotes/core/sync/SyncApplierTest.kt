@@ -80,6 +80,20 @@ class SyncApplierTest {
   private fun upNote(n: NoteEntity, seq: Long) = up("notes", n.id, seq, NotePayload.serializer(), NotePayload(n))
   private fun upSession(s: SessionEntity, seq: Long) = up("sessions", s.id, seq, SessionEntity.serializer(), s)
 
+  @Test
+  fun older_source_payload_preserves_intrinsic_identity_and_requeues_enrichment() = runBlocking {
+    apply(upFolder(folder("f"), 1), upNote(note("n", "f"), 2))
+    val known = SourceEntity(id = "samsung", noteId = "n", kind = SourceKind.SDOCX, originalName = "Alpha.sdocx",
+      mime = "application/sdoc", sizeBytes = 10, sha256 = "sdocx-sha", importedAt = 1, sdocxCreatedAtMillis = 1_700_000_000_000L)
+    apply(up("sources", known.id, 3, SourceEntity.serializer(), known))
+    clean()
+    val oldClient = known.copy(sdocxCreatedAtMillis = null, archivedAt = 100, importedAt = 2)
+    apply(up("sources", known.id, 4, SourceEntity.serializer(), oldClient))
+    assertEquals(known.sdocxCreatedAtMillis, db.sources().get(known.id)!!.sdocxCreatedAtMillis)
+    assertEquals(100L, db.sources().get(known.id)!!.archivedAt)
+    assertNotNull(db.sync().outboxEntry("sources", known.id))
+  }
+
   private fun apply(vararg changes: WireChange) = runBlocking { applier.apply(changes.toList(), ownerId = "me", deviceName = "questo") }
 
   /** Come se tutto quello che c'e' fosse gia' stato sincronizzato: niente di sporco. */

@@ -41,6 +41,7 @@ class ImportCoordinatorTest {
   private lateinit var context: Context
   private lateinit var db: PampaDatabase
   private lateinit var files: AppFiles
+  private lateinit var identities: SdocxSourceIdentity
   private lateinit var coordinator: ImportCoordinator
   private lateinit var workDir: File
 
@@ -65,12 +66,15 @@ class ImportCoordinatorTest {
     val storage = StorageRepository(db.audioParts(), db.sources(), db.jobs(), files, computerOnly, archive, FilesInUse())
     val notes = NoteRepository(db.notes(), db.tags(), storage)
     val fetcher = ArchiveFetcher(files, settings, resolver, http, db.audioParts(), db.sources(), auth, computerOnly)
+    identities = SdocxSourceIdentity(db.sources(), files, dev.pampa.pampanotes.core.archive.FileMetaApi(
+      dev.pampa.pampanotes.core.transcription.TranscriptionHttp("PampaNotes-test"), resolver, settings, auth))
     coordinator = ImportCoordinator(
       context = context,
       files = files,
       notes = notes,
       noteDao = db.notes(),
       sources = db.sources(),
+      sourceIdentity = identities,
       audioParts = db.audioParts(),
       sessions = db.sessions(),
       extractors = extractors,
@@ -222,6 +226,40 @@ class ImportCoordinatorTest {
     coordinator.importAll(candidates, ImportTarget.UpdateNote(note.id))
     assertEquals("Revised imported body.\n\nMy personal editor additions.", db.notes().get(note.id)!!.body)
     assertEquals(1, db.sources().byNote(note.id).count { it.kind == SourceKind.SDOCX })
+  }
+
+  @Test
+  fun samsung_identity_survives_original_eviction_and_renamed_incoming_title() = runTest {
+    val folder = seedFolder()
+    val original = samsungFile("Alpha.sdocx", "Alpha original note", 1_700_000_000_000L, "Original body.")
+    val first = coordinator.importAll(coordinator.inspect(listOf(android.net.Uri.fromFile(original))),
+      ImportTarget.NewNote(folder, "Alpha original note"))
+    val source = db.sources().byNote(first.noteId).single()
+    assertEquals(1_700_000_000_000L, source.sdocxCreatedAtMillis)
+    assertTrue(files.sourceFile(source.storedFileName!!).delete())
+    val renamed = samsungFile("Beta.sdocx", "Beta renamed note", 1_700_000_000_000L, "Updated body.")
+    val candidate = coordinator.inspect(listOf(android.net.Uri.fromFile(renamed))).single()
+    assertEquals(first.noteId, candidate.updateOfNoteId)
+    assertEquals(source.id, candidate.updateOfSourceId)
+    val unrelated = samsungFile("Alpha-again.sdocx", "Alpha original note", 1_700_000_100_000L, "Unrelated body.")
+    assertEquals(null, coordinator.inspect(listOf(android.net.Uri.fromFile(unrelated))).single().updateOfNoteId)
+  }
+
+  @Test
+  fun legacy_local_identity_backfill_survives_eviction_without_changing_source_content() = runTest {
+    val folder = seedFolder()
+    val original = samsungFile("Legacy.sdocx", "Legacy Samsung title", 1_700_000_000_000L, "Original body.")
+    val first = coordinator.importAll(coordinator.inspect(listOf(android.net.Uri.fromFile(original))),
+      ImportTarget.NewNote(folder, "Local title"))
+    val source = db.sources().byNote(first.noteId).single().copy(sdocxCreatedAtMillis = null)
+    db.sources().upsert(source)
+    assertEquals(1, identities.backfill())
+    assertEquals(0, identities.backfill())
+    val backfilled = db.sources().get(source.id)!!
+    assertEquals(source, backfilled.copy(sdocxCreatedAtMillis = null))
+    assertTrue(files.sourceFile(source.storedFileName!!).delete())
+    val renamed = samsungFile("Renamed.sdocx", "Renamed Samsung title", 1_700_000_000_000L, "Updated body.")
+    assertEquals(first.noteId, coordinator.inspect(listOf(android.net.Uri.fromFile(renamed))).single().updateOfNoteId)
   }
 
   private fun samsungFile(name: String, title: String, createdAt: Long? = null, body: String? = null): File {

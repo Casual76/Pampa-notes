@@ -139,6 +139,7 @@ class StorageRepository @Inject constructor(
       if (sources) {
         this@StorageRepository.sources.all().filter { it.archivedAt > 0 && it.storedFileName != null && it.derivedFromId == null }.forEach { source ->
           val stored = source.storedFileName!!
+          dev.pampa.pampanotes.core.importing.SdocxSourceIdentity.rememberLocal(source, files.sourceFile(stored), this@StorageRepository.sources)
           add(Evictable(source.sha256, files.sourceFile(stored), FilesInUse.source(stored), sessionId = null) { this@StorageRepository.sources.markArchived(source.id, 0L) })
         }
       }
@@ -172,6 +173,7 @@ class StorageRepository @Inject constructor(
       }
       scope.sources.filter { it.archivedAt > 0 }.forEach { source ->
         val stored = source.storedFileName ?: return@forEach
+        dev.pampa.pampanotes.core.importing.SdocxSourceIdentity.rememberLocal(source, files.sourceFile(stored), sources)
         add(Evictable(source.sha256, files.sourceFile(stored), FilesInUse.source(stored), sessionId = null) { sources.markArchived(source.id, 0L) })
       }
     }

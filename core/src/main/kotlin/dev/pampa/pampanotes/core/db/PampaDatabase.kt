@@ -16,7 +16,7 @@ import javax.inject.Singleton
 /**
  * Il database: entita', DAO e l'indice di ricerca.
  *
- * Versione 12. Le aggiunte di colonna e di tabella passano da `@AutoMigration`; tutto il resto si
+ * Versione 13. Le aggiunte di colonna e di tabella passano da `@AutoMigration`; tutto il resto si
  * scrive a mano in [Migrations] e si prova con `MigrationTest` sugli schemi esportati in
  * `core/schemas`.
  *
@@ -47,6 +47,7 @@ import javax.inject.Singleton
  * `VoiceNames`). Nulla per tutte le righe di prima, e nulla non entra nell'impronta della sessione.
  * 11 -> 12: `bundleBodyBase` sulle note, baseline privata per aggiornare un bundle senza perdere
  * il testo locale. Null sulle note precedenti; segue sync e backup, mai gli export portabili.
+ * 12 -> 13: creazione intrinseca Samsung sulle fonti, indipendente dalla presenza del file.
  */
 @Database(
   entities = [
@@ -69,9 +70,9 @@ import javax.inject.Singleton
     SyncOriginEntity::class,
     TranscriptionRunEntity::class,
   ],
-  version = 12,
+  version = 13,
   exportSchema = true,
-  autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7), AutoMigration(from = 7, to = 8), AutoMigration(from = 8, to = 9), AutoMigration(from = 9, to = 10), AutoMigration(from = 10, to = 11), AutoMigration(from = 11, to = 12)],
+  autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7), AutoMigration(from = 7, to = 8), AutoMigration(from = 8, to = 9), AutoMigration(from = 9, to = 10), AutoMigration(from = 10, to = 11), AutoMigration(from = 11, to = 12), AutoMigration(from = 12, to = 13)],
 )
 abstract class PampaDatabase : RoomDatabase() {
   abstract fun folders(): FolderDao

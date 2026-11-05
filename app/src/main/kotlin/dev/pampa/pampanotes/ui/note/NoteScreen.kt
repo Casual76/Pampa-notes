@@ -536,7 +536,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
             if (partIndex > 0) FluidListDivider()
             FluidListRow(
               title = part.originalName,
-              subtitle = Formats.duration(part.durationMs) + " · " + partLocation(part.archivedAt > 0, part.id in state.missingParts),
+              subtitle = Formats.duration(part.durationMs) + " · " + partLocation(part, part.id in state.missingParts),
               eyebrow = stringResource(R.string.note_part_number, partIndex + 1),
               meta = Formats.bytes(part.sizeBytes),
               onClick = { onOpenSession(sessionId) },
@@ -790,11 +790,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sourcesTab(
  * normale, e senza dirlo non si capisce perche' una lezione chiede di scaricare o non si trascrive.
  */
 @Composable
-private fun partLocation(archived: Boolean, missing: Boolean): String = stringResource(
+private fun partLocation(part: dev.pampa.pampanotes.core.db.AudioPartEntity, missing: Boolean): String = stringResource(
   when {
-    !missing && archived -> R.string.note_part_here_and_pc
+    dev.pampa.pampanotes.core.importing.PampaBundleOmissions.isOmitted(part) -> R.string.note_part_omitted_bundle
+    !missing && part.archivedAt > 0 -> R.string.note_part_here_and_pc
     !missing -> R.string.note_part_here_only
-    archived -> R.string.note_part_on_pc
+    part.archivedAt > 0 -> R.string.note_part_on_pc
     else -> R.string.note_part_elsewhere
   },
 )

@@ -257,7 +257,7 @@ class SyncApplier @Inject constructor(
         // Rinata sopra una cancellazione di qui: i figli se ne sono andati con la cascata, e tornano
         // col riallineamento che [SyncRepository] fa prima del push.
         val reborn = !change.isDelete && view.pendingDelete && change.tbl in CONTAINERS
-        val keptLocalMarker = if (change.isDelete) { delete(change, tally.trash); false } else upsert(change, tally.deviceName)
+        val keptLocalContent = if (change.isDelete) { delete(change, tally.trash); false } else upsert(change, tally.deviceName)
         if (!change.isDelete && change.tbl == "transcripts") {
           db.transcripts().get(change.id)?.takeIf { it.kind == TranscriptKind.RAW }?.let { tally.rawSessions += it.sessionId }
         }
@@ -265,7 +265,7 @@ class SyncApplier @Inject constructor(
         if (reborn) tally.revived += SyncPlan.key(change.tbl, change.id)
         // La sessione e' quella remota, ma il segno «in trascrizione su» e' rimasto quello di qui:
         // e' diversa da quella concordata, e deve salire.
-        if (keptLocalMarker) sync.markDirty(SyncOutboxEntity(tbl = change.tbl, rowId = change.id, op = WireChange.OP_UPSERT))
+        if (keptLocalContent) sync.markDirty(SyncOutboxEntity(tbl = change.tbl, rowId = change.id, op = WireChange.OP_UPSERT))
         if (change.isDelete) tally.deleted++ else tally.applied++
       }
     }
@@ -484,7 +484,12 @@ class SyncApplier @Inject constructor(
           db.segments().insertAll(list.map { it.copy(id = 0, transcriptId = transcript.id) })
         }
       }
-      "sources" -> db.sources().upsert(decode(SourceEntity.serializer(), payload))
+      "sources" -> {
+        val remote = decode(SourceEntity.serializer(), payload)
+        val merged = SourceIdentityMerge.into(db.sources().get(remote.id), remote)
+        db.sources().upsert(merged)
+        return merged != remote
+      }
       "export_presets" -> db.exportPresets().upsert(decode(ExportPresetEntity.serializer(), payload))
       // Senza padre da aspettare: il `sessionId` di una corsa non e' una chiave esterna.
       "transcription_runs" -> db.stats().upsert(RunPayload.decode(payload))

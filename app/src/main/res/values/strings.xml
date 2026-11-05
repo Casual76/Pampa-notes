@@ -1653,7 +1653,7 @@
   <string name="markdown_code_block_description">Blocco di %1$s</string>
   <string name="player_scrubber_spoken">%1$s di %2$s</string>
   <string name="import_bundle_title">Pacchetto Pampa Notes</string>
-  <string name="import_bundle_counts">%1$d note · %2$d aggiornabili · %3$d audio presenti · %4$d immagini</string>
+  <string name="import_bundle_counts">%1$d note · %2$d aggiornabili · %3$d audio presenti · Immagini: %4$d</string>
   <string name="import_bundle_precision">Questo pacchetto non contiene tempi precisi per evidenziare le singole parole durante la riproduzione audio.</string>
   <string name="import_bundle_update">Aggiorna le note riconosciute</string>
   <string name="import_bundle_copies">Crea copie nuove</string>
@@ -1670,4 +1670,7 @@
   <string name="import_bundle_importing_notes">Importazione delle note…</string>
   <string name="import_bundle_importing_note">Importazione di %1$s</string>
   <string name="import_bundle_failed_detail">Impossibile importare il pacchetto. Verifica che sia un export Pampa Notes completo e supportato, poi riprova.</string>
+  <string name="note_part_omitted_bundle">non incluso nel pacchetto</string>
+  <string name="session_bundle_omitted_title">Audio non incluso nel pacchetto</string>
+  <string name="session_bundle_omitted_detail">Chiedi a chi ha condiviso le note un pacchetto che includa le registrazioni, poi importalo scegliendo di aggiornare le note. Questi file non arriveranno automaticamente dal tuo computer.</string>
 </resources>

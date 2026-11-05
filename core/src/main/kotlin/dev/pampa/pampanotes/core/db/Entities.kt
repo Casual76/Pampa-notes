@@ -278,6 +278,8 @@ data class SourceEntity(
    * va — un aggiornamento della nota — se ne vanno anche le pagine ricavate da lui.
    */
   val derivedFromId: String? = null,
+  /** Intrinsic Samsung creation time; survives source eviction and is shared as content identity. */
+  val sdocxCreatedAtMillis: Long? = null,
 )
 
 enum class JobType { TRANSCRIBE, REFINE }

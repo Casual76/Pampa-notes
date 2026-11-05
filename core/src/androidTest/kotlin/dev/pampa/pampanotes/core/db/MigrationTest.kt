@@ -294,6 +294,35 @@ class MigrationTest {
     }
   }
 
+  @Test
+  fun migrazione12a13_conserva_fonti_baseline_e_date_con_identita_samsung_null() {
+    helper.createDatabase(NAME, 12).use { db ->
+      db.execSQL("INSERT INTO folders (id, name, sortOrder, createdAt, updatedAt, kind) VALUES ('f', 'Subject', 0, 1, 1, 'school')")
+      db.execSQL("INSERT INTO notes (id, folderId, title, body, pinned, createdAt, updatedAt, bundleBodyBase) VALUES ('n', 'f', 'Title', 'Personal body', 0, 1, 7, 'Imported baseline')")
+      db.execSQL("INSERT INTO sources (id, noteId, kind, originalName, mime, sizeBytes, sha256, storedFileName, extractedChars, status, importedAt, archivedAt) VALUES ('src', 'n', 'SDOCX', 'Alpha.sdocx', 'application/sdoc', 120, 'sha', 'src.sdocx', 10, 'OK', 5, 6)")
+    }
+    helper.runMigrationsAndValidate(NAME, 13, true).use { db ->
+      db.query("SELECT originalName, sha256, archivedAt, importedAt, sdocxCreatedAtMillis FROM sources WHERE id = 'src'").use { cursor ->
+        assertTrue(cursor.moveToFirst())
+        assertEquals("Alpha.sdocx", cursor.getString(0))
+        assertEquals("sha", cursor.getString(1))
+        assertEquals(6L, cursor.getLong(2))
+        assertEquals(5L, cursor.getLong(3))
+        assertTrue(cursor.isNull(4))
+      }
+      db.query("SELECT body, bundleBodyBase, updatedAt FROM notes WHERE id = 'n'").use { cursor ->
+        assertTrue(cursor.moveToFirst())
+        assertEquals("Personal body", cursor.getString(0))
+        assertEquals("Imported baseline", cursor.getString(1))
+        assertEquals(7L, cursor.getLong(2))
+      }
+      db.execSQL("UPDATE sources SET sdocxCreatedAtMillis = 1700000000000 WHERE id = 'src'")
+      db.query("SELECT sdocxCreatedAtMillis FROM sources WHERE id = 'src'").use { cursor ->
+        assertTrue(cursor.moveToFirst()); assertEquals(1_700_000_000_000L, cursor.getLong(0))
+      }
+    }
+  }
+
   private companion object {
     const val NAME = "migration-test.db"
   }
