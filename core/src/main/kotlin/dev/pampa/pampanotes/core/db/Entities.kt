@@ -74,6 +74,9 @@ data class NoteEntity(
   val language: String? = null,
   val createdAt: Long,
   val updatedAt: Long,
+  /** Last imported bundle body, private account metadata for three-way reimport merge.
+   * Normal sync/backup retain it; portable exports always remove it. */
+  @ColumnInfo(defaultValue = "NULL") val bundleBodyBase: String? = null,
 )
 
 @Serializable

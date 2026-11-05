@@ -27,11 +27,11 @@ class PampaBundleImporter @Inject constructor(private val db: PampaDatabase, pri
     file: File,
     updateExisting: Boolean = true,
     intoFolderId: String? = null,
-    onProgress: (Float, String) -> Unit = { _, _ -> },
+    onProgress: (Float, PampaBundleProgress) -> Unit = { _, _ -> },
   ): PampaBundleImportResult = withContext(Dispatchers.IO) {
     val ctx = currentCoroutineContext()
     val checkpoint = { ctx.ensureActive() }
-    onProgress(0f, "Validating bundle")
+    onProgress(0f, PampaBundleProgress(PampaBundlePhase.VALIDATING))
     val read = PampaBundleArchive.read(file, checkpoint)
     val namespace = if (updateExisting) "origin" else UUID.randomUUID().toString()
     val data = remap(read.data, namespace)
@@ -49,7 +49,7 @@ class PampaBundleImporter @Inject constructor(private val db: PampaDatabase, pri
           staged += target
           target.outputStream().use { out -> zip.getInputStream(zip.getEntry(read.root + a.path)).use { PampaBundleArchive.verify(it, a.bytes, a.sha256, checkpoint, out) } }
           stored[a.audio to a.id] = target.name
-          onProgress(0.1f + 0.6f * (index + 1) / attachments.size.coerceAtLeast(1), "Staging attachments")
+          onProgress(0.1f + 0.6f * (index + 1) / attachments.size.coerceAtLeast(1), PampaBundleProgress(PampaBundlePhase.STAGING_ATTACHMENTS))
         }
       }
       checkpoint()
@@ -68,10 +68,16 @@ class PampaBundleImporter @Inject constructor(private val db: PampaDatabase, pri
 
   internal suspend fun persist(
     data: PampaBundleData, intoFolderId: String?, stored: Map<Pair<Boolean, String>, String>,
-    checkpoint: () -> Unit = {}, onProgress: (Float, String) -> Unit = { _, _ -> },
+    checkpoint: () -> Unit = {}, onProgress: (Float, PampaBundleProgress) -> Unit = { _, _ -> },
   ): PampaBundleImportResult {
     require(intoFolderId == null || db.folders().get(intoFolderId) != null) { "Destination folder missing" }
-    require(intoFolderId == null || data.folders.none { it.id == intoFolderId }) { "Destination cannot be inside the imported hierarchy" }
+    val importedFolders = data.folders.mapTo(HashSet()) { it.id }
+    val ancestors = mutableSetOf<String>()
+    var ancestor = intoFolderId
+    while (ancestor != null) {
+      require(ancestor !in importedFolders && ancestors.add(ancestor)) { "Destination cannot be inside the imported hierarchy" }
+      ancestor = db.folders().get(ancestor)?.parentId
+    }
     val pending = data.folders.toMutableList()
     val done = mutableSetOf<String>()
     while (pending.isNotEmpty()) {
@@ -87,60 +93,61 @@ class PampaBundleImporter @Inject constructor(private val db: PampaDatabase, pri
       checkpoint()
       val oldNote = db.notes().get(n.note.id)
       if (oldNote == null) imported++ else updated++
-      db.notes().upsert(n.note)
-      // Merge tags and descendants: local-only work must survive subsequent exports.
-      db.tags().insertAll(n.tags.distinct().map { NoteTagEntity(n.note.id, it) })
-      n.sessions.forEach { s ->
-        val old = db.sessions().get(s.id)
-        require(old == null || old.noteId == n.note.id) { "Session identity conflict" }
-        db.sessions().upsert(s.copy(activeTranscriptId = s.activeTranscriptId ?: old?.activeTranscriptId,
-          transcribingOn = old?.transcribingOn, transcribingSince = old?.transcribingSince,
-          voiceNames = VoiceNames.encode(VoiceNames.decode(old?.voiceNames) + VoiceNames.decode(s.voiceNames))))
+      val oldSessions = db.sessions().plainByNote(n.note.id)
+      val oldParts = oldSessions.flatMap { db.audioParts().bySession(it.id) }
+      val oldTranscripts = oldSessions.flatMap { db.transcripts().bySession(it.id) }
+      val local = oldNote?.let { PampaBundleNote(it, db.tags().tags(it.id), oldSessions, oldParts,
+        oldTranscripts, oldTranscripts.flatMap { t -> db.segments().byTranscript(t.id) }, db.sources().byNote(it.id)) }
+      suspend fun sameNote(sessionId: String): Boolean = db.sessions().get(sessionId)?.noteId == n.note.id
+      n.sessions.forEach { s -> require(db.sessions().get(s.id)?.noteId.let { it == null || it == n.note.id }) { "Session belongs to another note" } }
+      val incomingParts = n.parts.map { part ->
+        val old = db.audioParts().get(part.id)
+        require(old == null || sameNote(old.sessionId)) { "Audio belongs to another note" }
+        val name = stored[true to part.id]
+        if (name == null && old != null) {
+          require(part.sha256.isBlank() || old.sha256.isBlank() || part.sha256.equals(old.sha256, true)) { "Omitted audio conflicts with local content" }
+          old.copy(sessionId = part.sessionId, position = part.position)
+        } else part.copy(fileName = name ?: "missing-${UUID.nameUUIDFromBytes(part.id.toByteArray(Charsets.UTF_8))}", archivedAt = 0)
       }
-      n.parts.forEach { p ->
-        val old = db.audioParts().get(p.id)
-        require(old == null || old.sessionId == p.sessionId) { "Audio identity conflict" }
-        val name = stored[true to p.id]
-        // An omitted attachment never replaces the existing local file or its metadata.
-        db.audioParts().upsert(if (name == null && old != null) old.copy(position = p.position) else p.copy(fileName = name ?: "missing-${p.id}", archivedAt = 0))
+      val incomingSources = n.sources.map { source ->
+        val old = db.sources().get(source.id)
+        require(old == null || old.noteId == n.note.id) { "Source belongs to another note" }
+        val name = stored[false to source.id]
+        if (name == null && old != null) old.copy(derivedFromId = source.derivedFromId)
+        else source.copy(storedFileName = name, archivedAt = 0)
       }
-      n.sources.forEach { s ->
-        val old = db.sources().get(s.id)
-        require(old == null || old.noteId == n.note.id) { "Source identity conflict" }
-        val name = stored[false to s.id]
-        db.sources().upsert(if (name == null && old != null) old else s.copy(storedFileName = name, archivedAt = 0))
-      }
-      n.transcripts.forEach { t ->
-        checkpoint()
+      val merged = PampaBundleMerge.merge(local, n.copy(parts = incomingParts, sources = incomingSources))
+      // Includes synthesized RAW histories; reject any global ID collision before graph writes.
+      merged.transcripts.forEach { t ->
         val old = db.transcripts().get(t.id)
-        require(old == null || old.sessionId == t.sessionId) { "Transcript identity conflict" }
-        val incomingParts = n.parts.mapTo(HashSet()) { it.id }
-        val localSegments = db.segments().byTranscript(t.id).filter { it.partId !in incomingParts }
-        val incomingSegments = n.segments.filter { it.transcriptId == t.id }
-        val combined = (incomingSegments + localSegments).sortedBy { it.sessionStartMs }
-        val row = if (t.kind == TranscriptKind.RAW && localSegments.isNotEmpty()) {
-          val text = combined.joinToString(" ") { it.text }
-          t.copy(text = text, wordCount = text.split(Regex("\\s+")).count { it.isNotBlank() })
-        } else t
-        db.transcripts().upsert(row)
-        // Keep segments of local-only parts even when they share the imported RAW version.
-        db.segments().deleteByTranscript(t.id)
-        db.segments().insertAll(combined.map { it.copy(id = 0) })
+        require(old == null || sameNote(old.sessionId)) { "Transcript belongs to another note" }
+        require(old == null || old.kind == t.kind) { "Transcript kind identity conflict" }
       }
-      onProgress((index + 1f) / data.notes.size.coerceAtLeast(1), n.note.title)
+      db.notes().upsert(merged.note.copy(updatedAt = maxOf(merged.note.updatedAt, oldNote?.updatedAt ?: 0)))
+      db.tags().insertAll(merged.tags.map { NoteTagEntity(n.note.id, it) })
+      merged.sessions.forEach { db.sessions().upsert(it) }
+      merged.parts.forEach { db.audioParts().upsert(it) }
+      merged.sources.forEach { db.sources().upsert(it) }
+      merged.transcripts.forEach { t ->
+        checkpoint()
+        db.transcripts().upsert(t)
+        db.segments().deleteByTranscript(t.id)
+        db.segments().insertAll(merged.segments.filter { it.transcriptId == t.id }.map { it.copy(id = 0) })
+      }
+      onProgress((index + 1f) / data.notes.size.coerceAtLeast(1), PampaBundleProgress(PampaBundlePhase.IMPORTING_NOTES, n.note.title))
     }
     checkpoint()
     return PampaBundleImportResult(data.notes.map { it.note.id }, imported, updated, data.notes.sumOf { n -> n.attachments.count { it.audio && it.path != null } })
   }
 
   companion object {
-    internal fun originId(id: String): String = mapped("origin", "note", id)
+    internal fun originId(id: String): String = id
     private fun mapped(namespace: String, kind: String, id: String): String = UUID.nameUUIDFromBytes("pampa-bundle:$namespace:$kind:$id".toByteArray(Charsets.UTF_8)).toString()
 
     internal fun remap(data: PampaBundleData, namespace: String): PampaBundleData {
-      fun id(kind: String, value: String) = mapped(namespace, kind, value)
+      fun id(kind: String, value: String) = if (namespace == "origin") value else mapped(namespace, kind, value)
       return data.copy(folders = data.folders.map { it.copy(id = id("folder", it.id), parentId = it.parentId?.let { p -> id("folder", p) }) }, notes = data.notes.map { n ->
-        n.copy(note = n.note.copy(id = id("note", n.note.id), folderId = id("folder", n.note.folderId)),
+        n.copy(note = n.note.copy(id = id("note", n.note.id), folderId = id("folder", n.note.folderId), bundleBodyBase = null),
           sessions = n.sessions.map { s -> s.copy(id = id("session", s.id), noteId = id("note", s.noteId), activeTranscriptId = s.activeTranscriptId?.let { id("transcript", it) }, transcribingOn = null, transcribingSince = null,
             voiceNames = VoiceNames.encode(VoiceNames.decode(s.voiceNames).mapKeys { (key, _) -> id("part", key.substringBefore('|')) + "|" + key.substringAfter('|') })) },
           parts = n.parts.map { it.copy(id = id("part", it.id), sessionId = id("session", it.sessionId), fileName = "", archivedAt = 0) },

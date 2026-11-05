@@ -272,6 +272,28 @@ class MigrationTest {
     }
   }
 
+  @Test
+  fun migrazione11a12_conserva_testo_e_aggiunge_baseline_privata_null() {
+    helper.createDatabase(NAME, 11).use { db ->
+      db.execSQL("INSERT INTO folders (id, name, sortOrder, createdAt, updatedAt, kind) VALUES ('f', 'Subject', 0, 1, 1, 'school')")
+      db.execSQL("INSERT INTO notes (id, folderId, title, body, pinned, createdAt, updatedAt) VALUES ('n', 'f', 'Title', 'Private local body', 0, 1, 7)")
+    }
+    helper.runMigrationsAndValidate(NAME, 12, true).use { db ->
+      db.query("SELECT body, updatedAt, bundleBodyBase FROM notes WHERE id = 'n'").use { cursor ->
+        assertTrue(cursor.moveToFirst())
+        assertEquals("Private local body", cursor.getString(0))
+        assertEquals(7L, cursor.getLong(1))
+        assertTrue(cursor.isNull(2))
+      }
+      db.execSQL("UPDATE notes SET bundleBodyBase = 'Imported baseline' WHERE id = 'n'")
+      db.query("SELECT body, bundleBodyBase FROM notes WHERE id = 'n'").use { cursor ->
+        assertTrue(cursor.moveToFirst())
+        assertEquals("Private local body", cursor.getString(0))
+        assertEquals("Imported baseline", cursor.getString(1))
+      }
+    }
+  }
+
   private companion object {
     const val NAME = "migration-test.db"
   }

@@ -82,4 +82,109 @@ class PampaBundleRoomTest {
     assertEquals(before, db.notes().all().single())
     assertEquals(oldFiles, files.audio.listFiles()!!.map { it.name }.toSet())
   }
+
+  private fun graph(vararg groups: Pair<String, List<String>>): PampaBundleNote {
+    val sessions = groups.mapIndexed { index, (id, _) -> SessionEntity(id, "note", date = "2026-11-05", position = index, activeTranscriptId = "raw-$id", createdAt = 1, updatedAt = 2) }
+    val parts = groups.flatMap { (session, ids) -> ids.mapIndexed { index, id -> AudioPartEntity(id, session, index, "$id.m4a", "$id.m4a", "audio/mp4", 3, 1000, "", 1) } }
+    val segments = parts.map { p -> SegmentEntity(transcriptId = "raw-${p.sessionId}", partId = p.id, indexInPart = 0, partStartMs = 100, partEndMs = 800,
+      sessionStartMs = p.position * 1000L + 100, sessionEndMs = p.position * 1000L + 800, text = p.id, wordsJson = "0,700,${p.id}", speaker = "SPEAKER_00") }
+    val transcripts = sessions.map { s -> TranscriptEntity("raw-${s.id}", s.id, TranscriptKind.RAW, "custom", "test", text = parts.filter { it.sessionId == s.id }.joinToString(" ") { it.id }, wordCount = 1, createdAt = 1) }
+    return PampaBundleNote(NoteEntity("note", "folder", "Title", "Base\nMiddle\nEnd", createdAt = 1, updatedAt = 2), sessions = sessions, parts = parts, transcripts = transcripts, segments = segments)
+  }
+
+  private fun archive(graph: PampaBundleNote, includeAudio: Boolean = true): File {
+    val input = File(directory, "incoming").also { it.mkdirs() }
+    graph.parts.forEach { File(input, it.fileName).writeBytes(byteArrayOf(1, 2, 3)) }
+    val sessions = graph.sessions.mapIndexed { index, s ->
+      val chosen = graph.transcripts.firstOrNull { it.id == s.activeTranscriptId }
+      val raw = if (chosen?.kind == TranscriptKind.RAW) chosen else graph.transcripts.firstOrNull { it.id == chosen?.parentId }
+      var offset = 0L
+      ExportSession(s.id, index + 1, s.title, s.date, graph.parts.filter { it.sessionId == s.id }.sortedBy { it.position }.map { p ->
+        ExportPart(p.id, p.originalName, p.fileName, p.durationMs, offset, p.sizeBytes).also { offset += p.durationMs }
+      }, chosen, raw, graph.segments.filter { it.transcriptId == raw?.id })
+    }
+    val export = ExportNote(graph.note, listOf("Subject"), graph.tags, emptyList(), sessions, native = graph)
+    val folder = FolderEntity("folder", "Subject", createdAt = 1, updatedAt = 2)
+    return File(directory, "${UUID.randomUUID()}.zip").also { zip -> zip.outputStream().use {
+      BundleWriter(input, directory).write(ExportSet("Subject", "subject", listOf(export), "Pampa Notes test", 1000, folders = listOf(folder)), ExportOptions(includeAudio = includeAudio), it)
+    } }
+  }
+
+  private suspend fun storedGraph(): PampaBundleNote {
+    val sessions = db.sessions().plainByNote("note")
+    val transcripts = sessions.flatMap { db.transcripts().bySession(it.id) }
+    return PampaBundleNote(db.notes().get("note")!!, sessions = sessions, parts = sessions.flatMap { db.audioParts().bySession(it.id) }, transcripts = transcripts,
+      segments = transcripts.flatMap { db.segments().byTranscript(it.id) })
+  }
+
+  @Test fun competing_append_split_merge_and_reexport_preserve_local_audio() = runTest {
+    val phases = mutableSetOf<PampaBundlePhase>()
+    importer.import(archive(graph("s" to listOf("A"))), onProgress = { _, progress -> phases += progress.phase })
+    assertEquals(PampaBundlePhase.entries.toSet(), phases)
+    val local = graph("s" to listOf("A", "L"))
+    val localPart = local.parts.single { it.id == "L" }
+    files.audioFile(localPart.fileName).writeBytes(byteArrayOf(7, 8, 9))
+    db.audioParts().upsert(localPart)
+    db.segments().insertAll(local.segments.filter { it.partId == "L" })
+    val other = graph("local" to listOf("Z"))
+    db.sessions().upsert(other.sessions.single())
+    db.audioParts().upsert(other.parts.single())
+    db.transcripts().upsert(other.transcripts.single())
+    db.segments().insertAll(other.segments)
+
+    importer.import(archive(graph("s" to listOf("A", "B"), "new" to listOf("N"))))
+    assertEquals(listOf("A", "B", "L"), db.audioParts().bySession("s").map { it.id })
+    assertEquals(listOf(0, 1, 2), db.audioParts().bySession("s").map { it.position })
+    assertEquals(2100L, db.segments().byTranscript("raw-s").single { it.partId == "L" }.sessionStartMs)
+    assertEquals(localPart.fileName, db.audioParts().get("L")!!.fileName)
+    PampaBundleArchive.read(archive(storedGraph(), false))
+
+    importer.import(archive(graph("s" to listOf("A"), "s2" to listOf("B"), "new" to listOf("N"))))
+    assertEquals("s2", db.audioParts().get("B")!!.sessionId)
+    assertEquals(listOf("A", "L"), db.audioParts().bySession("s").map { it.id })
+    PampaBundleArchive.read(archive(storedGraph(), false))
+    importer.import(archive(graph("s" to listOf("A", "B"), "new" to listOf("N"))))
+    assertEquals("s", db.audioParts().get("B")!!.sessionId)
+    assertEquals(listOf("A", "B", "L"), db.audioParts().bySession("s").map { it.id })
+    val stored = storedGraph()
+    assertTrue(stored.transcripts.any { it.id == "raw-local" })
+    assertTrue(stored.segments.all { seg -> stored.parts.single { it.id == seg.partId }.sessionId == stored.transcripts.single { it.id == seg.transcriptId }.sessionId })
+    PampaBundleArchive.read(archive(stored, false))
+  }
+
+  @Test fun original_same_id_is_updated_and_body_baseline_survives_repeat_import() = runTest {
+    val initial = graph("s" to listOf("A"))
+    db.folders().upsert(FolderEntity("folder", "Subject", createdAt = 1, updatedAt = 2))
+    db.notes().upsert(initial.note)
+    assertEquals(1, importer.inspect(archive(initial)).updateCount)
+    val first = importer.import(archive(initial))
+    assertEquals(listOf("note"), first.noteIds)
+    assertEquals(1, db.notes().count())
+    db.notes().updateBody("note", initial.note.body + "\nPDF appendix", 10)
+    val incoming = initial.copy(note = initial.note.copy(body = "Base corrected\nMiddle\nEnd"))
+    importer.import(archive(incoming))
+    val merged = db.notes().get("note")!!
+    assertEquals("Base corrected\nMiddle\nEnd\nPDF appendix", merged.body)
+    assertEquals(incoming.note.body, merged.bundleBodyBase)
+    importer.import(archive(incoming))
+    assertEquals(merged, db.notes().get("note"))
+    assertNull(PampaBundleArchive.read(archive(storedGraph(), false)).data.notes.single().note.bundleBodyBase)
+  }
+
+  @Test fun audio_identity_cannot_hijack_another_note_and_staging_is_rolled_back() = runTest {
+    val initial = graph("s" to listOf("A"))
+    importer.import(archive(initial))
+    db.notes().upsert(initial.note.copy(id = "other"))
+    val foreign = graph("foreign" to listOf("B"))
+    db.sessions().upsert(foreign.sessions.single().copy(noteId = "other"))
+    db.audioParts().upsert(foreign.parts.single())
+    val before = files.audio.listFiles()!!.map { it.name }.toSet()
+    try {
+      importer.import(archive(graph("s" to listOf("A", "B"))))
+      fail("Expected cross-note identity conflict")
+    } catch (_: IllegalArgumentException) { }
+    assertEquals("foreign", db.audioParts().get("B")!!.sessionId)
+    assertEquals(listOf("A"), db.audioParts().bySession("s").map { it.id })
+    assertEquals(before, files.audio.listFiles()!!.map { it.name }.toSet())
+  }
 }

@@ -22,6 +22,12 @@ internal object PampaBundleExport {
         sources = item.sources.map { SourceEntity(it.id.ifBlank { "${n.id}:source:${it.originalName}" }, n.id, it.kind, it.originalName, "application/octet-stream", it.sizeBytes, it.sha256, it.storedFileName, it.extractedChars, it.status, importedAt = n.createdAt) } +
           item.handwriting.map { SourceEntity(it.id.ifBlank { "${n.id}:page:${it.page}" }, n.id, SourceKind.IMAGE, "Page ${it.page}", "image/png", it.sizeBytes, "", it.storedFileName, importedAt = n.createdAt, derivedFromId = item.sources.firstOrNull()?.id) },
       )
+      val byTranscript = native.transcripts.associateBy { it.id }
+      val chosen = item.sessions.associate { session ->
+        val requested = if (options.transcript == TranscriptChoice.RAW) session.raw else session.transcript
+        session.id to requested?.let { byTranscript[it.id] }
+      }
+      val includedIds = chosen.values.filterNotNull().flatMap { t -> listOfNotNull(t.id, t.parentId) }.toSet()
       val paths = layout.of(item)
       fun attachment(id: String, isAudio: Boolean, name: String?, path: String?, enabled: Boolean): PampaBundleAttachment {
         val file = name?.let { File(if (isAudio) audio else sources, it) }
@@ -36,7 +42,10 @@ internal object PampaBundleExport {
           attachment(source.id, false, source.storedFileName, if (page >= 0) paths.images[page] else paths.sources.getOrNull(original), page >= 0 || options.includeSources)
         }
       native.copy(
-        sessions = native.sessions.map { it.copy(transcribingOn = null, transcribingSince = null) },
+        note = native.note.copy(bundleBodyBase = null),
+        sessions = native.sessions.map { it.copy(activeTranscriptId = chosen[it.id]?.id, transcribingOn = null, transcribingSince = null) },
+        transcripts = native.transcripts.filter { it.id in includedIds },
+        segments = native.segments.filter { it.transcriptId in includedIds },
         parts = native.parts.map { row -> val a = attachments.first { it.audio && it.id == row.id }; row.copy(archivedAt = 0, sizeBytes = if (a.path != null) a.bytes else row.sizeBytes, sha256 = a.sha256 ?: row.sha256) },
         sources = native.sources.map { row -> val a = attachments.first { !it.audio && it.id == row.id }; row.copy(archivedAt = 0, sizeBytes = if (a.path != null) a.bytes else row.sizeBytes, sha256 = a.sha256 ?: row.sha256) },
         attachments = attachments,

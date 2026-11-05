@@ -40,7 +40,7 @@ data class PampaBundlePreview(
   val imageCount: Int,
   val titles: List<String>,
   val hasPreciseTimings: Boolean,
-  val warnings: List<String> = emptyList(),
+  val warnings: List<PampaBundleWarning> = emptyList(),
 )
 
 data class PampaBundleImportResult(
@@ -48,5 +48,10 @@ data class PampaBundleImportResult(
   val importedNotes: Int,
   val updatedNotes: Int,
   val recordings: Int,
-  val warnings: List<String> = emptyList(),
+  val warnings: List<PampaBundleWarning> = emptyList(),
 )
+
+/** UI maps these stable codes to its own localized resources. */
+enum class PampaBundleWarning { LEGACY_FORMAT, OMITTED_ATTACHMENTS }
+enum class PampaBundlePhase { VALIDATING, STAGING_ATTACHMENTS, IMPORTING_NOTES }
+data class PampaBundleProgress(val phase: PampaBundlePhase, val noteTitle: String? = null)

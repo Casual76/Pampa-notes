@@ -25,7 +25,7 @@ object PampaBundleArchive {
     }
   }.getOrDefault(false)
 
-  internal data class Read(val data: PampaBundleData, val root: String, val warnings: List<String>, val precise: Boolean)
+  internal data class Read(val data: PampaBundleData, val root: String, val warnings: List<PampaBundleWarning>, val precise: Boolean)
 
   internal fun read(file: File, checkpoint: () -> Unit = {}): Read = ZipFile(file).use { zip ->
     val names = mutableSetOf<String>()
@@ -64,8 +64,8 @@ object PampaBundleArchive {
       }
     }
     val warnings = buildList {
-      if (manifest.schema < 3) add("Legacy bundle: original body boundaries, IDs and exact word/audio timings were not exported; Markdown is preserved without inventing timestamps.")
-      if (data.notes.any { n -> n.attachments.any { it.path == null } }) add("Some attachments were omitted or unavailable. Their audio is not playable unless already stored locally.")
+      if (manifest.schema < 3) add(PampaBundleWarning.LEGACY_FORMAT)
+      if (data.notes.any { n -> n.attachments.any { it.path == null } }) add(PampaBundleWarning.OMITTED_ATTACHMENTS)
     }
     Read(data, root, warnings, manifest.schema == 3 && data.notes.any { it.segments.isNotEmpty() })
   }
@@ -164,7 +164,20 @@ object PampaBundleArchive {
         return PampaBundleAttachment(key, audio, path, entry.size, digest.digest().joinToString("") { "%02x".format(it) })
       }
       n.sources.forEachIndexed { i, s -> val key = id("${n.id}:source:$i"); sources += SourceEntity(key, n.id, runCatching { SourceKind.valueOf(s.kind.uppercase()) }.getOrDefault(SourceKind.OTHER), s.name, "application/octet-stream", s.bytes, s.sha256, importedAt = date(n.created)); attachments += attach(key, false, s.file) }
-      n.files.filter { it.kind == "handwriting" }.forEach { f -> val key = id("${n.id}:page:${f.path}"); sources += SourceEntity(key, n.id, SourceKind.IMAGE, f.path.substringAfterLast('/'), "image/png", zip.getEntry(root + f.path).size, "", importedAt = date(n.created)); attachments += attach(key, false, f.path) }
+      val pages = n.files.filter { it.kind == "handwriting" }
+      // Handwriting must remain derived content even when its original was not exported.
+      val pageParent = if (pages.isEmpty()) null else {
+        sources.firstOrNull { it.kind == SourceKind.SDOCX }?.id
+          ?: id("${n.id}:handwriting-origin").also { key ->
+            sources += SourceEntity(key, n.id, SourceKind.OTHER, n.title, "application/octet-stream", 0, "", importedAt = date(n.created))
+            attachments += PampaBundleAttachment(key, false)
+          }
+      }
+      pages.forEach { f ->
+        val key = id("${n.id}:page:${f.path}")
+        sources += SourceEntity(key, n.id, SourceKind.IMAGE, f.path.substringAfterLast('/'), "image/png", zip.getEntry(root + f.path).size, "", importedAt = date(n.created), derivedFromId = pageParent)
+        attachments += attach(key, false, f.path)
+      }
       val sessions = n.sessions.mapIndexed { i, s -> SessionEntity(id("${n.id}:session:$i"), n.id, s.title.orEmpty(), s.date, i, createdAt = date(n.created), updatedAt = date(n.updated)) }
       val parts = n.sessions.flatMapIndexed { i, s -> s.audio.mapIndexed { j, path -> val key = id("${sessions[i].id}:part:$j"); val a = attach(key, true, path); attachments += a; AudioPartEntity(key, sessions[i].id, j, "", path.substringAfterLast('/'), "audio/mp4", a.bytes, 0, a.sha256.orEmpty(), date(n.created)) } }
       val transcripts = n.sessions.mapIndexedNotNull { i, s ->

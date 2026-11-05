@@ -243,6 +243,8 @@ object SyncCodec {
           // Una colonna nuova e vuota non cambia l'impronta: una sorgente di prima, riletta da una
           // versione che ha `derivedFromId`, e' la stessa sorgente di prima.
           key == "derivedFromId" && value is JsonNull -> Unit
+          // An absent import baseline keeps old note hashes stable; a present baseline syncs.
+          key == "bundleBodyBase" && value is JsonNull -> Unit
           // Lo stesso per il segno «in trascrizione su» delle sessioni: vuoto, la sessione e' quella
           // di prima (senza, l'aggiornamento avrebbe sporcato tutte le sessioni di tutti). Pieno,
           // conta: e' cosi' che il segno sale e arriva agli altri.
