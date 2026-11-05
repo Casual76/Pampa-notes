@@ -1,6 +1,18 @@
 # Importazione ZIP e aggiornamenti note
 
-Configurazione autorizzata: GPT-6.1 Sol, reasoning high, due implementatori e due reviewer indipendenti per fase. Concorrenza massima quattro agenti incluso l'orchestratore. Tre giri iniziali consumati; l'utente ha poi autorizzato esplicitamente di continuare fino alla chiusura dei difetti, senza limite di giri. Conservare il conteggio e proseguire con le medesime review indipendenti.
+Configurazione autorizzata: GPT-6.1 Sol, reasoning high, massimo due implementatori contemporanei e due reviewer indipendenti per giro. Concorrenza massima quattro agenti incluso l'orchestratore. Dopo i giri iniziali l'utente aveva autorizzato prosecuzione illimitata, poi ha imposto tre giri aggiuntivi (6–8) e pubblicazione stable. Lavoro chiuso al giro 7 con due review senza rilievi.
+
+## Stato corrente: completato e pubblicato
+
+Pampa Notes **1.2.0 / versionCode 18**, canale **stable**, pubblicata e verificata il 2026-11-05. Importazione ZIP nativa e aggiornamenti/Samsung integrati in main. Nessun difetto concreto aperto nei perimetri delle due review finali. I limiti di esecuzione dei reviewer sono dichiarati nelle rispettive tabelle.
+
+- Release: https://github.com/Casual76/Pampa-notes/releases/tag/stable-pampa-notes-v1.2.0
+- APK: https://github.com/Casual76/Pampa-notes/releases/download/stable-pampa-notes-v1.2.0/pampa-notes-1.2.0.apk
+- Sorgenti della release: e8c9ba4f2d0b7cc4a5f138e622be62da61979845. Engine 3.0.5, database 14.
+- Artefatto remoto riscaricato e verificato: 13.018.187 byte; SHA256 355953a81bb72af63e1024db71865930aa6e265b2b22bf59efd58006f19ae939. Firma identica alla 1.1.2, certificato SHA256 825738500ce9605429ffba3c4019228f992f2c37d1b70a2230a7ce2c25637e43.
+- Debug: 846 test JVM e 127 Android passati, build/lint/QA passati. Release: altri 846 test JVM della variante release passati, assembleRelease e lintRelease passati (log %TEMP%/pampa-zip-release-gradle.log, 6m37s). Aggiornamento reale 1.1.2→1.2.0 e avvio su emulator-5580 passati, crash buffer vuoto.
+- Publisher: probe, dry-run e pubblicazione riusciti; tag sul commit sorgente esatto, release non prerelease, manifest app/indice Pampa Store verificati, configurazione engine remota conservata. Evidenze %TEMP%/pampa-zip-release/publish.json e remote-verification.json.
+- La cancellazione locale preesistente di companion/tools/__pycache__/holes.cpython-311.pyc è stata ripristinata. Rimosso soltanto lo stash temporaneo di questa release, identificato per hash.
 
 ## Criteri
 
@@ -11,7 +23,7 @@ Configurazione autorizzata: GPT-6.1 Sol, reasoning high, due implementatori e du
 - Validazione degli archivi prima di modifiche durevoli e gestione coerente di errori/cancellazione.
 - Test mirati significativi, build Android integrata e due review indipendenti sulla stessa versione. Le prove su dispositivo saranno riportate separatamente: nessun dispositivo era collegato all'avvio.
 
-## Stato
+## Stato iniziale (storico)
 
 - Implementatore wizard/Samsung completato: d748249e20e72a2c3a9ecfb8b1e74417f5bc396f, worktree corrente. Riportati 42 test JVM passati; due regressioni Room aggiunte, ancora da eseguire.
 - Implementatore bundle core/export/persistenza in corso; API concordata PampaBundleArchive, PampaBundleImporter, PampaBundlePreview, PampaBundleImportResult.
@@ -267,7 +279,6 @@ Riepilogo generale completo: integrazione, giro 7, stessa versione62cc0dd; R1/R2
 
 Decisione: tutti i criteri di implementazione soddisfatti entro i limiti dichiarati e due report disponibili, nessun difetto concreto aperto. Avanzare autonomamente alla release stable già autorizzata. Non consumare l'ulteriore giro 8 senza necessità. Preparare1.2.0/code18 con engine3.0.5 e DB14; preservare la cancellazione cache Python locale preesistente. Certificato APK1.1.2: SHA256 825738500ce9605429ffba3c4019228f992f2c37d1b70a2230a7ce2c25637e43.
 
-## Prossime azioni
+## Consegna
 
-1. Completare il giro 6, verificare e avviare due nuove review indipendenti con rubriche e tabelle. Proseguire soltanto entro il limite aggiornato dei giri 6–8.
-2. Integrare nel checkout principale conservando ogni modifica preesistente e preparare/pubblicare la release Pampa Store stable autorizzata.
+Implementazione, review indipendenti, integrazione, firma, pubblicazione stable e verifica remota completate. Nessun ulteriore giro richiesto. Conservare gli artefatti di QA/release come evidenze; non attribuire esecuzioni runtime ai reviewer.
