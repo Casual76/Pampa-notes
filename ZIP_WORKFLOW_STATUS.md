@@ -217,6 +217,56 @@ Decisione: giro 6 non approvato; due difetti confermati, correzione nel giro 7. 
 - Tre regressioni JVM app verificano cartella importata e discendenti esclusi dagli aggiornamenti, copie consentite e cambio copia→aggiornamento, conservazione di destinazione esterna e rimozione di cartella inesistente. Guard persistence invariata.
 - Da congelare per due nuove review con tabelle dei voti: giro 7, secondo dei tre consentiti; al massimo un ulteriore giro 8 prima della pubblicazione stable autorizzata.
 
+## Review giro 7: R1 ricevuto, riepilogo parziale
+
+Versione 62cc0ddff6fc938c1608c3490a72b2e371dd29eb, integrazione, giro 7. R1 GPT-6.1 Sol/high, dati/file sync/integrità. Nessun rilievo azionabile nel perimetro. R2 GPT-6.1 Sol/high ancora in attesa; non attribuita approvazione finale.
+
+| Criterio | Voto | Stato della verifica | Motivazione ed evidenze | Problemi e gravità |
+|---|---|---|---|---|
+| C1 | NA | Verifica parziale, completo fuori assegnazione | Filtro/normalizzazione e screenshot/XML round7 confermano default e risultato 0 nuove/2 aggiornate/2 registrazioni. | Nessun difetto nel percorso controllato; non rivalutata tutta la completezza/localizzazione. |
+| C2 | 8/10 | Sorgenti e report parent verificati | Export selezionato/RAW, relazione genitore, validazione tempi/offset e regressioni di roundtrip/consumer. | Nessun rilievo; nessuna riproduzione audio propria del reviewer. |
+| C3 | 8/10 | Soddisfatto nei percorsi esaminati | ID esatti, provenienza monotona, copie, merge conservativo, retirement alias e regressioni Room su cicli/omissioni. | Nessun rilievo; quarantena risolta nei controlli, non esplorati grafi arbitrari esaustivamente. |
+| C4 | NA | Fuori assegnazione | Nessuna rivalutazione completa Samsung/titoli. | NA escluso dagli aggregati. |
+| C5 | 8/10 | Transazioni e cleanup verificati | Riferimenti audio/fonti correnti controllati nella seconda transazione Room, cancellazioni dirette/cascade filtrate, staging/rollback e regressione byte/quarantena. | Nessun rilievo; nessun test concorrente/crash proprio. |
+| C6 | 8/10 | Artefatti parent verificati indipendentemente | 818 core JVM + 28 app + 127 Android, zero errori/fallimenti/skips; log3m29s, lint senza errori, schema14 e UI round7. | Nessun rilievo; esecuzioni parent. |
+
+| Criterio | R1 | R2 | Media | Minimo | Esito e problemi aperti |
+|---|---|---|---|---|---|
+| C1 | NA | in attesa | — | — | 0/2 voti validi, attesa R2. |
+| C2 | 8 | in attesa | 8 (1/2) | 8 | Nessun rilievo R1. |
+| C3 | 8 | in attesa | 8 (1/2) | 8 | Nessun rilievo R1. |
+| C4 | NA | in attesa | — | — | 0/2 voti validi, attesa R2. |
+| C5 | 8 | in attesa | 8 (1/2) | 8 | Nessun rilievo R1. |
+| C6 | 8 | in attesa | 8 (1/2) | 8 | Artefatti verificati. |
+
+Preparazione indipendente della release: main ancora7e66664 con sola cancellazione cache Python preesistente; ultima stable1.1.2 confermata. APK precedente scaricato in %TEMP%/pampa-zip-release, SHA256 f981fd2a62f919a2b562031f4732f6eb686ab518cba087bd242e8c86eb440eb2 confermato. Changelog IT preparato nella stessa directory. Configurazione firma e OAuth disponibile nel local.properties ignorato del main; accesso GitHub verificato, credenziali mai riportate.
+
+## Review completa del giro 7 e passaggio alla release
+
+R2: GPT-6.1 Sol/high, integrazione, giro 7, versione62cc0ddff6fc938c1608c3490a72b2e371dd29eb. Nessun rilievo azionabile. Voti individuali trascritti, motivazioni sintetizzate.
+
+| Criterio | Voto | Stato della verifica | Motivazione ed evidenze | Problemi e gravità |
+|---|---|---|---|---|
+| C1 | 8/10 | Sorgenti, test e artefatti UI verificati | Preview IDs, filtro antenati/discendenti, default/manuale/copia→update e messaggi IT/EN esaminati. | Nessun difetto; nessuna interazione UI propria, screenshot con omonimi non identificano da soli gli ID esclusi. |
+| C2 | NA | Fuori assegnazione completa | Consumer RAW/ricerca/player controllati incidentalmente. | Nessun voto aggregabile. |
+| C3 | 8/10 | Conservazione verificata nei percorsi esaminati | Provenienza, ID esatti, riconciliazione globale/cicli/omissioni, baseline/copie/export e quarantena con regressioni Room. | Nessun difetto; runtime del parent, nessuna simulazione concorrente propria. |
+| C4 | 8/10 | Controlli Samsung su sorgenti/test/report | Fonte/intrinsicità, ambiguità, eviction/omissioni, NFC/spazi/suffissi validi e numeri significativi. | Nessun rilievo; nessuna prova propria Samsung. |
+| C5 | NA | Fuori assegnazione completa | Guard destinazione, riferimenti/quarantena controllati incidentalmente. | Nessun voto aggregabile. |
+| C6 | 8/10 | Artefatti parent verificati indipendentemente | 818+28 JVM e 127 Android senza errori/failure/skips; lint/log3m29s, schema14, QA e APK debug17. | Nessuna discrepanza; nessuna esecuzione propria né verifica release firmata. |
+
+Riepilogo generale completo: integrazione, giro 7, stessa versione62cc0dd; R1/R2 entrambi GPT-6.1 Sol/high. NA esclusi; conteggio fra parentesi su due reviewer.
+
+| Criterio | R1 | R2 | Media | Minimo | Esito e problemi aperti |
+|---|---|---|---|---|---|
+| C1 | NA | 8 | 8 (1/2) | 8 | Soddisfatto nei controlli, nessun rilievo aperto. |
+| C2 | 8 | NA | 8 (1/2) | 8 | Soddisfatto nei controlli, nessun rilievo aperto. |
+| C3 | 8 | 8 | 8 (2/2) | 8 | Soddisfatto, nessun rilievo aperto. |
+| C4 | NA | 8 | 8 (1/2) | 8 | Soddisfatto nei controlli, nessun rilievo aperto. |
+| C5 | 8 | NA | 8 (1/2) | 8 | Soddisfatto nei controlli, nessun rilievo aperto. |
+| C6 | 8 | 8 | 8 (2/2) | 8 | Build/test/QA verificati; verifica della release firmata ancora da eseguire. |
+
+Decisione: tutti i criteri di implementazione soddisfatti entro i limiti dichiarati e due report disponibili, nessun difetto concreto aperto. Avanzare autonomamente alla release stable già autorizzata. Non consumare l'ulteriore giro 8 senza necessità. Preparare1.2.0/code18 con engine3.0.5 e DB14; preservare la cancellazione cache Python locale preesistente. Certificato APK1.1.2: SHA256 825738500ce9605429ffba3c4019228f992f2c37d1b70a2230a7ce2c25637e43.
+
 ## Prossime azioni
 
 1. Completare il giro 6, verificare e avviare due nuove review indipendenti con rubriche e tabelle. Proseguire soltanto entro il limite aggiornato dei giri 6–8.
