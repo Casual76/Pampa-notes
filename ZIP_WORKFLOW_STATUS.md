@@ -1,6 +1,6 @@
 # Importazione ZIP e aggiornamenti note
 
-Configurazione autorizzata: GPT-6.1 Sol, reasoning high, due implementatori e due reviewer indipendenti per fase. Concorrenza massima quattro agenti incluso l'orchestratore. Massimo tre giri di correzione dopo la review iniziale; secondo giro in corso (uno restante dopo questo).
+Configurazione autorizzata: GPT-6.1 Sol, reasoning high, due implementatori e due reviewer indipendenti per fase. Concorrenza massima quattro agenti incluso l'orchestratore. Massimo tre giri di correzione dopo la review iniziale; terzo e ultimo giro in corso. Se le nuove review confermano ancora rilievi bloccanti, chiedere all'utente come proseguire senza azzerare il contatore.
 
 ## Criteri
 
@@ -49,6 +49,27 @@ Configurazione autorizzata: GPT-6.1 Sol, reasoning high, due implementatori e du
 - 1926bd8: probe reale degli audio inclusi con durata sconosciuta prima della scrittura; export aderente a RAW/raffinata selezionati e relativo genitore.
 - Schema 13 generato da KSP; build, test JVM app/core, suite Android core completa e lint in corso con due worker e compilatore in-process. Log %TEMP%/pampa-zip-round2-gradle.log.
 - Da ripetere prova legacy/ricerca audio, omissioni e rifiuto di tempi incompatibili sulla build finale. Due nuove review ancora da avviare dopo congelamento dello schema e della versione.
+
+## Esito secondo giro e terzo giro
+
+- Snapshot 699bc6f: build app/test JVM app passati; tutti i 94 test Android core passati su Pampa_Tablet API35 e sull'altro emulatore attivo. Le prossime esecuzioni saranno limitate a emulator-5580.
+- Compilazione JVM core bloccata dal test che usava javax.sound.sampled, escluso dalla compilazione Android: 81a6408 sostituisce solo l'adapter JVM con lettura del formato PCM della fixture; il probe Android reale è già provato nei test Room.
+- Due review disponibili: P1 SessionRepository mescola/cancella segmenti di storie RAW diverse su riordino/spostamento; P1 SyncApplier elimina versioni selezionate/raffinate usando solo copertura parti; P2 metadati Samsung nuovi persi quando l'allegato non viene sostituito; P3 anteprima confonde segmenti e tempi parola esatti.
+- Terzo giro assegnato ai due implementatori: repository delle sessioni e relativi test; sync/identità fonte/copertura tempi e relativi test. Nessun gate di approvazione passato.
+- Prove manuali su schema13: tempi parola invalidi rifiutati prima dell'import; vecchio ZIP con audio misurato a 2s+2s, cursore e ricerca disponibili. Nuovo difetto riprodotto nel passaggio schema2→3 della stessa nota: sessioni/audio duplicati per ID sintetici diversi. Aggiunto al terzo giro dell'implementatore importer, con prova richiesta vecchio→nuovo→reimportazione e conservazione del contenuto locale. Evidenze audio-upgrade.xml/png in %TEMP%/pampa-zip-qa.
+
+## Terzo giro integrato
+
+- a3bfafd: niente potatura automatica RAW nel sync; metadati identità Samsung conservati negli aggiornamenti senza originale; copertura dei tempi parola effettivi; identificatori legacy riconoscibili e riconciliazione con i pacchetti nativi senza duplicare registrazioni.
+- 2005e8b: RawTimelinePlan e operazioni SessionRepository transazionali, con proprietà separata dei segmenti per ogni versione RAW e conservazione delle raffinate.
+- 93e82ad: ricerca, scelta del genitore per i lavori e riconoscimento del risultato remoto usano la grezza selezionata, senza unire coperture di storie alternative.
+- Verifica integrata completa in corso sul solo emulator-5580, buildRoot %LOCALAPPDATA%/PampaNotes/build-zip-final, log %TEMP%/pampa-zip-round3-gradle.log. Nuove review finali ancora da avviare; non attribuita approvazione.
+
+## Verifica integrata finale prima delle review
+
+- Build assembleDebug, lintDebug, 791 test JVM core, 25 test JVM app e 109 test Android core passati. Suite Android limitata a emulator-5580. Engine doctor passato, engine 3.0.5 pulito.
+- Prova manuale fresca dopo il terzo giro: vecchio ZIP importato, successivo ZIP nativo della stessa nota aggiornato (0 nuove/2 aggiornate), una sola sessione con due WAV da 2s. La nota mantiene il titolo aggiornato e la versione raffinata selezionata. Reimportazione del vecchio pacchetto in verifica.
+- Codice stabilizzato al commit 2005e8b; aggiornamenti successivi in questo passaggio sono soltanto documentazione. Due review finali richieste sul medesimo risultato integrato; tre giri di correzione consumati, nessuna approvazione ancora attribuita.
 
 ## Prossime azioni
 

@@ -1,5 +1,9 @@
 # Portable bundle core handoff
 
+Historical handoff for the initial implementation (commit 20cc5b3). The current API, migrations,
+history-preservation rules and validation status are documented in CLAUDE.md and ZIP_WORKFLOW_STATUS.md.
+The original notes below are retained as implementation-stage evidence, not current instructions.
+
 Implementation 1, isolated worktree `t3-43922baa`, branch `t3/portable-note-bundles`.
 No engine, version, app UI, existing import coordinator/parser, database schema, release or remote changes.
 

@@ -572,17 +572,18 @@ nodo condiviso): l'invito che l'app compone dice indirizzo e codice, e il link
 
 ## Sessioni, parti, segmenti
 
-Una regola sola, e il resto ne discende: **i segmenti appartengono alla parte, non alla
-trascrizione**. La trascrizione grezza di una sessione è quello che si ottiene mettendo in fila i
-segmenti delle parti che ha in quel momento, e `SessionRepository.rebuildRaw` la rifà dopo ogni
-cambiamento. Per questo riordinare, separare o unire non costa una richiesta di rete: i tempi dentro
-il file (`partStartMs`) non cambiano mai, cambia solo chi viene prima, e da lì `SessionAssembler`
-ricalcola i tempi di sessione (`sessionStartMs`) e ricompone il testo.
+I segmenti identificano sia **la parte audio sia la versione della trascrizione**: due grezze
+possono dare parole diverse agli stessi audio e non si devono concatenare. `RawTimelinePlan`
+ricompone ogni storia separatamente dopo un cambiamento, conservando parole, voci e tempi nella
+parte (`partStartMs`) e ricalcolando soltanto i tempi nella sessione (`sessionStartMs`). Riordinare,
+separare o unire non costa una richiesta di rete. Registrazioni indipendenti possono produrre una
+grezza composta selezionata, mantenendo le versioni originali; versioni alternative restano distinte.
 
-Attenzione all'ordine quando una parte cambia sessione: **prima si ricompone chi riceve, poi chi
-perde**. Cancellare la trascrizione di una sessione rimasta vuota si porta dietro i suoi segmenti
-via cascata, compresi quelli appena spostati altrove. `SessionRepositoryTest` copre tutti e tre i
-casi (sposta, separa, unisci).
+Le operazioni prendono una fotografia delle versioni e applicano tutte le destinazioni in una
+transazione **prima di cancellare la sessione di origine**. Le raffinate restano come storia;
+se il loro testo non segue più l'ordine corrente si seleziona la relativa grezza. Non usare
+`deleteByPart` per ricostruire una versione: cancellerebbe anche i tempi delle altre.
+`SessionRepositoryTest` copre riordino, spostamento, separazione e unione con più storie RAW.
 
 Vale anche per il risultato di una trascrizione, che arriva minuti o ore dopo la fotografia delle
 parti fatta alla partenza: `SessionRepository.saveTranscription` scrive i segmenti **per parte**,
@@ -1102,10 +1103,12 @@ non si salva in `computer.json`. Una parte con audio tornata senza parole mentre
 «Ritrascrivi» (`SessionTranscript.emptyPartIds`, salvati nel lavoro). La cucitura fra pezzi sta a meta'
 della sovrapposizione, non all'inizio del pezzo dopo (`TranscriptStitcher.seam`), e sulla strada del
 computer l'app non rifa' l'eco del vocabolario che il companion ha gia' filtrato
-(`stitchFromComputer`). **Una grezza per sessione**: la schermata e l'export leggevano la piu'
-vecchia; adesso vince la piu' recente (poi l'id, uguale su ogni dispositivo: `RawTranscripts`),
-`saveTranscription` toglie tutte le precedenti e il sync, dopo una pagina, toglie quelle che la piu'
-recente copre gia' (`SyncApplier.settleRaws`, tombstone scritti a mano sotto la guardia).
+(`stitchFromComputer`). **La grezza della versione selezionata**: schermata, ricerca, coda ed export
+usano `RawTranscripts.forSelection`, oppure il genitore RAW della raffinata selezionata. Solo senza
+una scelta valida si prende la più recente. Il sync conserva le storie: coprire le stesse parti non
+significa avere le stesse parole o gli stessi tempi. Una ritrascrizione normale sostituisce la singola
+grezza precedente come prima; quando ci sono versioni alternative, `saveTranscription` le conserva
+e riadotta soltanto le parole della versione selezionata per le parti non incluse nel lavoro.
 
 **«Ritrascrivi le lezioni del filtro vecchio».** Le lezioni trascritte dal computer dal 24/09 fino al
 primo `/health` che dichiara `holes` (`holesSince`, salvato una volta) hanno avuto il VAD severo e
