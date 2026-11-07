@@ -15,22 +15,30 @@
       "ref": "main"
     },
     "stable": {
-      "version": "1.3.0",
+      "version": "1.3.1",
       "releaseDate": "2026-11-07",
-      "changelog": "Trascrizione cloud con OpenRouter: scelta del modello, chiave protetta e supporto alle risposte con o senza timestamp.\nCosti e autorizzazioni cloud: budget giornaliero o mensile e per trascrizione, stime preventive, consuntivi e importi incerti. Permessi e modello per cartella con ereditarietà; controlli applicati anche a importazioni automatiche e nuovi tentativi.\nTrasferimenti temporanei di registrazioni e originali fra dispositivi dello stesso account, senza companion: invio per nota o per tutto l'archivio, ricezione, ripresa e reinvio. Accesso ai file limitato a dieci minuti; testi e trascrizioni mantengono la sincronizzazione esistente. L'attivazione in produzione richiede il Worker aggiornato.\nMigliorati configurazione iniziale e percorsi senza computer. Nei nuovi avvii la trascrizione automatica dopo import è spenta.\nCorrezioni a recupero dei file, condivisioni, gestione delle trascrizioni senza tempi e pannelli di trasferimento.",
-      "releaseTag": "stable-pampa-notes-v1.3.0",
-      "apkAsset": "pampa-notes-1.3.0.apk",
-      "sizeBytes": 13219178
+      "changelog": "Per ogni ritrascrizione scegli computer di casa, Groq o OpenRouter e consulta la previsione dei costi. La scelta vale solo per quel lavoro, anche se è attivo solo computer di casa; restano validi i limiti di spesa e le regole delle cartelle.",
+      "releaseTag": "stable-pampa-notes-v1.3.1",
+      "apkAsset": "pampa-notes-1.3.1.apk",
+      "sizeBytes": 13219195
     },
     "beta": {
-      "version": "1.3.0",
+      "version": "1.3.1",
       "releaseDate": "2026-11-07",
-      "changelog": "Trascrizione cloud con OpenRouter: scelta del modello, chiave protetta e supporto alle risposte con o senza timestamp.\nCosti e autorizzazioni cloud: budget giornaliero o mensile e per trascrizione, stime preventive, consuntivi e importi incerti. Permessi e modello per cartella con ereditarietà; controlli applicati anche a importazioni automatiche e nuovi tentativi.\nTrasferimenti temporanei di registrazioni e originali fra dispositivi dello stesso account, senza companion: invio per nota o per tutto l'archivio, ricezione, ripresa e reinvio. Accesso ai file limitato a dieci minuti; testi e trascrizioni mantengono la sincronizzazione esistente. L'attivazione in produzione richiede il Worker aggiornato.\nMigliorati configurazione iniziale e percorsi senza computer. Nei nuovi avvii la trascrizione automatica dopo import è spenta.\nCorrezioni a recupero dei file, condivisioni, gestione delle trascrizioni senza tempi e pannelli di trasferimento.",
-      "releaseTag": "stable-pampa-notes-v1.3.0",
-      "apkAsset": "pampa-notes-1.3.0.apk",
-      "sizeBytes": 13219178
+      "changelog": "Per ogni ritrascrizione scegli computer di casa, Groq o OpenRouter e consulta la previsione dei costi. La scelta vale solo per quel lavoro, anche se è attivo solo computer di casa; restano validi i limiti di spesa e le regole delle cartelle.",
+      "releaseTag": "stable-pampa-notes-v1.3.1",
+      "apkAsset": "pampa-notes-1.3.1.apk",
+      "sizeBytes": 13219195
     },
     "history": [
+      {
+        "version": "1.3.0",
+        "releaseDate": "2026-11-07",
+        "changelog": "Trascrizione cloud con OpenRouter: scelta del modello, chiave protetta e supporto alle risposte con o senza timestamp.\nCosti e autorizzazioni cloud: budget giornaliero o mensile e per trascrizione, stime preventive, consuntivi e importi incerti. Permessi e modello per cartella con ereditarietà; controlli applicati anche a importazioni automatiche e nuovi tentativi.\nTrasferimenti temporanei di registrazioni e originali fra dispositivi dello stesso account, senza companion: invio per nota o per tutto l'archivio, ricezione, ripresa e reinvio. Accesso ai file limitato a dieci minuti; testi e trascrizioni mantengono la sincronizzazione esistente. L'attivazione in produzione richiede il Worker aggiornato.\nMigliorati configurazione iniziale e percorsi senza computer. Nei nuovi avvii la trascrizione automatica dopo import è spenta.\nCorrezioni a recupero dei file, condivisioni, gestione delle trascrizioni senza tempi e pannelli di trasferimento.",
+        "releaseTag": "stable-pampa-notes-v1.3.0",
+        "apkAsset": "pampa-notes-1.3.0.apk",
+        "sizeBytes": 13219178
+      },
       {
         "version": "1.2.0",
         "releaseDate": "2026-11-05",
