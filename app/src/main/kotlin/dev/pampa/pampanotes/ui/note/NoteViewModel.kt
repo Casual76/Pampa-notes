@@ -287,7 +287,8 @@ class NoteViewModel @Inject constructor(
    * non ne prende un secondo.
    */
   fun retranscribe(sessionIds: Collection<String>, overrides: TranscribeOverrides? = null) = viewModelScope.launch {
-    val provider = settingsStore.current().transcriptionProvider
+    val provider = overrides?.provider?.let { id -> dev.pampa.pampanotes.core.settings.TranscriptionProviderId.entries.firstOrNull { it.id == id } }
+      ?: settingsStore.current().transcriptionProvider
     sessionIds.forEach { transcription.enqueue(it, provider, overrides) }
     scheduler.kick(provider.id)
   }

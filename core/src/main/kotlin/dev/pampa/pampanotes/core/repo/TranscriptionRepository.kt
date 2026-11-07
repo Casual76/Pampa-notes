@@ -112,9 +112,10 @@ class TranscriptionRepository @Inject constructor(
     jobs.activeForSession(sessionId)?.let { return it }
     if (busyElsewhere(sessionId) != null) return null
 
-    val selectedProvider = settingsStore.current().providerForJob(providerId.id, transcription = true)
+    val explicitCloud = overrides?.explicitlyChoosesCloud(providerId.id) == true
+    val selectedProvider = if (explicitCloud) providerId.id else settingsStore.current().providerForJob(providerId.id, transcription = true)
     val blocked = if (selectedProvider == OpenAiCompatProvider.ID) null else try {
-      spending.policyForSession(sessionId).takeUnless { it.allowed }?.reason
+      spending.policyForSession(sessionId, allowExplicitCloud = explicitCloud).takeUnless { it.allowed }?.reason
     } catch (error: TranscriptionError.CloudControl) {
       error.reason
     }
@@ -251,7 +252,9 @@ class TranscriptionRepository @Inject constructor(
   suspend fun moveCloudTranscriptionsToComputer(): Int {
     var moved = 0
     for (provider in TranscriptionProviderId.entries.filter { it != TranscriptionProviderId.CUSTOM }) {
-      moved += jobs.moveTranscriptions(provider.id, OpenAiCompatProvider.ID, System.currentTimeMillis())
+      for (job in jobs.movableTranscriptions(provider.id)) {
+        if (!explicitCloud(job)) moved += jobs.moveTranscription(job.id, provider.id, OpenAiCompatProvider.ID, job.optionsJson, System.currentTimeMillis())
+      }
     }
     return moved
   }
@@ -260,8 +263,10 @@ class TranscriptionRepository @Inject constructor(
    * Il servizio che una trascrizione deve usare adesso: con «solo il computer di casa» acceso, mai
    * Groq, qualunque cosa ci fosse scritto quando e' stata accodata.
    */
+  fun explicitCloud(job: JobEntity): Boolean = overridesOf(job)?.explicitlyChoosesCloud(job.provider) == true
+
   suspend fun effectiveProvider(job: JobEntity): String =
-    settingsStore.current().providerForJob(job.provider, job.type == JobType.TRANSCRIBE)
+    if (explicitCloud(job)) job.provider else settingsStore.current().providerForJob(job.provider, job.type == JobType.TRANSCRIBE)
 
   /**
    * Il computer di casa: mai configurato, configurato ma muto, o pronto.
@@ -506,7 +511,7 @@ class TranscriptionRepository @Inject constructor(
    * se a meta' lavoro il computer si raggiunge da un'altra strada (vedi [endpointMovedFrom]), il
    * lavoro si rimette in fila invece di fallire.
    */
-  suspend fun bind(providerId: String, pieces: Pieces? = null): BoundProvider? {
+  suspend fun bind(providerId: String, pieces: Pieces? = null, explicitCloud: Boolean = false): BoundProvider? {
     val settings = settingsStore.current()
     // I pezzi scelti per questo lavoro vincono su quelli delle impostazioni.
     val chunkAuto = pieces?.auto ?: settings.customChunkAuto
@@ -520,20 +525,20 @@ class TranscriptionRepository @Inject constructor(
           maxUploadBytes = settings.groqMaxUploadMb * 1024L * 1024L,
         )
         BoundProvider(CloudTranscriptionGuard(provider, beforeUpload = { request ->
-          spending.beforeUpload(providerId, dev.pampa.pampanotes.core.spending.OpenRouterCostMetadata.fingerprint(key), request)
-        }) { settingsStore.current().customOnly }, baseUrl = null)
+          spending.beforeUpload(providerId, dev.pampa.pampanotes.core.spending.OpenRouterCostMetadata.fingerprint(key), request, explicitCloud)
+        }) { !explicitCloud && settingsStore.current().customOnly }, baseUrl = null)
       }
 
       OpenRouterTranscriptionProvider.ID -> {
         val key = keys.key(ProviderId.OPENROUTER)?.takeIf { it.isNotBlank() } ?: return null
         BoundProvider(CloudTranscriptionGuard(OpenRouterTranscriptionProvider(http, key), prepare = { request ->
-          val policy = spending.policyForSession(request.cloudSessionId, request.cloudPartId)
+          val policy = spending.policyForSession(request.cloudSessionId, request.cloudPartId, explicitCloud)
           if (!policy.allowed) throw TranscriptionError.CloudControl(policy.reason ?: "cloud_folder_blocked")
           request.copy(model = policy.model ?: request.model, cloudDefaultModel = request.model)
         }, beforeUpload = { request ->
-          spending.beforeUpload(providerId, dev.pampa.pampanotes.core.spending.OpenRouterCostMetadata.fingerprint(key), request)
+          spending.beforeUpload(providerId, dev.pampa.pampanotes.core.spending.OpenRouterCostMetadata.fingerprint(key), request, explicitCloud)
         }) {
-          settingsStore.current().customOnly
+          !explicitCloud && settingsStore.current().customOnly
         }, baseUrl = null)
       }
 

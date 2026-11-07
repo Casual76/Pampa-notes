@@ -67,18 +67,18 @@ class CloudSpending @Inject constructor(
       FolderCloudSnapshot(data.folders[folderId] ?: FolderCloudSetting(), FolderCloudPolicy.resolve(folderId,
         folders.map { CloudFolder(it.id, it.parentId, it.name) }, data.folders, prefs.customOnly))
     }
-  suspend fun policyForSession(sessionId: String?, partId: String? = null): EffectiveCloudPolicy {
+  suspend fun policyForSession(sessionId: String?, partId: String? = null, allowExplicitCloud: Boolean = false): EffectiveCloudPolicy {
     // A queued audio part may have moved to another session/note since it was enqueued.
     val currentSession = if (partId != null) db.audioParts().get(partId)?.sessionId else sessionId
     val session = currentSession?.let { db.sessions().get(it) }
     val note = session?.let { db.notes().get(it.noteId) }
-    return FolderCloudPolicy.resolve(note?.folderId, db.folders().all().map { CloudFolder(it.id, it.parentId, it.name) }, data().folders, settings.current().customOnly)
+    return FolderCloudPolicy.resolve(note?.folderId, db.folders().all().map { CloudFolder(it.id, it.parentId, it.name) }, data().folders, settings.current().customOnly && !allowExplicitCloud)
   }
 
-  suspend fun preflight(sessionId: String, provider: String? = null): CloudPreflight {
+  suspend fun preflight(sessionId: String, provider: String? = null, allowExplicitCloud: Boolean = false): CloudPreflight {
     val prefs = settings.current()
     val selected = provider ?: prefs.transcriptionProvider.id
-    val policy = policyForSession(sessionId)
+    val policy = policyForSession(sessionId, allowExplicitCloud = allowExplicitCloud)
     val model = if (selected == "openrouter") policy.model ?: prefs.openRouterTranscriptionModel else if (selected == "groq") "whisper-large-v3-turbo" else prefs.endpointModel
     val audio = db.audioParts().bySession(sessionId)
     val duration = if (audio.isEmpty() || audio.any { it.durationMs <= 0 }) 0 else audio.sumOf { it.durationMs }
@@ -89,11 +89,11 @@ class CloudSpending @Inject constructor(
   }
 
   @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-  fun observePreflight(sessionId: String, provider: String? = null): Flow<CloudPreflight> =
+  fun observePreflight(sessionId: String, provider: String? = null, allowExplicitCloud: Boolean = false): Flow<CloudPreflight> =
     db.sessions().observe(sessionId).flatMapLatest { session ->
       val note = session?.session?.noteId?.let { db.notes().observe(it) } ?: flowOf(null)
       combine(changes, settings.settings, db.folders().observeAll(), note, db.audioParts().observeBySession(sessionId)) { _, _, _, _, _ ->
-        preflight(sessionId, provider)
+        preflight(sessionId, provider, allowExplicitCloud)
       }
     }
 
@@ -119,8 +119,8 @@ class CloudSpending @Inject constructor(
   }
 
   /** Called for each actual network attempt, after cached chunks have been skipped. */
-  suspend fun beforeUpload(provider: String, keyFingerprint: String, request: TranscribeRequest): TranscribeRequest {
-    var policy = policyForSession(request.cloudSessionId, request.cloudPartId)
+  suspend fun beforeUpload(provider: String, keyFingerprint: String, request: TranscribeRequest, allowExplicitCloud: Boolean = false): TranscribeRequest {
+    var policy = policyForSession(request.cloudSessionId, request.cloudPartId, allowExplicitCloud)
     if (!policy.allowed) throw TranscriptionError.CloudControl(policy.reason ?: "cloud_folder_blocked")
     checkBoundKey(provider, keyFingerprint)
     var model = if (provider == "openrouter") policy.model ?: request.cloudDefaultModel ?: request.model else request.model
@@ -130,7 +130,7 @@ class CloudSpending @Inject constructor(
       catch (_: Exception) { /* stale stays unknown */ }
     }
     // Metadata requests may take time: re-resolve a moved note and privacy immediately before reserving.
-    policy = policyForSession(request.cloudSessionId, request.cloudPartId)
+    policy = policyForSession(request.cloudSessionId, request.cloudPartId, allowExplicitCloud)
     if (!policy.allowed) throw TranscriptionError.CloudControl(policy.reason ?: "cloud_folder_blocked")
     model = if (provider == "openrouter") policy.model ?: request.cloudDefaultModel ?: request.model else request.model
     // Do not combine a cached earlier chunk with a different model after a folder rule change.

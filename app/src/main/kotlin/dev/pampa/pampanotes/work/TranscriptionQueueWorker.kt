@@ -331,7 +331,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     val settings = settingsStore.current()
     // Le impostazioni scelte da chi ha ritrascritto, per questo lavoro soltanto.
     val overrides = repository.overridesOf(job)
-    val bound = repository.bind(job.provider, overrides?.pieces) ?: run {
+    val bound = repository.bind(job.provider, overrides?.pieces, repository.explicitCloud(job)) ?: run {
       // Configurato ma muto: si aspetta. Mai configurato: e' un errore, e lo si dice.
       if (job.provider == OpenAiCompatProvider.ID && settings.hasEndpoint) return Step.WaitForEndpoint
       fail(
@@ -505,7 +505,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       }
       work.cancel(JobCancelled())
     }
-    val privacy = if (job.type == JobType.TRANSCRIBE && job.provider != OpenAiCompatProvider.ID) launch {
+    val privacy = if (job.type == JobType.TRANSCRIBE && job.provider != OpenAiCompatProvider.ID && !repository.explicitCloud(job)) launch {
       settingsStore.settings.first { it.customOnly }
       work.cancel(PrivacyChanged())
     } else null

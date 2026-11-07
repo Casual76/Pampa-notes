@@ -51,12 +51,16 @@ fun TranscribeOptionsSheet(
   onConfirm: (TranscribeOverrides) -> Unit,
   viewModel: TranscribeOptionsViewModel = hiltViewModel(),
   sessionId: String? = null,
+  sessionIds: List<String> = emptyList(),
 ) {
   val state by viewModel.state.collectAsStateWithLifecycle()
   LaunchedEffect(Unit) { viewModel.load() }
 
   val settings = state.settings
-  val ready = state.ready
+  var provider by remember { mutableStateOf<dev.pampa.pampanotes.core.settings.TranscriptionProviderId?>(null) }
+  val effectiveProvider = provider ?: settings?.transcriptionProvider
+  val effectiveState = state.copy(onComputer = effectiveProvider == dev.pampa.pampanotes.core.settings.TranscriptionProviderId.CUSTOM)
+  val ready = effectiveState.ready
 
   // Le scelte: null e' «come nelle impostazioni».
   var language by remember { mutableStateOf<String?>(null) }
@@ -69,16 +73,17 @@ fun TranscribeOptionsSheet(
 
   val computerChoice = ComputerOverrides(model = model, vramGb = vramGb, batchMax = batchMax)
   // La stima si rifa' a ogni scelta (con un attimo di pazienza, vedi il ViewModel).
-  LaunchedEffect(computerChoice, state.canTuneComputer) { viewModel.estimate(computerChoice) }
+  LaunchedEffect(computerChoice, effectiveState.canTuneComputer) { viewModel.estimate(computerChoice) }
 
   fun overrides(): TranscribeOverrides {
-    val tune = state.canTuneComputer
+    val tune = effectiveState.canTuneComputer
     return TranscribeOverrides(
+      provider = provider?.id,
       language = language,
       // Il vocabolario e' una scelta solo se e' diverso da quello delle impostazioni.
       vocabulary = vocabulary.takeIf { settings != null && it.trim() != settings.vocabulary.trim() },
-      diarize = diarize.takeIf { state.onComputer && ready?.diarize == true },
-      pieces = pieces.takeIf { state.onComputer },
+      diarize = diarize.takeIf { effectiveState.onComputer && ready?.diarize == true },
+      pieces = pieces.takeIf { effectiveState.onComputer },
       computer = computerChoice.takeIf { tune && !it.isEmpty },
     )
   }
@@ -117,10 +122,23 @@ fun TranscribeOptionsSheet(
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
-      sessionId?.let {
+      val ids = if (sessionIds.isNotEmpty()) sessionIds else listOfNotNull(sessionId)
+      if (settings != null && ids.isNotEmpty()) {
         val preflight: dev.pampa.pampanotes.ui.cloudcost.CloudPreflightViewModel = hiltViewModel(key = "transcribe-options-preflight")
-        dev.pampa.pampanotes.ui.cloudcost.CloudPreflightSummary(listOf(it), viewModel = preflight)
+        dev.pampa.pampanotes.ui.cloudcost.CloudPreflightSummary(ids, provider = effectiveProvider?.id, allowExplicitCloud = provider != null && provider != dev.pampa.pampanotes.core.settings.TranscriptionProviderId.CUSTOM, viewModel = preflight)
       }
+
+      FluidSectionHeader(title = stringResource(R.string.settings_provider_header))
+      val providerDefault = stringResource(R.string.tx_opts_as_now)
+      val computerLabel = stringResource(R.string.provider_custom)
+      val groqLabel = stringResource(R.string.provider_groq)
+      val routerLabel = stringResource(R.string.provider_openrouter)
+      Choices(
+        options = listOf(null, dev.pampa.pampanotes.core.settings.TranscriptionProviderId.CUSTOM, dev.pampa.pampanotes.core.settings.TranscriptionProviderId.GROQ, dev.pampa.pampanotes.core.settings.TranscriptionProviderId.OPENROUTER),
+        selected = provider,
+        onSelect = { provider = it },
+        label = { when (it) { null -> providerDefault; dev.pampa.pampanotes.core.settings.TranscriptionProviderId.CUSTOM -> computerLabel; dev.pampa.pampanotes.core.settings.TranscriptionProviderId.GROQ -> groqLabel; dev.pampa.pampanotes.core.settings.TranscriptionProviderId.OPENROUTER -> routerLabel } },
+      )
 
       // --- Cosa si sente ---------------------------------------------------------------------
       FluidSectionHeader(title = stringResource(R.string.settings_language_header))
@@ -139,7 +157,7 @@ fun TranscribeOptionsSheet(
         },
       )
 
-      val onOpenRouter = settings?.transcriptionProvider == dev.pampa.pampanotes.core.settings.TranscriptionProviderId.OPENROUTER
+      val onOpenRouter = effectiveProvider == dev.pampa.pampanotes.core.settings.TranscriptionProviderId.OPENROUTER
       FluidTextField(
         enabled = !onOpenRouter,
         value = vocabulary,
@@ -154,9 +172,9 @@ fun TranscribeOptionsSheet(
       FluidSectionFootnote(text = stringResource(if (onOpenRouter) R.string.openrouter_vocabulary_ignored else R.string.tx_opts_vocabulary_detail))
 
       // --- Il computer di casa ---------------------------------------------------------------
-      if (state.onComputer) {
+      if (effectiveState.onComputer) {
         ComputerChoices(
-          state = state,
+          state = effectiveState,
           diarize = diarize,
           onDiarize = { diarize = it },
           pieces = pieces,

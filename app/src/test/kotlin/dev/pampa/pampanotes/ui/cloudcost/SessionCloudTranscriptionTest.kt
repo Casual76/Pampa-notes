@@ -64,4 +64,12 @@ class SessionCloudTranscriptionTest {
     coVerify(exactly = 0) { spending.preflight(any(), any()) }
     coVerify { scheduler.kick("custom") }
   }
+  @Test fun `one time provider is used for preflight and queue`() = runTest {
+    coEvery { settings.current() } returns PampaSettings(customOnly = true)
+    val options = TranscribeOverrides(provider = "groq")
+    coEvery { spending.preflight("s", "groq", true) } returns preflight().copy(provider = "groq")
+    coEvery { repository.enqueue("s", TranscriptionProviderId.GROQ, options) } returns job("groq")
+    assertNull(action.enqueue("s", options))
+    coVerifyOrder { spending.preflight("s", "groq", true); repository.enqueue("s", TranscriptionProviderId.GROQ, options); scheduler.kick("groq") }
+  }
 }

@@ -384,6 +384,7 @@ private fun NoteScreen(
 
   if (choosingTranscribeOptions) {
     TranscribeOptionsSheet(
+      sessionIds = selected.toList(),
       onDismiss = { choosingTranscribeOptions = false },
       onConfirm = { overrides ->
         choosingTranscribeOptions = false

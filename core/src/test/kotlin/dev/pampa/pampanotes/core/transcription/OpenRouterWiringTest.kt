@@ -74,11 +74,18 @@ class OpenRouterWiringTest {
     assertEquals(setOf("groq", "openrouter", "custom"), TranscriptionProviderId.entries.map { it.id }.toSet())
   }
 
-  @Test fun `privacy migration covers both cloud queues`() = runTest {
-    coEvery { jobs.moveTranscriptions(any(), "custom", any()) } returns 1
-    assertEquals(2, repository().moveCloudTranscriptionsToComputer())
-    coVerify(exactly = 1) { jobs.moveTranscriptions("groq", "custom", any()) }
-    coVerify(exactly = 1) { jobs.moveTranscriptions("openrouter", "custom", any()) }
+  @Test fun `privacy migration preserves explicit cloud choices and moves ordinary jobs`() = runTest {
+    val explicit = JobEntity(id = "explicit", sessionId = "s", type = JobType.TRANSCRIBE, provider = "groq", optionsJson = """{"overrides":{"provider":"groq"}}""", createdAt = 1, updatedAt = 1)
+    val ordinary = explicit.copy(id = "ordinary", optionsJson = null)
+    coEvery { jobs.movableTranscriptions("groq") } returns listOf(explicit, ordinary)
+    coEvery { jobs.movableTranscriptions("openrouter") } returns emptyList()
+    coEvery { jobs.moveTranscription("ordinary", "groq", "custom", null, any()) } returns 1
+    coEvery { settings.current() } returns PampaSettings(customOnly = true)
+    val repo = repository()
+    assertEquals("groq", repo.effectiveProvider(explicit))
+    assertEquals("custom", repo.effectiveProvider(ordinary))
+    assertEquals(1, repo.moveCloudTranscriptionsToComputer())
+    coVerify(exactly = 0) { jobs.moveTranscription("explicit", any(), any(), any(), any()) }
   }
 
   @Test fun `OpenRouter binding uses the shared secure key and no Groq key`() = runTest {

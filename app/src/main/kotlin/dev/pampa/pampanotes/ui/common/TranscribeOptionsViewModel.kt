@@ -65,10 +65,8 @@ class TranscribeOptionsViewModel @Inject constructor(
       val settings = settingsStore.current()
       val onComputer = settings.transcriptionProvider == TranscriptionProviderId.CUSTOM
       _state.update { it.copy(settings = settings, onComputer = onComputer) }
-      if (onComputer) {
-        val status = companionApi.status()
-        _state.update { it.copy(companion = status) }
-      }
+      val status = companionApi.status()
+      _state.update { it.copy(companion = status) }
     }
   }
 
@@ -79,7 +77,7 @@ class TranscribeOptionsViewModel @Inject constructor(
   fun estimate(choice: ComputerOverrides?) {
     estimating?.cancel()
     val base = _state.value.ready?.settings
-    if (choice == null || choice.isEmpty || base == null || !_state.value.canTuneComputer) {
+    if (choice == null || choice.isEmpty || base == null || _state.value.ready?.let { it.jobOptions && it.canEdit } != true) {
       _state.update { it.copy(estimate = null) }
       return
     }

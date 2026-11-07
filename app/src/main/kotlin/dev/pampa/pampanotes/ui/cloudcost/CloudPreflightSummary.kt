@@ -16,6 +16,7 @@ import dev.pampa.pampanotes.core.spending.CloudPreflight
 import dev.pampa.pampanotes.core.spending.CloudSpending
 import dev.pampa.pampanotes.ui.common.jobErrorText
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -42,17 +43,23 @@ class CloudPreflightViewModel @Inject constructor(private val spending: CloudSpe
   private val mutable = MutableStateFlow(CloudPreflightUiState())
   val state = mutable.asStateFlow()
   private val watchers = mutableListOf<Job>()
-  fun observe(sessionIds: List<String>, provider: String? = null) {
+  fun observe(sessionIds: List<String>, provider: String? = null, allowExplicitCloud: Boolean = false) {
     watchers.forEach { it.cancel() }; watchers.clear()
     mutable.value = CloudPreflightUiState()
     val results = mutableMapOf<String, CloudPreflight>()
     val failures = mutableSetOf<String>()
+    val refreshedModels = mutableSetOf<String>()
     val ids = sessionIds.distinct()
     ids.forEach { id -> watchers += viewModelScope.launch {
-      spending.observePreflight(id, provider).catch {
+      spending.observePreflight(id, provider, allowExplicitCloud).catch {
         failures += id
         mutable.value = mutable.value.copy(loading = results.size + failures.size < ids.size, failed = true)
       }.collect { result ->
+        if (result.provider == "openrouter" && result.estimate.maxUsd == null && refreshedModels.add(result.model)) {
+          viewModelScope.launch {
+            try { spending.refresh(result.model) } catch (cancel: CancellationException) { throw cancel } catch (_: Exception) { }
+          }
+        }
         results[id] = result
         mutable.value = CloudPreflightUiState(items = ids.mapNotNull { results[it] }, loading = results.size + failures.size < ids.size, failed = failures.isNotEmpty())
       }
@@ -62,9 +69,9 @@ class CloudPreflightViewModel @Inject constructor(private val spending: CloudSpe
 }
 
 @Composable
-fun CloudPreflightSummary(sessionIds: List<String>, provider: String? = null, viewModel: CloudPreflightViewModel = hiltViewModel()) {
+fun CloudPreflightSummary(sessionIds: List<String>, provider: String? = null, allowExplicitCloud: Boolean = false, viewModel: CloudPreflightViewModel = hiltViewModel()) {
   val state by viewModel.state.collectAsStateWithLifecycle()
-  LaunchedEffect(sessionIds, provider) { viewModel.observe(sessionIds, provider) }
+  LaunchedEffect(sessionIds, provider, allowExplicitCloud) { viewModel.observe(sessionIds, provider, allowExplicitCloud) }
   CloudPreflightSummary(state)
 }
 

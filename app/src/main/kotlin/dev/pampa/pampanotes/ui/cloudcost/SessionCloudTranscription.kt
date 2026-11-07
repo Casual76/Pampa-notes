@@ -17,12 +17,14 @@ class SessionCloudTranscription @Inject constructor(
   private val scheduler: WorkScheduler,
 ) {
   suspend fun enqueue(sessionId: String, overrides: TranscribeOverrides?): String? {
-    val provider = settings.current().transcriptionProvider
+    val provider = overrides?.provider?.let { id -> TranscriptionProviderId.entries.firstOrNull { it.id == id } }
+      ?: settings.current().transcriptionProvider
+    val explicitCloud = overrides?.explicitlyChoosesCloud(provider.id) == true
     if (provider != TranscriptionProviderId.CUSTOM) {
-      var preflight = spending.preflight(sessionId, provider.id)
+      var preflight = spending.preflight(sessionId, provider.id, explicitCloud)
       if (preflight.blockedReason == "cloud_price_unknown" && provider == TranscriptionProviderId.OPENROUTER) {
         spending.refresh(preflight.model)
-        preflight = spending.preflight(sessionId, provider.id)
+        preflight = spending.preflight(sessionId, provider.id, explicitCloud)
       }
       preflight.blockedReason?.let { return it }
     }

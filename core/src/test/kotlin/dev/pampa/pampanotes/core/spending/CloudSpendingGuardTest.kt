@@ -111,6 +111,18 @@ class CloudSpendingGuardTest {
     assertEquals(1, server.requests.size)
   }
 
+  @Test fun `explicit cloud exception keeps folder policy and cost reservation`() = runBlocking {
+    prefs = prefs.copy(customOnly = true)
+    val fingerprint = OpenRouterCostMetadata.fingerprint("fake")
+    assertEquals("companion_only", reason { spending.beforeUpload("openrouter", fingerprint, request()) })
+    val authorized = spending.beforeUpload("openrouter", fingerprint, request(), allowExplicitCloud = true)
+    assertEquals(1, disk.durable.read().charges.size)
+    authorized.cloudAttemptFinished?.invoke()
+    noteFolder = "denied"
+    assertEquals("cloud_folder_blocked", reason { spending.beforeUpload("openrouter", fingerprint, request(), allowExplicitCloud = true) })
+    assertEquals(1, disk.durable.read().charges.size)
+  }
+
   @Test fun `companion only always stops paid requests and reservation creation`() = runBlocking {
     prefs = prefs.copy(customOnly = true)
     assertEquals("companion_only", reason { upload() })

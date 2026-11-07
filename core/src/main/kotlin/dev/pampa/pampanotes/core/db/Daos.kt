@@ -652,6 +652,12 @@ interface JobDao {
   )
   suspend fun moveTranscriptions(from: String, to: String, now: Long): Int
 
+  @Query("SELECT * FROM jobs WHERE provider = :provider AND type = 'TRANSCRIBE' AND state IN ('QUEUED','FAILED')")
+  suspend fun movableTranscriptions(provider: String): List<JobEntity>
+
+  @Query("UPDATE jobs SET provider = :to, phase = NULL, updatedAt = :now WHERE id = :id AND provider = :from AND type = 'TRANSCRIBE' AND state IN ('QUEUED','FAILED') AND optionsJson IS :options")
+  suspend fun moveTranscription(id: String, from: String, to: String, options: String?, now: Long): Int
+
   /**
    * Il lavoro parte: da `QUEUED` a [state], con un tentativo in piu'. La condizione e' il punto: un
    * «Annulla» arrivato un attimo prima l'ha gia' tolto dalla fila, e il numero di righe dice al
