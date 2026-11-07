@@ -291,6 +291,7 @@ class BackupService @Inject constructor(
     settings.setVocabulary(saved.vocabulary)
     settings.setChunkMinutes(saved.chunkMinutes)
     settings.setGroqMaxUploadMb(saved.groqMaxUploadMb)
+    settings.setOpenRouterTranscriptionModel(saved.openRouterTranscriptionModel)
     settings.setCustomMaxMinutes(saved.customMaxMinutes)
     settings.setPreferredProvider(saved.providerId())
     settings.setCustomOnly(saved.customOnly)

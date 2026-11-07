@@ -74,7 +74,7 @@
   <string name="home_section_folders">Folders</string>
   <string name="home_section_recent">Recent notes</string>
   <string name="home_empty_title">No notes yet</string>
-  <string name="home_empty_detail">Share a Samsung Notes note, a PDF or a recording with Pampa Notes, or import it from here: you pick the folder afterwards.</string>
+  <string name="home_empty_detail">Share a Samsung Notes note, a PDF or a recording with Pampa Notes, or import it from here: you pick the folder afterwards. Importing, organizing and exporting need no computer or API keys.</string>
   <string name="home_new_folder">New folder</string>
   <plurals name="folder_note_count">
     <item quantity="one">%d note</item>
@@ -431,15 +431,15 @@
 
   <string name="settings_groq">Groq</string>
   <string name="settings_groq_key">API key</string>
-  <string name="settings_groq_key_hint">Free at console.groq.com. Stays encrypted on the phone.</string>
+  <string name="settings_groq_key_hint">Create a key at console.groq.com. Costs and limits depend on your plan. Stays encrypted on the phone.</string>
   <string name="settings_groq_verified">Key verified</string>
   <string name="settings_groq_unverified">Key saved, not verified yet</string>
-  <string name="settings_groq_missing">No key: cloud transcription will not start</string>
+  <string name="settings_groq_missing">Groq key missing: set up this service to transcribe with Groq</string>
   <string name="settings_groq_ok">Works. Model: %1$s</string>
   <string name="settings_verify">Save and verify</string>
   <string name="settings_ok">OK</string>
   <string name="settings_endpoint">Home computer</string>
-  <string name="settings_endpoint_detail">Your computer with WhisperX: no size limit, and the files never leave the house.</string>
+  <string name="settings_endpoint_detail">Optional: transcribes with WhisperX on your computer, without sending audio to Groq or OpenRouter.</string>
   <string name="settings_endpoint_url">Address at home</string>
   <string name="settings_endpoint_token">Code (only without an account)</string>
   <string name="settings_endpoint_token_hint">Only if the server asks for one</string>
@@ -458,9 +458,9 @@
   <string name="provider_custom">Home computer</string>
 
   <string name="settings_custom_only">Home computer only</string>
-  <string name="settings_custom_only_detail">Never Groq, not even automatically: whatever comes in waits for the computer to answer</string>
+  <string name="settings_custom_only_detail">Never Groq or OpenRouter, even automatically: incoming audio waits for the computer to answer</string>
   <string name="settings_auto_transcribe">Transcribe on import</string>
-  <string name="settings_auto_transcribe_detail">Without asking every time</string>
+  <string name="settings_auto_transcribe_detail">When enabled, audio is sent to the chosen transcription service after every import. You can leave this off and transcribe later.</string>
   <string name="settings_chunk_minutes">Chunk length</string>
   <string name="settings_chunk_minutes_detail">How much audio goes in one request when a file must be split</string>
   <string name="settings_groq_limit">Groq limit</string>
@@ -509,13 +509,13 @@
   <!-- Transcription and queue: home computer chunks, waiting on Groq's limit -->
   <string name="settings_custom_chunk_whole">Whole</string>
   <string name="settings_custom_chunk_detail">How much audio the home computer transcribes at once, for each recording: a cap helps a slow PC, or one that shuts down halfway.</string>
-  <string name="job_phase_until">Waiting on Groq\'s limit until %1$s</string>
+  <string name="job_phase_until">Waiting for the service rate limit, until %1$s</string>
   <string name="settings_vocabulary">Vocabulary</string>
   <string name="settings_vocabulary_hint">Thermidor, Feuerbach, Termidoro…</string>
   <string name="settings_vocabulary_detail">Names and terms the model does not know. Seeing them first is the difference between a name and nonsense.</string>
   <string name="language_auto">Auto</string>
   <string name="settings_provider_header">Who transcribes</string>
-  <string name="settings_provider_header_detail">What you import goes to this service, unless you pick another one at the time.</string>
+  <string name="settings_provider_header_detail">The service for transcriptions you request or start with “Transcribe after import”. Selecting it does not send files.</string>
   <string name="settings_hearing_header">What it hears</string>
   <string name="settings_custom_advanced">Home computer, advanced</string>
   <string name="settings_custom_advanced_detail">Pieces, video memory, model</string>
@@ -651,7 +651,7 @@
   <string name="export_label_raw">raw</string>
   <string name="export_label_refined">refined</string>
   <string name="export_label_no_transcript">Not transcribed yet.</string>
-  <string name="export_label_no_timings">This version was cleaned up by a model and carries no timings. The raw one has them.</string>
+  <string name="export_label_no_timings">This version has no usable timestamps for following the audio.</string>
   <string name="export_label_part">Recording</string>
   <string name="export_label_sources">Sources</string>
   <string name="export_label_index">Index</string>
@@ -783,7 +783,7 @@
   <string name="sidebar_all_folders">All subjects</string>
   <string name="detail_empty_title">Nothing open</string>
   <string name="detail_empty_detail">Pick a note from the list, or import one.</string>
-  <string name="settings_section_services_detail">Groq key and home computer</string>
+  <string name="settings_section_services_detail">Groq and OpenRouter keys, home computer</string>
   <string name="settings_section_transcription_detail">Service, language, voices, computer</string>
   <string name="settings_section_refinement_detail">How much to clean up, and with which model</string>
   <string name="settings_section_appearance_detail">Theme, colours, haptics</string>
@@ -865,7 +865,7 @@
   <string name="settings_models_missing">Verify the Groq key under Services to see the models to choose from.</string>
   <string name="settings_subject_accent_detail">With the brand colours, the app takes the colour of the subject you are in. With Material You or a chosen tint, that one stays.</string>
   <string name="note_sources_hint">The files the text came from. Tap a row to reopen the original.</string>
-  <string name="session_words_estimated">Per-word timings are estimated: Groq gives per-sentence times, not per-word. With the home computer they are truly aligned.</string>
+  <string name="session_words_estimated">Individual word timings are estimated from the sentence timings returned by the service.</string>
   <string name="session_incoming_title">Coming in from the computer · %1$s</string>
   <plurals name="session_incoming_pieces">
     <item quantity="one">%1$d of %2$d pieces</item>
@@ -912,7 +912,7 @@
   <string name="backup_restored_title">Restored</string>
   <string name="backup_restored_message">The app restarts to read the archive from scratch.</string>
   <string name="backup_restart">Restart</string>
-  <string name="backup_secrets_note">The Groq key and the server token stay out of the backup: they are encrypted with this phone, and would not open on another device anyway. Type them again under Services.</string>
+  <string name="backup_secrets_note">API keys and the server token are excluded from backups: they stay encrypted on the device. Enter them again in Services.</string>
 
   <!-- Storage -->
   <string name="storage_audio">Recordings</string>
@@ -973,11 +973,11 @@
   <!-- First run -->
   <string name="onboarding_step">Step %1$d of %2$d</string>
   <string name="onboarding_welcome_title">Pampa Notes</string>
-  <string name="onboarding_welcome_detail">A bridge between the notes you take elsewhere and the assistants you hand them to.</string>
+  <string name="onboarding_welcome_detail">Collect, organize and export your notes from your phone: no computer or account required. Audio transcription is set up separately.</string>
   <string name="onboarding_step_import">Import</string>
   <string name="onboarding_step_import_detail">Samsung Notes, PDF, Word, text and recordings</string>
   <string name="onboarding_step_transcribe">Transcribe</string>
-  <string name="onboarding_step_transcribe_detail">Whisper, on Groq or on your own computer</string>
+  <string name="onboarding_step_transcribe_detail">Groq, OpenRouter or your computer</string>
   <string name="onboarding_step_export">Export</string>
   <string name="onboarding_step_export_detail">A Markdown bundle with the rules for Claude, ChatGPT or Gemini</string>
   <string name="onboarding_welcome_recordings">An interview, a meeting, a trip: audio that is not school goes in Recordings, outside your subjects.</string>
@@ -991,9 +991,9 @@
   <string name="onboarding_import_picker">From the import button</string>
   <string name="onboarding_import_picker_detail">Under More, from a subject screen, or from Recordings</string>
   <string name="onboarding_provider_title">Who transcribes</string>
-  <string name="onboarding_provider_detail">Groq is in the cloud and wants a free key. The home computer transcribes on your PC and also gives per-word timings.</string>
+  <string name="onboarding_provider_detail">Groq and OpenRouter transcribe in the cloud with your API key, without a companion. The home computer transcribes on your PC. Set up a service now or later.</string>
   <string name="onboarding_server_detail">The address of the computer at home, with its port.</string>
-  <string name="onboarding_provider_later">You can leave this for now: the same page lives in Settings, under Services.</string>
+  <string name="onboarding_provider_later">You can continue without a service: import and organize now, then set up transcription in Settings → Services. Choose the default service under Transcription.</string>
   <string name="onboarding_backup_title">A copy kept safe</string>
   <string name="onboarding_backup_detail">A folder for backups and exported bundles. Drive works too: files land there like in any other folder.</string>
   <string name="onboarding_backup_choose">Choose the folder</string>
@@ -1195,7 +1195,7 @@
   <string name="export_summary_sources">Originals: %1$s</string>
   <string name="export_summary_no_rules">no rules</string>
   <string name="export_transcript_best_effect">The one you see in the app: the cleaned-up one if there is one, otherwise the raw one. In ZIP bundles, exporting a refined transcript also includes its original raw transcript when needed for audio timing.</string>
-  <string name="export_transcript_raw_effect">Always Whisper\'s: the only one with timestamps, and one no model has rewritten.</string>
+  <string name="export_transcript_raw_effect">The original text returned by the transcription service, without rewriting. Timestamps depend on the model.</string>
   <string name="export_skill_effect">They tell the assistant what notes and transcripts are, and how to cite them. SKILL.md for Claude, instructions.md for the others.</string>
   <string name="export_audio_effect">The audio files, for whoever wants to listen again. They are heavy; the ones on your home computer are downloaded first.</string>
   <string name="export_audio_effect_size">%1$s of audio, for whoever wants to listen again. They are heavy; the ones on your home computer are downloaded first.</string>
@@ -1416,7 +1416,7 @@
   <string name="install_title">Install on your computer</string>
   <string name="install_row_detail">The companion for Windows: download it on the PC, install it, scan the QR</string>
   <string name="install_onboarding_row">Don\'t have it yet? Install it on your computer</string>
-  <string name="install_intro">Your computer transcribes lessons instead of Groq: no size limits, files stay at home, and words are aligned one by one.</string>
+  <string name="install_intro">The companion is optional: it transcribes with WhisperX on your computer and aligns words with audio times. Importing, organizing and exporting need no PC; Groq and OpenRouter also transcribe without a companion.</string>
   <string name="install_needs_header">What you need</string>
   <string name="install_need_windows">Windows 10 or 11</string>
   <string name="install_need_windows_detail">Setup does not ask for administrator rights, except once for the firewall.</string>
@@ -1638,4 +1638,73 @@
   <string name="note_part_omitted_bundle">not included in the bundle</string>
   <string name="session_bundle_omitted_title">Audio not included in the bundle</string>
   <string name="session_bundle_omitted_detail">Ask the person who shared these notes for a bundle that includes the recordings, then import it and choose to update the notes. These files will not arrive automatically from your computer.</string>
+  <string name="provider_openrouter">OpenRouter</string>
+  <string name="error_credit_required">The service requires credit. Check your OpenRouter account balance before retrying.</string>
+  <string name="openrouter_requirements">Cloud transcription without a home computer. Requires an OpenRouter API key and credit for the selected model; audio is sent to OpenRouter and its provider.</string>
+  <string name="openrouter_key">OpenRouter API key</string>
+  <string name="openrouter_key_hint">Create a key at openrouter.ai. It stays encrypted on this device and is excluded from backups.</string>
+  <string name="openrouter_key_saved">Key saved on this device. You can replace or remove it here.</string>
+  <string name="openrouter_refresh">Refresh transcription models</string>
+  <string name="openrouter_remove_key">Remove OpenRouter key</string>
+  <string name="openrouter_loading">Verifying the key and loading transcription models…</string>
+  <string name="openrouter_model">Transcription model</string>
+  <string name="openrouter_selected">Saved model: %1$s</string>
+  <string name="openrouter_timing_detail">Sentence and word timing depends on the model. Text-only models retain the full transcript without synchronized highlighting.</string>
+  <string name="openrouter_vocabulary_ignored">OpenRouter ignores vocabulary hints. Your preference remains available for Groq and the home computer.</string>
+  <string name="openrouter_chunks">Cloud transcription, audio chunks</string>
+  <string name="job_phase_awaiting_openrouter">OpenRouter is transcribing</string>
+  <string name="recordings_transcribe_all_message_openrouter">%1$s of audio, transcribed by OpenRouter.</string>
+  <string name="session_untimed">This model returned text without timestamps. The full text is preserved; synchronized highlighting and seeking to words are unavailable.</string>
+  <string name="services_setup_detail">Set up one service at a time. Groq and OpenRouter need internet and your own API key, without a computer. You can import, organize and export without configuring anything.</string>
+  <string name="services_choose_active">Choose the default service under Transcription. Opening these forms does not change who transcribes.</string>
+  <string name="services_computer_missing">No computer connected. Set one up here, or choose Groq or OpenRouter under Transcription to use the cloud.</string>
+  <string name="services_computer_setup">Computer addresses and connection</string>
+
+    <!-- Temporary same-account file relay. -->
+    <string name="relay_title">Transfer files</string>
+    <string name="relay_intro">Sign in to the same account and sync text on both devices. Keep both online and receive within ten minutes of starting the transfer, including upload time. Files pass temporarily through the cloud; no computer is required.</string>
+    <string name="relay_auto">Receive after syncing</string>
+    <string name="relay_auto_detail">On this device only. Does not send files or guarantee receipt before expiry.</string>
+    <string name="relay_account">Same account required</string>
+    <string name="relay_auth">Sign in under Synchronization, enable it and finish a sync on both devices. If your session expired, sign in again.</string>
+    <string name="relay_send_note">Send files to other devices</string>
+    <string name="relay_send_all">Send all local files</string>
+    <string name="relay_receive">Receive now</string>
+    <string name="relay_resume">Refresh and resume</string>
+    <string name="relay_cancel">Stop transfers</string>
+    <string name="relay_cancelled">Transfers stopped. You can resume before the original deadline; afterwards send again.</string>
+    <string name="relay_preparing">Preparing files</string>
+    <string name="relay_working">Transfer waiting or running</string>
+    <string name="relay_wait_detail">Android may delay the work. Keep both devices online and check the outcome for each file.</string>
+    <string name="relay_none">No files available in this pass. Sync text and choose Send on the device that keeps the file.</string>
+    <string name="relay_file">Transferred file</string>
+    <string name="relay_resend_note">Send the note’s files again</string>
+    <string name="relay_resend_detail">Creates a new window for finished files in this note. Active transfers keep their deadline.</string>
+    <string name="relay_limits">Per file: up to 256 MiB. Per account: 512 MiB and 8 transfers, including those awaiting cleanup. Automatic reception starts off. This is not an archive: originals stay on the sending device. Blocking cloud transcription for a folder does not prevent this explicit transfer.</string>
+    <string name="relay_queued">Queued: not yet available to receive</string>
+    <string name="relay_uploading">Uploading</string>
+    <string name="relay_ready">Temporarily ready: receive on the other device before expiry</string>
+    <string name="relay_downloading">Downloading</string>
+    <string name="relay_received">Received and verified on this device</string>
+    <string name="relay_local">File already on this device</string>
+    <string name="relay_retry">Connection interrupted. Check your network and resume before expiry.</string>
+    <string name="relay_expired">Expired. Send again from the device that keeps the file.</string>
+    <string name="relay_quota">Temporary space or transfer count reached. Wait for cleanup, then send again.</string>
+    <string name="relay_unsupported">File cannot be transferred. Check that it is present and no larger than 256 MiB.</string>
+    <string name="relay_unmatched">File waiting for matching notes. Sync text, then receive again.</string>
+    <string name="relay_account_changed">Account changed. Return to the account that owns the notes and try again.</string>
+    <string name="relay_row_changed">Note or file changed. Refresh notes before trying again.</string>
+    <string name="relay_source_changed">The original changed. Check it on the sending device and send again.</string>
+    <string name="relay_integrity">File verification failed. Keep the original and send it again.</string>
+    <string name="relay_queue_full">Queue full. Finish or stop current transfers before trying again.</string>
+    <string name="relay_failed">Transfer failed. Check your connection and account, update the app and try again.</string>
+    <string name="relay_protocol">The transfer service is incompatible or unavailable. Update the app and check that the service is up to date, then try again.</string>
+    <string name="relay_bytes">%1$s of %2$s</string>
+    <string name="relay_expiry">Fixed expiry: %1$s</string>
+    <string name="relay_available">Temporarily available: tap to download</string>
+    <string name="relay_send_from_original">Send again from the device that keeps the file. Keep both online and receive within ten minutes.</string>
+    <string name="relay_audio_available">Files can be downloaded (%1$s), including through temporary transfer. Download now; after ten minutes they need to be sent again.</string>
+    <string name="relay_check_download">Find and download files</string>
+    <string name="relay_sync_intro">Synchronization keeps text, folders and transcripts. For audio and originals, use the temporary transfers below or the optional computer archive.</string>
+    <string name="relay_audio_title">Recordings available to download</string>
 </resources>

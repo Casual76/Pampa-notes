@@ -211,7 +211,7 @@ data class ExportSession(
   val durationMs: Long get() = parts.sumOf { it.durationMs }
 
   /** Vero quando quello che si stampa ha i tempi da stampare accanto. */
-  val hasTimings: Boolean get() = transcript != null && transcript.id == raw?.id && segments.isNotEmpty()
+  val hasTimings: Boolean get() = transcript != null && transcript.id == raw?.id && segments.isNotEmpty() && segments.all { it.partEndMs > it.partStartMs }
 }
 
 /**

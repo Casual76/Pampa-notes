@@ -16,6 +16,7 @@ import dev.pampa.pampanotes.core.db.JobType
 import dev.pampa.pampanotes.core.refinement.RefinementError
 import dev.pampa.pampanotes.core.repo.RefinementRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
+import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.transcription.EndpointWait
 import dev.pampa.pampanotes.core.transcription.GroqWhisperProvider
@@ -83,6 +84,8 @@ class TranscriptionQueueWorker @AssistedInject constructor(
   }
 
   /** Il lavoro l'ha annullato chi guardava la riga: l'utente, o la riga che non c'e' piu'. */
+  private class PrivacyChanged : CancellationException("Companion only")
+
   private class JobCancelled : CancellationException("lavoro annullato")
 
   /**
@@ -107,8 +110,10 @@ class TranscriptionQueueWorker @AssistedInject constructor(
 
     // «Solo il computer di casa»: le trascrizioni accodate per Groq prima che la si accendesse (o
     // arrivate con un backup) passano al computer, e questa coda non le tocca.
-    if (providerId == GroqWhisperProvider.ID && runCatching { settingsStore.current().customOnly }.getOrDefault(false)) {
-      if (runCatching { repository.moveGroqTranscriptionsToComputer() }.getOrDefault(0) > 0) scheduler.kick(OpenAiCompatProvider.ID)
+    if (providerId != OpenAiCompatProvider.ID && runCatching { settingsStore.current().customOnly }.getOrDefault(false)) {
+      repository.moveCloudTranscriptionsToComputer()
+      // enqueue may already have applied privacy after its caller read the old preference.
+      if (repository.queuedCount(OpenAiCompatProvider.ID) > 0) scheduler.kick(OpenAiCompatProvider.ID)
     }
 
     if (repository.nextQueued(providerId) == null) return finish(providerId)
@@ -254,8 +259,9 @@ class TranscriptionQueueWorker @AssistedInject constructor(
 
   /** La pulizia ha rimesso in fila dei lavori: le code che ne hanno si svegliano. */
   private suspend fun wakeQueuesWithWork() {
-    if (repository.queuedCount(GroqWhisperProvider.ID) > 0) scheduler.kick(GroqWhisperProvider.ID)
-    if (repository.queuedCount(OpenAiCompatProvider.ID) > 0) scheduler.kick(OpenAiCompatProvider.ID)
+    for (provider in TranscriptionProviderId.entries) {
+      if (repository.queuedCount(provider.id) > 0) scheduler.kick(provider.id)
+    }
   }
 
   /**
@@ -302,7 +308,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     // «Solo il computer di casa» acceso dopo che il lavoro era stato accodato per Groq: non parte da
     // qui. Passa al computer (con tutti quelli nella stessa situazione) e si sveglia la sua coda.
     if (repository.effectiveProvider(job) != job.provider) {
-      if (repository.moveGroqTranscriptionsToComputer() > 0) scheduler.kick(OpenAiCompatProvider.ID)
+      if (repository.moveCloudTranscriptionsToComputer() > 0) scheduler.kick(OpenAiCompatProvider.ID)
       return Step.Next
     }
 
@@ -422,6 +428,11 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       val run = transcript?.let { repository.recordRun(job.copy(sessionId = saved.sessionId, model = model), startedAt, it) }
       AppNotifications.notifyDone(applicationContext, job.id, transcript?.wordCount ?: 0, run)
       archiveIfComputerOnly(saved.sessionId)
+    } catch (privacy: TranscriptionError.CompanionOnly) {
+      repository.requeueStopped(job.id)
+      repository.moveCloudTranscriptionsToComputer()
+      scheduler.kick(OpenAiCompatProvider.ID)
+      return Step.Next
     } catch (timeout: IdleTimeoutException) {
       val error = TranscriptionError.Timeout(applicationContext.getString(dev.pampa.pampanotes.R.string.error_timeout), timeout)
       return lostComputer(job, error, bound.baseUrl) ?: run {
@@ -494,6 +505,10 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       }
       work.cancel(JobCancelled())
     }
+    val privacy = if (job.type == JobType.TRANSCRIBE && job.provider != OpenAiCompatProvider.ID) launch {
+      settingsStore.settings.first { it.customOnly }
+      work.cancel(PrivacyChanged())
+    } else null
     val publisher = launch {
       while (isActive) {
         delay(PUBLISH_EVERY_MS)
@@ -504,6 +519,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       work.await()
     } finally {
       watcher.cancel()
+      privacy?.cancel()
       publisher.cancel()
     }
   }
@@ -530,6 +546,14 @@ class TranscriptionQueueWorker @AssistedInject constructor(
         }
       }
       throw cancellation
+    }
+    if (cancellation is PrivacyChanged) {
+      withContext(NonCancellable) {
+        repository.requeueStopped(job.id)
+        repository.moveCloudTranscriptionsToComputer()
+        scheduler.kick(OpenAiCompatProvider.ID)
+      }
+      return Step.Next
     }
     val current = withContext(NonCancellable) { repository.get(job.id) }
     return when {

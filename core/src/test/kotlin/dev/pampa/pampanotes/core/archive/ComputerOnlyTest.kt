@@ -231,7 +231,9 @@ class ComputerOnlyTest {
     coEvery { sources.archived() } returns sourcesByNote.values.flatten().filter { it.archivedAt > 0 }
     val resolver = mockk<EndpointResolver>()
     coEvery { resolver.resolve(any(), any()) } returns null
-    val fetcher = ArchiveFetcher(files, settings, resolver, mockk(relaxed = true), audioParts, sources, mockk(relaxed = true), scope)
+    val relay = mockk<dev.pampa.pampanotes.core.relay.RelayRepository>()
+    coEvery { relay.fetch(any(), any(), any()) } returns dev.pampa.pampanotes.core.relay.RelayResult(dev.pampa.pampanotes.core.relay.RelayState.UNMATCHED)
+    val fetcher = ArchiveFetcher(files, settings, resolver, mockk(relaxed = true), audioParts, sources, mockk(relaxed = true), scope, relay)
 
     // Fuori dalla regola: p4, p5, pdf4, e la pagina a mano di n3, che resta qui anche dentro una
     // cartella esclusa e quindi si scarica come sempre.

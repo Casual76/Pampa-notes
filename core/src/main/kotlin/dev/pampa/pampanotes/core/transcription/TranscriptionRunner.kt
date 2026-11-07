@@ -254,16 +254,18 @@ class TranscriptionRunner @Inject constructor(
     onProgress: (TranscriptionProgress) -> Unit = {},
   ): SessionTranscript {
     require(parts.isNotEmpty()) { "una sessione senza parti non si trascrive" }
+    val request = if (provider is CloudTranscriptionGuard) provider.prepareRequest(request.copy(cloudSessionId = parts.first().sessionId, cloudPartId = parts.first().id)) else request
     val workDir = files.jobDir(jobId)
     // Lo stesso id puo' tornare con un altro servizio o un altro tetto («Riprova», «solo il computer
     // di casa» acceso dopo): i pezzi lasciati da quel giro non sono di questo, e se ne vanno.
-    val signature = StoredChunks.signature(provider.id, provider.capabilities, chunkMinutes)
+    val signature = StoredChunks.signature(provider.id, provider.capabilities, chunkMinutes) +
+      if (provider.id == OpenRouterTranscriptionProvider.ID) "|${request.model}" else ""
     prepareWorkDir(workDir, signature)
     val transcripts = mutableListOf<PartTranscript>()
     val sorted = parts.sortedBy { it.position }
     val scale = ProgressScale(
       durationsMs = sorted.map { it.durationMs },
-      uploadShare = if (provider.id == GroqWhisperProvider.ID) ProgressScale.GROQ_UPLOAD_SHARE else ProgressScale.COMPUTER_UPLOAD_SHARE,
+      uploadShare = if (provider.id != OpenAiCompatProvider.ID) ProgressScale.GROQ_UPLOAD_SHARE else ProgressScale.COMPUTER_UPLOAD_SHARE,
     )
     // Una domanda per lavoro: il computer sa lavorare da se'? Se si', il telefono non decodifica e
     // non taglia niente, e una registrazione che il computer ha gia' non la scarica ne' la rimanda.
@@ -272,7 +274,7 @@ class TranscriptionRunner @Inject constructor(
     // cui la parte va intera: sulla strada di sempre (Groq, un companion vecchio, un ospite) il campo
     // non parte, e i pezzi tagliati qui avrebbero comunque voci che non si riconoscono fra loro.
     // Lo stesso per modello, memoria e lotto (`job_*`): sono richieste a un computer che li conosce.
-    val plain = request.copy(diarize = false, computer = null)
+    val plain = request.copy(diarize = false, computer = null, cloudJobId = jobId)
     val onComputer = request.copy(
       diarize = request.diarize && computer?.diarize == true,
       computer = request.computer?.takeIf { computer?.jobOptions == true && !it.isEmpty },
@@ -297,7 +299,8 @@ class TranscriptionRunner @Inject constructor(
         workDir = partDir,
         signature = signature,
         provider = provider,
-        request = plain,
+        request = (if (provider.id == OpenRouterTranscriptionProvider.ID) plain.copy(prompt = null) else plain)
+          .copy(cloudPartId = part.id, cloudSessionId = part.sessionId),
         chunkMinutes = chunkMinutes,
         scale = scale,
         onProgress = onProgress,
@@ -535,13 +538,11 @@ class TranscriptionRunner @Inject constructor(
   ): PartTranscript {
     val source = files.audioFile(part.fileName)
     if (!source.exists()) {
-      // Registrata su un altro dispositivo: se il computer di casa ce l'ha, si prende da li' e la
-      // coda va avanti da sola. Altrimenti e' rimasta dov'e' nata, e qui non c'e' niente da trascrivere.
-      if (part.archivedAt <= 0) throw TranscriptionError.Decode("«${part.originalName}» non e' su questo dispositivo")
+      // Relay first, then any durable companion copy. A temporary transfer never sets archivedAt.
       onProgress(TranscriptionProgress.Preparing(partIndex, partCount, 0f, scale.overall(partIndex, 0f)))
       runCatching { fetcher.fetchPart(part) }.getOrElse {
         if (it is kotlinx.coroutines.CancellationException) throw it
-        throw TranscriptionError.Decode("«${part.originalName}» sta sul computer di casa e non sono riuscito a prenderlo: ${it.message}")
+        throw TranscriptionError.Decode("Non riesco a recuperare «${part.originalName}» su questo dispositivo: ${it.message}")
       }
     }
 
@@ -578,20 +579,22 @@ class TranscriptionRunner @Inject constructor(
     // La via breve: il file ci sta intero. Niente decodifica, niente ricodifica, niente cuciture —
     // ed e' anche l'unica che conserva la qualita' originale dell'audio.
     if (!chunked) {
-      val result = try {
-        sendWithRetry(provider, source, part.mime, request, waitingReporter(onProgress), remote(1, 1), uploading(1, 1))
-      } catch (silent: TranscriptionError.NoSpeech) {
-        return PartTranscript(part, "", emptyList(), null)
+      val spec = ChunkSpec(0, 0, part.durationMs)
+      val cached = File(workDir, "whole.json")
+      var language = request.language
+      val chunk = readStored(cached, spec, signature) ?: run {
+        val result = try {
+          sendWithRetry(provider, source, part.mime, request.copy(cloudDurationMs = part.durationMs), waitingReporter(onProgress), remote(1, 1), uploading(1, 1))
+        } catch (silent: TranscriptionError.NoSpeech) {
+          TranscriptResult("", emptyList(), null, null)
+        }
+        language = result.language
+        ChunkTranscript(spec, result.segments, result.text.takeIf { result.segments.isEmpty() }.orEmpty())
+          .also { writeStored(cached, it, signature) }
       }
       finished(1, 1)
-      val stitched = TranscriptStitcher.stitch(
-        listOf(ChunkTranscript(ChunkSpec(0, 0, part.durationMs), result.segments)),
-        request.prompt,
-      )
-      // Un server che risponde col solo testo, senza segmenti: mezzo risultato vale piu' di niente.
-      // Con segmenti tutti tolti dalle difese, invece, il testo del server e' l'allucinazione stessa.
-      val text = if (stitched.text.isBlank() && result.segments.isEmpty()) result.text.trim() else stitched.text
-      return PartTranscript(part, text, stitched.segments, result.language)
+      val stitched = TranscriptStitcher.stitch(listOf(chunk), request.prompt)
+      return PartTranscript(part, stitched.text, stitched.segments, language)
     }
 
     val pcm = File(workDir, "audio.pcm")
@@ -619,18 +622,18 @@ class TranscriptionRunner @Inject constructor(
 
       val encoded = ChunkEncoder.encode(pcm, PcmDecoder.TARGET_SAMPLE_RATE, spec, workDir)
       try {
-        val segments = try {
+        val result = try {
           sendWithRetry(
-            provider, encoded.file, encoded.mime, request, waitingReporter(onProgress),
+            provider, encoded.file, encoded.mime, request.copy(cloudDurationMs = spec.endMs - spec.startMs), waitingReporter(onProgress),
             remote(chunkIndex, chunkCount), uploading(chunkIndex, chunkCount),
-          ).segments
+          )
         } catch (silent: TranscriptionError.NoSpeech) {
           // Dieci minuti di intervallo, o la classe che esce: un pezzo muto e' un pezzo vuoto, non
           // una lezione fallita. Si salva vuoto, cosi' una ripresa non lo rimanda.
-          emptyList()
+          TranscriptResult("", emptyList(), null, null)
         }
         finished(chunkIndex, chunkCount)
-        val chunk = ChunkTranscript(spec, segments)
+        val chunk = ChunkTranscript(spec, result.segments, result.text.takeIf { result.segments.isEmpty() }.orEmpty())
         // Prima su disco, poi in memoria: un processo ucciso fra le due cose deve poter ripartire
         // da qui, non dal pezzo precedente.
         writeStoredChunk(workDir, chunk, signature)

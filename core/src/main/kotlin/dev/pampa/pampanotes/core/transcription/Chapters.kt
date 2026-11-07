@@ -94,7 +94,7 @@ object Chapters {
    * la fine dell'ultima frase.
    */
   fun build(segments: List<SegmentEntity>, totalMs: Long? = null): List<Chapter> {
-    if (segments.isEmpty()) return emptyList()
+    if (segments.isEmpty() || segments.any { it.partEndMs <= it.partStartMs }) return emptyList()
     val threshold = thresholdFor(totalMs ?: segments.maxOf { it.sessionEndMs })
 
     // 1. I tagli: dove il silenzio dalla fine della voce (la piu' tarda finora, se due frasi si

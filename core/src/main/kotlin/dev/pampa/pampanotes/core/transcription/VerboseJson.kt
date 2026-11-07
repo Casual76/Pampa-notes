@@ -30,11 +30,24 @@ object VerboseJson {
 
     val text = root["text"].asString()?.trim().orEmpty()
     val language = root["language"].asString()?.takeIf { it.isNotBlank() }
-    val durationMs = root["duration"].asDouble()?.let { (it * 1000).roundToLong() }
+    val durationMs = root["duration"].asDouble()?.takeIf { it.isFinite() && it >= 0 }
+      ?.let { (it * 1000).roundToLong() }
 
-    val segments = (root["segments"] as? JsonArray)
+    var segments = (root["segments"] as? JsonArray)
       ?.mapNotNull { element -> parseSegment(element) }
       .orEmpty()
+
+    val words = parseWords(root["words"])
+    if (words.isNotEmpty()) {
+      segments = if (segments.isEmpty()) {
+        listOf(RawSegment(words.minOf { it.startMs }, words.maxOf { it.endMs },
+          text.ifBlank { words.joinToString(" ") { it.text } }, words = words))
+      } else segments.map { segment ->
+        if (segment.words.isNotEmpty()) segment else segment.copy(words = words.filter {
+          (it.startMs + it.endMs) / 2 in segment.startMs..segment.endMs
+        })
+      }
+    }
 
     if (text.isEmpty() && segments.isEmpty()) {
       // Il JSON e' a posto, e' l'audio che non aveva niente da dire: lo si dice cosi'.
@@ -86,7 +99,7 @@ object VerboseJson {
     val done = root["pieces_done"].asDouble()?.toInt()?.takeIf { it >= 0 } ?: return null
     val total = root["pieces_total"].asDouble()?.toInt()?.coerceAtLeast(done) ?: done
     val from = root["from"].asDouble()?.toInt()?.coerceAtLeast(0) ?: 0
-    val segments = (root["segments"] as? JsonArray)?.mapNotNull { parseSegment(it) }.orEmpty()
+    var segments = (root["segments"] as? JsonArray)?.mapNotNull { parseSegment(it) }.orEmpty()
     return RemotePartial(from = from, piecesDone = done, piecesTotal = total, segments = segments)
   }
 
@@ -94,8 +107,8 @@ object VerboseJson {
     val obj = element as? JsonObject ?: return null
     val text = obj["text"].asString()?.trim().orEmpty()
     if (text.isEmpty()) return null
-    val start = obj["start"].asDouble() ?: return null
-    val end = obj["end"].asDouble() ?: start
+    val start = obj["start"].asDouble()?.takeIf { it.isFinite() && it >= 0 } ?: return null
+    val end = (obj["end"].asDouble() ?: start).takeIf { it.isFinite() && it >= start } ?: return null
     return RawSegment(
       startMs = (start * 1000).roundToLong(),
       endMs = (end * 1000).roundToLong(),
@@ -121,8 +134,8 @@ object VerboseJson {
       val obj = item as? JsonObject ?: return@mapNotNull null
       val text = (obj["word"] ?: obj["text"]).asString()?.trim().orEmpty()
       if (text.isEmpty()) return@mapNotNull null
-      val start = obj["start"].asDouble() ?: return@mapNotNull null
-      val end = obj["end"].asDouble() ?: return@mapNotNull null
+      val start = obj["start"].asDouble()?.takeIf { it.isFinite() && it >= 0 } ?: return@mapNotNull null
+      val end = obj["end"].asDouble()?.takeIf { it.isFinite() && it >= start } ?: return@mapNotNull null
       RawWord(startMs = (start * 1000).roundToLong(), endMs = (end * 1000).roundToLong(), text = text)
     }
   }

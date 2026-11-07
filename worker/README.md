@@ -2,8 +2,10 @@
 
 Un Worker Cloudflare con un database D1. È quello che tiene le note allineate fra telefono, tablet
 e computer: **solo testo** — note, cartelle, sessioni, trascrizioni con i segmenti, sorgenti,
-preset — e mai un file. Registrazioni e originali vanno da dispositivo a computer di casa e basta
-(vedi `companion/`).
+preset. Registrazioni e originali possono passare dal computer di casa (`companion/`) oppure dal
+relay privato temporaneo in R2: **dieci minuti dall'inizio dell'invio**, con accesso dello stesso
+account e pulizia programmata. Il relay non e' un archivio e non autorizza a eliminare l'originale.
+Contratto completo per Android e requisiti di schema/cron: [RELAY_API.md](RELAY_API.md).
 
 Non è un registro di eventi: una riga per (proprietario, tabella, id), sovrascritta a ogni
 modifica, con un numero di sequenza che sale. Il database è grande quanto i dati, non quanto la
@@ -83,9 +85,15 @@ lo tiene: lo presenta una volta a `POST /v1/auth/google` e riceve un **token di 
 (tabella `sessions`, uno per dispositivo, revocabile con `POST /v1/auth/logout` o a mano), che è
 quello che manda da lì in poi.
 
-Il piano gratuito di Cloudflare basta: Workers 100.000 richieste al giorno, D1 5 GB. Una
+Per il solo indice di testo, il piano gratuito di Cloudflare basta: Workers 100.000 richieste al giorno, D1 5 GB. Una
 sincronizzazione ogni sei ore per tre dispositivi sono poche decine di richieste al giorno; il
 testo di anni di lezioni sono decine di megabyte.
+
+Il relay richiede le nuove tabelle di `schema.sql` e il Cron Trigger di `wrangler.toml`; per file
+grandi va validato il budget CPU o usato Workers Paid (vedi il contratto). La scadenza di accesso
+e' precisa; la cancellazione fisica dipende dai successivi cron e dalle code/fallimenti R2/D1.
+
+Test isolati del relay, senza leggere `.dev.vars`: `npm run typecheck` e `npm run test:relay`.
 
 ## Il protocollo, in breve
 

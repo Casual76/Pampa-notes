@@ -20,7 +20,7 @@ data class ExportLabels(
   val transcriptRaw: String = "grezza",
   val transcriptRefined: String = "raffinata",
   val noTranscript: String = "Non ancora trascritta.",
-  val refinedHasNoTimings: String = "Questa versione è stata ripulita da un modello e non porta i tempi. La grezza li ha.",
+  val refinedHasNoTimings: String = "Questa versione non porta i tempi per seguire l’audio.",
   /** Una delle registrazioni di una sessione, nella riga che dice dove comincia la successiva. */
   val part: String = "Registrazione",
   val startsAt: String = "comincia a",

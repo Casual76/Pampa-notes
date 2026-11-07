@@ -120,3 +120,36 @@ CREATE TABLE IF NOT EXISTS computers (
   updatedAt   INTEGER NOT NULL,             -- l'orologio del dispositivo che l'ha scritto
   deviceId    TEXT    NOT NULL DEFAULT ''
 );
+
+-- Relay temporaneo privato. Mai scrivere archivedAt/state/owners.seq dal relay.
+-- Riserva quota e idempotenza in un INSERT atomico. Anche gli upload incompleti scadono.
+CREATE TABLE IF NOT EXISTS relay_transfers (
+  transferId TEXT PRIMARY KEY,
+  ownerId TEXT NOT NULL,
+  requestId TEXT NOT NULL,
+  requestedAt INTEGER NOT NULL,
+  kind TEXT NOT NULL CHECK(kind IN ('audio', 'source')),
+  entityId TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  bytes INTEGER NOT NULL CHECK(bytes > 0 AND bytes <= 268435456),
+  mime TEXT NOT NULL,
+  originalName TEXT NOT NULL,
+  deviceId TEXT NOT NULL,
+  deviceName TEXT NOT NULL,
+  createdAt INTEGER NOT NULL,
+  expiresAt INTEGER NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('uploading', 'ready', 'deleting')),
+  cleanupAttempts INTEGER NOT NULL DEFAULT 0,
+  nextCleanupAt INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(ownerId, requestId)
+);
+CREATE INDEX IF NOT EXISTS relay_owner ON relay_transfers(ownerId, expiresAt);
+CREATE INDEX IF NOT EXISTS relay_cleanup ON relay_transfers(nextCleanupAt, expiresAt);
+CREATE TABLE IF NOT EXISTS relay_chunks (
+  transferId TEXT NOT NULL REFERENCES relay_transfers(transferId) ON DELETE CASCADE,
+  chunkIndex INTEGER NOT NULL CHECK(chunkIndex >= 0 AND chunkIndex < 32),
+  bytes INTEGER NOT NULL CHECK(bytes > 0 AND bytes <= 8388608),
+  sha256 TEXT NOT NULL,
+  uploaded INTEGER NOT NULL DEFAULT 0 CHECK(uploaded IN (0, 1)),
+  PRIMARY KEY(transferId, chunkIndex)
+);

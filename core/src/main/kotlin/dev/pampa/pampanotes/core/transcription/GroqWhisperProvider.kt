@@ -96,6 +96,7 @@ class GroqWhisperProvider(
       fileMime = mime,
       readTimeoutMillis = READ_TIMEOUT_MS,
       onProgress = onProgress,
+      onResponse = request.cloudResponse,
     )
     return VerboseJson.parse(body)
   }

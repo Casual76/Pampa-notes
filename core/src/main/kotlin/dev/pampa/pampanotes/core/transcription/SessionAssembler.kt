@@ -84,6 +84,16 @@ object SessionAssembler {
 
     parts.forEach { transcript ->
       val offset = offsets[transcript.part.id] ?: 0L
+      // Zero-length part-relative row is an untimed text container, never an estimated alignment.
+      // Persisting per part preserves text through save/reorder/split/sync without a schema change.
+      if (transcript.segments.isEmpty() && transcript.text.isNotBlank()) {
+        segments += SessionSegment(
+          partId = transcript.part.id, indexInPart = 0,
+          partStartMs = 0, partEndMs = 0, sessionStartMs = offset, sessionEndMs = offset,
+          text = transcript.text, noSpeechProb = null, avgLogProb = null,
+          wordsEncoded = null, wordsEstimated = false,
+        )
+      }
       transcript.segments.forEachIndexed { index, segment ->
         // Le parole si riempiono qui, una volta sola: chi non le ha se le fa stimare, e da questo
         // punto in poi il database ha sempre le parole e la UI ha una strada sola.

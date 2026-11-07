@@ -20,11 +20,15 @@ binding = "DB"
 database_name = "pampa-notes"
 database_id = "9ef936de-c141-45e3-87e0-18389b7b2d3e"
 
-# L'audio delle sole note condivise. In locale e' una cartella in .wrangler/; per il deploy vero:
+# Audio condiviso persistente e relay privato sotto __relay/v1/. In locale e' in .wrangler/:
 # `npx wrangler r2 bucket create pampa-notes-audio` una volta sola.
 [[r2_buckets]]
 binding = "AUDIO"
 bucket_name = "pampa-notes-audio"
+
+# Auth/read expiry never relies on cron. Physical GC is eventual; see RELAY_API.md.
+[triggers]
+crons = ["* * * * *"]
 
 [vars]
 # "token:ownerId,token2:ownerId2". Solo per lo sviluppo locale; in produzione lasciare vuoto.

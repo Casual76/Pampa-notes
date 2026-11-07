@@ -2,14 +2,15 @@
  * L'indice in cloud di Pampa Notes. Un Worker, un D1, un bucket R2.
  *
  * Solo testo nell'indice: note, cartelle, sessioni, trascrizioni coi segmenti, sorgenti, preset.
- * Mai un file audio, mai un originale: quelli vanno da dispositivo a computer di casa e basta.
- * L'unica eccezione e' l'audio delle note **condivise**, che sta in R2 finche' il link e' vivo.
+ * I file condivisi restano in R2 finche' il link e' vivo. Il relay privato usa un prefisso
+ * separato e una scadenza server fissa di dieci minuti, senza modificare l'indice persistente.
  */
 
 import { bearerOf, loginWithGoogle, logout, ownerOf, Unauthorized, type Env } from "./auth";
 import { deleteComputer, getComputer, issueTicket, putComputer, verifyTicket, type PutComputerBody } from "./computer";
 import { createGuest, listGuests, reportUsage, revokeGuest, verifyGuest } from "./guests";
 import { pageHtml } from "./page";
+import { cleanupRelay, relayErrorResponse, RelayError, relayJson, relayRequest, type RelayEnv } from "./relay";
 import {
   abortMultipart, audioResponse, beginMultipart, completeMultipart, createShare, headAudio, listShares, noteOpened,
   NotFound, pageData, putAudio, putMultipartPart, revokeShare, type ShareEnv,
@@ -87,6 +88,17 @@ export default {
 
     try {
       const path = segments(url.pathname);
+
+      // Always ownerOf: neither public share links nor computer guest tokens authorize relay.
+      if (path[0] === "v1" && path[1] === "relay") {
+        let ownerId: string;
+        try { ownerId = await ownerOf(request, env); }
+        catch (error) {
+          if (error instanceof Unauthorized) return relayJson({ error: error.message, code: "unauthorized" }, 401);
+          throw error;
+        }
+        return await relayRequest(request, env as RelayEnv, ownerId, path);
+      }
 
       // --- la pagina di una nota condivisa: senza token, e' il link la chiave ---
       if (path[0] === "s" && path.length >= 2) {
@@ -237,11 +249,17 @@ export default {
 
       return json({ error: "non trovato" }, { status: 404 });
     } catch (error) {
+      if (error instanceof RelayError) return relayErrorResponse(error);
       if (error instanceof Unauthorized) return json({ error: error.message }, { status: 401 });
       if (error instanceof BadRequest) return json({ error: error.message }, { status: 400 });
       if (error instanceof NotFound) return json({ error: error.message }, { status: 404 });
       console.error(error);
       return json({ error: "errore interno" }, { status: 500 });
     }
+  },
+  async scheduled(_event: ScheduledController, env: Env): Promise<void> {
+    const result = await cleanupRelay(env as RelayEnv);
+    console.log("relay cleanup", result);
+    if (result.failed) throw new Error("Relay cleanup failed; retained for scheduled retry");
   },
 } satisfies ExportedHandler<Env>;

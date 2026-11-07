@@ -42,3 +42,4 @@ worker/node_modules/
 worker/.wrangler/
 worker/logs/
 worker/.dev.vars
+/.wrangler/

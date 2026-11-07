@@ -9,6 +9,8 @@ import dev.pampa.pampanotes.core.archive.ArchiveMismatch
 import dev.pampa.pampanotes.core.archive.ArchiveMissing
 import dev.pampa.pampanotes.core.archive.ArchiveRepository
 import dev.pampa.pampanotes.core.archive.FetchProgress
+import dev.pampa.pampanotes.core.archive.RelayUnavailable
+import dev.pampa.pampanotes.core.relay.RelayKind
 import dev.pampa.pampanotes.core.db.AudioPartDao
 import dev.pampa.pampanotes.core.db.FolderDao
 import dev.pampa.pampanotes.core.db.NoteDao
@@ -220,7 +222,12 @@ class ExportService @Inject constructor(
    */
   suspend fun plan(set: ExportSet, options: ExportOptions): ExportFetchPlan = withContext(io) {
     inUse.hold(ExportFiles.wanted(set, options).map(::heldName), PLAN_HOLD_MS)
-    ExportFiles.plan(set, options, ::isPresent)
+    val plan = ExportFiles.plan(set, options, ::isPresent)
+    val transferable = plan.unobtainable.filter { missing ->
+      fetcher.relayAvailable(if (missing.file.kind == ExportFileKind.AUDIO) RelayKind.AUDIO else RelayKind.SOURCE, missing.file.id)
+    }
+    // The export plan can obtain these bytes; the original archived flags stay untouched.
+    plan.copy(toFetch = plan.toFetch + transferable.map { it.file }, unobtainable = plan.unobtainable - transferable.toSet())
   }
 
   /**
@@ -261,7 +268,7 @@ class ExportService @Inject constructor(
         fetched++
       } catch (error: IOException) {
         val reason = when {
-          error is ArchiveMissing -> MissingReason.NOT_ARCHIVED
+          error is ArchiveMissing || error is RelayUnavailable -> MissingReason.NOT_ARCHIVED
           error !is ArchiveMismatch && ArchiveRepository.isUnreachable(error) -> MissingReason.UNREACHABLE
           else -> MissingReason.FAILED
         }
@@ -519,7 +526,8 @@ class ExportService @Inject constructor(
     // niente). Una pagina che non sta da nessuna delle due parti non si promette nemmeno.
     val pages = allSources.filter { source ->
       source.derivedFromId != null &&
-        source.storedFileName?.let { name -> files.sourceFile(name).exists() || source.archivedAt > 0 } == true
+        source.storedFileName?.let { name -> files.sourceFile(name).exists() || source.archivedAt > 0 ||
+          fetcher.relayAvailable(RelayKind.SOURCE, source.id) } == true
     }.sortedWith(compareBy({ it.importedAt }, { it.originalName }))
     return ExportNote(
       note = note,

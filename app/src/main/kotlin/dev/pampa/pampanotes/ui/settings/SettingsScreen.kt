@@ -215,6 +215,7 @@ private fun PreferencesSectionRoute(
   val exportDefaults by viewModel.exportDefaults.collectAsStateWithLifecycle()
 
   var groqKey by remember { mutableStateOf("") }
+  var openRouterKey by remember { mutableStateOf("") }
   var endpointUrl by remember(settings.endpointUrl) { mutableStateOf(settings.endpointUrl) }
   var endpointRemoteUrl by remember(settings.endpointRemoteUrl) { mutableStateOf(settings.endpointRemoteUrl) }
   var endpointToken by remember { mutableStateOf("") }
@@ -243,34 +244,74 @@ private fun PreferencesSectionRoute(
     LaunchedEffect(settings.hasEndpoint) { if (settings.hasEndpoint) viewModel.loadCompanion() }
   }
 
+  if (section == SettingsSection.SERVICES || section == SettingsSection.TRANSCRIPTION) {
+    LaunchedEffect(services.openRouterKeyPresent) {
+      if (services.openRouterKeyPresent) viewModel.loadOpenRouterModels()
+    }
+  }
+
+  var setupProvider by rememberSaveable(settings.transcriptionProvider) { mutableStateOf(settings.transcriptionProvider) }
   FluidScreen(
     title = section.label(),
     onBack = onBack,
     ambient = FluidAmbient(tone = FluidHeroTone.PrimaryToSecondary, motif = FluidHeroMotif.Bars),
   ) {
     when (section) {
-      SettingsSection.SERVICES -> servicesSection(
-        services = services,
-        groqKey = groqKey,
-        onGroqKeyChange = { groqKey = it },
-        onVerifyGroq = {
-          viewModel.saveGroqKey(groqKey)
-          groqKey = ""
-        },
-        endpointUrl = endpointUrl,
-        onEndpointUrlChange = { endpointUrl = it },
-        endpointRemoteUrl = endpointRemoteUrl,
-        onEndpointRemoteUrlChange = { endpointRemoteUrl = it },
-        endpointToken = endpointToken,
-        onEndpointTokenChange = { endpointToken = it },
-        onTestEndpoint = {
-          viewModel.setEndpoint(endpointUrl, settings.endpointModel)
-          viewModel.setEndpointRemoteUrl(endpointRemoteUrl)
-          if (endpointToken.isNotBlank()) viewModel.setEndpointToken(endpointToken)
-          viewModel.testEndpoint(endpointUrl, endpointRemoteUrl)
-        },
-        onInstall = { onOpenSection(SettingsSection.INSTALL) },
-      )
+      SettingsSection.SERVICES -> {
+        // Browsing setup is independent of the active provider and the privacy restriction.
+        item { FluidSectionFootnote(text = stringResource(R.string.services_setup_detail)) }
+        item {
+          val labels = mapOf(
+            TranscriptionProviderId.GROQ to stringResource(R.string.provider_groq),
+            TranscriptionProviderId.OPENROUTER to stringResource(R.string.provider_openrouter),
+            TranscriptionProviderId.CUSTOM to stringResource(R.string.provider_custom),
+          )
+          FluidSegmentedControl(
+            options = TranscriptionProviderId.entries.toList(),
+            selected = setupProvider,
+            onSelect = { setupProvider = it },
+            label = { labels.getValue(it) },
+          )
+        }
+        item {
+          FluidListGroup {
+            FluidListRow(
+              title = stringResource(R.string.settings_provider_header),
+              subtitle = stringResource(if (settings.customOnly) R.string.settings_custom_only_detail else R.string.services_choose_active),
+              onClick = { onOpenSection(SettingsSection.TRANSCRIPTION) },
+            )
+          }
+        }
+        if (setupProvider == TranscriptionProviderId.OPENROUTER) {
+          openRouterSettings(settings, services, openRouterKey, { openRouterKey = it }, {
+            viewModel.saveOpenRouterKey(openRouterKey)
+            openRouterKey = ""
+          }, viewModel)
+        }
+        servicesSection(
+          provider = setupProvider,
+          services = services,
+          groqKey = groqKey,
+          onGroqKeyChange = { groqKey = it },
+          onVerifyGroq = {
+            viewModel.saveGroqKey(groqKey)
+            groqKey = ""
+          },
+          endpointUrl = endpointUrl,
+          onEndpointUrlChange = { endpointUrl = it },
+          endpointRemoteUrl = endpointRemoteUrl,
+          onEndpointRemoteUrlChange = { endpointRemoteUrl = it },
+          endpointToken = endpointToken,
+          onEndpointTokenChange = { endpointToken = it },
+          onTestEndpoint = {
+            viewModel.setEndpoint(endpointUrl, settings.endpointModel)
+            viewModel.setEndpointRemoteUrl(endpointRemoteUrl)
+            if (endpointToken.isNotBlank()) viewModel.setEndpointToken(endpointToken)
+            viewModel.testEndpoint(endpointUrl, endpointRemoteUrl)
+          },
+          onInstall = { onOpenSection(SettingsSection.INSTALL) },
+        )
+      }
 
       SettingsSection.TRANSCRIPTION -> transcriptionSection(
         settings = settings,
@@ -308,6 +349,7 @@ private fun PreferencesSectionRoute(
 // -------------------------------------------------------------------------------------------------
 
 private fun LazyListScope.servicesSection(
+  provider: TranscriptionProviderId,
   services: ServicesUiState,
   groqKey: String,
   onGroqKeyChange: (String) -> Unit,
@@ -321,65 +363,69 @@ private fun LazyListScope.servicesSection(
   onTestEndpoint: () -> Unit,
   onInstall: () -> Unit,
 ) {
-  item {
-    FluidListGroup {
-      FluidListRow(
-        title = stringResource(R.string.settings_groq),
-        subtitle = when {
-          services.groqVerified -> stringResource(R.string.settings_groq_verified)
-          services.groqKeyPresent -> stringResource(R.string.settings_groq_unverified)
-          else -> stringResource(R.string.settings_groq_missing)
-        },
-        badge = if (services.groqVerified) {
-          { FluidStatusBadge(label = stringResource(R.string.settings_ok), tone = FluidTone.Success) }
-        } else {
-          null
-        },
-      )
-    }
-  }
-
-  item {
-    FluidTextField(
-      value = groqKey,
-      onValueChange = onGroqKeyChange,
-      label = stringResource(R.string.settings_groq_key),
-      placeholder = "gsk_…",
-      secret = true,
-      supportingText = stringResource(R.string.settings_groq_key_hint),
-      modifier = Modifier.fillMaxWidth(),
-    )
-  }
-
-  item {
-    FluidButton(
-      text = stringResource(R.string.settings_verify),
-      onClick = onVerifyGroq,
-      enabled = groqKey.isNotBlank() && services.groqCheck !is CheckState.Running,
-      loading = services.groqCheck is CheckState.Running,
-      fillWidth = true,
-      modifier = Modifier.fillMaxWidth(),
-    )
-  }
-
-  (services.groqCheck as? CheckState.Failed)?.let { failed ->
+  if (provider == TranscriptionProviderId.GROQ) {
     item {
-      FluidInlineMessage(
-        message = jobErrorText(failed.reason, null),
-        title = stringResource(R.string.settings_groq),
-        tone = FluidTone.Danger,
-      )
+      FluidListGroup {
+        FluidListRow(
+          title = stringResource(R.string.settings_groq),
+          subtitle = when {
+            services.groqVerified -> stringResource(R.string.settings_groq_verified)
+            services.groqKeyPresent -> stringResource(R.string.settings_groq_unverified)
+            else -> stringResource(R.string.settings_groq_missing)
+          },
+          badge = if (services.groqVerified) {
+            { FluidStatusBadge(label = stringResource(R.string.settings_ok), tone = FluidTone.Success) }
+          } else {
+            null
+          },
+        )
+      }
     }
-  }
-  (services.groqCheck as? CheckState.Ok)?.let { ok ->
+
     item {
-      FluidInlineMessage(
-        message = stringResource(R.string.settings_groq_ok, ok.detail),
-        title = stringResource(R.string.settings_groq),
-        tone = FluidTone.Success,
+      FluidTextField(
+        value = groqKey,
+        onValueChange = onGroqKeyChange,
+        label = stringResource(R.string.settings_groq_key),
+        placeholder = "gsk_…",
+        secret = true,
+        supportingText = stringResource(R.string.settings_groq_key_hint),
+        modifier = Modifier.fillMaxWidth(),
       )
     }
+
+    item {
+      FluidButton(
+        text = stringResource(R.string.settings_verify),
+        onClick = onVerifyGroq,
+        enabled = groqKey.isNotBlank() && services.groqCheck !is CheckState.Running,
+        loading = services.groqCheck is CheckState.Running,
+        fillWidth = true,
+        modifier = Modifier.fillMaxWidth(),
+      )
+    }
+
+    (services.groqCheck as? CheckState.Failed)?.let { failed ->
+      item {
+        FluidInlineMessage(
+          message = jobErrorText(failed.reason, null),
+          title = stringResource(R.string.settings_groq),
+          tone = FluidTone.Danger,
+        )
+      }
+    }
+    (services.groqCheck as? CheckState.Ok)?.let { ok ->
+      item {
+        FluidInlineMessage(
+          message = stringResource(R.string.settings_groq_ok, ok.detail),
+          title = stringResource(R.string.settings_groq),
+          tone = FluidTone.Success,
+        )
+      }
+    }
+
   }
+  if (provider != TranscriptionProviderId.CUSTOM) return
 
   item {
     FluidSectionHeader(
@@ -485,6 +531,7 @@ private fun LazyListScope.transcriptionSection(
   onOpenServices: () -> Unit,
   viewModel: SettingsViewModel,
 ) {
+  item { dev.pampa.pampanotes.ui.cloudcost.CloudCostsEntry() }
   // --- 1. Chi trascrive ------------------------------------------------------------------------
   item { FluidSectionHeader(title = stringResource(R.string.settings_provider_header), detail = stringResource(R.string.settings_provider_header_detail)) }
   // Con «solo il computer di casa» la scelta non esiste piu': il selettore sparisce invece di
@@ -493,6 +540,7 @@ private fun LazyListScope.transcriptionSection(
     item {
       val providerLabels = mapOf(
         TranscriptionProviderId.GROQ to stringResource(R.string.provider_groq),
+        TranscriptionProviderId.OPENROUTER to stringResource(R.string.provider_openrouter),
         TranscriptionProviderId.CUSTOM to stringResource(R.string.provider_custom),
       )
       FluidSegmentedControl(
@@ -522,6 +570,51 @@ private fun LazyListScope.transcriptionSection(
     }
   }
 
+  if (settings.transcriptionProvider == TranscriptionProviderId.OPENROUTER) {
+    item { FluidSectionFootnote(text = stringResource(R.string.openrouter_requirements)) }
+    item {
+      FluidListGroup {
+        FluidListRow(title = stringResource(R.string.provider_openrouter),
+          subtitle = stringResource(if (services.openRouterKeyPresent) R.string.openrouter_key_saved else R.string.openrouter_key_hint),
+          onClick = onOpenServices)
+      }
+    }
+    if (services.openRouterCheck is CheckState.Running) {
+      item { FluidSectionFootnote(text = stringResource(R.string.openrouter_loading)) }
+    }
+    (services.openRouterCheck as? CheckState.Failed)?.let { failed ->
+      item { FluidInlineMessage(message = jobErrorText(failed.reason, null), tone = FluidTone.Danger) }
+    }
+    if (services.openRouterModels.isNotEmpty()) {
+      item {
+        FluidListGroup {
+          services.openRouterModels.forEach { model ->
+            FluidChoiceRow(title = model, selected = model == settings.openRouterTranscriptionModel,
+              onSelect = { viewModel.setOpenRouterModel(model) })
+          }
+        }
+      }
+    }
+    item { FluidSectionFootnote(text = stringResource(R.string.openrouter_timing_detail)) }
+  } else {
+    item {
+      val onComputer = settings.transcriptionProvider == TranscriptionProviderId.CUSTOM
+      FluidListGroup {
+        FluidListRow(
+          title = stringResource(if (onComputer) R.string.provider_custom else R.string.provider_groq),
+          subtitle = stringResource(when {
+            onComputer && !settings.hasEndpoint -> R.string.services_computer_missing
+            onComputer -> R.string.services_computer_setup
+            !services.groqKeyPresent -> R.string.settings_groq_missing
+            services.groqVerified -> R.string.settings_groq_verified
+            else -> R.string.settings_groq_unverified
+          }),
+          onClick = onOpenServices,
+        )
+      }
+    }
+  }
+
   // --- 2. Cosa si sente ------------------------------------------------------------------------
   item { FluidSectionHeader(title = stringResource(R.string.settings_hearing_header)) }
   item {
@@ -547,6 +640,7 @@ private fun LazyListScope.transcriptionSection(
     FluidTextField(
       value = vocabulary,
       onValueChange = { vocabulary = it },
+      enabled = settings.transcriptionProvider != TranscriptionProviderId.OPENROUTER,
       label = stringResource(R.string.settings_vocabulary),
       placeholder = stringResource(R.string.settings_vocabulary_hint),
       singleLine = false,
@@ -555,7 +649,7 @@ private fun LazyListScope.transcriptionSection(
       modifier = Modifier.fillMaxWidth(),
     )
   }
-  item { FluidSectionFootnote(text = stringResource(R.string.settings_vocabulary_detail)) }
+  item { FluidSectionFootnote(text = stringResource(if (settings.transcriptionProvider == TranscriptionProviderId.OPENROUTER) R.string.openrouter_vocabulary_ignored else R.string.settings_vocabulary_detail)) }
 
   // --- 3. Chi parla ----------------------------------------------------------------------------
   speakersSection(settings = settings, companion = companion, onOpenServices = onOpenServices, viewModel = viewModel)
@@ -593,8 +687,8 @@ private fun LazyListScope.transcriptionSection(
   // --- 5. Groq, avanzate -----------------------------------------------------------------------
   // Solo se Groq si puo' usare: con «solo il computer di casa», o senza una chiave, i pezzi di Groq
   // non contano, e restare li' li farebbe sembrare importanti.
-  if (!settings.customOnly && services.groqKeyPresent) {
-    item { FluidSectionHeader(title = stringResource(R.string.settings_groq_advanced)) }
+  if (!settings.customOnly && (services.groqKeyPresent || settings.transcriptionProvider == TranscriptionProviderId.OPENROUTER)) {
+    item { FluidSectionHeader(title = stringResource(if (settings.transcriptionProvider == TranscriptionProviderId.OPENROUTER) R.string.openrouter_chunks else R.string.settings_groq_advanced)) }
     // Ogni scelta subito sotto la sua riga: prima le due righe stavano insieme e i due selettori
     // sotto, e «25 · 100» sembrava la risposta a «Durata di un pezzo».
     item {
@@ -614,6 +708,7 @@ private fun LazyListScope.transcriptionSection(
         label = { "$it min" },
       )
     }
+    if (settings.transcriptionProvider != TranscriptionProviderId.OPENROUTER) {
     item {
       FluidListGroup {
         FluidListRow(
@@ -632,6 +727,7 @@ private fun LazyListScope.transcriptionSection(
       )
     }
     item { FluidSectionFootnote(text = stringResource(R.string.settings_groq_chunk_rule)) }
+    }
   }
 }
 

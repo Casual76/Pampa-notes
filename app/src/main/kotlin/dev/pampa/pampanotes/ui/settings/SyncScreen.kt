@@ -30,11 +30,12 @@ import dev.antigravity.fluidengine.ui.theme.FluidListDivider
 import dev.antigravity.fluidengine.ui.theme.FluidListGroup
 import dev.antigravity.fluidengine.ui.theme.FluidListRow
 import dev.antigravity.fluidengine.ui.theme.FluidTone
+import dev.pampa.pampanotes.ui.cloudrelay.cloudRelaySection
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.ui.nav.SettingsSection
 
 /**
- * Sincronizzazione: l'indice in cloud. Solo testo — note, cartelle, trascrizioni — mai un file.
+ * Text synchronization and the separate, explicitly enabled temporary file relay.
  *
  * Tre campi e un interruttore. L'accesso oggi e' un codice (quello del server, o di sviluppo);
  * quando ci sara' il client ID di Google, al suo posto ci sara' un bottone. Quello che si vede
@@ -46,6 +47,9 @@ fun SyncSectionRoute(
   viewModel: SyncViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
+  val relay: dev.pampa.pampanotes.ui.cloudrelay.CloudRelayViewModel = hiltViewModel()
+  val relayState by relay.state.collectAsStateWithLifecycle()
+  androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) { relay.reloadJobs() }
   val context = LocalContext.current
   var serverUrl by remember(state.serverUrl) { mutableStateOf(state.serverUrl) }
   var token by remember { mutableStateOf("") }
@@ -56,7 +60,7 @@ fun SyncSectionRoute(
     onBack = onBack,
     ambient = FluidAmbient(tone = FluidHeroTone.PrimaryToSecondary, motif = FluidHeroMotif.Bars),
   ) {
-    item { FluidSectionFootnote(text = stringResource(R.string.sync_intro)) }
+    item { FluidSectionFootnote(text = stringResource(R.string.relay_sync_intro)) }
 
     item {
       FluidTextField(
@@ -219,5 +223,6 @@ fun SyncSectionRoute(
     }
 
     item { FluidSectionFootnote(text = stringResource(R.string.sync_footnote)) }
+    cloudRelaySection(relayState, relay)
   }
 }

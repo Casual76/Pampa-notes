@@ -1,5 +1,12 @@
 package dev.pampa.pampanotes.ui.note
 
+import dev.pampa.pampanotes.ui.cloudrelay.lookupFiles
+import dev.pampa.pampanotes.ui.cloudrelay.relayMessage
+import dev.pampa.pampanotes.core.relay.RelayRepository
+import dev.pampa.pampanotes.core.relay.RelayKind
+import dev.pampa.pampanotes.core.archive.RelayUnavailable
+import dev.pampa.pampanotes.core.files.FilesInUse
+import dev.pampa.pampanotes.R
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -76,6 +83,8 @@ data class NoteUiState(
   val missingSources: Set<String> = emptySet(),
   /** Le parti audio il cui file non e' su questo dispositivo, per id: sul computer o altrove. */
   val missingParts: Set<String> = emptySet(),
+  val relaySources: Set<String> = emptySet(),
+  val relayParts: Set<String> = emptySet(),
   val loading: Boolean = true,
 ) {
   val audioDurationMs: Long get() = sessions.sumOf { it.durationMs }
@@ -84,12 +93,16 @@ data class NoteUiState(
 
 @HiltViewModel
 class NoteViewModel @Inject constructor(
+  @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
   savedStateHandle: SavedStateHandle,
   private val notes: NoteRepository,
   private val folders: FolderRepository,
   private val sessionDao: SessionDao,
   private val sessionRepository: SessionRepository,
-  sources: SourceDao,
+  private val sources: SourceDao,
+  private val relay: RelayRepository,
+  private val relayScheduler: dev.pampa.pampanotes.work.CloudRelayScheduler,
+  private val inUse: FilesInUse,
   private val transcriptDao: TranscriptDao,
   private val transcription: TranscriptionRepository,
   private val settingsStore: PampaSettingsStore,
@@ -105,6 +118,10 @@ class NoteViewModel @Inject constructor(
   private val folderPath = MutableStateFlow("")
   private val missingSources = MutableStateFlow<Set<String>>(emptySet())
   private val missingParts = MutableStateFlow<Set<String>>(emptySet())
+  private val relaySources = MutableStateFlow<Set<String>>(emptySet())
+  private val relayParts = MutableStateFlow<Set<String>>(emptySet())
+  private var availabilityJob: kotlinx.coroutines.Job? = null
+  private var expiryJob: kotlinx.coroutines.Job? = null
 
   /** La materia della nota, e se la nota sta in Registrazioni. */
   @OptIn(ExperimentalCoroutinesApi::class)
@@ -147,6 +164,8 @@ class NoteViewModel @Inject constructor(
     missingParts,
     transcription.observeElsewhere(),
     jobDao.observeLatestFailed(),
+    relaySources,
+    relayParts,
   ) { values ->
     @Suppress("UNCHECKED_CAST")
     NoteUiState(
@@ -169,6 +188,8 @@ class NoteViewModel @Inject constructor(
         val transcript = (values[6] as Map<String, TranscriptEntity>)[failed.sessionId]
         FailedJobs.standing(failed, sessionExists = true, listOfNotNull(transcript), emptyList()) != FailureStanding.SUPERSEDED
       }.associateBy { it.sessionId },
+      relaySources = values[12] as Set<String>,
+      relayParts = values[13] as Set<String>,
       loading = false,
     )
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NoteUiState())
@@ -176,9 +197,17 @@ class NoteViewModel @Inject constructor(
 
   init {
     viewModelScope.launch {
+      settingsStore.settings.map { listOf(it.syncServerUrl, it.syncDeviceId, it.syncAccount, it.syncEnabled.toString()) }
+        .distinctUntilChanged().collect { refreshAvailability() }
+    }
+    viewModelScope.launch {
+      relayScheduler.observe().map { infos -> infos.map { it.id to it.state } }.distinctUntilChanged().collect { refreshAvailability() }
+    }
+    viewModelScope.launch {
       // Quali originali ci sono davvero: con l'indice in cloud una fonte puo' avere la riga e non il file.
       sources.observeByNote(noteId).distinctUntilChanged().collect { list ->
         missingSources.value = withContext(Dispatchers.IO) { list.filter { fetcher.isMissing(it) }.map { it.id }.toSet() }
+        refreshAvailability()
       }
     }
     viewModelScope.launch {
@@ -190,6 +219,34 @@ class NoteViewModel @Inject constructor(
     }
     viewModelScope.launch {
       notes.get(noteId)?.let { folderPath.value = folders.pathString(it.folderId) }
+    }
+  }
+
+  /** Triggered by row changes, foreground return and completed relay work, never recomposition. */
+  fun refreshAvailability() {
+    availabilityJob?.cancel()
+    expiryJob?.cancel()
+    relaySources.value = emptySet()
+    relayParts.value = emptySet()
+    availabilityJob = viewModelScope.launch {
+      val list = sources.byNote(noteId)
+      missingSources.value = withContext(Dispatchers.IO) { list.filter { fetcher.isMissing(it) }.map { it.id }.toSet() }
+      missingParts.value = withContext(Dispatchers.IO) { fetcher.missing(sessionDao.byNote(noteId).flatMap { it.parts }).map { it.id }.toSet() }
+      val available = relay.lookupFiles(RelayKind.SOURCE, missingSources.value)
+      val audio = relay.lookupFiles(RelayKind.AUDIO, missingParts.value)
+      relaySources.value = available.live()
+      relayParts.value = audio.live()
+      expiryJob?.cancel()
+      expiryJob = viewModelScope.launch {
+        while (relaySources.value.isNotEmpty() || relayParts.value.isNotEmpty()) {
+          val next = (available.readyUntil.values + audio.readyUntil.values).filter { it > android.os.SystemClock.elapsedRealtime() }.minOrNull() ?: break
+          kotlinx.coroutines.delay((next - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(1))
+          relaySources.value = available.live()
+          relayParts.value = audio.live()
+        }
+        relaySources.value = emptySet()
+        relayParts.value = emptySet()
+      }
     }
   }
 
@@ -283,17 +340,14 @@ class NoteViewModel @Inject constructor(
   /**
    * L'originale conservato di una fonte, da riaprire; niente per il testo incollato, che un file
    * non l'ha. Se il file sta sul computer di casa e non qui, prima si scarica: [onReady] arriva
-   * dopo, e [onError] se non si e' riusciti. Un originale che non e' mai stato archiviato non si
-   * puo' chiedere a nessuno, e la riga non e' cliccabile.
+   * dopo, e [onError] se non si e' riusciti. Anche un originale senza archivio puo' arrivare dal
+   * relay temporaneo: non si deduce la disponibilita' dal solo marker del computer.
    */
-  fun openSource(source: SourceEntity, onReady: (File) -> Unit, onError: (String) -> Unit, onUnavailable: () -> Unit = {}) {
+  fun openSource(source: SourceEntity, onReady: (File) -> Unit, onError: (String) -> Unit) {
     val file = source.storedFileName?.let(files::sourceFile) ?: return
+    inUse.hold(listOf(FilesInUse.source(file.name)), 15 * 60_000L, owner = this)
     if (file.exists()) {
       onReady(file)
-      return
-    }
-    if (source.archivedAt <= 0) {
-      onUnavailable()
       return
     }
     viewModelScope.launch {
@@ -303,6 +357,10 @@ class NoteViewModel @Inject constructor(
         onReady(got)
       } catch (cancelled: CancellationException) {
         throw cancelled
+      } catch (error: RelayUnavailable) {
+        val message = if (error.result.code == "no_ready_transfer" || error.result.state == dev.pampa.pampanotes.core.relay.RelayState.UNMATCHED)
+          R.string.relay_send_from_original else relayMessage(error.result)
+        onError(context.getString(message))
       } catch (error: Exception) {
         onError(error.message ?: error::class.java.simpleName)
       }

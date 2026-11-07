@@ -5,6 +5,7 @@ import dev.pampa.pampanotes.core.db.AudioPartEntity
 import dev.pampa.pampanotes.core.db.NoteDao
 import dev.pampa.pampanotes.core.db.SessionDao
 import dev.pampa.pampanotes.core.files.AppFiles
+import dev.pampa.pampanotes.core.relay.RelayKind
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.sync.SyncRepository
 import javax.inject.Inject
@@ -17,7 +18,7 @@ data class SharePlan(
   val configured: Boolean,
   val parts: Int,
   val bytes: Long,
-  /** Registrazioni che non sono ne' qui ne' sul computer di casa: la pagina dira' che l'audio manca. */
+  /** Registrazioni senza copia locale, archivio sul computer o trasferimento temporaneo pronto. */
   val unavailable: Int,
   /** Il link gia' vivo per questa nota, se c'e'. */
   val existing: ShareInfo? = null,
@@ -33,7 +34,7 @@ data class ShareProgress(val stage: ShareStage, val partName: String = "", val f
  * Il testo e la trascrizione sono gia' nell'indice in cloud, quindi la prima cosa e' un giro di
  * sincronizzazione — la pagina deve mostrare quello che c'e' *adesso*, non quello di sei ore fa.
  * Poi il server crea il link, e sale l'audio delle sessioni della nota: da qui se c'e', dal
- * computer di casa se sta solo la' ([ArchiveFetcher]), e se non e' in nessuno dei due posti la
+ * trasferimento temporaneo o dal computer di casa ([ArchiveFetcher]), e se non si trova la
  * pagina lo dice invece di fingere. Un `HEAD` prima di ogni parte rende tutto ripetibile: un
  * caricamento interrotto riparte da dove era.
  */
@@ -60,7 +61,7 @@ class ShareRepository @Inject constructor(
   suspend fun plan(noteId: String): SharePlan {
     val server = server()
     val parts = partsOf(noteId)
-    val unavailable = parts.count { !files.audioFile(it.fileName).exists() && it.archivedAt <= 0 }
+    val unavailable = parts.count { !files.audioFile(it.fileName).exists() && !remotelyAvailable(it) }
     val existing = server?.let { (url, token) -> runCatching { api.list(url, token).firstOrNull { it.noteId == noteId } }.getOrNull() }
     return SharePlan(configured = server != null, parts = parts.size, bytes = parts.sumOf { it.sizeBytes }, unavailable = unavailable, existing = existing)
   }
@@ -86,16 +87,16 @@ class ShareRepository @Inject constructor(
           done += part.sizeBytes
           continue
         }
-        val file = files.audioFile(part.fileName)
+        var file = files.audioFile(part.fileName)
         if (!file.exists()) {
-          // Non e' qui e non e' mai arrivata al computer: la pagina dira' che manca. Non si blocca
-          // tutto per una registrazione rimasta su un altro telefono.
-          if (part.archivedAt <= 0) {
+          // Una copia temporanea pronta basta per pubblicare, senza diventare un archivio.
+          // Se manca anche quella, la pagina dira' che l'audio e' rimasto su un altro dispositivo.
+          if (!remotelyAvailable(part)) {
             done += part.sizeBytes
             continue
           }
           onProgress(ShareProgress(ShareStage.FETCHING, part.originalName, base))
-          fetcher.fetchPart(part) { received, size ->
+          file = fetcher.fetchPart(part) { received, size ->
             val within = if (size > 0) received.toFloat() / size else 0f
             onProgress(ShareProgress(ShareStage.FETCHING, part.originalName, 0.05f + 0.95f * (done + within * part.sizeBytes / 2) / total))
           }
@@ -125,4 +126,7 @@ class ShareRepository @Inject constructor(
   }
 
   suspend fun configured(): Boolean = server() != null
+
+  private suspend fun remotelyAvailable(part: AudioPartEntity): Boolean =
+    part.archivedAt > 0 || fetcher.relayAvailable(RelayKind.AUDIO, part.id)
 }

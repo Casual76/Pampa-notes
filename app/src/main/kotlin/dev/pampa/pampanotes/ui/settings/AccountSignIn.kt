@@ -7,6 +7,7 @@ import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.sync.SyncApi
 import dev.pampa.pampanotes.core.sync.SyncReport
 import dev.pampa.pampanotes.core.sync.SyncRepository
+import dev.pampa.pampanotes.work.CloudRelayScheduler
 import dev.pampa.pampanotes.work.WorkScheduler
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -28,6 +29,7 @@ class AccountSignIn @Inject constructor(
   private val repository: SyncRepository,
   private val scheduler: WorkScheduler,
   private val notes: NoteDao,
+  private val relayScheduler: CloudRelayScheduler,
 ) {
 
   /** Com'e' andata: chi e' entrato, e — se si e' aspettato il primo giro — cosa ha portato. */
@@ -74,6 +76,7 @@ class AccountSignIn @Inject constructor(
     // Un giro andato male (rete, un archivio enorme interrotto) non fa fallire l'accesso: la
     // sessione c'e', e il worker ci riprova con i suoi tempi.
     if (!report.ok) scheduler.syncNow(force = true)
+    else relayScheduler.kick()
     return Result(account, report = report.takeIf { it.ok }, notes = notes.count())
   }
 }

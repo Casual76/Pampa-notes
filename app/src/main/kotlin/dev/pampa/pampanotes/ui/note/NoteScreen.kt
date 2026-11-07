@@ -86,6 +86,9 @@ fun NoteRoute(
   viewModel: NoteViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
+  var relayOpen by remember { mutableStateOf(false) }
+  if (relayOpen) dev.pampa.pampanotes.ui.cloudrelay.CloudRelaySheet(onDismiss = { relayOpen = false })
+  androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) { viewModel.refreshAvailability() }
   val context = LocalContext.current
   // Le stringhe dalle risorse osservabili, non dal contesto: cambiano con la lingua e il tema.
   val resources = LocalResources.current
@@ -143,14 +146,12 @@ fun NoteRoute(
     onDismissJob = viewModel::dismissJob,
     onOpenSession = onOpenSession,
     onOpenSessionAt = onOpenSessionAt,
+    onRelayTransfer = { relayOpen = true },
     onOpenSource = { source ->
       viewModel.openSource(
         source,
         onReady = { openWithSystem(context, it, source.mime) },
         onError = { Toast.makeText(context, resources.getString(R.string.note_source_fetch_failed, it), Toast.LENGTH_LONG).show() },
-        // Una pagina a mano e' sempre toccabile — e' una scheda, non una riga spenta — quindi un
-        // tocco che non puo' fare niente deve almeno dire perche'.
-        onUnavailable = { Toast.makeText(context, resources.getString(R.string.note_handwriting_unavailable), Toast.LENGTH_LONG).show() },
       )
     },
     onRederiveHandwriting = {
@@ -193,6 +194,7 @@ private fun NoteScreen(
   onDismissJob: (String) -> Unit,
   onOpenSession: (String) -> Unit,
   onOpenSessionAt: (String, Long) -> Unit,
+  onRelayTransfer: () -> Unit,
   onOpenSource: (SourceEntity) -> Unit,
   onRederiveHandwriting: () -> Unit,
   onRepairRecordings: () -> Unit,
@@ -239,6 +241,7 @@ private fun NoteScreen(
   val retranscribeAllLabel = stringResource(R.string.note_retranscribe_all)
   val chooseSessionsLabel = stringResource(R.string.note_choose_sessions)
   val repairLabel = stringResource(R.string.note_repair)
+  val relayLabel = stringResource(R.string.relay_send_note)
 
   CloseWhenGone(gone = !state.loading && state.note == null, onBack = onBack)
 
@@ -310,6 +313,7 @@ private fun NoteScreen(
                 }
                 NoteTab.SOURCES -> add(FluidContextAction(label = importLabel) { onImport() })
               }
+              add(FluidContextAction(label = relayLabel) { onRelayTransfer() })
               add(FluidContextAction(label = exportLabel) { exporting = true })
               add(FluidContextAction(label = shareLabel) { sharing = true })
               add(FluidContextAction(label = statsLabel) { showingStats = true })
@@ -536,7 +540,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.audioTab(
             if (partIndex > 0) FluidListDivider()
             FluidListRow(
               title = part.originalName,
-              subtitle = Formats.duration(part.durationMs) + " · " + partLocation(part, part.id in state.missingParts),
+              subtitle = Formats.duration(part.durationMs) + " · " + partLocation(part, part.id in state.missingParts, part.id in state.relayParts),
               eyebrow = stringResource(R.string.note_part_number, partIndex + 1),
               meta = Formats.bytes(part.sizeBytes),
               onClick = { onOpenSession(sessionId) },
@@ -759,13 +763,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sourcesTab(
         if (index > 0) FluidListDivider()
         FluidListRow(
           title = source.originalName,
-          subtitle = sourceSubtitle(source, missing = source.id in state.missingSources),
+          subtitle = sourceSubtitle(source, missing = source.id in state.missingSources, relayReady = source.id in state.relaySources),
           eyebrow = sourceKindLabel(source.kind),
           meta = Formats.bytes(source.sizeBytes),
           tone = sourceTone(source.status),
-          // Solo chi ha un file conservato si riapre: il testo incollato non ha un originale. E un
-          // file che sta su un altro dispositivo, non ancora sul computer, non si puo' chiedere a nessuno.
-          onClick = if (source.storedFileName != null && (source.id !in state.missingSources || source.archivedAt > 0)) { { onOpenSource(source) } } else null,
+          // Stored originals can arrive through the relay even without a companion archive.
+          onClick = if (source.storedFileName != null) { { onOpenSource(source) } } else null,
           badge = if (source.status != SourceStatus.OK) {
             { FluidStatusBadge(label = sourceStatusLabel(source.status), tone = sourceTone(source.status)) }
           } else {
@@ -790,9 +793,10 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sourcesTab(
  * normale, e senza dirlo non si capisce perche' una lezione chiede di scaricare o non si trascrive.
  */
 @Composable
-private fun partLocation(part: dev.pampa.pampanotes.core.db.AudioPartEntity, missing: Boolean): String = stringResource(
+private fun partLocation(part: dev.pampa.pampanotes.core.db.AudioPartEntity, missing: Boolean, relayReady: Boolean): String = stringResource(
   when {
     dev.pampa.pampanotes.core.importing.PampaBundleOmissions.isOmitted(part) -> R.string.note_part_omitted_bundle
+    missing && relayReady -> R.string.relay_audio_title
     !missing && part.archivedAt > 0 -> R.string.note_part_here_and_pc
     !missing -> R.string.note_part_here_only
     part.archivedAt > 0 -> R.string.note_part_on_pc
@@ -807,12 +811,13 @@ private fun sourceTone(status: SourceStatus): FluidTone = when (status) {
 }
 
 @Composable
-private fun sourceSubtitle(source: SourceEntity, missing: Boolean): String {
+private fun sourceSubtitle(source: SourceEntity, missing: Boolean, relayReady: Boolean): String {
   val detail = source.detail
   return when {
     // Il file non e' qui: e' la prima cosa da dire, prima di quante lettere ne sono uscite.
+    missing && relayReady -> stringResource(R.string.relay_available)
     missing && source.archivedAt > 0 -> stringResource(R.string.note_source_remote)
-    missing -> stringResource(R.string.note_source_elsewhere)
+    missing -> stringResource(R.string.relay_send_from_original)
     detail != null -> detail
     source.extractedChars > 0 -> pluralStringResource(R.plurals.note_source_chars, source.extractedChars, source.extractedChars)
     else -> stringResource(R.string.note_source_attached)

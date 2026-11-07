@@ -30,7 +30,9 @@ class TinyHttpServer {
 
   private val socket = ServerSocket(0, 8, InetAddress.getLoopbackAddress())
   val port: Int get() = socket.localPort
-  val requests: MutableList<Request> = java.util.Collections.synchronizedList(mutableListOf())
+  private val received: MutableList<Request> = java.util.Collections.synchronizedList(mutableListOf())
+  /** Polling can still append while a test iterates. Expose a snapshot under the same lock. */
+  val requests: List<Request> get() = synchronized(received) { received.toList() }
 
   @Volatile
   private var handler: (Request) -> Response = { Response(404) }
@@ -72,7 +74,7 @@ class TinyHttpServer {
     }
     val parts = requestLine.split(' ')
     val request = Request(parts.getOrElse(0) { "" }, parts.getOrElse(1) { "" }, headers, body.toByteArray())
-    requests += request
+    received += request
     val response = handler(request)
     val reason = when (response.code) { 200 -> "OK"; 404 -> "Not Found"; 500 -> "Internal Server Error"; else -> "Status" }
     val extra = response.headers.entries.joinToString("") { "${it.key}: ${it.value}\r\n" }

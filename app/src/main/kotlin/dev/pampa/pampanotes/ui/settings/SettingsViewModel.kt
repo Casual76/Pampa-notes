@@ -27,6 +27,7 @@ import dev.pampa.pampanotes.core.transcription.EndpointHealth
 import dev.pampa.pampanotes.core.transcription.VramEstimate
 import dev.pampa.pampanotes.core.transcription.EndpointResolver
 import dev.pampa.pampanotes.core.transcription.GroqWhisperProvider
+import dev.pampa.pampanotes.core.transcription.OpenRouterTranscriptionProvider
 import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
 import dev.pampa.pampanotes.core.transcription.TranscriptionError
 import dev.pampa.pampanotes.core.transcription.TranscriptionHttp
@@ -63,6 +64,9 @@ data class ServicesUiState(
   val groqVerified: Boolean = false,
   val groqModels: List<String> = emptyList(),
   val groqCheck: CheckState = CheckState.Idle,
+  val openRouterKeyPresent: Boolean = false,
+  val openRouterModels: List<String> = emptyList(),
+  val openRouterCheck: CheckState = CheckState.Idle,
   val endpointCheck: CheckState = CheckState.Idle,
   val endpointModels: List<String> = emptyList(),
   /** I modelli di chat che Groq dichiara, fra cui scegliere quello del raffinamento. */
@@ -139,7 +143,8 @@ class SettingsViewModel @Inject constructor(
     viewModelScope.launch {
       keys.states.collect { states ->
         val groq = states[ProviderId.GROQ]
-        _services.update { it.copy(groqKeyPresent = groq?.present == true, groqVerified = groq?.verified == true) }
+        _services.update { it.copy(groqKeyPresent = groq?.present == true, groqVerified = groq?.verified == true,
+          openRouterKeyPresent = states[ProviderId.OPENROUTER]?.present == true) }
       }
     }
   }
@@ -189,6 +194,64 @@ class SettingsViewModel @Inject constructor(
     viewModelScope.launch {
       keys.set(ProviderId.GROQ, null)
       _services.update { it.copy(groqModels = emptyList(), groqCheck = CheckState.Idle) }
+    }
+  }
+
+  // --- OpenRouter: dedicated transcription catalogue, separate from the engine chat catalogue. ---
+  private var openRouterLoad: Job? = null
+
+  fun saveOpenRouterKey(key: String) {
+    openRouterLoad?.cancel()
+    openRouterLoad = viewModelScope.launch {
+      _services.update { it.copy(openRouterModels = emptyList(), openRouterCheck = CheckState.Running) }
+      try {
+        keys.set(ProviderId.OPENROUTER, key)
+        fetchOpenRouterModels()
+      } catch (error: Exception) {
+        if (error is kotlinx.coroutines.CancellationException) throw error
+        _services.update { it.copy(openRouterCheck = CheckState.Failed(TranscriptionError.from(error).code)) }
+      }
+    }
+  }
+
+  fun loadOpenRouterModels() {
+    if (openRouterLoad?.isActive == true) return
+    openRouterLoad = viewModelScope.launch {
+      _services.update { it.copy(openRouterCheck = CheckState.Running) }
+      try {
+        fetchOpenRouterModels()
+      } catch (error: Exception) {
+        if (error is kotlinx.coroutines.CancellationException) throw error
+        _services.update { it.copy(openRouterCheck = CheckState.Failed(TranscriptionError.from(error).code)) }
+      }
+    }
+  }
+
+  private suspend fun fetchOpenRouterModels() {
+    val key = keys.key(ProviderId.OPENROUTER) ?: throw TranscriptionError.Unauthorized("Missing OpenRouter key")
+    // /models is public: it cannot verify a key. /key is authenticated and incurs no inference cost.
+    http.getJson("${OpenRouterTranscriptionProvider.BASE_URL}/key", mapOf("Authorization" to "Bearer $key"))
+    val models = OpenRouterTranscriptionProvider(http, key).listModels()
+    if (models.isEmpty()) throw TranscriptionError.UnknownModel("", "No transcription models")
+    keys.markVerified(ProviderId.OPENROUTER, System.currentTimeMillis())
+    val saved = settingsStore.current().openRouterTranscriptionModel
+    if (saved.isBlank()) settingsStore.setOpenRouterTranscriptionModel(models.first())
+    _services.update { it.copy(openRouterModels = models, openRouterCheck =
+      if (saved.isNotBlank() && saved !in models) CheckState.Failed("unknown_model") else CheckState.Ok(modelCount = models.size)) }
+  }
+
+  fun setOpenRouterModel(model: String) = viewModelScope.launch {
+    if (model in services.value.openRouterModels) {
+      settingsStore.setOpenRouterTranscriptionModel(model)
+      _services.update { it.copy(openRouterCheck = CheckState.Ok(modelCount = it.openRouterModels.size)) }
+    }
+  }
+
+  fun clearOpenRouterKey() {
+    openRouterLoad?.cancel()
+    viewModelScope.launch {
+      keys.set(ProviderId.OPENROUTER, null)
+      _services.update { it.copy(openRouterModels = emptyList(), openRouterCheck = CheckState.Idle) }
     }
   }
 
@@ -287,7 +350,7 @@ class SettingsViewModel @Inject constructor(
    */
   fun setCustomOnly(only: Boolean) = viewModelScope.launch {
     settingsStore.setCustomOnly(only)
-    if (only && runCatching { transcription.moveGroqTranscriptionsToComputer() }.getOrDefault(0) > 0) {
+    if (only && runCatching { transcription.moveCloudTranscriptionsToComputer() }.getOrDefault(0) > 0) {
       scheduler.kick(dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider.ID)
     }
   }

@@ -42,8 +42,10 @@ data class BackupSettings(
   /** I pezzi del computer di casa: null, il file intero. */
   val customMaxMinutes: Int? = null,
   val preferredProvider: String = "groq",
+  val openRouterTranscriptionModel: String = "",
   val customOnly: Boolean = false,
-  val autoTranscribeOnImport: Boolean = true,
+  // Explicit old true/false values survive restore; a missing field grants no new upload consent.
+  val autoTranscribeOnImport: Boolean = false,
   /** «Separa le voci» ([dev.pampa.pampanotes.core.settings.SpeakerSeparation]), per nome. */
   val speakerSeparation: String = "PERSONAL",
   val endpointUrl: String = "",
@@ -134,6 +136,7 @@ fun PampaSettings.toBackup(): BackupSettings = BackupSettings(
   groqMaxUploadMb = groqMaxUploadMb,
   customMaxMinutes = customMaxMinutes,
   preferredProvider = preferredProvider.id,
+  openRouterTranscriptionModel = openRouterTranscriptionModel,
   customOnly = customOnly,
   autoTranscribeOnImport = autoTranscribeOnImport,
   speakerSeparation = speakerSeparation.name,

@@ -6,6 +6,8 @@ import dev.pampa.pampanotes.core.audio.ChunkSpec
 data class ChunkTranscript(
   val spec: ChunkSpec,
   val segments: List<RawSegment>,
+  /** Untimed response, kept without inventing segment or word timestamps. */
+  val fallbackText: String = "",
 )
 
 /**
@@ -84,6 +86,15 @@ object TranscriptStitcher {
     if (chunks.isEmpty()) return StitchedTranscript("", emptyList())
 
     val ordered = chunks.sortedBy { it.spec.index }
+    // A mixed response cannot be shown as only its timed fragments: retain every chunk's text.
+    // There is no reliable seam position in untimed text; do not guess word timestamps.
+    if (ordered.any { it.segments.isEmpty() && it.fallbackText.isNotBlank() }) {
+      val text = ordered.map { chunk ->
+        if (chunk.segments.isEmpty()) chunk.fallbackText.trim()
+        else stitch(listOf(chunk), prompt).text
+      }.filter { it.isNotBlank() }.joinToString("\n\n")
+      return StitchedTranscript(text, emptyList())
+    }
     val placed = mutableListOf<StitchedSegment>()
 
     ordered.forEachIndexed { position, chunk ->

@@ -297,7 +297,11 @@ fun RecordingsRoute(
       onDismissRequest = viewModel::dismissTranscribeAll,
       title = pluralStringResource(R.plurals.recordings_transcribe_all_title, ask.sessionIds.size, ask.sessionIds.size),
       message = listOfNotNull(
-        stringResource(if (custom) R.string.recordings_transcribe_all_message_computer else R.string.recordings_transcribe_all_message_groq, duration),
+        stringResource(when (ask.provider) {
+          TranscriptionProviderId.CUSTOM -> R.string.recordings_transcribe_all_message_computer
+          TranscriptionProviderId.OPENROUTER -> R.string.recordings_transcribe_all_message_openrouter
+          else -> R.string.recordings_transcribe_all_message_groq
+        }, duration),
         if (custom) null else stringResource(R.string.recordings_transcribe_all_cloud),
         if (ask.skippedSilent > 0) stringResource(R.string.recordings_transcribe_all_skipped) else null,
       ).joinToString(" "),

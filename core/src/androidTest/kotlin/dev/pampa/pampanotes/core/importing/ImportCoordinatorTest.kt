@@ -15,6 +15,7 @@ import dev.pampa.pampanotes.core.db.SourceKind
 import dev.pampa.pampanotes.core.db.SourceStatus
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.repo.NoteRepository
+import dev.pampa.pampanotes.core.relay.*
 import dev.pampa.pampanotes.core.transcription.ComputerAuth
 import dev.pampa.pampanotes.core.repo.StorageRepository
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
@@ -65,7 +66,15 @@ class ImportCoordinatorTest {
     val archive = ArchiveRepository(db.audioParts(), db.sources(), files, settings, resolver, http, auth)
     val storage = StorageRepository(db.audioParts(), db.sources(), db.jobs(), files, computerOnly, archive, FilesInUse())
     val notes = NoteRepository(db.notes(), db.tags(), storage)
-    val fetcher = ArchiveFetcher(files, settings, resolver, http, db.audioParts(), db.sources(), auth, computerOnly)
+    // Explicitly no relay account: the target app's saved settings must never reach a real API.
+    val relay = RelayRepository(object : RelayAccounts {
+      override suspend fun snapshot(): RelaySession = throw RelayFailure(RelayState.AUTH_REQUIRED, "test_no_session")
+      override suspend fun isCurrent(session: RelaySession) = false
+    }, AndroidRelayLocalFiles(db, files, FilesInUse()), RelayHttp(), RelayJournal(File(workDir, "relay")), object : RelayClock {
+      override fun elapsedMillis() = android.os.SystemClock.elapsedRealtime()
+      override fun wallMillis() = System.currentTimeMillis()
+    })
+    val fetcher = ArchiveFetcher(files, settings, resolver, http, db.audioParts(), db.sources(), auth, computerOnly, relay)
     identities = SdocxSourceIdentity(db.sources(), files, dev.pampa.pampanotes.core.archive.FileMetaApi(
       dev.pampa.pampanotes.core.transcription.TranscriptionHttp("PampaNotes-test"), resolver, settings, auth))
     coordinator = ImportCoordinator(

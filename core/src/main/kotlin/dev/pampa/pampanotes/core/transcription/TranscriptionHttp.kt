@@ -49,6 +49,7 @@ class TranscriptionHttp(
     fileName: String = file.name,
     readTimeoutMillis: Int,
     onProgress: (UploadProgress) -> Unit = {},
+    onResponse: ((JsonElement?) -> Unit)? = null,
   ): JsonElement? {
     val boundary = "----PampaNotes${System.nanoTime().toString(16)}"
     val prelude = buildPrelude(boundary, fields, fileName, fileMime)
@@ -56,7 +57,7 @@ class TranscriptionHttp(
     val total = prelude.size.toLong() + file.length() + epilogue.size
 
     val connection = open(url, "POST", headers, readTimeoutMillis.coerceAtLeast(1))
-    return connection.cancellable(io) { exchange(connection) {
+    return connection.cancellable(io) { exchange(connection, onResponse) {
       connection.doOutput = true
       connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
       // A lunghezza fissa e non a blocchi: cosi' la barra ha un totale da cui calcolare, e il server
@@ -80,7 +81,7 @@ class TranscriptionHttp(
         counting.write(epilogue)
         counting.flush()
       }
-      readBody(connection)
+      readBody(connection, onResponse)
     } }
   }
 
@@ -146,11 +147,11 @@ class TranscriptionHttp(
    * Annullati, non si traduce niente: [mapHttp] chiede il codice di risposta, e su una connessione
    * appena staccata `responseCode` rifarebbe la richiesta da capo.
    */
-  private suspend inline fun <T> exchange(connection: HttpURLConnection, block: () -> T): T = try {
+  private suspend inline fun <T> exchange(connection: HttpURLConnection, noinline onResponse: ((JsonElement?) -> Unit)? = null, block: () -> T): T = try {
     block()
   } catch (t: Throwable) {
     kotlinx.coroutines.currentCoroutineContext().ensureActive()
-    throw TranscriptionError.from(mapHttp(connection, t))
+    throw TranscriptionError.from(mapHttp(connection, t, onResponse))
   } finally {
     connection.disconnect()
   }
@@ -166,18 +167,22 @@ class TranscriptionHttp(
     return connection
   }
 
-  private fun readBody(connection: HttpURLConnection): JsonElement? {
+  private fun readBody(connection: HttpURLConnection, onResponse: ((JsonElement?) -> Unit)? = null): JsonElement? {
     val code = connection.responseCode
     val stream = if (code in 200..299) connection.inputStream else connection.errorStream
     val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+    val parsed = runCatching { json.parseToJsonElement(text) }.getOrNull()
+    // Capture usage.cost on both success and error responses before transcript/error parsing.
+    // Failure to persist accounting propagates; the durable reservation remains conservative.
+    onResponse?.invoke(parsed)
     if (code !in 200..299) {
       throw httpFailure(code, connection.headerFields.orEmpty(), text)
     }
-    return runCatching { json.parseToJsonElement(text) }.getOrNull()
+    return parsed
   }
 
   /** Un errore durante la scrittura puo' nascondere una risposta gia' pronta: 413 arriva cosi'. */
-  private fun mapHttp(connection: HttpURLConnection, t: Throwable): Throwable {
+  private fun mapHttp(connection: HttpURLConnection, t: Throwable, onResponse: ((JsonElement?) -> Unit)? = null): Throwable {
     if (t is kotlinx.coroutines.CancellationException) return t
     // Gia' tradotto da [readBody], col corpo della risposta: rileggerlo qui dava un corpo vuoto (lo
     // stream e' gia' consumato) e un «HTTP 404» al posto di quello che il server aveva detto.
@@ -185,6 +190,7 @@ class TranscriptionHttp(
     val code = runCatching { connection.responseCode }.getOrNull() ?: return AiErrorMapper.wrap(t)
     if (code in 200..299) return AiErrorMapper.wrap(t)
     val body = runCatching { connection.errorStream?.bufferedReader()?.use { it.readText() } }.getOrNull().orEmpty()
+    onResponse?.invoke(runCatching { json.parseToJsonElement(body) }.getOrNull())
     return httpFailure(code, connection.headerFields.orEmpty(), body)
   }
 

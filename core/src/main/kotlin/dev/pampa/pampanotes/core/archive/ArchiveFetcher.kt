@@ -5,6 +5,10 @@ import dev.pampa.pampanotes.core.db.AudioPartEntity
 import dev.pampa.pampanotes.core.db.SourceDao
 import dev.pampa.pampanotes.core.db.SourceEntity
 import dev.pampa.pampanotes.core.files.AppFiles
+import dev.pampa.pampanotes.core.relay.RelayRepository
+import dev.pampa.pampanotes.core.relay.RelayKind
+import dev.pampa.pampanotes.core.relay.RelayResult
+import dev.pampa.pampanotes.core.relay.RelayState
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.transcription.CompanionAuth
 import dev.pampa.pampanotes.core.transcription.ComputerAuth
@@ -64,6 +68,7 @@ class ArchiveFetcher @Inject constructor(
   private val sources: SourceDao,
   private val auth: ComputerAuth,
   private val computerOnly: ComputerOnlyScope,
+  private val relay: RelayRepository,
 ) {
   private val oneAtATime = Mutex()
 
@@ -73,10 +78,17 @@ class ArchiveFetcher @Inject constructor(
   /** Vero se la fonte ha un file conservato e quel file non e' qui. */
   fun isMissing(source: SourceEntity): Boolean = source.storedFileName?.let { !files.sourceFile(it).exists() } ?: false
 
+  /** A live transfer can be fetched, without changing the row's durable archive status. */
+  suspend fun relayAvailable(kind: RelayKind, entityId: String): Boolean = relay.availability(kind, entityId).ready.isNotEmpty()
+
   suspend fun fetchPart(part: AudioPartEntity, onProgress: (received: Long, total: Long) -> Unit = { _, _ -> }): File = oneAtATime.withLock {
     val target = files.audioFile(part.fileName)
     if (target.exists()) return@withLock target
-    if (part.archivedAt <= 0) throw ArchiveMissing(part.originalName)
+    val received = relay.fetch(RelayKind.AUDIO, part.id) { onProgress(it.bytes, it.totalBytes) }
+    if (received.state in setOf(RelayState.RECEIVED, RelayState.ALREADY_LOCAL)) {
+      received.file?.takeIf { it.isFile }?.let { return@withLock it }
+    }
+    if (part.archivedAt <= 0) throw RelayUnavailable(received)
     fetchOrForget(part.sha256, target, part.originalName, onProgress) { audioParts.markArchived(part.id, 0L) }
   }
 
@@ -84,7 +96,11 @@ class ArchiveFetcher @Inject constructor(
     val stored = source.storedFileName ?: throw ArchiveMissing(source.originalName)
     val target = files.sourceFile(stored)
     if (target.exists()) return@withLock target
-    if (source.archivedAt <= 0) throw ArchiveMissing(source.originalName)
+    val received = relay.fetch(RelayKind.SOURCE, source.id) { onProgress(it.bytes, it.totalBytes) }
+    if (received.state in setOf(RelayState.RECEIVED, RelayState.ALREADY_LOCAL)) {
+      received.file?.takeIf { it.isFile }?.let { return@withLock it }
+    }
+    if (source.archivedAt <= 0) throw RelayUnavailable(received)
     fetchOrForget(source.sha256, target, source.originalName, onProgress) { sources.markArchived(source.id, 0L) }
   }
 
@@ -213,3 +229,6 @@ class ArchiveMissing(name: String) : IOException("«$name» non e' ancora arriva
 
 /** Il computer ha risposto, ma con un file diverso da quello atteso: non prende il nome di quello buono. */
 class ArchiveMismatch : IOException("il file arrivato non e' quello atteso")
+
+/** UI translates [result]; absence/expiry never clears a companion archive marker. */
+class RelayUnavailable(val result: RelayResult) : IOException("Invia di nuovo dal dispositivo che conserva il file")

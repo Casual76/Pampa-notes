@@ -185,8 +185,7 @@ class BackupViewModel @Inject constructor(
       if (current.syncEnabled) work.syncNow()
       // Una coda vuota si chiude subito, senza andare in primo piano: svegliarle tutte e due costa
       // niente, e i lavori interrotti dallo stop sono tornati in fila.
-      work.wake(OpenAiCompatProvider.ID)
-      work.kick(GroqWhisperProvider.ID)
+      dev.pampa.pampanotes.core.settings.TranscriptionProviderId.entries.forEach { work.wake(it.id) }
     }
   }
 

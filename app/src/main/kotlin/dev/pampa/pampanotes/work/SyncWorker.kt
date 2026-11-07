@@ -26,6 +26,7 @@ class SyncWorker @AssistedInject constructor(
   private val settingsStore: PampaSettingsStore,
   private val scheduler: WorkScheduler,
   private val repairs: StartupRepairs,
+  private val relayScheduler: CloudRelayScheduler,
 ) : CoroutineWorker(context, params) {
 
   override suspend fun doWork(): Result {
@@ -36,6 +37,7 @@ class SyncWorker @AssistedInject constructor(
     if (repairs.run() && report.ok) scheduler.syncSoon()
     // Le righe nuove sono arrivate: se si e' chiesto di tenere tutto anche qui, i loro file si
     // vanno a prendere adesso. Il worker si chiude da solo se non c'e' niente da scaricare.
+    if (report.ok) relayScheduler.kick()
     val settings = settingsStore.current()
     if (report.ok && settings.mirrorEnabled && settings.hasEndpoint) scheduler.fetchNow(settings.archiveOnlyUnmetered)
     val data = workDataOf(

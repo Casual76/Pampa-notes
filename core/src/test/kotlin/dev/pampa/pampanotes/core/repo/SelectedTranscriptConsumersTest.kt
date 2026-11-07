@@ -26,7 +26,7 @@ class SelectedTranscriptConsumersTest {
   }
 
   private fun transcription() = TranscriptionRepository(mockk(), sessions, mockk(), parts, transcripts, segments,
-    mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk())
+    mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk())
 
   @Test fun `search seeks inside the selected version's RAW parent`() = runTest {
     seed()

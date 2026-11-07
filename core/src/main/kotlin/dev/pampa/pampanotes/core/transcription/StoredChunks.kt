@@ -39,6 +39,7 @@ object StoredChunks {
       startMs = chunk.spec.startMs,
       endMs = chunk.spec.endMs,
       signature = signature,
+      fallbackText = chunk.fallbackText,
       segments = chunk.segments.map { segment ->
         StoredSegment(
           startMs = segment.startMs,
@@ -64,6 +65,7 @@ object StoredChunks {
     if (stored.index != spec.index || stored.startMs != spec.startMs || stored.endMs != spec.endMs) return null
     return ChunkTranscript(
       spec = spec,
+      fallbackText = stored.fallbackText,
       segments = stored.segments.map { segment ->
         RawSegment(
           startMs = segment.startMs,
@@ -95,6 +97,7 @@ object StoredChunks {
     val segments: List<StoredSegment>,
     /** Con quale piano e' nato il pezzo ([signature]). Null nei file delle versioni di prima. */
     val signature: String? = null,
+    val fallbackText: String = "",
   )
 
   @Serializable

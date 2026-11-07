@@ -144,6 +144,56 @@ class TranscriptionRunnerTest {
   private fun spoken(text: String) = TranscriptResult(text, listOf(RawSegment(0, 5_000, text)), "it", 60_000)
 
   @Test
+  fun `OpenRouter whole text survives a later interruption without retranscribing successful parts`() = runBlocking {
+    var interruptSecond = true
+    var firstCalls = 0
+    val provider = object : TranscriptionProvider by FakeProvider({ error("unused") }) {
+      override val id = OpenRouterTranscriptionProvider.ID
+      override suspend fun transcribe(
+        file: File, mime: String, request: TranscribeRequest,
+        onProgress: (UploadProgress) -> Unit, onRemote: (RemoteProgress) -> Unit,
+      ): TranscriptResult {
+        if (file.name.startsWith("a")) firstCalls++
+        if (file.name.startsWith("b") && interruptSecond) throw CancellationException("system stop")
+        return TranscriptResult("Complete text for ${file.name}.", emptyList(), "en", null)
+      }
+    }
+    val parts = listOf(part("a", 0), part("b", 1))
+    assertTrue(runCatching {
+      runner.transcribeSession("resume", parts, provider, TranscribeRequest("model"), 10)
+    }.exceptionOrNull() is CancellationException)
+    interruptSecond = false
+    val result = runner.transcribeSession("resume", parts, provider, TranscribeRequest("model"), 10)
+    assertEquals(1, firstCalls)
+    assertTrue(result.text.contains("Complete text for a.m4a."))
+    assertTrue(result.text.contains("Complete text for b.m4a."))
+    assertTrue(result.segments.all { it.wordsEncoded == null && it.partStartMs == it.partEndMs })
+    // A different chosen model must not reuse the old model's successful cache.
+    runner.transcribeSession("resume", parts, provider, TranscribeRequest("different-model"), 10)
+    assertEquals(2, firstCalls)
+  }
+
+  @Test fun `unarchived missing audio can be fetched from temporary relay before cloud transcription`() = runBlocking {
+    val remote = part("relay", 0).copy(archivedAt = 0)
+    val local = files.audioFile(remote.fileName)
+    assertTrue(local.delete())
+    io.mockk.coEvery { fetcher.fetchPart(remote, any()) } coAnswers {
+      local.apply { writeBytes(ByteArray(16)) }
+    }
+    val cloud = object : TranscriptionProvider by FakeProvider({ spoken("from relay") }) {
+      override val id = OpenRouterTranscriptionProvider.ID
+    }
+    val archived = mutableListOf<String>()
+    val result = runner.transcribeSession("relay-job", listOf(remote), cloud, TranscribeRequest("m"), 10,
+      onArchived = { id, _ -> archived += id })
+    assertEquals("from relay", result.text)
+    coVerify(exactly = 1) { fetcher.fetchPart(remote, any()) }
+    assertTrue(local.isFile)
+    assertEquals(0L, remote.archivedAt)
+    assertTrue(archived.isEmpty())
+  }
+
+  @Test
   fun `una parte muta in mezzo alla lezione si salta`() = runBlocking {
     val provider = FakeProvider { file ->
       if (file.name.startsWith("a")) throw TranscriptionError.NoSpeech("niente") else spoken("La ragion pratica viene prima.")

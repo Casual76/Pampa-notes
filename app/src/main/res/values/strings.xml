@@ -65,7 +65,7 @@
   <string name="home_section_folders">Cartelle</string>
   <string name="home_section_recent">Ultime note</string>
   <string name="home_empty_title">Ancora nessuna nota</string>
-  <string name="home_empty_detail">Condividi una nota di Samsung Notes, un PDF o una registrazione con Pampa Notes, o importala da qui: la cartella si sceglie dopo.</string>
+  <string name="home_empty_detail">Condividi una nota di Samsung Notes, un PDF o una registrazione con Pampa Notes, o importala da qui: la cartella si sceglie dopo. Per importare, organizzare ed esportare non servono computer né chiavi API.</string>
   <string name="home_new_folder">Nuova cartella</string>
   <plurals name="folder_note_count">
     <item quantity="one">%d nota</item>
@@ -463,15 +463,15 @@
   <!-- Impostazioni: servizi -->
   <string name="settings_groq">Groq</string>
   <string name="settings_groq_key">Chiave API</string>
-  <string name="settings_groq_key_hint">Si prende gratis su console.groq.com. Resta cifrata sul telefono.</string>
+  <string name="settings_groq_key_hint">Crea una chiave su console.groq.com. Costi e limiti dipendono dal tuo piano. Resta cifrata sul telefono.</string>
   <string name="settings_groq_verified">Chiave verificata</string>
   <string name="settings_groq_unverified">Chiave salvata, non ancora verificata</string>
-  <string name="settings_groq_missing">Nessuna chiave: la trascrizione nel cloud non parte</string>
+  <string name="settings_groq_missing">Manca la chiave Groq: configura questo servizio per trascrivere con Groq</string>
   <string name="settings_groq_ok">Funziona. Modello: %1$s</string>
   <string name="settings_verify">Salva e verifica</string>
   <string name="settings_ok">Ok</string>
   <string name="settings_endpoint">Computer di casa</string>
-  <string name="settings_endpoint_detail">Il tuo computer con WhisperX: nessun limite di dimensione, e i file non escono di casa.</string>
+  <string name="settings_endpoint_detail">Opzionale: trascrive con WhisperX sul tuo computer, senza inviare audio a Groq o OpenRouter.</string>
   <string name="settings_endpoint_url">Indirizzo in casa</string>
   <string name="settings_endpoint_token">Codice (solo senza account)</string>
   <string name="settings_endpoint_token_hint">Solo se il server ne chiede uno</string>
@@ -491,9 +491,9 @@
 
   <!-- Impostazioni: trascrizione -->
   <string name="settings_custom_only">Solo il computer di casa</string>
-  <string name="settings_custom_only_detail">Mai con Groq, nemmeno in automatico: quello che arriva aspetta che il computer risponda</string>
+  <string name="settings_custom_only_detail">Mai con Groq o OpenRouter, nemmeno in automatico: quello che arriva aspetta che il computer risponda</string>
   <string name="settings_auto_transcribe">Trascrivi appena importi</string>
-  <string name="settings_auto_transcribe_detail">Senza chiederlo ogni volta</string>
+  <string name="settings_auto_transcribe_detail">Quando attivo, dopo ogni import l’audio viene inviato al servizio di trascrizione scelto. Puoi lasciarlo spento e trascrivere in seguito.</string>
   <string name="settings_chunk_minutes">Durata di un pezzo</string>
   <string name="settings_chunk_minutes_detail">Quanto audio sta in una richiesta quando il file va tagliato</string>
   <string name="settings_groq_limit">Limite di Groq</string>
@@ -542,13 +542,13 @@
   <!-- Trascrizione e coda: pezzi del computer di casa, attesa del limite di Groq -->
   <string name="settings_custom_chunk_whole">Intero</string>
   <string name="settings_custom_chunk_detail">Quanto audio il computer di casa trascrive in una volta, per ogni registrazione: un tetto serve a un PC lento, o che si spegne a metà.</string>
-  <string name="job_phase_until">In attesa del limite di Groq, fino alle %1$s</string>
+  <string name="job_phase_until">In attesa del limite del servizio, fino alle %1$s</string>
   <string name="settings_vocabulary">Vocabolario</string>
   <string name="settings_vocabulary_hint">Termidoro, Monti, Feuerbach…</string>
   <string name="settings_vocabulary_detail">Nomi e termini che il modello non conosce. Vederli prima e\u0300 la differenza fra «Termidoro» e «term e d\'oro».</string>
   <string name="language_auto">Auto</string>
   <string name="settings_provider_header">Chi trascrive</string>
-  <string name="settings_provider_header_detail">Quello che importi va a questo servizio, se non scegli altro sul momento.</string>
+  <string name="settings_provider_header_detail">Il servizio per le trascrizioni richieste da te o avviate con “Trascrivi dopo import”. Selezionarlo non invia file.</string>
   <string name="settings_hearing_header">Cosa si sente</string>
   <string name="settings_custom_advanced">Computer di casa, avanzate</string>
   <string name="settings_custom_advanced_detail">Pezzi, memoria video, modello</string>
@@ -686,7 +686,7 @@
   <string name="export_label_raw">grezza</string>
   <string name="export_label_refined">raffinata</string>
   <string name="export_label_no_transcript">Non ancora trascritta.</string>
-  <string name="export_label_no_timings">Questa versione è stata ripulita da un modello e non porta i tempi. La grezza li ha.</string>
+  <string name="export_label_no_timings">Questa versione non porta i tempi per seguire l’audio.</string>
   <string name="export_label_part">Registrazione</string>
   <string name="export_label_sources">Fonti</string>
   <string name="export_label_index">Indice</string>
@@ -818,7 +818,7 @@
   <string name="sidebar_all_folders">Tutte le materie</string>
   <string name="detail_empty_title">Niente di aperto</string>
   <string name="detail_empty_detail">Scegli una nota dalla lista, o importane una.</string>
-  <string name="settings_section_services_detail">Chiave Groq e computer di casa</string>
+  <string name="settings_section_services_detail">Chiavi Groq e OpenRouter, computer di casa</string>
   <string name="settings_section_transcription_detail">Servizio, lingua, voci, computer</string>
   <string name="settings_section_refinement_detail">Quanto ripulire, e con quale modello</string>
   <string name="settings_section_appearance_detail">Tema, colori, aptica</string>
@@ -900,7 +900,7 @@
   <string name="settings_models_missing">Verifica la chiave Groq in Servizi per vedere i modelli fra cui scegliere.</string>
   <string name="settings_subject_accent_detail">Con i colori del marchio, l\'app prende il colore della materia in cui ti trovi. Con Material You o una tinta scelta, resta quella.</string>
   <string name="note_sources_hint">I file da cui è arrivato il testo. Tocca una riga per riaprire l\'originale.</string>
-  <string name="session_words_estimated">I tempi delle singole parole sono stimati: Groq dà i tempi di ogni frase, non di ogni parola. Con il computer di casa sono allineati davvero.</string>
+  <string name="session_words_estimated">I tempi delle singole parole sono stimati dai tempi delle frasi restituiti dal servizio.</string>
   <string name="session_incoming_title">In arrivo dal computer · %1$s</string>
   <plurals name="session_incoming_pieces">
     <item quantity="one">%1$d pezzo di %2$d</item>
@@ -947,7 +947,7 @@
   <string name="backup_restored_title">Ripristinato</string>
   <string name="backup_restored_message">L\'app riparte per rileggere l\'archivio da capo.</string>
   <string name="backup_restart">Riavvia</string>
-  <string name="backup_secrets_note">La chiave di Groq e il token del server non entrano nel backup: sono cifrati con il telefono, e su un altro dispositivo non si aprirebbero comunque. Si riscrivono in Servizi.</string>
+  <string name="backup_secrets_note">Le chiavi API e il token del server non entrano nel backup: restano cifrati sul dispositivo. Si riscrivono in Servizi.</string>
 
   <!-- Archiviazione -->
   <string name="storage_audio">Registrazioni</string>
@@ -1008,11 +1008,11 @@
   <!-- Primo avvio -->
   <string name="onboarding_step">Passo %1$d di %2$d</string>
   <string name="onboarding_welcome_title">Pampa Notes</string>
-  <string name="onboarding_welcome_detail">Un ponte fra gli appunti che prendi altrove e gli assistenti a cui li dai da leggere.</string>
+  <string name="onboarding_welcome_detail">Raccogli gli appunti, organizzali ed esportali dal telefono: non servono un computer né un account. La trascrizione audio si configura a parte.</string>
   <string name="onboarding_step_import">Importa</string>
   <string name="onboarding_step_import_detail">Samsung Notes, PDF, Word, testo e registrazioni</string>
   <string name="onboarding_step_transcribe">Trascrivi</string>
-  <string name="onboarding_step_transcribe_detail">Whisper, su Groq o sul tuo computer</string>
+  <string name="onboarding_step_transcribe_detail">Groq, OpenRouter o il tuo computer</string>
   <string name="onboarding_step_export">Esporta</string>
   <string name="onboarding_step_export_detail">Un pacchetto Markdown con le regole per Claude, ChatGPT o Gemini</string>
   <string name="onboarding_welcome_recordings">Un\'intervista, una riunione, un viaggio: l\'audio che non è scuola va in Registrazioni, fuori dalle materie.</string>
@@ -1026,9 +1026,9 @@
   <string name="onboarding_import_picker">Dal tasto importa</string>
   <string name="onboarding_import_picker_detail">In Altro, dalla schermata di una materia, o da Registrazioni</string>
   <string name="onboarding_provider_title">Chi trascrive</string>
-  <string name="onboarding_provider_detail">Groq è nel cloud e vuole una chiave gratuita. Il computer di casa trascrive sul tuo PC e dà anche i tempi di ogni parola.</string>
+  <string name="onboarding_provider_detail">Groq e OpenRouter trascrivono nel cloud con la tua chiave, senza companion. Il computer di casa trascrive sul tuo PC. Puoi configurare il servizio ora o più tardi.</string>
   <string name="onboarding_server_detail">L\'indirizzo del computer di casa, con la porta.</string>
-  <string name="onboarding_provider_later">Si può anche lasciare stare adesso: la stessa pagina sta in Impostazioni, sotto Servizi.</string>
+  <string name="onboarding_provider_later">Puoi continuare senza un servizio: importa e organizza subito, poi configura la trascrizione in Impostazioni → Servizi. Il servizio predefinito si sceglie in Trascrizione.</string>
   <string name="onboarding_backup_title">Una copia al sicuro</string>
   <string name="onboarding_backup_detail">Una cartella dove tenere i backup e i pacchetti esportati. Va bene anche Drive: i file ci finiscono dentro come in una cartella qualsiasi.</string>
   <string name="onboarding_backup_choose">Scegli la cartella</string>
@@ -1230,7 +1230,7 @@
   <string name="export_summary_sources">Originali: %1$s</string>
   <string name="export_summary_no_rules">senza regole</string>
   <string name="export_transcript_best_effect">Quella che vedi nell\'app: la ripulita se c\'è, altrimenti la grezza. Negli ZIP, se esporti una trascrizione ripulita, viene inclusa anche la grezza di origine necessaria per i tempi audio.</string>
-  <string name="export_transcript_raw_effect">Sempre quella di Whisper: l\'unica con i tempi, e che nessun modello ha riscritto.</string>
+  <string name="export_transcript_raw_effect">Il testo originale del servizio di trascrizione, senza riscrittura. I tempi dipendono dal modello.</string>
   <string name="export_skill_effect">Dicono all\'assistente cosa sono appunti e trascrizioni, e come citarli. SKILL.md per Claude, instructions.md per gli altri.</string>
   <string name="export_audio_effect">I file audio, per chi vuole riascoltare. Pesano; quelli che stanno sul computer di casa li scarico prima.</string>
   <string name="export_audio_effect_size">%1$s di audio, per chi vuole riascoltare. Pesano; quelli che stanno sul computer di casa li scarico prima.</string>
@@ -1451,7 +1451,7 @@
   <string name="install_title">Installa sul tuo computer</string>
   <string name="install_row_detail">Il companion per Windows: scaricalo sul PC, installalo, inquadra il QR</string>
   <string name="install_onboarding_row">Non ce l\'hai ancora? Installalo sul tuo computer</string>
-  <string name="install_intro">Il tuo computer trascrive le lezioni al posto di Groq: niente limiti di dimensione, i file restano in casa, e le parole si allineano una per una.</string>
+  <string name="install_intro">Il companion è opzionale: trascrive con WhisperX sul tuo computer e allinea le parole ai tempi audio. Per importare, organizzare ed esportare non serve un PC; Groq e OpenRouter trascrivono anche senza companion.</string>
   <string name="install_needs_header">Cosa serve</string>
   <string name="install_need_windows">Windows 10 o 11</string>
   <string name="install_need_windows_detail">Il setup non chiede l\'amministratore, tranne una volta per il firewall.</string>
@@ -1673,4 +1673,73 @@
   <string name="note_part_omitted_bundle">non incluso nel pacchetto</string>
   <string name="session_bundle_omitted_title">Audio non incluso nel pacchetto</string>
   <string name="session_bundle_omitted_detail">Chiedi a chi ha condiviso le note un pacchetto che includa le registrazioni, poi importalo scegliendo di aggiornare le note. Questi file non arriveranno automaticamente dal tuo computer.</string>
+  <string name="provider_openrouter">OpenRouter</string>
+  <string name="error_credit_required">Il servizio richiede credito. Controlla il saldo del tuo account OpenRouter prima di riprovare.</string>
+  <string name="openrouter_requirements">Trascrive nel cloud senza computer di casa. Servono una chiave OpenRouter e credito per il modello scelto; l’audio viene inviato a OpenRouter e al suo fornitore.</string>
+  <string name="openrouter_key">Chiave API OpenRouter</string>
+  <string name="openrouter_key_hint">Crea una chiave su openrouter.ai. Resta cifrata su questo dispositivo e non entra nel backup.</string>
+  <string name="openrouter_key_saved">Chiave salvata sul dispositivo. Puoi sostituirla o rimuoverla qui.</string>
+  <string name="openrouter_refresh">Aggiorna i modelli di trascrizione</string>
+  <string name="openrouter_remove_key">Rimuovi la chiave OpenRouter</string>
+  <string name="openrouter_loading">Verifico la chiave e carico i modelli di trascrizione…</string>
+  <string name="openrouter_model">Modello di trascrizione</string>
+  <string name="openrouter_selected">Modello salvato: %1$s</string>
+  <string name="openrouter_timing_detail">I tempi di frasi e parole dipendono dal modello. I modelli con risposta solo testo conservano tutta la trascrizione, senza evidenziazione sincronizzata.</string>
+  <string name="openrouter_vocabulary_ignored">OpenRouter ignora il vocabolario. La preferenza resta disponibile per Groq e per il computer di casa.</string>
+  <string name="openrouter_chunks">Trascrizione nel cloud, pezzi audio</string>
+  <string name="job_phase_awaiting_openrouter">OpenRouter trascrive</string>
+  <string name="recordings_transcribe_all_message_openrouter">%1$s di audio, trascritte da OpenRouter.</string>
+  <string name="session_untimed">Questo modello ha restituito testo senza tempi. Il testo è completo; evidenziazione e salti alle parole non sono disponibili.</string>
+  <string name="services_setup_detail">Configura un servizio alla volta. Groq e OpenRouter richiedono internet e una tua chiave API, senza computer. Puoi importare, organizzare ed esportare anche senza configurare nulla.</string>
+  <string name="services_choose_active">Scegli il servizio predefinito in Trascrizione. Aprire questi moduli non cambia chi trascrive.</string>
+  <string name="services_computer_missing">Nessun computer collegato. Configuralo qui oppure scegli Groq o OpenRouter in Trascrizione per usare il cloud.</string>
+  <string name="services_computer_setup">Indirizzi e collegamento del computer</string>
+
+    <!-- Temporary same-account file relay. -->
+    <string name="relay_title">Trasferisci file</string>
+    <string name="relay_intro">Accedi allo stesso account e sincronizza il testo su entrambi i dispositivi. Tienili online e ricevi entro dieci minuti dall’inizio dell’invio, caricamento incluso. I file passano temporaneamente dal cloud; il computer non serve.</string>
+    <string name="relay_auto">Ricevi dopo la sincronizzazione</string>
+    <string name="relay_auto_detail">Solo su questo dispositivo. Non invia file e non garantisce di riceverli prima della scadenza.</string>
+    <string name="relay_account">Serve lo stesso account</string>
+    <string name="relay_auth">Accedi in Sincronizzazione, attivala e completa un giro su entrambi i dispositivi. Se la sessione è scaduta, accedi di nuovo.</string>
+    <string name="relay_send_note">Invia file agli altri dispositivi</string>
+    <string name="relay_send_all">Invia tutti i file locali</string>
+    <string name="relay_receive">Ricevi adesso</string>
+    <string name="relay_resume">Aggiorna e riprendi</string>
+    <string name="relay_cancel">Interrompi trasferimenti</string>
+    <string name="relay_cancelled">Trasferimenti interrotti. Puoi riprenderli entro la scadenza originale; dopo serve un nuovo invio.</string>
+    <string name="relay_preparing">Preparazione dei file</string>
+    <string name="relay_working">Trasferimento in attesa o in corso</string>
+    <string name="relay_wait_detail">Android può ritardare il lavoro. Lascia entrambi i dispositivi online e controlla gli esiti dei singoli file.</string>
+    <string name="relay_none">Nessun file disponibile in questo giro. Sincronizza il testo e, sul dispositivo che conserva il file, scegli Invia.</string>
+    <string name="relay_file">File trasferito</string>
+    <string name="relay_resend_note">Invia di nuovo i file della nota</string>
+    <string name="relay_resend_detail">Crea una nuova finestra per i file terminati di questa nota. Gli invii ancora attivi mantengono la loro scadenza.</string>
+    <string name="relay_limits">Ogni file: massimo 256 MiB. Per account: 512 MiB e 8 trasferimenti, anche in attesa di pulizia. La ricezione automatica è spenta all’inizio. Questo non è un archivio: gli originali restano sul dispositivo che li invia. Il blocco della trascrizione cloud di una cartella non impedisce questo invio esplicito.</string>
+    <string name="relay_queued">In coda: non ancora disponibile per la ricezione</string>
+    <string name="relay_uploading">Invio in corso</string>
+    <string name="relay_ready">Pronto temporaneamente: ricevi sull’altro dispositivo prima della scadenza</string>
+    <string name="relay_downloading">Ricezione in corso</string>
+    <string name="relay_received">Ricevuto e verificato su questo dispositivo</string>
+    <string name="relay_local">File già presente su questo dispositivo</string>
+    <string name="relay_retry">Connessione interrotta. Controlla la rete e riprendi entro la scadenza.</string>
+    <string name="relay_expired">Scaduto. Invia di nuovo dal dispositivo che conserva il file.</string>
+    <string name="relay_quota">Spazio temporaneo o numero di invii esaurito. Attendi la pulizia, poi invia di nuovo.</string>
+    <string name="relay_unsupported">File non trasferibile. Controlla che sia presente e non superi 256 MiB.</string>
+    <string name="relay_unmatched">File in attesa delle note corrispondenti. Sincronizza il testo, poi ricevi di nuovo.</string>
+    <string name="relay_account_changed">Account cambiato. Torna all’account delle note e riprova.</string>
+    <string name="relay_row_changed">Nota o file cambiati. Aggiorna le note prima di riprovare.</string>
+    <string name="relay_source_changed">L’originale è cambiato. Controlla il file sul dispositivo di origine e invia di nuovo.</string>
+    <string name="relay_integrity">Verifica del file non riuscita. Conserva l’originale e invialo di nuovo.</string>
+    <string name="relay_queue_full">Coda piena. Termina o interrompi gli invii in corso prima di riprovare.</string>
+    <string name="relay_failed">Trasferimento non riuscito. Controlla connessione e account, aggiorna l’app e riprova.</string>
+    <string name="relay_protocol">Il servizio di trasferimento non è compatibile o non è disponibile. Aggiorna l’app e verifica che il servizio sia aggiornato, poi riprova.</string>
+    <string name="relay_bytes">%1$s di %2$s</string>
+    <string name="relay_expiry">Scadenza fissa: %1$s</string>
+    <string name="relay_available">Disponibile temporaneamente: tocca per scaricare</string>
+    <string name="relay_send_from_original">Invia di nuovo dal dispositivo che conserva il file. Tieni entrambi online e ricevi entro dieci minuti.</string>
+    <string name="relay_audio_available">File scaricabili (%1$s), anche tramite trasferimento temporaneo. Scaricali adesso; dopo dieci minuti serve un nuovo invio.</string>
+    <string name="relay_check_download">Cerca e scarica i file</string>
+    <string name="relay_sync_intro">La sincronizzazione conserva testo, cartelle e trascrizioni. Per audio e originali usa i trasferimenti temporanei qui sotto, oppure l’archivio opzionale sul computer.</string>
+    <string name="relay_audio_title">Registrazioni disponibili da scaricare</string>
 </resources>

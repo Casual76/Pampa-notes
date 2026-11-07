@@ -101,8 +101,11 @@ export function pageHtml(): string {
   }
   function el(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
 
-  // Le parole di un segmento, in tempo di sessione. Senza parole: il segmento intero e' una parola.
+  // I contenitori text-only hanno durata zero anche dopo lo scarto della parte nella sessione.
+  function untimed(seg) { return seg.sessionEndMs <= seg.sessionStartMs; }
+  // Le parole di un segmento temporizzato, in tempo di sessione.
   function wordsOf(seg) {
+    if (untimed(seg)) return [];
     var out = [];
     if (seg.words) {
       var lines = seg.words.split('\\n');
@@ -143,6 +146,7 @@ export function pageHtml(): string {
   }
   // Paragrafi: si spezza su una pausa lunga, quando il testo si fa lungo o cambia la voce, come nell'app.
   function paragraphs(segments) {
+    if (segments.some(untimed)) return [];
     var out = [], cur = null, chars = 0, numbers = voices(segments);
     for (var i = 0; i < segments.length; i++) {
       var seg = segments[i];
@@ -243,7 +247,13 @@ export function pageHtml(): string {
     if (!raw && !refined) { container.appendChild(el('div', 'missing', 'Questa lezione non è stata trascritta.')); return; }
     var views = {};
     if (refined) views.refined = el('div', 'card notes', md(refined.text));
-    if (raw) {
+    // Un solo contenitore senza tempi rende non allineabile il testo completo, anche nei misti.
+    // raw.text conserva tutto il parlato; i segmenti non sono una sua ricostruzione affidabile.
+    var rawUntimed = raw && (!raw.segments.length || raw.segments.some(untimed));
+    if (rawUntimed) {
+      views.raw = el('div', 'card notes static', md(raw.text));
+      views.raw.appendChild(el('p', 'note', 'Questa trascrizione non ha tempi allineati all’audio.'));
+    } else if (raw) {
       var rawView = el('div', playable ? 'card' : 'card static');
       var paras = paragraphs(raw.segments), names = session.voiceNames || {};
       for (var p = 0; p < paras.length; p++) {
@@ -279,7 +289,7 @@ export function pageHtml(): string {
       function show(which) {
         holder.innerHTML = ''; holder.appendChild(views[which]);
         bRef.setAttribute('aria-selected', which === 'refined'); bRaw.setAttribute('aria-selected', which === 'raw');
-        if (which === 'refined') holder.appendChild(el('p', 'note', 'Testo ripulito da un modello (' + esc(refined.model) + '). Le parole che si accendono con l’audio sono nella grezza.'));
+        if (which === 'refined') holder.appendChild(el('p', 'note', 'Testo ripulito da un modello (' + esc(refined.model) + ').' + (rawUntimed ? '' : ' Le parole che si accendono con l’audio sono nella grezza.')));
       }
       bRef.addEventListener('click', function () { show('refined'); }); bRaw.addEventListener('click', function () { show('raw'); });
       show(playable ? 'raw' : 'refined');

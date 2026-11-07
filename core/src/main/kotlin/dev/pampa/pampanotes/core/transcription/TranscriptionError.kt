@@ -16,6 +16,9 @@ sealed class TranscriptionError(message: String, cause: Throwable? = null) : Exc
   /** Chiave mancante, sbagliata o revocata. Riprovare non serve: serve una chiave nuova. */
   class Unauthorized(message: String) : TranscriptionError(message)
 
+  /** The key works, but the cloud account needs credit. Retrying cannot add it. */
+  class CreditRequired(message: String) : TranscriptionError(message)
+
   /** Il limite di richieste. [retryAfterSec] e' quanto il server chiede di aspettare, quando lo dice. */
   class RateLimited(val retryAfterSec: Double?, message: String) : TranscriptionError(message)
 
@@ -47,6 +50,9 @@ sealed class TranscriptionError(message: String, cause: Throwable? = null) : Exc
   /** Il modello chiesto non esiste piu' sul servizio. */
   class UnknownModel(val model: String, message: String) : TranscriptionError(message)
 
+  class CompanionOnly : TranscriptionError("Cloud transcription disabled")
+  class CloudControl(val reason: String) : TranscriptionError(reason)
+
   class Cancelled : TranscriptionError("annullato")
 
   /**
@@ -72,6 +78,7 @@ sealed class TranscriptionError(message: String, cause: Throwable? = null) : Exc
   val code: String
     get() = when (this) {
       is Unauthorized -> "unauthorized"
+      is CreditRequired -> "credit_required"
       is RateLimited -> "rate_limited"
       is FileTooLarge -> "file_too_large"
       is Server -> "server"
@@ -81,6 +88,8 @@ sealed class TranscriptionError(message: String, cause: Throwable? = null) : Exc
       is Parse -> "parse"
       is NoSpeech -> "no_speech"
       is UnknownModel -> "unknown_model"
+      is CompanionOnly -> "companion_only"
+      is CloudControl -> reason
       is Cancelled -> "cancelled"
       is BlobMissing -> "blob_missing"
       is OwnerOnly -> "owner_only"
@@ -103,10 +112,10 @@ sealed class TranscriptionError(message: String, cause: Throwable? = null) : Exc
       is AiError.Unauthorized -> Unauthorized(t.message.orEmpty())
       is AiError.RateLimited -> RateLimited(t.retryAfterSec, t.message.orEmpty())
       is AiError.Server -> Server(t.code, t.message.orEmpty())
-      is AiError.BadRequest -> if (t.code == 413) {
-        FileTooLarge(null, t.message.orEmpty())
-      } else {
-        Parse(t.message.orEmpty(), t)
+      is AiError.BadRequest -> when (t.code) {
+        402 -> CreditRequired(t.message.orEmpty())
+        413 -> FileTooLarge(null, t.message.orEmpty())
+        else -> Parse(t.message.orEmpty(), t)
       }
       is AiError.Network -> Network(t.message.orEmpty(), t)
       is AiError.Timeout -> Timeout(t.message.orEmpty(), t)

@@ -50,6 +50,7 @@ fun TranscribeOptionsSheet(
   onDismiss: () -> Unit,
   onConfirm: (TranscribeOverrides) -> Unit,
   viewModel: TranscribeOptionsViewModel = hiltViewModel(),
+  sessionId: String? = null,
 ) {
   val state by viewModel.state.collectAsStateWithLifecycle()
   LaunchedEffect(Unit) { viewModel.load() }
@@ -116,6 +117,10 @@ fun TranscribeOptionsSheet(
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
+      sessionId?.let {
+        val preflight: dev.pampa.pampanotes.ui.cloudcost.CloudPreflightViewModel = hiltViewModel(key = "transcribe-options-preflight")
+        dev.pampa.pampanotes.ui.cloudcost.CloudPreflightSummary(listOf(it), viewModel = preflight)
+      }
 
       // --- Cosa si sente ---------------------------------------------------------------------
       FluidSectionHeader(title = stringResource(R.string.settings_language_header))
@@ -134,7 +139,9 @@ fun TranscribeOptionsSheet(
         },
       )
 
+      val onOpenRouter = settings?.transcriptionProvider == dev.pampa.pampanotes.core.settings.TranscriptionProviderId.OPENROUTER
       FluidTextField(
+        enabled = !onOpenRouter,
         value = vocabulary,
         onValueChange = { vocabulary = it },
         label = stringResource(R.string.settings_vocabulary),
@@ -144,7 +151,7 @@ fun TranscribeOptionsSheet(
         showClearButton = false,
         modifier = Modifier.fillMaxWidth(),
       )
-      FluidSectionFootnote(text = stringResource(R.string.tx_opts_vocabulary_detail))
+      FluidSectionFootnote(text = stringResource(if (onOpenRouter) R.string.openrouter_vocabulary_ignored else R.string.tx_opts_vocabulary_detail))
 
       // --- Il computer di casa ---------------------------------------------------------------
       if (state.onComputer) {

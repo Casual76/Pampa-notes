@@ -30,4 +30,28 @@ class SessionAudioAvailabilityTest {
     val session = SessionEntity("s", "n", date = "2026-11-05", position = 0, activeTranscriptId = "author", createdAt = 1, updatedAt = 1)
     assertEquals(author, SessionUiState(session = session, transcripts = listOf(author, local)).raw)
   }
+
+  @Test fun `live relay makes an unarchived existing row fetchable without treating it as locally playable`() {
+    val remote = omitted.copy(fileName = "uuid.m4a", archivedAt = 0)
+    val waiting = SessionUiState(parts = listOf(remote), missing = listOf(remote))
+    assertFalse(waiting.fetchable)
+    assertFalse(waiting.transcribableHere)
+    val ready = waiting.copy(relayParts = setOf(remote.id))
+    assertTrue(ready.fetchable)
+    assertTrue(ready.transcribableHere)
+    assertFalse(ready.playable)
+    assertEquals(0L, remote.archivedAt)
+    assertFalse(ready.copy(relayParts = emptySet()).fetchable)
+    assertTrue(ready.copy(missing = emptyList()).playable)
+  }
+
+  @Test fun `every missing part must be obtainable and unknown disk state cannot transcribe`() {
+    val first = omitted.copy(fileName = "a.m4a", id = "a", archivedAt = 1)
+    val second = first.copy(id = "b", fileName = "b.m4a", archivedAt = 0)
+    val partial = SessionUiState(parts = listOf(first, second), missing = listOf(first, second))
+    assertFalse(partial.fetchable)
+    assertTrue(partial.copy(relayParts = setOf(second.id)).fetchable)
+    assertFalse(partial.copy(missing = null).transcribableHere)
+    assertFalse(SessionUiState(parts = listOf(omitted), missing = listOf(omitted), relayParts = setOf(omitted.id)).transcribableHere)
+  }
 }

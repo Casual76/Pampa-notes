@@ -89,7 +89,7 @@ object TranscriptParagraphs {
   }
 
   fun split(segments: List<SegmentEntity>, maxSegments: Int = Int.MAX_VALUE): List<Paragraph> {
-    if (segments.isEmpty()) return emptyList()
+    if (segments.isEmpty() || segments.any { it.partEndMs <= it.partStartMs }) return emptyList()
     val voices = voices(segments)
     val result = mutableListOf<Paragraph>()
     var current = mutableListOf<SegmentEntity>()

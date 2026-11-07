@@ -34,6 +34,7 @@ class PampaNotesApp : Application(), Configuration.Provider {
   @Inject lateinit var workerFactory: HiltWorkerFactory
   @Inject lateinit var remoteConfig: EngineRemoteConfig
   @Inject lateinit var settingsStore: PampaSettingsStore
+  @Inject lateinit var relayScheduler: dev.pampa.pampanotes.work.CloudRelayScheduler
   @Inject lateinit var scheduler: WorkScheduler
   @Inject lateinit var transcription: TranscriptionRepository
   @Inject lateinit var handwriting: HandwritingPages
@@ -72,6 +73,7 @@ class PampaNotesApp : Application(), Configuration.Provider {
         // processo, e prima che qualunque worker prenda un lavoro: ogni worker la chiama a sua
         // volta, e chi arriva secondo aspetta che il primo abbia finito (vedi il repository).
         transcription.requeueInterruptedOnce()
+        relayScheduler.kick() // Resume saved transfers; receiving still requires the opt-in.
       }
       runCatching {
         val settings = settingsStore.current()
@@ -81,8 +83,9 @@ class PampaNotesApp : Application(), Configuration.Provider {
         if (settings.syncEnabled) scheduler.syncNow()
         // Una fila che aspetta il computer di casa: aprire l'app e' un buon momento per riprovare,
         // prima del tentativo rimandato. Il worker guarda se risponde, e se no torna ad aspettare.
-        if (transcription.queuedCount(OpenAiCompatProvider.ID) > 0) scheduler.wake(OpenAiCompatProvider.ID)
-        if (transcription.queuedCount(GroqWhisperProvider.ID) > 0) scheduler.kick(GroqWhisperProvider.ID)
+        for (provider in dev.pampa.pampanotes.core.settings.TranscriptionProviderId.entries) {
+          if (transcription.queuedCount(provider.id) > 0) scheduler.wake(provider.id)
+        }
       }
     }
     // Il segno «in trascrizione su» segue la coda di questo dispositivo, e al primo giro toglie

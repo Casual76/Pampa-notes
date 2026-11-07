@@ -2,16 +2,22 @@
   "name": "pampa-notes-sync",
   "private": true,
   "version": "0.1.0",
-  "description": "L'indice in cloud di Pampa Notes: un Worker Cloudflare con D1. Solo testo, mai file.",
+  "description": "Indice persistente, condivisioni e relay privato temporaneo di Pampa Notes su D1/R2.",
   "scripts": {
     "dev": "wrangler dev --local --ip 0.0.0.0 --port 8787",
     "schema:local": "wrangler d1 execute pampa-notes --local --file=./schema.sql",
     "schema:remote": "wrangler d1 execute pampa-notes --remote --file=./schema.sql",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:relay": "node --test tests/relay.test.mjs",
+    "test:page": "node --test tests/page.test.mjs",
+    "test:regressions": "node tests/regressions.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.0.0",
+    "esbuild": "0.28.1",
+    "linkedom": "0.18.12",
+    "miniflare": "5.20260921.0-alpha",
     "typescript": "^5.6.0",
     "wrangler": "^4.0.0"
   }

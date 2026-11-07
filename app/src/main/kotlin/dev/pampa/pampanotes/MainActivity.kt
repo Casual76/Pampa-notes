@@ -60,8 +60,9 @@ class MainActivity : ComponentActivity() {
     lastWake = now
     lifecycleScope.launch {
       runCatching {
-        if (transcription.readyToWake(OpenAiCompatProvider.ID)) scheduler.wake(OpenAiCompatProvider.ID)
-        if (transcription.readyToWake(GroqWhisperProvider.ID)) scheduler.wake(GroqWhisperProvider.ID)
+        for (provider in dev.pampa.pampanotes.core.settings.TranscriptionProviderId.entries) {
+          if (transcription.readyToWake(provider.id)) scheduler.wake(provider.id)
+        }
       }
     }
   }

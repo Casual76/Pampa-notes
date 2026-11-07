@@ -49,6 +49,7 @@ import dev.pampa.pampanotes.ui.common.RowIcon
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
 import dev.pampa.pampanotes.ui.settings.CheckState
+import dev.pampa.pampanotes.ui.settings.openRouterSettings
 import dev.pampa.pampanotes.ui.settings.ServicesUiState
 import dev.pampa.pampanotes.ui.settings.SettingsViewModel
 import dev.pampa.pampanotes.ui.settings.installCompanionContent
@@ -87,8 +88,12 @@ fun OnboardingRoute(
   val services by viewModel.services.collectAsStateWithLifecycle()
   val account by onboarding.account.collectAsStateWithLifecycle()
   val context = LocalContext.current
+  androidx.compose.runtime.LaunchedEffect(services.openRouterKeyPresent) {
+    if (services.openRouterKeyPresent) viewModel.loadOpenRouterModels()
+  }
 
   var groqKey by remember { mutableStateOf("") }
+  var openRouterKey by remember { mutableStateOf("") }
   // Gli indirizzi sopravvivono a una rotazione: riscriverli a meta' primo avvio e' il modo di farli
   // saltare. Il codice e la chiave di Groq invece no — lo stato salvato finisce su disco, in chiaro,
   // e un segreto non ci va: al massimo si riscrive.
@@ -106,6 +111,10 @@ fun OnboardingRoute(
     ) {
       viewModel.saveEndpoint(endpointUrl, endpointRemoteUrl, endpointToken)
       endpointToken = ""
+    }
+    if (step == OnboardingStep.PROVIDER && openRouterKey.isNotBlank()) {
+      viewModel.saveOpenRouterKey(openRouterKey)
+      openRouterKey = ""
     }
     // Anche la chiave di Groq: incollata e lasciata li', andava persa, e la prima lezione falliva.
     if (step == OnboardingStep.PROVIDER && groqKey.isNotBlank()) {
@@ -175,37 +184,45 @@ fun OnboardingRoute(
         onSignIn = { onboarding.signIn(context) },
       )
       OnboardingStep.IMPORT -> importStep(settings.autoTranscribeOnImport, viewModel::setAutoTranscribe)
-      OnboardingStep.PROVIDER -> providerStep(
-        provider = settings.preferredProvider,
-        onProvider = viewModel::setPreferredProvider,
-        accountComputer = settings.endpointName.ifBlank { settings.endpointUrl.ifBlank { settings.endpointRemoteUrl } }
-          .takeIf { endpointFromAccount },
-        onChangeComputer = { editingEndpoint = true },
-        onInstall = {
-          leaveStep()
-          showInstall = true
-        },
-        services = services,
-        groqKey = groqKey,
-        onGroqKeyChange = { groqKey = it },
-        onVerifyGroq = {
-          viewModel.saveGroqKey(groqKey)
-          groqKey = ""
-        },
-        endpointUrl = endpointUrl,
-        onEndpointUrlChange = { endpointUrl = it },
-        endpointRemoteUrl = endpointRemoteUrl,
-        onEndpointRemoteUrlChange = { endpointRemoteUrl = it },
-        endpointToken = endpointToken,
-        onEndpointTokenChange = { endpointToken = it },
-        onTestEndpoint = {
-          viewModel.setEndpoint(endpointUrl, settings.endpointModel)
-          viewModel.setEndpointRemoteUrl(endpointRemoteUrl)
-          if (endpointToken.isNotBlank()) viewModel.setEndpointToken(endpointToken)
-          viewModel.testEndpoint(endpointUrl, endpointRemoteUrl)
-        },
-      )
+      OnboardingStep.PROVIDER -> {
+        providerStep(
+          provider = settings.preferredProvider,
+          onProvider = viewModel::setPreferredProvider,
+          accountComputer = settings.endpointName.ifBlank { settings.endpointUrl.ifBlank { settings.endpointRemoteUrl } }
+            .takeIf { endpointFromAccount },
+          onChangeComputer = { editingEndpoint = true },
+          onInstall = {
+            leaveStep()
+            showInstall = true
+          },
+          services = services,
+          groqKey = groqKey,
+          onGroqKeyChange = { groqKey = it },
+          onVerifyGroq = {
+            viewModel.saveGroqKey(groqKey)
+            groqKey = ""
+          },
+          endpointUrl = endpointUrl,
+          onEndpointUrlChange = { endpointUrl = it },
+          endpointRemoteUrl = endpointRemoteUrl,
+          onEndpointRemoteUrlChange = { endpointRemoteUrl = it },
+          endpointToken = endpointToken,
+          onEndpointTokenChange = { endpointToken = it },
+          onTestEndpoint = {
+            viewModel.setEndpoint(endpointUrl, settings.endpointModel)
+            viewModel.setEndpointRemoteUrl(endpointRemoteUrl)
+            if (endpointToken.isNotBlank()) viewModel.setEndpointToken(endpointToken)
+            viewModel.testEndpoint(endpointUrl, endpointRemoteUrl)
+          },
+        )
 
+        if (settings.preferredProvider == TranscriptionProviderId.OPENROUTER) {
+          openRouterSettings(settings, services, openRouterKey, { openRouterKey = it }, {
+            viewModel.saveOpenRouterKey(openRouterKey)
+            openRouterKey = ""
+          }, viewModel)
+        }
+      }
       OnboardingStep.BACKUP -> backupStep(
         folderChosen = settings.backupFolderUri.isNotBlank(),
         onPickFolder = { pickFolder.launch(null) },
@@ -398,6 +415,7 @@ private fun LazyListScope.providerStep(
   item {
     val labels = mapOf(
       TranscriptionProviderId.GROQ to stringResource(R.string.provider_groq),
+      TranscriptionProviderId.OPENROUTER to stringResource(R.string.provider_openrouter),
       TranscriptionProviderId.CUSTOM to stringResource(R.string.provider_custom),
     )
     FluidSegmentedControl(
@@ -449,6 +467,8 @@ private fun LazyListScope.providerStep(
         )
       }
     }
+  } else if (provider == TranscriptionProviderId.OPENROUTER) {
+    // Shared setup in the provider step.
   } else if (accountComputer != null) {
     // Arrivato con l'accesso: indirizzi e token ci sono gia', e chiederli di nuovo sarebbe chiedere
     // proprio quello che l'account doveva risparmiare.

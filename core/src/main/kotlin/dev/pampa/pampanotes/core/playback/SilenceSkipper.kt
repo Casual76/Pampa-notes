@@ -98,7 +98,7 @@ class SilenceSkipper(val gaps: List<Gap>) {
       parts: List<SessionAssembler.Part>,
       minGapMs: Long = MIN_GAP_MS,
     ): List<Gap> {
-      if (segments.isEmpty() || parts.isEmpty()) return emptyList()
+      if (segments.isEmpty() || parts.isEmpty() || segments.any { it.partEndMs <= it.partStartMs }) return emptyList()
       val transcribed = segments.mapTo(HashSet()) { it.partId }
       val covered = mutableListOf<Gap>()
       var offset = 0L

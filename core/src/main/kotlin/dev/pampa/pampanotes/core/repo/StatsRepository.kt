@@ -62,7 +62,7 @@ class StatsRepository @Inject constructor(
    */
   suspend fun recordTranscription(job: JobEntity, startedAt: Long, transcript: TranscriptEntity): TranscriptionRunEntity? = try {
     val now = System.currentTimeMillis()
-    val report = if (job.provider == GroqWhisperProvider.ID) null else ServerReport.merge(ServerReports.drainSince(startedAt))
+    val report = if (job.provider != "custom") null else ServerReport.merge(ServerReports.drainSince(startedAt))
     val partsMs = parts.bySession(job.sessionId).sumOf { it.durationMs }
     val span = stats.segmentSpan(transcript.id)
     val run = TranscriptionRunEntity(

@@ -123,6 +123,11 @@ private fun FolderScreen(
   onSetPersonal: (Boolean) -> Unit,
 ) {
   var creatingFolder by remember { mutableStateOf(false) }
+  var cloudSettings by remember { mutableStateOf(false) }
+  val cloudSettingsLabel = stringResource(R.string.cloud_folder_title)
+  if (cloudSettings) state.folder?.let { folder ->
+    dev.pampa.pampanotes.ui.cloudcost.FolderCloudSheet(folder.id, onDismiss = { cloudSettings = false })
+  }
   // «Sposta in Registrazioni» / «Sposta fra le materie»: il valore e' la sezione di arrivo.
   var movingSection by remember { mutableStateOf<Boolean?>(null) }
   // La selezione delle note: la barra in alto diventa quella della selezione, le sottocartelle e
@@ -209,6 +214,7 @@ private fun FolderScreen(
               if (state.notes.isNotEmpty()) add(FluidContextAction(label = selectLabel) { selection.start() })
               add(FluidContextAction(label = exportLabel) { exporting = true })
               state.folder?.let { folder ->
+                add(FluidContextAction(label = cloudSettingsLabel) { cloudSettings = true })
                 add(computerOnly.folderAction(folder.id, folder.name))
                 if (state.canChangeSection) {
                   add(FluidContextAction(label = if (state.personal) toSchoolLabel else toRecordingsLabel) { movingSection = !state.personal })

@@ -55,6 +55,14 @@ data class TranscribeRequest(
    * [CompanionFeatures.JOB_OPTIONS], mai a Groq.
    */
   val computer: ComputerOverrides? = null,
+  /** Local authorization/accounting context; never serialized into provider fields. */
+  val cloudSessionId: String? = null,
+  val cloudPartId: String? = null,
+  val cloudJobId: String? = null,
+  val cloudDurationMs: Long = 0,
+  val cloudDefaultModel: String? = null,
+  val cloudResponse: ((kotlinx.serialization.json.JsonElement?) -> Unit)? = null,
+  val cloudAttemptFinished: (() -> Unit)? = null,
 )
 
 /** Un pezzo di testo con i suoi tempi, come lo restituisce il servizio. */
@@ -195,7 +203,7 @@ data class EndpointHealth(
  * prende l'ora intera.
  */
 interface TranscriptionProvider {
-  /** "groq" oppure "custom": lo stesso identificatore con cui i lavori si mettono in coda. */
+  /** "groq", "openrouter" or "custom": the same identifier used by the job queues. */
   val id: String
 
   val capabilities: TranscriptionCapabilities

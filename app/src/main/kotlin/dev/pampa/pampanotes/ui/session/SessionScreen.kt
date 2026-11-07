@@ -132,6 +132,10 @@ fun SessionRoute(
   viewModel: SessionViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
+  val cloudPreflight by viewModel.cloudPreflight.collectAsStateWithLifecycle()
+  val transcribeChecking by viewModel.transcribeChecking.collectAsStateWithLifecycle()
+  val transcribeError by viewModel.transcribeError.collectAsStateWithLifecycle()
+  androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) { viewModel.refreshAvailability() }
   // Lo stato, non il valore: la posizione cambia cinque volte al secondo, e letta qui farebbe
   // ricomporre tutta la pagina a ogni battito. La leggono solo il lettore e il paragrafo acceso.
   val playback = viewModel.playback.collectAsStateWithLifecycle()
@@ -155,6 +159,9 @@ fun SessionRoute(
     onUserScrolled = viewModel::stopFollowing,
     onTranscribe = { viewModel.transcribe() },
     onTranscribeWith = { viewModel.transcribe(it) },
+    cloudPreflight = cloudPreflight,
+    transcribeChecking = transcribeChecking,
+    transcribeError = transcribeError,
     onCancelJob = viewModel::cancelJob,
     onDismissJob = { viewModel.dismissJob(it) },
     onFetchMissing = viewModel::fetchMissing,
@@ -192,6 +199,9 @@ private fun SessionScreen(
   onTranscribe: () -> Unit,
   /** «Ritrascrivi» con le impostazioni scelte per questa volta sola ([TranscribeOptionsSheet]). */
   onTranscribeWith: (TranscribeOverrides) -> Unit,
+  cloudPreflight: dev.pampa.pampanotes.ui.cloudcost.CloudPreflightUiState,
+  transcribeChecking: Boolean,
+  transcribeError: String?,
   onCancelJob: (String) -> Unit,
   onDismissJob: (String) -> Unit,
   onFetchMissing: () -> Unit,
@@ -223,6 +233,7 @@ private fun SessionScreen(
   var confirmingPartDelete by remember { mutableStateOf<String?>(null) }
   var confirmingRetranscribe by remember { mutableStateOf(false) }
   var choosingTranscribeOptions by remember { mutableStateOf(false) }
+  var showingCloudCosts by remember { mutableStateOf(false) }
   var refining by remember { mutableStateOf(false) }
   // Dove sta il tasto «altro»: i pop-up di rinomina e ripulitura nascono da li'.
   var moreOrigin by remember { mutableStateOf<Rect?>(null) }
@@ -475,7 +486,7 @@ private fun SessionScreen(
           onSeek = onSeek,
           onCycleSpeed = onCycleSpeed,
           notice = noticeText?.takeIf { skipSilence },
-          skippingSilence = skipSilence && state.segments.isNotEmpty(),
+          skippingSilence = skipSilence && state.segments.isNotEmpty() && state.segments.all { it.partEndMs > it.partStartMs },
           // I capitoli sono punti sulla pista: l'inizio di ognuno si raggiunge da li'.
           marks = remember(chapters, state.durationMs) { chapterMarks(chapters.map { it.startMs }, state.durationMs) },
           modifier = Modifier
@@ -517,7 +528,17 @@ private fun SessionScreen(
     if (state.job != null) partialTranscriptItems(state.partial, onSeek)
     remoteAudioItem(state, onFetchMissing)
     partsSection(state, onSeek, onMovePart, onMovePartTo, onSplitAt, onRetranscribe = { confirmingRetranscribe = true }) { confirmingPartDelete = it }
-    transcriptSection(state, onTranscribe, onShowTranscript) {
+    if (state.parts.isNotEmpty() && state.job == null && state.elsewhere == null) {
+      item(key = "cloud-preflight") {
+        dev.pampa.pampanotes.ui.cloudcost.CloudPreflightSummary(cloudPreflight)
+        if (transcribeError != null) FluidInlineMessage(message = jobErrorText(transcribeError, null), tone = FluidTone.Danger)
+        if (cloudPreflight.cloudItems.isNotEmpty()) FluidButton(
+          text = stringResource(R.string.cloud_cost_title), onClick = { showingCloudCosts = true },
+          style = FluidButtonStyle.Plain, fillWidth = true, loading = transcribeChecking,
+        )
+      }
+    }
+    transcriptSection(state, onTranscribe, onShowTranscript, transcribeChecking = transcribeChecking) {
       onPrepareRefinement()
       refining = true
     }
@@ -624,6 +645,7 @@ private fun SessionScreen(
 
   if (choosingTranscribeOptions) {
     TranscribeOptionsSheet(
+      sessionId = state.session?.id,
       onDismiss = { choosingTranscribeOptions = false },
       onConfirm = { overrides ->
         choosingTranscribeOptions = false
@@ -631,6 +653,7 @@ private fun SessionScreen(
       },
     )
   }
+  if (showingCloudCosts) dev.pampa.pampanotes.ui.cloudcost.CloudCostsSheet(onDismiss = { showingCloudCosts = false })
 
   confirmingPartDelete?.let { partId ->
     val part = state.parts.firstOrNull { it.id == partId }
@@ -796,20 +819,27 @@ private fun LazyListScope.remoteAudioItem(state: SessionUiState, onFetch: () -> 
           )
           FluidProgressBar(progress = { fetch.fraction }, modifier = Modifier.padding(horizontal = 4.dp))
         }
-        missing.all { it.archivedAt > 0 } -> {
-          val detail = pluralStringResource(R.plurals.session_remote_detail, missing.size, missing.size, Formats.bytes(bytes))
+        missing.all { it.archivedAt > 0 || it.id in state.relayParts } -> {
+          val detail = if (missing.any { it.id in state.relayParts }) stringResource(R.string.relay_audio_available, Formats.bytes(bytes))
+            else pluralStringResource(R.plurals.session_remote_detail, missing.size, missing.size, Formats.bytes(bytes))
           FluidInlineMessage(
-            title = stringResource(R.string.session_remote_title),
+            title = stringResource(if (state.relayParts.isNotEmpty()) R.string.relay_audio_title else R.string.session_remote_title),
             message = fetch?.error?.let { detail + "\n" + stringResource(R.string.session_remote_error, it) } ?: detail,
             tone = if (fetch?.error != null) FluidTone.Danger else FluidTone.Warning,
           )
           FluidButton(text = stringResource(R.string.session_remote_fetch), onClick = onFetch, fillWidth = true)
         }
-        else -> FluidInlineMessage(
-          title = stringResource(R.string.session_remote_unavailable_title),
-          message = stringResource(R.string.session_remote_unavailable_detail),
-          tone = FluidTone.Warning,
-        )
+        else -> {
+          FluidInlineMessage(
+            title = stringResource(R.string.session_remote_unavailable_title),
+            message = fetch?.error ?: state.relayProblem?.let { stringResource(dev.pampa.pampanotes.ui.cloudrelay.relayMessage(it)) }
+              ?: stringResource(R.string.relay_send_from_original),
+            tone = FluidTone.Warning,
+          )
+          // A fresh on-demand lookup may find an upload completed while this page was open.
+          FluidButton(text = stringResource(R.string.relay_check_download), onClick = onFetch, fillWidth = true,
+            style = FluidButtonStyle.Plain)
+        }
       }
     }
   }
@@ -923,6 +953,7 @@ private fun LazyListScope.transcriptSection(
   state: SessionUiState,
   onTranscribe: () -> Unit,
   onShowTranscript: (String) -> Unit,
+  transcribeChecking: Boolean,
   onRefine: () -> Unit,
 ) {
   if (state.transcripts.size > 1) {
@@ -988,6 +1019,8 @@ private fun LazyListScope.transcriptSection(
         FluidButton(
           text = stringResource(R.string.note_transcribe),
           onClick = onTranscribe,
+          enabled = !transcribeChecking,
+          loading = transcribeChecking,
           style = FluidButtonStyle.Tinted,
           fillWidth = true,
           modifier = Modifier.fillMaxWidth(),
@@ -1026,6 +1059,9 @@ private fun LazyListScope.transcriptBody(
   val active = state.activeTranscript ?: return
 
   if (active.kind != TranscriptKind.RAW || paragraphs.isEmpty()) {
+    if (active.kind == TranscriptKind.RAW && state.segments.any { it.partEndMs <= it.partStartMs }) {
+      item(key = "untimed-transcript") { FluidSectionFootnote(text = stringResource(R.string.session_untimed)) }
+    }
     if (refinedBlocks != null) {
       itemsIndexed(items = refinedBlocks, key = { index, _ -> "$REFINED_BLOCK_KEY$index" }) { index, block ->
         FluidCard {
@@ -1252,7 +1288,8 @@ internal class Paragraph(val base: TranscriptParagraphs.Paragraph) {
  * dieci schermi non si scorre: si subisce.
  */
 internal fun paragraphsOf(segments: List<SegmentEntity>): List<Paragraph> =
-  TranscriptParagraphs.split(segments, TranscriptParagraphs.MAX_SEGMENTS_ON_SCREEN).map(::Paragraph)
+  if (segments.any { it.partEndMs <= it.partStartMs }) emptyList()
+  else TranscriptParagraphs.split(segments, TranscriptParagraphs.MAX_SEGMENTS_ON_SCREEN).map(::Paragraph)
 
 // -------------------------------------------------------------------------------------------------
 

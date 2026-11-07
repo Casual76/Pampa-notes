@@ -25,6 +25,8 @@ import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.settings.SpeakerSeparation
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
 import dev.pampa.pampanotes.core.transcription.ComputerAuth
+import dev.pampa.pampanotes.core.transcription.CloudTranscriptionGuard
+import dev.pampa.pampanotes.core.transcription.OpenRouterTranscriptionProvider
 import dev.pampa.pampanotes.core.transcription.GroqWhisperProvider
 import dev.pampa.pampanotes.core.transcription.EndpointResolver
 import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
@@ -76,6 +78,7 @@ class TranscriptionRepository @Inject constructor(
   private val stats: StatsRepository,
   private val sessionRepository: SessionRepository,
   private val files: AppFiles,
+  private val spending: dev.pampa.pampanotes.core.spending.CloudSpending,
 ) {
 
   fun observeAll(): Flow<List<JobEntity>> = jobs.observeAll()
@@ -109,14 +112,21 @@ class TranscriptionRepository @Inject constructor(
     jobs.activeForSession(sessionId)?.let { return it }
     if (busyElsewhere(sessionId) != null) return null
 
+    val selectedProvider = settingsStore.current().providerForJob(providerId.id, transcription = true)
+    val blocked = if (selectedProvider == OpenAiCompatProvider.ID) null else try {
+      spending.policyForSession(sessionId).takeUnless { it.allowed }?.reason
+    } catch (error: TranscriptionError.CloudControl) {
+      error.reason
+    }
     val now = System.currentTimeMillis()
     val job = JobEntity(
       id = Ids.newId(),
       sessionId = sessionId,
       type = JobType.TRANSCRIBE,
-      provider = providerId.id,
+      provider = selectedProvider,
       model = null,
-      state = JobState.QUEUED,
+      state = if (blocked != null) JobState.FAILED else JobState.QUEUED,
+      errorCode = blocked,
       chunkTotal = 0,
       chunkDone = 0,
       optionsJson = overrides?.takeUnless { it.isEmpty }
@@ -238,19 +248,20 @@ class TranscriptionRepository @Inject constructor(
    *
    * @return quante ne ha spostate: chi chiama sveglia la coda del computer.
    */
-  suspend fun moveGroqTranscriptionsToComputer(): Int =
-    jobs.moveTranscriptions(GroqWhisperProvider.ID, OpenAiCompatProvider.ID, System.currentTimeMillis())
+  suspend fun moveCloudTranscriptionsToComputer(): Int {
+    var moved = 0
+    for (provider in TranscriptionProviderId.entries.filter { it != TranscriptionProviderId.CUSTOM }) {
+      moved += jobs.moveTranscriptions(provider.id, OpenAiCompatProvider.ID, System.currentTimeMillis())
+    }
+    return moved
+  }
 
   /**
    * Il servizio che una trascrizione deve usare adesso: con «solo il computer di casa» acceso, mai
    * Groq, qualunque cosa ci fosse scritto quando e' stata accodata.
    */
   suspend fun effectiveProvider(job: JobEntity): String =
-    if (job.type == JobType.TRANSCRIBE && job.provider == GroqWhisperProvider.ID && settingsStore.current().customOnly) {
-      OpenAiCompatProvider.ID
-    } else {
-      job.provider
-    }
+    settingsStore.current().providerForJob(job.provider, job.type == JobType.TRANSCRIBE)
 
   /**
    * Il computer di casa: mai configurato, configurato ma muto, o pronto.
@@ -459,6 +470,7 @@ class TranscriptionRepository @Inject constructor(
     val note = session?.let { notes.get(it.noteId) }
     val request = TranscribeRequest(
       model = model,
+      cloudSessionId = sessionId,
       // La lingua della nota vince su quella generale: un quaderno di inglese in mezzo a note
       // italiane non deve essere trascritto come italiano storpiato.
       language = note?.language ?: settings.languageOrNull,
@@ -507,7 +519,22 @@ class TranscriptionRepository @Inject constructor(
           apiKey = key,
           maxUploadBytes = settings.groqMaxUploadMb * 1024L * 1024L,
         )
-        BoundProvider(provider, baseUrl = null)
+        BoundProvider(CloudTranscriptionGuard(provider, beforeUpload = { request ->
+          spending.beforeUpload(providerId, dev.pampa.pampanotes.core.spending.OpenRouterCostMetadata.fingerprint(key), request)
+        }) { settingsStore.current().customOnly }, baseUrl = null)
+      }
+
+      OpenRouterTranscriptionProvider.ID -> {
+        val key = keys.key(ProviderId.OPENROUTER)?.takeIf { it.isNotBlank() } ?: return null
+        BoundProvider(CloudTranscriptionGuard(OpenRouterTranscriptionProvider(http, key), prepare = { request ->
+          val policy = spending.policyForSession(request.cloudSessionId, request.cloudPartId)
+          if (!policy.allowed) throw TranscriptionError.CloudControl(policy.reason ?: "cloud_folder_blocked")
+          request.copy(model = policy.model ?: request.model, cloudDefaultModel = request.model)
+        }, beforeUpload = { request ->
+          spending.beforeUpload(providerId, dev.pampa.pampanotes.core.spending.OpenRouterCostMetadata.fingerprint(key), request)
+        }) {
+          settingsStore.current().customOnly
+        }, baseUrl = null)
       }
 
       OpenAiCompatProvider.ID -> {
@@ -560,12 +587,25 @@ class TranscriptionRepository @Inject constructor(
   suspend fun resolveModel(provider: TranscriptionProvider, settings: PampaSettings): String {
     val saved = when (provider.id) {
       OpenAiCompatProvider.ID -> settings.endpointModel
+      OpenRouterTranscriptionProvider.ID -> settings.openRouterTranscriptionModel
       else -> null
     }?.takeIf { it.isNotBlank() }
-    if (saved != null) return saved
+    if (saved != null && provider.id != OpenRouterTranscriptionProvider.ID) return saved
 
-    val available = runCatching { provider.listModels() }.getOrDefault(emptyList())
+    val available = try {
+      provider.listModels()
+    } catch (error: Exception) {
+      if (error is kotlinx.coroutines.CancellationException || provider.id == OpenRouterTranscriptionProvider.ID) throw error
+      // Keep compatibility with custom endpoints which do not expose a model catalogue.
+      emptyList()
+    }
+    if (saved != null) {
+      if (saved !in available) throw TranscriptionError.UnknownModel(saved, "Selected transcription model unavailable")
+      return saved
+    }
     return when (provider.id) {
+      OpenRouterTranscriptionProvider.ID -> available.firstOrNull()
+        ?: throw TranscriptionError.UnknownModel("", "OpenRouter has no transcription models")
       GroqWhisperProvider.ID -> GroqWhisperProvider.pickModel(available)
         ?: throw TranscriptionError.UnknownModel("", "Groq non offre nessun modello Whisper")
       else -> available.firstOrNull() ?: DEFAULT_LOCAL_MODEL

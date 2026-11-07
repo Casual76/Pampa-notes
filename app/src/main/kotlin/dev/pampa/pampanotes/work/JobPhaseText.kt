@@ -67,7 +67,11 @@ object JobPhaseText {
   private fun uploading(context: Context, job: JobEntity, phase: JobPhase.Uploading): String {
     val chunk = chunkLabel(context, phase.chunk, phase.chunks)
     if (phase.awaiting) {
-      val who = if (job.provider == GroqWhisperProvider.ID) R.string.job_phase_awaiting_groq else R.string.job_phase_awaiting_computer
+      val who = when (job.provider) {
+        GroqWhisperProvider.ID -> R.string.job_phase_awaiting_groq
+        dev.pampa.pampanotes.core.transcription.OpenRouterTranscriptionProvider.ID -> R.string.job_phase_awaiting_openrouter
+        else -> R.string.job_phase_awaiting_computer
+      }
       return join(partLabel(context, phase.part, phase.parts), chunk, context.getString(who))
     }
     val percent = context.getString(R.string.job_phase_percent, phase.percent)

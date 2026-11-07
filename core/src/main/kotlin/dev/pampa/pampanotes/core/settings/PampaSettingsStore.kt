@@ -22,6 +22,7 @@ private val Context.pampaSettingsStore: DataStore<Preferences> by preferencesDat
 /** Quale servizio trascrive di default: Groq nel cloud, o il server personale in LAN. */
 enum class TranscriptionProviderId(val id: String) {
   GROQ("groq"),
+  OPENROUTER("openrouter"),
   CUSTOM("custom");
 
   companion object {
@@ -66,6 +67,8 @@ data class PampaSettings(
   val customChunkAuto: Boolean = true,
   /** L'ultima durata dei pezzi scelta dal computer, in minuti (0 = intera; null = mai). La mostra lo slider. */
   val customLastMaxMinutes: Int? = null,
+  /** Dedicated STT model, independent of assistant/refinement chat models. No secret here. */
+  val openRouterTranscriptionModel: String = "",
   val preferredProvider: TranscriptionProviderId = TranscriptionProviderId.GROQ,
   /**
    * Mai con Groq: ogni trascrizione, anche quella automatica all'import, va al computer di casa e
@@ -74,7 +77,7 @@ data class PampaSettings(
    */
   val customOnly: Boolean = false,
   /** Trascrivi subito quando importi un audio, senza chiederlo. */
-  val autoTranscribeOnImport: Boolean = true,
+  val autoTranscribeOnImport: Boolean = false,
   /** «Separa le voci»: vedi [SpeakerSeparation]. */
   val speakerSeparation: SpeakerSeparation = SpeakerSeparation.PERSONAL,
   /** L'indirizzo di casa, sulla rete locale. */
@@ -142,6 +145,10 @@ data class PampaSettings(
   /** Chi trascrive davvero: con «solo il computer di casa» la preferenza non conta piu'. */
   val transcriptionProvider: TranscriptionProviderId
     get() = if (customOnly) TranscriptionProviderId.CUSTOM else preferredProvider
+  /** Applies to queued/retried transcription jobs too; refinement is a separate consent. */
+  fun providerForJob(providerId: String, transcription: Boolean): String =
+    if (customOnly && transcription && providerId != TranscriptionProviderId.CUSTOM.id) TranscriptionProviderId.CUSTOM.id else providerId
+
   val languageOrNull: String? get() = language.takeIf { it != "auto" && it.isNotBlank() }
 }
 
@@ -162,6 +169,7 @@ class PampaSettingsStore(
   suspend fun setVocabulary(vocabulary: String) = edit { it[Vocabulary] = vocabulary }
   suspend fun setChunkMinutes(minutes: Int) = edit { it[ChunkMinutes] = minutes.coerceIn(3, 20) }
   suspend fun setGroqMaxUploadMb(mb: Int) = edit { it[GroqMaxUploadMb] = mb.coerceIn(5, 100) }
+  suspend fun setOpenRouterTranscriptionModel(model: String) = edit { it[OpenRouterTranscriptionModel] = model.trim() }
   suspend fun setPreferredProvider(provider: TranscriptionProviderId) = edit { it[PreferredProvider] = provider.id }
   suspend fun setCustomOnly(only: Boolean) = edit { it[CustomOnly] = only }
   suspend fun setMirrorEnabled(enabled: Boolean) = edit { it[MirrorEnabled] = enabled }
@@ -603,9 +611,11 @@ class PampaSettingsStore(
     customMaxMinutes = this[CustomMaxMinutes],
     customChunkAuto = this[CustomChunkAuto] ?: (this[CustomMaxMinutes] == null),
     customLastMaxMinutes = this[CustomLastMaxMinutes],
+    openRouterTranscriptionModel = this[OpenRouterTranscriptionModel] ?: "",
     preferredProvider = TranscriptionProviderId.fromId(this[PreferredProvider]),
     customOnly = this[CustomOnly] ?: false,
-    autoTranscribeOnImport = this[AutoTranscribe] ?: true,
+    // Missing preference is a fresh install, never implicit consent to paid uploads.
+    autoTranscribeOnImport = this[AutoTranscribe] ?: false,
     speakerSeparation = this[SpeakerSeparationKey]?.let { runCatching { SpeakerSeparation.valueOf(it) }.getOrNull() }
       ?: SpeakerSeparation.PERSONAL,
     endpointUrl = this[EndpointUrl] ?: "",
@@ -649,6 +659,7 @@ class PampaSettingsStore(
     val Language = stringPreferencesKey("language")
     val Vocabulary = stringPreferencesKey("vocabulary")
     val ChunkMinutes = intPreferencesKey("chunk_minutes")
+    val OpenRouterTranscriptionModel = stringPreferencesKey("openrouter_transcription_model")
     val GroqMaxUploadMb = intPreferencesKey("groq_max_upload_mb")
     val PreferredProvider = stringPreferencesKey("preferred_provider")
     val CustomOnly = booleanPreferencesKey("custom_only")
