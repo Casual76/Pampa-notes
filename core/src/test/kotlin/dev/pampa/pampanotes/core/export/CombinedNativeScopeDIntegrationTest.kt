@@ -86,7 +86,9 @@ class CombinedNativeScopeDIntegrationTest {
       rows["clipboard"] = SourceEntity("clipboard", note.id, SourceKind.CLIPBOARD, "Text", "text/plain", 0, "", importedAt = 5)
       rows["missing-pdf"] = rows.getValue("PDF").copy(id = "missing-pdf", storedFileName = null)
       rows["page"] = rows.getValue("PDF").copy(id = "page", kind = SourceKind.IMAGE, derivedFromId = "SDOCX")
-      val notes = mockk<NoteDao> { coEvery { get(note.id) } returns note; coEvery { getAll(listOf(note.id)) } returns listOf(note) }
+      val notes = mockk<NoteDao>()
+      coEvery { notes.get(note.id) } returns note
+      coEvery { notes.getAll(listOf(note.id)) } returns listOf(note)
       val folders = mockk<FolderDao> { coEvery { all() } returns listOf(folder) }
       val tags = mockk<NoteTagDao> { coEvery { tags(note.id) } returns listOf("tag") }
       val sessionDao = mockk<SessionDao> {
