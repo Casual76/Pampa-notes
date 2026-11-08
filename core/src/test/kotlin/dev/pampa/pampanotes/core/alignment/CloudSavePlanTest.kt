@@ -12,7 +12,8 @@ class CloudSavePlanTest {
   private val raw = TranscriptEntity("new-raw", "s", TranscriptKind.RAW, "mistral", "voxtral", "it", "", wordCount = 0, createdAt = 90)
   private val a = "  Esatto,\t😀!\n"; private val b = " Seconda  frase. "
   private fun result() = SessionTranscript("normalized aggregate", emptyList(), "it", "voxtral", "mistral",
-    sourceParts = listOf(CloudPartText("a", a, "it"), CloudPartText("b", b, "en")))
+    sourceParts = listOf(CloudPartText("a", a, "it", part("a").sha256, provider = "mistral", model = "voxtral", exactTextKnown = true),
+      CloudPartText("b", b, "en", part("b").sha256, provider = "mistral", model = "voxtral", exactTextKnown = true)))
   @Test fun `save preserves authoritative per part text full text provider model language and original hashes`() {
     val parts = listOf(part("a"), part("b", 1))
     val (body, doc) = CloudSavePlan.build(raw, listOf("a", "b"), result(), parts, parts, setOf("a", "b"), null, emptyList())
@@ -48,7 +49,8 @@ class CloudSavePlanTest {
   }
   @Test fun `absent original snapshot never rereads current rows as original and alignment defers`() {
     val current = listOf(part("a"), part("b", 1))
-    val (text, doc) = CloudSavePlan.build(raw, listOf("a", "b"), result(), emptyList(), current, setOf("a", "b"), null, emptyList())
+    val unknown = result().let { it.copy(sourceParts = it.sourceParts.map { p -> p.copy(audioSha256 = null) }) }
+    val (text, doc) = CloudSavePlan.build(raw, listOf("a", "b"), unknown, emptyList(), current, setOf("a", "b"), null, emptyList())
     assertEquals(a + "\n\n" + b, text)
     assertTrue(doc.parts.all { it.sha256.isEmpty() }); assertNull(CloudSources.bindSource(doc, current))
     assertEquals(doc, CloudSources.decode(CloudSources.encode(doc)))

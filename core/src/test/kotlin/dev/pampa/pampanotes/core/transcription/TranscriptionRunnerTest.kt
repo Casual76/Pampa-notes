@@ -144,7 +144,7 @@ class TranscriptionRunnerTest {
   private fun spoken(text: String) = TranscriptResult(text, listOf(RawSegment(0, 5_000, text)), "it", 60_000)
 
   @Test
-  fun `OpenRouter whole text survives a later interruption without retranscribing successful parts`() = runBlocking {
+  fun `OpenRouter whole text survives quota wait without retranscribing successful parts`() = runBlocking {
     var interruptSecond = true
     var firstCalls = 0
     val provider = object : TranscriptionProvider by FakeProvider({ error("unused") }) {
@@ -154,22 +154,23 @@ class TranscriptionRunnerTest {
         onProgress: (UploadProgress) -> Unit, onRemote: (RemoteProgress) -> Unit,
       ): TranscriptResult {
         if (file.name.startsWith("a")) firstCalls++
-        if (file.name.startsWith("b") && interruptSecond) throw CancellationException("system stop")
+        if (file.name.startsWith("b") && interruptSecond) throw TranscriptionError.RateLimited(120.0, "quota wait")
         return TranscriptResult("Complete text for ${file.name}.", emptyList(), "en", null)
       }
     }
     val parts = listOf(part("a", 0), part("b", 1))
     assertTrue(runCatching {
       runner.transcribeSession("resume", parts, provider, TranscribeRequest("model"), 10)
-    }.exceptionOrNull() is CancellationException)
+    }.exceptionOrNull() is TranscriptionError.RateLimited)
     interruptSecond = false
     val result = runner.transcribeSession("resume", parts, provider, TranscribeRequest("model"), 10)
     assertEquals(1, firstCalls)
     assertTrue(result.text.contains("Complete text for a.m4a."))
     assertTrue(result.text.contains("Complete text for b.m4a."))
     assertTrue(result.segments.all { it.wordsEncoded == null && it.partStartMs == it.partEndMs })
-    // A different chosen model must not reuse the old model's successful cache.
-    runner.transcribeSession("resume", parts, provider, TranscribeRequest("different-model"), 10)
+    // An explicit new manual job can choose another model without deleting the paid old cache.
+    assertTrue(runCatching { runner.transcribeSession("resume", parts, provider, TranscribeRequest("different-model"), 10) }.exceptionOrNull() is java.io.IOException)
+    runner.transcribeSession("new-manual-job", parts, provider, TranscribeRequest("different-model"), 10)
     assertEquals(2, firstCalls)
   }
 

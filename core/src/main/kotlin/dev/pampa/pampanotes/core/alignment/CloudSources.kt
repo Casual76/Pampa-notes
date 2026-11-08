@@ -3,6 +3,7 @@ package dev.pampa.pampanotes.core.alignment
 import dev.pampa.pampanotes.core.db.AudioPartEntity
 import dev.pampa.pampanotes.core.db.SegmentEntity
 import dev.pampa.pampanotes.core.db.TranscriptEntity
+import dev.pampa.pampanotes.core.transcription.CloudResponseText
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -15,6 +16,13 @@ import kotlinx.serialization.json.Json
   val language: String?,
   val provider: String,
   val model: String,
+  /** Optional exact ordered provider responses, including legacy overlapping audio windows.
+   * Null in pre-extension documents; never reconstructed from segments. Public content only.
+   * Bounds: at most 10000 responses/part, MAX_CONTENT UTF16 units/response and shared content cap.
+   * Native PN/ZIP blobs and selected histories must retain this field; sync compaction must
+   * expand it losslessly before typed projection. Missing old null/empty documents stay missing.
+   */
+  val responses: List<CloudResponseText>? = null,
 )
 @Serializable data class CloudOriginal(
   val rawId: String,
@@ -27,7 +35,7 @@ import kotlinx.serialization.json.Json
   val parts: List<CloudTextPart>,
   /** Aggregate supplied by the runner, when distinct from the lossless per-part composition. */
   val reportedText: String? = null,
-  /** A portable projection is explicitly not the complete original provider response. */
+  /** portable_projection/derived_presentation explicitly do not claim a complete original. */
   val contentScope: String = "complete_original",
 )
 /** Protocol language code, independent of the provider's verbatim language label. */
@@ -46,6 +54,13 @@ import kotlinx.serialization.json.Json
 )
 
 object CloudSources {
+  /** A single label only when every response reports the same known language identity.
+   * Preserve the first verbatim label; canonical codes belong to alignment requests only. */
+  fun reportedLanguage(labels: List<String?>): String? {
+    if (labels.isEmpty() || labels.any { it.isNullOrBlank() }) return null
+    val distinct = labels.map { AlignmentLanguage.code(it) ?: it }.distinct()
+    return labels.first().takeIf { distinct.size == 1 }
+  }
   // Transfers must not silently discard fields introduced by an unsupported codec.
   private val portableJson = Json { encodeDefaults = true; ignoreUnknownKeys = false }
   const val MAX_JSON = 32 * 1024 * 1024
@@ -72,20 +87,37 @@ object CloudSources {
         require(p.text == null || p.text.length <= MAX_CONTENT && AlignmentProtocol.validUnicode(p.text))
         require(p.provider.length <= 128 && p.model.length <= 512 && (p.language?.length ?: 0) <= 64)
         require(listOfNotNull(p.provider, p.model, p.language).all(AlignmentProtocol::validUnicode))
+        p.responses?.let { responses ->
+          require(responses.size <= 10000 && responses.map { it.index }.distinct().size == responses.size)
+          require(responses.zipWithNext().all { (a, b) -> a.index < b.index })
+          responses.forEach { r ->
+            require(r.index >= 0 && r.startMs >= 0 && r.endMs >= r.startMs)
+            require(r.text == null || r.text.length <= MAX_CONTENT && AlignmentProtocol.validUnicode(r.text))
+            require(r.language == null || r.language.length <= 64 && AlignmentProtocol.validUnicode(r.language))
+            require(r.audioSha256 == null || AlignmentProtocol.validHash(r.audioSha256))
+            require(r.provider == null || r.provider.length <= 128 && AlignmentProtocol.validUnicode(r.provider))
+            require(r.model == null || r.model.length <= 512 && AlignmentProtocol.validUnicode(r.model))
+            require(p.sha256.isEmpty() || r.audioSha256 == p.sha256)
+          }
+        }
       }
     }
     checkParts(value.parts)
+    fun responseContent(parts: List<CloudTextPart>) = parts.sumOf { p -> p.responses.orEmpty().sumOf { (it.text?.length ?: 0).toLong() } }
     var total = 0L
+    var responseTotal = responseContent(value.parts)
     value.originals.forEach { o ->
       require(o.rawId.length in 1..128 && AlignmentProtocol.validUnicode(o.rawId) && o.rawVersion > 0 && o.text.length <= MAX_CONTENT && AlignmentProtocol.validUnicode(o.text) && AlignmentProtocol.sha256(o.text) == o.textSha256)
       require((o.reportedText?.length ?: 0) <= MAX_CONTENT && (o.reportedText == null || AlignmentProtocol.validUnicode(o.reportedText)))
       require(o.provider.length <= 128 && o.model.length <= 512 && (o.language?.length ?: 0) <= 64)
       require(listOfNotNull(o.provider, o.model, o.language).all(AlignmentProtocol::validUnicode))
-      require(o.contentScope in setOf("complete_original", "portable_projection"))
+      require(o.contentScope in setOf("complete_original", "portable_projection", "derived_presentation"))
       checkParts(o.parts)
       total += o.text.length + (o.reportedText?.length ?: 0) + o.parts.sumOf { it.text?.length ?: 0 }
+      responseTotal += responseContent(o.parts)
     }
     require(total <= MAX_CONTENT * 4L)
+    require(responseTotal <= MAX_CONTENT * 4L)
     require(value.overlays.size <= value.parts.size && value.overlays.map { it.partId }.distinct().size == value.overlays.size)
     value.overlays.forEach { overlay ->
       val part = value.parts.single { it.id == overlay.partId }
