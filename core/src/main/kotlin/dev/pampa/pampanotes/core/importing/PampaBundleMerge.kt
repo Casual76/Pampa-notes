@@ -17,10 +17,15 @@ internal object PampaBundleMerge {
       local?.sessions.orEmpty().filter { it.id !in incomingSessions }.sortedWith(compareBy({ it.position }, { it.id })))
       .mapIndexed { index, s -> s.copy(position = index, transcribingOn = oldSessions[s.id]?.transcribingOn, transcribingSince = oldSessions[s.id]?.transcribingSince) }
 
-    val incomingParts = incoming.parts.associateBy { it.id }
+    val previousParts = local?.parts.orEmpty().associateBy { it.id }
+    val resolvedParts = incoming.parts.map { part ->
+      val previous = previousParts[part.id]?.takeIf { it.sha256.isNotBlank() && it.sha256.equals(part.sha256, true) }
+      PampaBundleMetadataMerge.audio(previous, part)
+    }
+    val incomingParts = resolvedParts.associateBy { it.id }
     val allParts = (local?.parts.orEmpty().associateBy { it.id } + incomingParts).values
     val parts = sessions.flatMap { session ->
-      (incoming.parts.filter { it.sessionId == session.id }.sortedWith(compareBy({ it.position }, { it.id })) +
+      (resolvedParts.filter { it.sessionId == session.id }.sortedWith(compareBy({ it.position }, { it.id })) +
         allParts.filter { it.sessionId == session.id && it.id !in incomingParts }.sortedWith(compareBy({ it.position }, { it.id })))
         .mapIndexed { index, p -> p.copy(position = index) }
     }
@@ -32,7 +37,8 @@ internal object PampaBundleMerge {
       parts.filter { it.sessionId == s.id }.forEach { p -> offsets[p.id] = offset; offset = Math.addExact(offset, p.durationMs) }
     }
 
-    val incomingTranscripts = incoming.transcripts.associateBy { it.id }
+    val oldTranscripts = local?.transcripts.orEmpty().associateBy { it.id }
+    val incomingTranscripts = incoming.transcripts.associate { it.id to PampaBundleMetadataMerge.transcript(oldTranscripts[it.id], it) }
     val transcripts = (local?.transcripts.orEmpty().associateBy { it.id } + incomingTranscripts).toMutableMap()
     require(transcripts.values.all { t -> sessions.any { it.id == t.sessionId } }) { "Missing transcript session" }
     // Local refinements follow their RAW parent when the same stable RAW ID moves session.
@@ -85,6 +91,11 @@ internal object PampaBundleMerge {
     }
     return incoming.copy(
       note = if (preserveLocalNote) requireNotNull(local).note else n.copy(
+        folderId = if (local != null && local.note.updatedAt > n.updatedAt) local.note.folderId else n.folderId,
+        title = if (local != null && local.note.updatedAt > n.updatedAt) local.note.title else n.title,
+        pinned = if (local != null && local.note.updatedAt > n.updatedAt) local.note.pinned else n.pinned,
+        language = if (local != null && local.note.updatedAt > n.updatedAt) local.note.language else n.language,
+        updatedAt = maxOf(local?.note?.updatedAt ?: n.updatedAt, n.updatedAt),
         body = PampaBundleBodyMerge.merge(local?.note?.bundleBodyBase, local?.note?.body ?: n.body, n.body), bundleBodyBase = n.body,
         bundleNativeAdopted = when {
           n.bundleNativeAdopted == true || local?.note?.bundleNativeAdopted == true -> true

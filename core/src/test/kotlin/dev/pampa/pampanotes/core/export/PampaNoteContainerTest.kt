@@ -141,6 +141,39 @@ class PampaNoteContainerTest {
       bytes.copyOf().also { it[0] = '['.code.toByte() } else bytes }, metadataOnly = true)
   }
 
+  @Test fun `older PN and schema three updates retain known origin and exact cloud source through reexport`() {
+    val unknown = graph()
+    val rich = unknown.copy(parts = unknown.parts.map { it.copy(recordedAtEpochMs = java.time.Instant.parse("2026-11-08T23:00:00.123Z").toEpochMilli(),
+      recordedAtLocal = "2026-11-09T00:00:00.123", recordedAtZoneId = "Europe/Rome",
+      recordedAtSource = "media_metadata", recordedAtPrecision = "millisecond") },
+      transcripts = unknown.transcripts.map { it.copy(cloudSourceJson = if (it.id == "raw1") "{\"text\":\"  Exact cloud source  \"}" else "") })
+    val local = PampaBundleArchive.read(write(listOf(rich))).data.notes.single()
+    val oldZip = temp.newFile().also { f -> f.outputStream().use { BundleWriter(audio, sources).write(set(listOf(unknown)), ExportOptions(), it) } }
+    val newKeys = setOf("recordedAtEpochMs", "recordedAtLocal", "recordedAtZoneId", "recordedAtSource", "recordedAtPrecision", "cloudSourceJson")
+    fun strip(value: JsonElement): JsonElement = when (value) {
+      is JsonObject -> JsonObject(value.filterKeys { it !in newKeys }.mapValues { strip(it.value) })
+      is JsonArray -> JsonArray(value.map(::strip))
+      else -> value
+    }
+    val legacy = rewrite(oldZip) { name, bytes -> name to if (name.endsWith("native.json"))
+      strip(Json.parseToJsonElement(String(bytes, Charsets.UTF_8))).toString().toByteArray() else bytes }
+    for (archive in listOf(write(listOf(unknown)), legacy)) {
+      val incoming = PampaBundleArchive.read(archive).data.notes.single()
+      val plan = PampaBundleLegacyReconcile.plan(local, incoming, publicLegacy = false)
+      val merged = PampaBundleMerge.merge(plan.local, plan.incoming)
+      // Restore the local storage references that staging/persistence supply in the app.
+      val stored = merged.copy(parts = merged.parts.map { part -> part.copy(fileName = unknown.parts.single { it.id == part.id }.fileName) },
+        sources = merged.sources.map { source -> source.copy(storedFileName = unknown.sources.single { it.id == source.id }.storedFileName) })
+      val reexported = PampaBundleArchive.read(write(listOf(stored))).data.notes.single()
+      assertEquals(rich.parts.map { it.recordedAtEpochMs }, reexported.parts.map { it.recordedAtEpochMs })
+      assertEquals(rich.parts.map { it.recordedAtLocal }, reexported.parts.map { it.recordedAtLocal })
+      assertEquals(rich.parts.map { it.recordedAtZoneId }, reexported.parts.map { it.recordedAtZoneId })
+      assertEquals(rich.parts.map { it.recordedAtSource }, reexported.parts.map { it.recordedAtSource })
+      assertEquals(rich.parts.map { it.recordedAtPrecision }, reexported.parts.map { it.recordedAtPrecision })
+      assertEquals(local.transcripts.associate { it.id to it.cloudSourceJson }, reexported.transcripts.associate { it.id to it.cloudSourceJson })
+    }
+  }
+
   @Test fun `selected note includes ancestors and excludes unrelated folders`() {
     val n = PampaBundleNote(note)
     val output = temp.newFile()

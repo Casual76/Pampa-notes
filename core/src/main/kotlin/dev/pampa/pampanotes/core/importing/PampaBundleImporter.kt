@@ -103,17 +103,10 @@ class PampaBundleImporter @Inject constructor(
       require(ancestor !in importedFolders && ancestors.add(ancestor)) { "Destination cannot be inside the imported hierarchy" }
       ancestor = db.folders().get(ancestor)?.parentId
     }
-    val pending = data.folders.toMutableList()
-    val done = mutableSetOf<String>()
-    while (pending.isNotEmpty()) {
+    val oldFolders = db.folders().all().associateBy { it.id }
+    PampaBundleFolderPlan.build(oldFolders.values.toList(), data.folders, intoFolderId, publicLegacy).forEach { next ->
       checkpoint()
-      val next = pending.firstOrNull { it.parentId == null || it.parentId in done } ?: error("Folder cycle")
-      val old = db.folders().get(next.id)
-      // Public folder IDs are synthesized from their original paths. A native adoption or a
-      // local rename/move may retain those IDs; an older public path cannot overwrite that work.
-      if (old == null || publicLegacy != true) db.folders().upsert(next.copy(parentId = if (next.parentId == null) intoFolderId else next.parentId,
-        updatedAt = maxOf(next.updatedAt, old?.updatedAt ?: 0)))
-      done += next.id; pending.remove(next)
+      if (next != oldFolders[next.id]) db.folders().upsert(next)
     }
     val cleanupFolders = data.folders.filter { PampaBundleLegacyReconcile.isFolder(it.id) }.mapTo(HashSet()) { it.id }
     var imported = 0; var updated = 0
@@ -161,13 +154,13 @@ class PampaBundleImporter @Inject constructor(
         } else if (sameAudio) {
           // Keep local identity/archive metadata even when recovering an evicted blob from staging.
           // Native duration/timing metadata takes precedence over an old MMR rounding estimate.
-          part.copy(fileName = if (files.audioFile(old.fileName).isFile) old.fileName else name ?: old.fileName,
+          PampaBundleMetadataMerge.audio(old, part).copy(fileName = if (files.audioFile(old.fileName).isFile) old.fileName else name ?: old.fileName,
             archivedAt = old.archivedAt, originalName = old.originalName,
             durationMs = part.durationMs.takeIf { it > 0 } ?: old.durationMs, sizeBytes = old.sizeBytes)
         } else if (name == null && old != null) {
           require(part.sha256.isBlank() || old.sha256.isBlank() || part.sha256.equals(old.sha256, true)) { "Omitted audio conflicts with local content" }
           old.copy(sessionId = part.sessionId, position = part.position)
-        } else part.copy(fileName = name ?: "missing-${UUID.nameUUIDFromBytes(part.id.toByteArray(Charsets.UTF_8))}", archivedAt = 0)
+        } else part.copy(fileName = name ?: PampaBundleOmissions.expectedFileName(part.id), archivedAt = 0)
       }
       val incomingSources = incoming.sources.map { source ->
         val persisted = db.sources().get(source.id)
@@ -192,9 +185,10 @@ class PampaBundleImporter @Inject constructor(
             require(old.sdocxCreatedAtMillis != null || sameHash) { "Cannot identify omitted Samsung original" }
           }
           old.copy(derivedFromId = if (reconciliation.legacyUpdate && old.derivedFromId != null) old.derivedFromId else source.derivedFromId,
-            storedFileName = if (old.storedFileName?.let { files.sourceFile(it).isFile } == true) old.storedFileName else name ?: old.storedFileName,
+            storedFileName = if (old.storedFileName?.let { files.sourceFile(it).isFile } == true) old.storedFileName else
+              name ?: old.storedFileName ?: PampaBundleOmissions.expectedSourceName(old),
             sdocxCreatedAtMillis = old.sdocxCreatedAtMillis ?: source.sdocxCreatedAtMillis)
-        } else source.copy(storedFileName = name, archivedAt = 0)
+        } else source.copy(storedFileName = name ?: PampaBundleOmissions.expectedSourceName(source), archivedAt = 0)
       }
       // Selecting another RAW/refinement is a local edit too. A stale portable snapshot must
       // not undo a later choice; first import and a newer incoming choice retain their selection.

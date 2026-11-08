@@ -123,11 +123,21 @@ internal object PampaBundleLegacyReconcile {
       check(retained !in old.parts.map { it.id } && retained !in target.parts.map { it.id } && retained !in partAliases.values) { "Retained legacy audio identity collision" }
       partAliases[part.id] = retained
     }
-    old.sources.filter { isSynthetic(it.id) && !it.id.startsWith("pampa-legacy-placeholder-") && target.sources.none { t -> t.id == it.id } }.forEach { source ->
-      var matches = target.sources.filter { it.kind == source.kind && hash(it.sha256, source.sha256) }
-      if (matches.size > 1) matches = matches.filter { text(it.originalName) == text(source.originalName) }
+    val reservedSources = target.sources.filter { t -> old.sources.any { it.id == t.id } }.mapTo(mutableSetOf()) { it.id }
+    val legacySources = old.sources.filter { isSynthetic(it.id) && !it.id.startsWith("pampa-legacy-placeholder-") && target.sources.none { t -> t.id == it.id } }
+    // Resolve named content matches globally before hash-only fallback. Reserving destinations
+    // keeps an omitted B distinct from A, even when B is visited first and their bytes are equal.
+    for (named in listOf(true, false)) legacySources.filterNot { it.id in sourceAliases }.forEach { source ->
+      val matches = target.sources.filter { it.id !in reservedSources && it.kind == source.kind && hash(it.sha256, source.sha256) &&
+        (!named || text(it.originalName) == text(source.originalName)) }
       require(matches.size <= 1) { "Ambiguous legacy source identity" }
-      matches.singleOrNull()?.let { sourceAliases[source.id] = it.id }
+      matches.singleOrNull()?.let { match ->
+        val competitors = legacySources.filter { it.id !in sourceAliases && it.kind == match.kind && hash(it.sha256, match.sha256) &&
+          (!named || text(it.originalName) == text(match.originalName)) }
+        require(competitors.size == 1) { "Ambiguous legacy source identity" }
+        sourceAliases[source.id] = match.id
+        reservedSources += match.id
+      }
     }
     // A legacy placeholder has no original content; its mapped pages identify their real native parent.
     val placeholders = old.sources.filter { it.id.startsWith("pampa-legacy-placeholder-") && isSynthetic(it.id) }
@@ -282,7 +292,9 @@ internal object PampaBundleLegacyReconcile {
     val movedSessions = note.sessions.sortedBy { if (isSynthetic(it.id)) 0 else 1 }.associate { s -> sid(s.id) to s.copy(id = sid(s.id),
       voiceNames = VoiceNames.encode(VoiceNames.decode(s.voiceNames).mapKeys { (key, _) -> pid(key.substringBefore('|')) + "|" + key.substringAfter('|') })) }.values.toList()
     val movedParts = note.parts.sortedBy { if (isSynthetic(it.id)) 0 else 1 }.associate { p -> pid(p.id) to p.copy(id = pid(p.id), sessionId = sid(p.sessionId)) }.values.toList()
-    val movedSources = note.sources.filterNot { it.id.startsWith("pampa-legacy-placeholder-") && it.id in sources }
+    val retainedSources = note.sources.filterNot { it.id.startsWith("pampa-legacy-placeholder-") && it.id in sources }
+    require(retainedSources.map { source(it.id) }.distinct().size == retainedSources.size) { "Legacy source identity conflict" }
+    val movedSources = retainedSources
       .sortedBy { if (!isSynthetic(it.id)) 2 else if (it.derivedFromId != null) 1 else 0 }
       .associate { s -> source(s.id) to s.copy(id = source(s.id), derivedFromId = s.derivedFromId?.let(::source)) }.values.toList()
     return note.copy(sessions = movedSessions, parts = movedParts, sources = movedSources,

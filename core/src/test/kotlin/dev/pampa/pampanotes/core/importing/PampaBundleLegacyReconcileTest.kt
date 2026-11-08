@@ -5,6 +5,35 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PampaBundleLegacyReconcileTest {
+  @Test fun `identical source bytes never collapse omitted source identities in either list order`() {
+    val target = native()
+    val old = legacy(target)
+    val first = SourceEntity(PampaBundleLegacyReconcile.id("source", "A"), old.note.id, SourceKind.TEXT,
+      "A.txt", "text/plain", 3, "c".repeat(64), "local-A.txt", importedAt = 1)
+    val second = first.copy(id = PampaBundleLegacyReconcile.id("source", "B"), originalName = "B.txt", storedFileName = "local-B.txt")
+    val page = first.copy(id = PampaBundleLegacyReconcile.id("page", "B-page"), kind = SourceKind.IMAGE,
+      originalName = "Page.png", sha256 = "d".repeat(64), derivedFromId = second.id)
+    val nativeA = first.copy(id = "native-A", storedFileName = "sender-A.txt")
+    for (order in listOf(listOf(first, second, page), listOf(second, page, first))) {
+      val plan = PampaBundleLegacyReconcile.plan(old.copy(sources = order), target.copy(sources = listOf(nativeA)))
+      assertEquals(mapOf(first.id to nativeA.id), plan.sources)
+      assertEquals(3, plan.local!!.sources.size)
+      val merged = PampaBundleMerge.merge(plan.local, plan.incoming)
+      assertEquals(setOf(nativeA.id, second.id, page.id), merged.sources.map { it.id }.toSet())
+      assertEquals(second.id, merged.sources.single { it.id == page.id }.derivedFromId)
+    }
+  }
+
+  @Test fun `exact source IDs reserve their destinations before content aliases`() {
+    val target = native()
+    val source = SourceEntity("native-A", target.note.id, SourceKind.TEXT, "Same.txt", "text/plain", 3,
+      "c".repeat(64), "native.txt", importedAt = 1)
+    val extra = source.copy(id = PampaBundleLegacyReconcile.id("source", "extra"), storedFileName = "extra.txt")
+    val plan = PampaBundleLegacyReconcile.plan(legacy(target).copy(sources = listOf(extra, source)), target.copy(sources = listOf(source)))
+    assertTrue(plan.sources.isEmpty())
+    assertEquals(setOf(source.id, extra.id), PampaBundleMerge.merge(plan.local, plan.incoming).sources.map { it.id }.toSet())
+  }
+
   private fun native(): PampaBundleNote {
     val session = SessionEntity("native-session", "note", "Lecture", "2026-11-05", 0, activeTranscriptId = "native-raw", createdAt = 1, updatedAt = 2)
     val parts = listOf("A", "B").mapIndexed { index, id -> AudioPartEntity(id, session.id, index, "$id.wav", "$id.wav", "audio/wav", 100, 1000, id.repeat(64), 1) }
