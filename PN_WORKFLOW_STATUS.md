@@ -229,3 +229,112 @@ Decisione: fase NON approvata; avvio correzione1/3. Due unità sostanziali con c
 - XML ricontati: core1036 casi,1035 passati e1 skipped; app44 passati. Totale1079 passati,1 skipped,0 failure/error. Lo skipped resta RelayWorkerInteropTest opt-in, nessun workerd/cloud distribuito avviato. Nuovi test fixture1.2.0 scoperti/eseguiti da Gradle. Non sommare70/14/7/93 standalone al totale della suite.
 - Lint0 errori e123 warning. Schema15 e submodule a055257/engine3.0.5 invariati; git diff --check pulito. Artefatti in %LOCALAPPDATA%\PampaNotes\build-pn-workflow, identici percorsi del giro iniziale ma risultati attuali; ai reviewer fornire soltanto il log del giro corrente.
 - Avvio3 reviewer FRESCHI Sol/xhigh sullo snapshot successivo a questo aggiornamento, stessi criteri PN1–PN8 e rubrica0–10; nessun autore delle patch come reviewer. I voti iniziali restano storico, nessun verdetto del giro1 ancora disponibile. Correzioni consumate1/3; dispositivi e cloud reale non richiesti né attestati. Per il prossimo giro, verificare sia le riproduzioni iniziali sia indipendenza dei file, convergenza/cleanup e provenienza nel sync.
+
+### Lease risorse durante la review1
+
+- CLOUD/RECORDINGS ha richiesto e ottenuto il lease Gradle dopo il rilascio PN: un batch integrato nel suo build-cloud-recordings, due worker/no-parallel, senza esecuzione Android/dispositivi/GPU/server/cloud reale. PN non avvierà build fino al suo rilascio esplicito.
+- I3 reviewer PN su83d73e5 restano in sola lettura senza risorse pesanti. Nessuna modifica al worktree congelato; questo aggiornamento è nel solo documento di coordinamento main.
+
+## Review correzione1: R1 ricevuto (1/3)
+
+Snapshot83d73e561164647a519ef36cd4d5dafaeeb7e0ec, R1 effettivo Sol/xhigh. Letture e probe JVM leggeri, nessuna modifica sorgenti/index. Confermata conservazione clock/cloudSourceJson contro input null; indipendenza dei file e fixture1.2.0 verificate nel perimetro. Segnalati2P2+1P3; nessuna nuova correzione finché gli altri2 reviewer non terminano. Gradle resta assegnato al flusso CLOUD/RECORDINGS.
+
+| Criterio | Voto R1 | Stato della verifica | Motivazione ed evidenze | Problemi e gravità |
+|---|---:|---|---|---|
+| PN1 | 6 | Sorgenti/probe/artefatti parent | Grafo e provenienza conservati; sessione può perdere titolo/data/nomi voce più recenti. | R1-1 P2 |
+| PN2 | 8 | Sorgenti/probe/artefatti | DEFLATE, hash, entità separate e buffering64KiB; file indipendenti confermati. | Nessun ulteriore rilievo |
+| PN3 | NA | Fuori assegnazione completa | Routing/UX non valutati integralmente. | — |
+| PN4 | NA | Fuori assegnazione completa | Invarianti letti perPN1/7. | R1-1 pertinente incidentalmente |
+| PN5 | NA | Fuori assegnazione completa | Relay/sync letti solo come dipendenze. | — |
+| PN6 | NA | Fuori assegnazione | Nessuna review completa UX. | — |
+| PN7 | 6 | Sorgenti/probe staging | Struttura/hash/staging validi, ma scelta file locale conserva solo per isFile. | R1-2 P2 |
+| PN8 | 7 | Artefatti parent e probe |1079pass/1skip/0error, lint/schema/fixture confermati; test rollback inietta dopo commit. | R1-3 P3 |
+
+- R1-1 P2: snapshot vecchio ripristina title/date/voiceNames sessione nonostante updatedAt locale maggiore. Il guard protegge solo selezione; il fold globale dà precedenza ai nomi entranti. Probe sulle classi produttive confermato (log %TEMP%\pampa-pn-r1-review-49c9ebe392c54bcf9e8456ad26e80c6e\probe.log). Preparare precedenza coerente per metadati e rimozioni alias, mantenendo nuove storie/parti.
+- R1-2 P2: file locale con hash DB atteso ma byte corrotti viene preferito allo staging verificato perché basta isFile; lo staging buono viene poi rimosso. Vale per audio/fonti e va valutato anche nei rami legacy/preserveLocalNote. Sorgenti confermate dal coordinatore, nessuna esecuzione Room. Richiesta verifica dimensioni/hash/checkpoint prima del riuso e regressioni troncamento/byte errati.
+- R1-3 P3: failure_inside_transaction_rolls_back_database_and_new_files lancia a progress>=1, ma persist arriva a0.99 e1 è ora notificato dopo commit. Correggere iniezione per fase IMPORTING_NOTES prima di1; distinguere esplicitamente post-commit. Test Android non eseguito, lacuna dedotta dal codice.
+
+| Criterio | R1 | R2 | R3 | Media | Minimo | Esito e problemi aperti |
+|---|---|---|---|---|---|---|
+| PN1 | 6 | In attesa | In attesa | 6 (1/3) | 6 | Metadati sessione P2 |
+| PN2 | 8 | In attesa | In attesa | 8 (1/1) | 8 | Nessun rilievo R1 |
+| PN3 | NA | In attesa | In attesa | — (0/1) | — | R2 atteso |
+| PN4 | NA | In attesa | In attesa | — (0/2) | — | R2/R3 attesi |
+| PN5 | NA | In attesa | In attesa | — (0/1) | — | R3 atteso |
+| PN6 | NA | In attesa | In attesa | — (0/1) | — | R2 atteso |
+| PN7 | 6 | In attesa | In attesa | 6 (1/2) | 6 | Riuso file P2 |
+| PN8 | 7 | In attesa | In attesa | 7 (1/3) | 7 | Test rollback P3 |
+
+Nessuna approvazione/avanzamento, nessun voto provvisorio in questo report. Attendere completamenti già in corso senza polling o nuove deleghe; sorgenti congelati invariati.
+
+## Review correzione1: R2 ricevuto (2/3)
+
+Stesso SHA83d73e561164647a519ef36cd4d5dafaeeb7e0ec, R2 effettivo Sol/xhigh, sorgenti/index puliti. R2-1 coincide con R1-1 (sessione). Nuovo R2-2 P3: fonte CLIPBOARD senza originale viene pianificata NO_FILE e produce OMITTED_ATTACHMENTS, causando conferma di omissione ingiustificata pur conservando il testo. Probe planner/writer/reader e metadati sessione eseguiti su classi produttive; risultati in %TEMP%\pn-r2-round1-probe-m4fyh75r\result.txt, letti dal coordinatore.
+
+| Criterio | Voto R2 | Stato della verifica | Motivazione ed evidenze | Problemi e gravità |
+|---|---:|---|---|---|
+| PN1 | 6 | Sorgenti/probe/artefatti | Grafo e clock/cloudsource conservati, metadati sessione ancora vulnerabili. | R2-1=R1-1 P2 |
+| PN2 | NA | Fuori assegnazione completa | Codec letto solo per fedeltà/interoperabilità. | — |
+| PN3 | 8 | Sorgenti/artefatti, Android dispensato | Routing/MIME/PN/ClipData/caption/errori/cancel collegati e fixture1.2.0 verificata indipendentemente. | Nessun ulteriore rilievo |
+| PN4 | 6 | Sorgenti/probe | Copie/body/gerarchia/alias fonti ora protetti, metadati sessione no. | R2-1 P2 |
+| PN5 | NA | Fuori assegnazione completa | Consumer e riferimenti letti, nessun voto completo sul relay. | — |
+| PN6 | 6 | Sorgenti UI/ITEN e probe | UX chiara, ma clipboard senza file dà falsi avvisi. | R2-2 P3 |
+| PN7 | NA | Fuori assegnazione completa | Staging/transazione solo dipendenze. | — |
+| PN8 | 8 | Artefatti ricontati e verifiche proprie |1079pass/1skip/0error, lint0error123warning,16 sorgenti/tag e15 entry fixture confermati. | Runtime Android/cloud non eseguiti |
+
+Nessun voto provvisorio in R2 del giro1. La valutazione verificataPN3=8 appartiene SOLO a questo snapshot/giro e non modifica il7 provvisorio del giro iniziale. Runtime Android escluso, fixture generata dai sorgenti1.2.0 non è il file dell'amico.
+
+| Criterio | R1 | R2 | R3 | Media | Minimo | Esito e problemi aperti |
+|---|---|---|---|---|---|---|
+| PN1 | 6 | 6 | In attesa | 6 (2/3) | 6 | Metadati sessione P2 |
+| PN2 | 8 | NA | In attesa | 8 (1/1) | 8 | Nessun rilievo R1 |
+| PN3 | NA | 8 | In attesa | 8 (1/1) | 8 | Compatibilità verificata nel perimetro |
+| PN4 | NA | 6 | In attesa | 6 (1/2) | 6 | Sessioni P2 |
+| PN5 | NA | NA | In attesa | — (0/1) | — | R3 atteso |
+| PN6 | NA | 6 | In attesa | 6 (1/1) | 6 | Falso avviso clipboard P3 |
+| PN7 | 6 | NA | In attesa | 6 (1/2) | 6 | Riuso file corrotti P2 |
+| PN8 | 7 | 8 | In attesa | 7,5 (2/3) | 7 | Test rollback P3 |
+
+Consolidamento provvisorio:2P2+2P3 distinti, nessuna approvazione. Si attende R3 già in corso, senza polling o nuove deleghe; nessuna scrittura nel worktree congelato e nessun uso del lease Gradle CLOUD/RECORDINGS.
+
+## Review correzione1 completa (3/3), avvio correzione2/3
+
+R3 ricevuto sullo stesso83d73e561164647a519ef36cd4d5dafaeeb7e0ec, effettivo Sol/xhigh, repository invariato. Sonde confermano convergenza del journal, file indipendenti e cleanup; quattroP2, di cui riuso corrotto coincide conR1-2. Nuovi casi: audio legacy stesso hash/nome diverso associato in base all'ordine; riferimento originale null non interrogato dall'export; Worker vecchio client omette i nuovi campi e li cancella dal server prima che A ritorni online.
+
+| Criterio | Voto R3 | Stato della verifica | Motivazione ed evidenze | Problemi e gravità |
+|---|---:|---|---|---|
+| PN1 | 8 | Sorgenti/sonde | Roundtrip locale completo, privati esclusi, nessun timing inventato. | Provenienza server R3-3 valutata inPN5 |
+| PN2 | NA | Fuori assegnazione completa | Dedup/staging solo dipendenze. | — |
+| PN3 | NA | Fuori assegnazione completa | Intents/errori non esaminati integralmente. | — |
+| PN4 | 6 | Sorgenti/sonde | Journal e file indipendenti verificati, alias audio legacy dipende ancora dall'ordine. | R3-1 P2 |
+| PN5 | 6 | Sorgenti/sonde/artefatti | Relay e receipt presenti, ma export diretto null e vecchio client Worker perdono recupero/provenienza. | R3-2/R3-3 P2 |
+| PN6 | NA | Fuori assegnazione completa | Consumer letti solo per disponibilità. | — |
+| PN7 | 6 | Sorgenti/sonde | Staging/sync cleanup validi, riuso import non verifica file locale. | R3-4=R1-2 P2 |
+| PN8 | 8 | Artefatti ricontati/sonde |1079pass/1skip/0error, lint0error123warning, schema6 colonne nullable. | Runtime dispensato, non attestato |
+
+Probe R3 in %TEMP%\pampa-pn-r3-round1-ec9aa0a70185408cb8a17a92d95042a2\{probe-results,codec-results}.txt. Il coordinatore ha verificato in sola lettura le mappe BA/AB e zero chiamate relay per ref vuoto, più il percorso Worker keepMissing esistente.
+
+### Tabella generale finale ROUND1
+
+Legenda: R1/R2/R3=GPT-6.1 Sol/xhigh, stesso snapshot/giro, nessun voto provvisorio. n=validi/assegnati; NA esclusi. PN1 mostra differenza di perimetro: R3 valuta8 il roundtrip locale, R1/R2 valutano6 includendo aggiornamenti sessione. Le medie non chiudono difetti confermati.
+
+| Criterio | R1 | R2 | R3 | Media | Minimo | Esito e problemi aperti |
+|---|---|---|---|---|---|---|
+| PN1 | 6 | 6 | 8 | 6,67 (3/3) | 6 | Metadati sessione P2 |
+| PN2 | 8 | NA | NA | 8 (1/1) | 8 | Nessun difetto confermato |
+| PN3 | NA | 8 | NA | 8 (1/1) | 8 | Compatibilità verificata nel perimetro |
+| PN4 | NA | 6 | 6 | 6 (2/2) | 6 | Sessione/alias audio P2 |
+| PN5 | NA | NA | 6 | 6 (1/1) | 6 | Export null/Worker vecchio client P2 |
+| PN6 | NA | 6 | NA | 6 (1/1) | 6 | Falso avviso clipboard P3 |
+| PN7 | 6 | NA | 6 | 6 (2/2) | 6 | Riuso byte corrotti P2 |
+| PN8 | 7 | 8 | 8 | 7,67 (3/3) | 7 | Iniezione rollback P3 |
+
+Decisione: NON approvato. Consolidati5P2+2P3 distinti. Correzione2/3 autorizzata nel limite corrente, senza chiedere conferme ulteriori. Snapshot non più congelato dopo tutti i report.
+
+### Assegnazioni correzione2
+
+- Coordinatore: corretto direttamente P3 del test rollback in PampaBundleRoomTest: iniezione per fase IMPORTING_NOTES a0.7<=p<1 dentro persist, e test distinto di observer dopo commit che conserva DB/file. Solo sorgenti preparati, nessuna esecuzione Android; compilazione integrata successiva.
+- Unità import: metadati sessioni/nomi voce incluse rimozioni, riuso solo di file verificati e riparazione tramite staging, prenotazione globale audio legacy per identità/nome prima del solo hash. Ambito importer/merge/legacy e helper/test dedicati, escluso il test Room modificato dal coordinatore.
+- Unità export: originali idonei con riferimento nullo devono essere risolti prima del piano/scrittura con grafo aggiornato; fonti intrinsecamente senza originale non devono generare avvisi o perdere metadati. Ambito export/lettore e semantica allegati con test dedicati; nessun importer/DB/sync.
+- Unità Worker: mantenere evidenza pubblica di audio/transcript attraverso client vecchi che omettono campi, con compatibilità hash/base/tombstone e test A nuovo→B vecchio→C nuovo prima del ritorno A. Worker sync non modificato nel checkout CLOUD; proprietà esclusiva PN confermata dal coordinatore separato, nessun deploy/schema/credenziale.
+-3 contesti freschi Sol/xhigh, ambiti distinti, nessun commit dei figli. Lease Gradle ancora CLOUD/RECORDINGS: agenti senza Gradle/JVM compilazioni pesanti/server/dispositivi, eventuali sole prove pure leggere e limitate. Un solo batch integrato dopo consegne e rilascio del lease.
