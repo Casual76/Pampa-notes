@@ -90,6 +90,7 @@ import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.ui.common.OverflowMenuButton
 import dev.pampa.pampanotes.core.db.SegmentEntity
 import dev.pampa.pampanotes.core.db.JobEntity
+import dev.pampa.pampanotes.core.db.JobState
 import dev.pampa.pampanotes.core.db.JobType
 import dev.pampa.pampanotes.core.repo.FailedJobs
 import dev.pampa.pampanotes.core.db.TranscriptEntity
