@@ -50,8 +50,9 @@ fun CloudRecoveryReader(jobId: String, onDismiss: () -> Unit, viewModel: CloudRe
       } else {
         if (value.uncertain) Text(stringResource(R.string.cloud_request_uncertain), style = MaterialTheme.typography.bodyMedium)
         value.windows.forEach { window ->
-          FluidSectionHeader(title = if (window.endMs != null) stringResource(R.string.cloud_recovery_window,
-            window.part, Formats.duration(window.startMs), Formats.duration(window.endMs))
+          val endMs = window.endMs
+          FluidSectionHeader(title = if (endMs != null) stringResource(R.string.cloud_recovery_window,
+            window.part, Formats.duration(window.startMs), Formats.duration(endMs))
             else stringResource(R.string.cloud_recovery_part, window.part))
           when (window.state) {
             RecoveryWindowState.RECEIVED -> SelectionContainer {
