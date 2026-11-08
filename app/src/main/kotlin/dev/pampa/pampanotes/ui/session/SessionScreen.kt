@@ -129,6 +129,7 @@ fun SessionRoute(
   onOpenSession: (String) -> Unit,
   /** Il salto della ricerca (`at`, `q`) e' stato fatto tutto: la rotta ricostruita non lo porta piu'. */
   onJumpUsed: () -> Unit = {},
+  onOpenNote: (String) -> Unit = {},
   viewModel: SessionViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -152,6 +153,7 @@ fun SessionRoute(
     playback = playback,
     following = following,
     onBack = onBack,
+    onOpenNote = onOpenNote,
     onPlayPause = viewModel::playPause,
     onSkip = viewModel::skip,
     onSeek = viewModel::seekTo,
@@ -191,6 +193,7 @@ private fun SessionScreen(
   playback: State<PlaybackState>,
   following: Boolean,
   onBack: () -> Unit,
+  onOpenNote: (String) -> Unit,
   onPlayPause: () -> Unit,
   onSkip: (Long) -> Unit,
   onSeek: (Long) -> Unit,
@@ -411,6 +414,7 @@ private fun SessionScreen(
   CloseWhenGone(gone = !state.loading && state.session == null, onBack = onBack)
   // La lezione e' della sua materia: l'app prende quel colore.
   ReportSubject(state.folder?.asSubject())
+  val materialLabel = stringResource(R.string.rv2_associated_material)
 
   FluidScreen(
     title = state.session?.let { sessionHeading(it.title, it.date) } ?: stringResource(R.string.session_loading),
@@ -440,6 +444,11 @@ private fun SessionScreen(
         modifier = Modifier.fluidExpandOrigin(open = { renaming || refining }, onMeasured = { moreOrigin = it }),
         actions = {
           buildList {
+            // SessionViewModel deliberately suppresses the subject for personal material. Keep
+            // its legacy body, tags, language, sources and existing note-level actions reachable.
+            if (!state.loading && state.folder == null) state.note?.let { note ->
+              add(FluidContextAction(label = materialLabel) { onOpenNote(note.id) })
+            }
             // In cima, perche' e' quello che si tocca mentre si ascolta; poi il testo (ripulirlo,
             // rifarlo), poi la sessione (titolo, unione), e in fondo l'unica voce distruttiva.
             //

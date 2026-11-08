@@ -53,8 +53,9 @@ Initial three delegates launched, all actual codex / gpt-6.1-sol / reasoningEffo
 | Unit | Task suffix | State |
 |---|---|---|
 | Cloud/pinning/retry | 6041ac2a-8dfd-4b5a-920d-ae8c1c6ef2c0 | running |
-| Recordings-first UX | d883446a-3153-48a8-857c-8d9ac1ee4944 | running |
+| Recordings-first UX | d883446a-3153-48a8-857c-8d9ac1ee4944 | completed |
 | Python alignment API | 0f90a2ea-4831-4a5f-ba6f-89d1686b5a93 | completed |
+| Android exact source / alignment | 6c6c919c-38ab-41d4-8da8-fa600c359921 | running |
 
 Full task/child id prefix is node:delegated-task:command%3Amcp%3Aeb1c4ba6-cbfc-4f0c-bac9-1b3c1c7a2dc7%3Adelegate-task%3A plus suffix (child thread uses thread: in place of node:).
 No Gradle/device/GPU lease held. Timestamp/Android alignment agents remain queued until a slot frees and contracts are stable. PN export milestone 11a7cbc1750eb04e5e23d94950be0d34f453c2f5 acknowledged as unintegrated; future export adaptations must include PAMPA enum/options and relay attachment planning.
@@ -85,4 +86,12 @@ Changed companion/whisperx_server.py, test_forced_alignment.py, test_companion.p
 
 Implementer executed286 tests (257existing+29new),49.040s, all pass; log %LOCALAPPDATA%/Temp/pampa-forced-alignment-tests-final.txt. Coordinator inspected actual log footer (Ran286 tests / OK), source API contract, declared file list and scoped diff --check. This is archived/executed implementer test evidence, not an independent acoustic/runtime accuracy review. Legacy cancellation fixtures emitted JobCancelled task warnings without failed tests. AST/syntax checks reported pass. Gradle/device/emulator/GPU/real-model accuracy NOT EXECUTED. No forbidden paths changed or commits made by implementer.
 
-Next ready work unit: fresh Android exact-source persistence and guarded background alignment, new package/core helpers + SessionRepository/RawTimelinePlan; cloud-owned scheduler/transcription files remain reserved until cloud implementer finishes. No additional DB15 fields/tables planned.
+Committed C5 snapshot925a646. Fresh Android exact-source/alignment delegate6c6c919c launched Sol/xhigh, shared checkout; owns new core/alignment helpers, SessionRepository/RawTimelinePlan and NEW AlignmentWorker/AlignmentScheduler only. Cloud-owned transcription/settings/existing workers remain reserved until cloud implementer finishes; coordinator wires small hooks afterward. No additional DB15 fields/tables planned. Active implementers: cloud, C6 finishing, Android alignment (three total). Clock/export queued until a slot frees. T3 next requires ending turn without polling; automatic completion will resume coordinator.
+
+## C6 consolidated unit delivery
+
+Completed session-first recordings UI/state, RecordingCatalog/Library/Actions, personal-only FolderScreen branch, PampaGraph callbacks, personal SessionScreen associated-material action, IT/EN recordings_v2.xml and RecordingCatalogTest. Individual session IDs flow to resumeSession; legacy material retained. Exact-session selection/deletion. Partial moves copy body/tags/metadata/sources with derived-link remapping and independent source filenames/bytes under FilesInUse holds; rollback removes only new copies. Whole-note moves only if all sibling sessions selected. Existing school behavior and retranscription options retained.
+
+Implementer executed10 standalone Kotlin/JUnit tests plus production actions/library fixtures with fake DAOs/transactions (exact delete, subset/whole move, material preservation, file independence, rollback and school-scope guards), all reported pass; source/resource/diff checks pass. Coordinator inspected stable actions/library/navigation source and scoped diff --check. Real Room execution and full app compile NOT EXECUTED, independent review still required. Device/emulator/physical/GPU NOT EXECUTED, user waived. No protected files/commits/shared status edits by implementer.
+
+Per-session export remains intentionally absent until fresh clock/export unit adds ExportScope.Sessions(sessionIds,label), constrained native/text collection and explicit associated-material policy. Existing whole-folder export remains.
