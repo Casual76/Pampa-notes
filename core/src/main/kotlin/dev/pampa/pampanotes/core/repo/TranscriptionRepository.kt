@@ -4,6 +4,7 @@ import androidx.room.withTransaction
 import dev.antigravity.fluidengine.ai.keys.AiKeyStore
 import dev.antigravity.fluidengine.ai.provider.ProviderId
 import dev.pampa.pampanotes.core.db.AudioPartDao
+import dev.pampa.pampanotes.core.db.AudioPartEntity
 import dev.pampa.pampanotes.core.db.JobDao
 import dev.pampa.pampanotes.core.db.JobEntity
 import dev.pampa.pampanotes.core.db.JobState
@@ -730,8 +731,12 @@ class TranscriptionRepository @Inject constructor(
    *
    * @return null se nessuna di quelle parti esiste piu': non c'e' niente da salvare.
    */
-  suspend fun saveTranscript(sessionId: String, partIds: List<String>, result: SessionTranscript): SavedTranscription? =
-    sessionRepository.saveTranscription(sessionId, partIds, result)
+  suspend fun saveTranscript(
+    sessionId: String,
+    partIds: List<String>,
+    result: SessionTranscript,
+    originalParts: List<AudioPartEntity> = emptyList(),
+  ): SavedTranscription? = sessionRepository.saveTranscription(sessionId, partIds, result, originalParts)
 
   /**
    * La sessione del lavoro non c'e' piu', ma qualcuna delle sue parti si': e' stata unita a

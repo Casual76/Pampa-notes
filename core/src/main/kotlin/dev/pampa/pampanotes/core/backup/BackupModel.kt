@@ -57,6 +57,9 @@ data class BackupSettings(
   val refinementPreset: String = "CLEAN",
   val refinementCustomPrompt: String = "",
   val exportDefaultsJson: String = "",
+  /** Public STT model choices only; keys and provider cooldown/account state never travel. */
+  val groqTranscriptionModel: String = "whisper-large-v3-turbo",
+  val mistralTranscriptionModel: String = "voxtral-mini-transcribe-3",
 )
 
 /**
@@ -137,6 +140,8 @@ fun PampaSettings.toBackup(): BackupSettings = BackupSettings(
   customMaxMinutes = customMaxMinutes,
   preferredProvider = preferredProvider.id,
   openRouterTranscriptionModel = openRouterTranscriptionModel,
+  groqTranscriptionModel = groqTranscriptionModel,
+  mistralTranscriptionModel = mistralTranscriptionModel,
   customOnly = customOnly,
   autoTranscribeOnImport = autoTranscribeOnImport,
   speakerSeparation = speakerSeparation.name,

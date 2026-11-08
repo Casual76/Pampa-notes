@@ -425,7 +425,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       }
 
       repository.publishProgress(latest.value.copy(state = JobState.STITCHING, progress = 0.98f, phase = null))
-      val saved = repository.saveTranscript(job.sessionId, partIds, result)
+      val saved = repository.saveTranscript(job.sessionId, partIds, result, originalParts = parts)
       if (saved == null) {
         // Nessuna delle parti esiste piu': la sessione e' stata cancellata mentre il computer
         // trascriveva. Non c'e' niente da salvare, e non e' un fallimento da notificare — prima la
