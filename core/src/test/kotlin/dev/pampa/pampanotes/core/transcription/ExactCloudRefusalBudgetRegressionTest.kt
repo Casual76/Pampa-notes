@@ -54,9 +54,12 @@ class ExactCloudRefusalBudgetRegressionTest {
     val db = mockk<PampaDatabase>()
     init {
       val folders = mockk<FolderDao> { coEvery { all() } returns listOf(FolderEntity("folder", "Folder", createdAt = 1, updatedAt = 1)) }
-      val sessions = mockk<SessionDao> { coEvery { get("session") } returns SessionEntity("session", "note", date = "2026-11-08", position = 0, createdAt = 1, updatedAt = 1) }
-      val notes = mockk<NoteDao> { coEvery { get("note") } returns NoteEntity("note", "folder", "Note", createdAt = 1, updatedAt = 1) }
-      val audio = mockk<AudioPartDao> { coEvery { get(any()) } answers { parts.single { it.id == firstArg<String>() } } }
+      val sessions = mockk<SessionDao>()
+      coEvery { sessions.get("session") } returns SessionEntity("session", "note", date = "2026-11-08", position = 0, createdAt = 1, updatedAt = 1)
+      val notes = mockk<NoteDao>()
+      coEvery { notes.get("note") } returns NoteEntity("note", "folder", "Note", createdAt = 1, updatedAt = 1)
+      val audio = mockk<AudioPartDao>()
+      coEvery { audio.get(any()) } answers { parts.single { it.id == firstArg<String>() } }
       every { db.folders() } returns folders
       every { db.sessions() } returns sessions
       every { db.notes() } returns notes

@@ -30,7 +30,8 @@ class TranscriptionRefinementVoiceClockRoundThreeTest {
 
   private fun repository() = TranscriptionRepository(jobs = mockk(), sessions = sessions, notes = mockk(), parts = parts,
     transcripts = transcripts, segments = mockk(), settingsStore = mockk(), keys = mockk(), http = mockk(), resolver = mockk(),
-    db = db, computerAuth = mockk(), stats = mockk(), sessionRepository = mockk(), files = mockk(), spending = mockk())
+    db = db, computerAuth = mockk(), stats = mockk(), sessionRepository = mockk(), files = mockk(), spending = mockk(),
+    credentials = mockk(), cooldowns = mockk())
   private val result = RefinementResult("Refined result", "test-model", RefinementPreset.CLEAN, 1f, false)
 
   @Before fun setup() {

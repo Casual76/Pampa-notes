@@ -61,8 +61,10 @@ class PreStartQueueOwnershipRegressionTest {
       repository = TranscriptionRepository(jobs, sessions, mockk(), parts, transcripts, mockk(), settings, keys, http,
         mockk(), mockk(), mockk(), mockk(), mockk(), mockk<AppFiles>(), mockk<CloudSpending>(), mockk(), cooldowns)
       // Bypass CoroutineWorker's Android constructor; invoke only the real suspend body under test.
-      val field = sun.misc.Unsafe::class.java.getDeclaredField("theUnsafe").apply { isAccessible = true }
-      worker = (field.get(null) as sun.misc.Unsafe).allocateInstance(TranscriptionQueueWorker::class.java) as TranscriptionQueueWorker
+      val unsafeClass = Class.forName("sun.misc.Unsafe")
+      val field = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
+      worker = unsafeClass.getMethod("allocateInstance", Class::class.java)
+        .invoke(field.get(null), TranscriptionQueueWorker::class.java) as TranscriptionQueueWorker
       for ((name, value) in mapOf("repository" to repository, "settingsStore" to settings, "scheduler" to scheduler, "runner" to runner))
         worker.javaClass.getDeclaredField(name).apply { isAccessible = true; set(worker, value) }
     }
