@@ -12,6 +12,7 @@ import dev.pampa.pampanotes.core.backup.toBackup
 import dev.pampa.pampanotes.core.db.JobDao
 import dev.pampa.pampanotes.core.db.JobEntity
 import dev.pampa.pampanotes.core.db.JobType
+import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
@@ -23,14 +24,21 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.Assert.*
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 class OpenRouterWiringTest {
+  @get:Rule val temp = TemporaryFolder()
   private val jobs = mockk<JobDao>()
   private val settings = mockk<PampaSettingsStore>()
   private val keys = mockk<AiKeyStore>()
-  private fun repository() = TranscriptionRepository(jobs, mockk(), mockk(), mockk(), mockk(), mockk(),
-    settings, keys, mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk())
+  private val files = mockk<AppFiles>()
+  private fun repository(): TranscriptionRepository {
+    every { files.jobs } returns File(temp.root, "jobs")
+    return TranscriptionRepository(jobs, mockk(), mockk(), mockk(), mockk(), mockk(),
+      settings, keys, mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), files, mockk(), mockk(), mockk())
+  }
 
   @Test fun `provider model choice persists and backup remains compatible with old Groq settings`() = runTest {
     val data = object : DataStore<Preferences> {

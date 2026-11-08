@@ -42,8 +42,10 @@ class CombinedOpenRouterExactSourceB04Test {
       val files = files(); val part = part(files, "a", 0)
       val (provider, http) = provider { body }
       val failure = runCatching { TranscriptionRunner(files, mockk()).transcribeSession("job", listOf(part), provider, TranscribeRequest("pinned", "it"), 10) }.exceptionOrNull()
-      assertTrue(failure is TranscriptionError.Parse)
-      assertFalse((failure as TranscriptionError).retryable)
+      assertTrue(failure is UncertainCloudRequest)
+      assertTrue(generateSequence(failure) { it.cause }.any { it is TranscriptionError.Parse })
+      assertEquals("cloud_request_uncertain", TranscriptionError.from(failure!!).code)
+      assertFalse(TranscriptionError.from(failure).retryable)
       coVerify(exactly = 1) { http.postAudio(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
       assertFalse(files.jobDir("job").walkTopDown().any { it.name == "whole.json" })
     }
