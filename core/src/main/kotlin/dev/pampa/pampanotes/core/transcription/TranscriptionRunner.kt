@@ -187,7 +187,12 @@ data class SessionTranscript(
    * segna ([dev.pampa.pampanotes.core.repo.TranscribeOptions.emptyParts]) e la sessione lo dice.
    */
   val emptyPartIds: List<String> = emptyList(),
+  /** Immutable source input for the post-save alignment/provenance integration. No credentials. */
+  val sourceParts: List<CloudPartText> = emptyList(),
 )
+
+@kotlinx.serialization.Serializable
+data class CloudPartText(val partId: String, val text: String, val language: String?)
 
 data class SessionSegment(
   val partId: String,
@@ -259,7 +264,8 @@ class TranscriptionRunner @Inject constructor(
     // Lo stesso id puo' tornare con un altro servizio o un altro tetto («Riprova», «solo il computer
     // di casa» acceso dopo): i pezzi lasciati da quel giro non sono di questo, e se ne vanno.
     val signature = StoredChunks.signature(provider.id, provider.capabilities, chunkMinutes) +
-      if (provider.id == OpenRouterTranscriptionProvider.ID) "|${request.model}" else ""
+      // Groq's existing cache signature stays compatible; its model is now pinned in the job.
+      if (provider.id == OpenRouterTranscriptionProvider.ID || provider.id == MistralTranscriptionProvider.ID) "|${request.model}" else ""
     prepareWorkDir(workDir, signature)
     val transcripts = mutableListOf<PartTranscript>()
     val sorted = parts.sortedBy { it.position }
@@ -313,7 +319,8 @@ class TranscriptionRunner @Inject constructor(
 
     onProgress(TranscriptionProgress.Stitching)
     return SessionAssembler.assemble(transcripts, provider.id, request.model)
-      .copy(emptyPartIds = emptyParts(transcripts))
+      .copy(emptyPartIds = emptyParts(transcripts), sourceParts = if (provider.id == OpenAiCompatProvider.ID) emptyList()
+        else transcripts.map { CloudPartText(it.part.id, it.text, it.language) })
   }
 
   /**
@@ -588,20 +595,23 @@ class TranscriptionRunner @Inject constructor(
         } catch (silent: TranscriptionError.NoSpeech) {
           TranscriptResult("", emptyList(), null, null)
         }
-        language = result.language
-        ChunkTranscript(spec, result.segments, result.text.takeIf { result.segments.isEmpty() }.orEmpty())
+        language = result.language ?: request.language
+        ChunkTranscript(spec, result.segments, result.text.takeIf { result.segments.isEmpty() }.orEmpty(),
+          sourceText = result.text.takeIf { provider.id != OpenAiCompatProvider.ID }, language = result.language ?: request.language)
           .also { writeStored(cached, it, signature) }
       }
       finished(1, 1)
-      val stitched = TranscriptStitcher.stitch(listOf(chunk), request.prompt)
-      return PartTranscript(part, stitched.text, stitched.segments, language)
+      val stitched = if (provider.id == OpenAiCompatProvider.ID) TranscriptStitcher.stitch(listOf(chunk), request.prompt)
+        else TranscriptStitcher.stitchCloud(listOf(chunk))
+      return PartTranscript(part, stitched.text, stitched.segments, chunk.language ?: language)
     }
 
     val pcm = File(workDir, "audio.pcm")
     // I pezzi si ricontano sulla durata vera, quella del PCM decodificato: la durata della riga puo'
     // mancare (0) o essere quella stimata dal contenitore, e un conto sbagliato qui e' un pezzo che
     // sfora il limite di Groq.
-    val plan = preparePlan(source, pcm, workDir, { totalMs -> piecesFor(provider.capabilities, totalMs, chunkMinutes) }) { fraction ->
+    val plan = preparePlan(source, pcm, workDir, { totalMs -> piecesFor(provider.capabilities, totalMs, chunkMinutes) },
+      cloud = provider.id != OpenAiCompatProvider.ID) { fraction ->
       onProgress(
         TranscriptionProgress.Preparing(partIndex, partCount, fraction, scale.overall(partIndex, scale.preparing(fraction))),
       )
@@ -633,7 +643,8 @@ class TranscriptionRunner @Inject constructor(
           TranscriptResult("", emptyList(), null, null)
         }
         finished(chunkIndex, chunkCount)
-        val chunk = ChunkTranscript(spec, result.segments, result.text.takeIf { result.segments.isEmpty() }.orEmpty())
+        val chunk = ChunkTranscript(spec, result.segments, result.text.takeIf { result.segments.isEmpty() }.orEmpty(),
+          sourceText = result.text.takeIf { provider.id != OpenAiCompatProvider.ID }, language = result.language ?: request.language)
         // Prima su disco, poi in memoria: un processo ucciso fra le due cose deve poter ripartire
         // da qui, non dal pezzo precedente.
         writeStoredChunk(workDir, chunk, signature)
@@ -646,8 +657,9 @@ class TranscriptionRunner @Inject constructor(
     // Il PCM non serve piu': su un'ora sono centoquindici megabyte che non hanno motivo di restare.
     pcm.delete()
 
-    val stitched = TranscriptStitcher.stitch(chunkTranscripts, request.prompt)
-    return PartTranscript(part, stitched.text, stitched.segments, request.language)
+    val stitched = if (provider.id == OpenAiCompatProvider.ID) TranscriptStitcher.stitch(chunkTranscripts, request.prompt)
+      else TranscriptStitcher.stitchCloud(chunkTranscripts)
+    return PartTranscript(part, stitched.text, stitched.segments, chunkTranscripts.firstNotNullOfOrNull { it.language } ?: request.language)
   }
 
   /** Decodifica e pianifica, oppure rilegge il piano di un tentativo precedente. */
@@ -656,6 +668,7 @@ class TranscriptionRunner @Inject constructor(
     pcm: File,
     workDir: File,
     piecesFor: (totalMs: Long) -> Int,
+    cloud: Boolean = false,
     onProgress: (Float) -> Unit,
   ): ChunkPlan {
     val planFile = File(workDir, "plan.json")
@@ -672,6 +685,7 @@ class TranscriptionRunner @Inject constructor(
       frameEnergies = decoded.frameEnergies,
       frameMs = decoded.frameMs,
       pieces = piecesFor(totalMs),
+      overlapMs = if (cloud) 0 else ChunkPlanner.DEFAULT_OVERLAP_MS,
     )
     planFile.writeText(StoredChunks.encodePlan(plan.chunks))
     return plan
@@ -692,9 +706,9 @@ class TranscriptionRunner @Inject constructor(
     onWaiting: (seconds: Int) -> Unit,
     onRemote: (RemoteProgress) -> Unit,
     onProgress: (UploadProgress) -> Unit,
-  ): TranscriptResult = withRetry(onWaiting) { provider.transcribe(file, mime, request, onProgress, onRemote) }
+  ): TranscriptResult = withRetry(onWaiting, yieldRateLimit = provider.id != OpenAiCompatProvider.ID) { provider.transcribe(file, mime, request, onProgress, onRemote) }
 
-  private suspend fun withRetry(onWaiting: (seconds: Int) -> Unit, send: suspend () -> TranscriptResult): TranscriptResult {
+  private suspend fun withRetry(onWaiting: (seconds: Int) -> Unit, yieldRateLimit: Boolean = false, send: suspend () -> TranscriptResult): TranscriptResult {
     var attempt = 0
     while (true) {
       currentCoroutineContext().ensureActive()
@@ -705,6 +719,7 @@ class TranscriptionRunner @Inject constructor(
         // per un guasto e segnava fallito un lavoro che l'utente — o il sistema — aveva fermato.
         if (error is kotlinx.coroutines.CancellationException) throw error
         val mapped = TranscriptionError.from(error)
+        if (yieldRateLimit && mapped is TranscriptionError.RateLimited) throw mapped
         attempt++
         if (!mapped.retryable || attempt > MAX_ATTEMPTS) throw mapped
         // Un limite che chiede ore non si aspetta qui dentro, con il worker in primo piano e la
@@ -760,7 +775,13 @@ class TranscriptionRunner @Inject constructor(
     writeStored(chunkFile(workDir, chunk.spec.index), chunk, signature)
 
   private fun writeStored(file: File, chunk: ChunkTranscript, signature: String) {
-    runCatching { file.writeText(StoredChunks.encode(chunk, signature)) }
+    // A successful paid chunk must be durable before another chunk can be billed.
+    val temporary = File(file.parentFile, "${file.name}.tmp")
+    java.io.FileOutputStream(temporary).use { stream ->
+      stream.write(StoredChunks.encode(chunk, signature).toByteArray(Charsets.UTF_8))
+      stream.fd.sync()
+    }
+    java.nio.file.Files.move(temporary.toPath(), file.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
   }
 
   /** Butta tutto quello che il lavoro aveva lasciato in giro: si chiama quando finisce, in bene o in male. */
@@ -821,7 +842,7 @@ class TranscriptionRunner @Inject constructor(
         durationMs = durationMs,
         sizeBytes = sizeBytes,
         capMs = capMs,
-        toleranceMs = if (computer) ChunkPolicy.COMPUTER_TOLERANCE_MS else ChunkPolicy.GROQ_TOLERANCE_MS,
+        toleranceMs = capabilities.chunkToleranceMs ?: if (computer) ChunkPolicy.COMPUTER_TOLERANCE_MS else ChunkPolicy.GROQ_TOLERANCE_MS,
         maxUploadBytes = capabilities.maxUploadBytes,
         acceptedAsIs = capabilities.acceptsAsIs(fileName),
       )
@@ -838,7 +859,7 @@ class TranscriptionRunner @Inject constructor(
         durationMs = totalMs,
         sizeBytes = 0,
         capMs = capMs,
-        toleranceMs = if (computer) ChunkPolicy.COMPUTER_TOLERANCE_MS else ChunkPolicy.GROQ_TOLERANCE_MS,
+        toleranceMs = capabilities.chunkToleranceMs ?: if (computer) ChunkPolicy.COMPUTER_TOLERANCE_MS else ChunkPolicy.GROQ_TOLERANCE_MS,
         maxUploadBytes = capabilities.maxUploadBytes,
         acceptedAsIs = false,
       )

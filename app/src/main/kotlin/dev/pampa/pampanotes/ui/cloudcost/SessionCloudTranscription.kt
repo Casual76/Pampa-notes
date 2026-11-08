@@ -21,10 +21,10 @@ class SessionCloudTranscription @Inject constructor(
       ?: settings.current().transcriptionProvider
     val explicitCloud = overrides?.explicitlyChoosesCloud(provider.id) == true
     if (provider != TranscriptionProviderId.CUSTOM) {
-      var preflight = spending.preflight(sessionId, provider.id, explicitCloud)
+      var preflight = spending.preflight(sessionId, provider.id, explicitCloud, overrides?.model)
       if (preflight.blockedReason == "cloud_price_unknown" && provider == TranscriptionProviderId.OPENROUTER) {
         spending.refresh(preflight.model)
-        preflight = spending.preflight(sessionId, provider.id, explicitCloud)
+        preflight = spending.preflight(sessionId, provider.id, explicitCloud, overrides?.model)
       }
       preflight.blockedReason?.let { return it }
     }

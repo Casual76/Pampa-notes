@@ -53,6 +53,7 @@ object JobPhaseText {
       is JobPhase.Waiting -> context.getString(R.string.job_phase_waiting, phase.seconds)
       JobPhase.Endpoint -> context.getString(R.string.job_phase_endpoint)
       is JobPhase.Until -> untilText(context, phase.atMillis) ?: stateLabel(context, job.state)
+      JobPhase.ProviderCooldown -> context.getString(R.string.cloud_waiting_quota)
       JobPhase.Stitching -> context.getString(R.string.job_phase_stitching)
       JobPhase.NeedsApp -> context.getString(R.string.job_phase_needs_app)
       is JobPhase.Elsewhere -> context.getString(R.string.transcribing_elsewhere, phase.device)
@@ -70,6 +71,7 @@ object JobPhaseText {
       val who = when (job.provider) {
         GroqWhisperProvider.ID -> R.string.job_phase_awaiting_groq
         dev.pampa.pampanotes.core.transcription.OpenRouterTranscriptionProvider.ID -> R.string.job_phase_awaiting_openrouter
+        dev.pampa.pampanotes.core.transcription.MistralTranscriptionProvider.ID -> R.string.job_phase_awaiting_mistral
         else -> R.string.job_phase_awaiting_computer
       }
       return join(partLabel(context, phase.part, phase.parts), chunk, context.getString(who))

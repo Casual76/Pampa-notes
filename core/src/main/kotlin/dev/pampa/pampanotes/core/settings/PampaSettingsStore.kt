@@ -23,6 +23,7 @@ private val Context.pampaSettingsStore: DataStore<Preferences> by preferencesDat
 enum class TranscriptionProviderId(val id: String) {
   GROQ("groq"),
   OPENROUTER("openrouter"),
+  MISTRAL("mistral"),
   CUSTOM("custom");
 
   companion object {
@@ -54,6 +55,7 @@ data class PampaSettings(
   val chunkMinutes: Int = 10,
   /** Il tetto di upload di Groq: 25 MB sul piano gratuito, 100 sul dev tier. */
   val groqMaxUploadMb: Int = 25,
+  val groqTranscriptionModel: String = "whisper-large-v3-turbo",
   /**
    * I pezzi del computer di casa, in minuti; null (di serie) vuol dire il file intero. Piu' lungo e'
    * meglio per Whisper, che ha piu' contesto; si accorcia solo su un PC con poca memoria video.
@@ -69,6 +71,7 @@ data class PampaSettings(
   val customLastMaxMinutes: Int? = null,
   /** Dedicated STT model, independent of assistant/refinement chat models. No secret here. */
   val openRouterTranscriptionModel: String = "",
+  val mistralTranscriptionModel: String = "voxtral-mini-transcribe-3",
   val preferredProvider: TranscriptionProviderId = TranscriptionProviderId.GROQ,
   /**
    * Mai con Groq: ogni trascrizione, anche quella automatica all'import, va al computer di casa e
@@ -169,7 +172,15 @@ class PampaSettingsStore(
   suspend fun setVocabulary(vocabulary: String) = edit { it[Vocabulary] = vocabulary }
   suspend fun setChunkMinutes(minutes: Int) = edit { it[ChunkMinutes] = minutes.coerceIn(3, 20) }
   suspend fun setGroqMaxUploadMb(mb: Int) = edit { it[GroqMaxUploadMb] = mb.coerceIn(5, 100) }
+  suspend fun setGroqTranscriptionModel(model: String) = edit {
+    require(model in setOf("whisper-large-v3-turbo", "whisper-large-v3"))
+    it[GroqTranscriptionModel] = model
+  }
   suspend fun setOpenRouterTranscriptionModel(model: String) = edit { it[OpenRouterTranscriptionModel] = model.trim() }
+  suspend fun setMistralTranscriptionModel(model: String) = edit {
+    require(model in dev.pampa.pampanotes.core.transcription.MistralTranscriptionProvider.MODELS)
+    it[MistralTranscriptionModel] = model
+  }
   suspend fun setPreferredProvider(provider: TranscriptionProviderId) = edit { it[PreferredProvider] = provider.id }
   suspend fun setCustomOnly(only: Boolean) = edit { it[CustomOnly] = only }
   suspend fun setMirrorEnabled(enabled: Boolean) = edit { it[MirrorEnabled] = enabled }
@@ -612,6 +623,8 @@ class PampaSettingsStore(
     customChunkAuto = this[CustomChunkAuto] ?: (this[CustomMaxMinutes] == null),
     customLastMaxMinutes = this[CustomLastMaxMinutes],
     openRouterTranscriptionModel = this[OpenRouterTranscriptionModel] ?: "",
+    groqTranscriptionModel = this[GroqTranscriptionModel] ?: "whisper-large-v3-turbo",
+    mistralTranscriptionModel = this[MistralTranscriptionModel] ?: "voxtral-mini-transcribe-3",
     preferredProvider = TranscriptionProviderId.fromId(this[PreferredProvider]),
     customOnly = this[CustomOnly] ?: false,
     // Missing preference is a fresh install, never implicit consent to paid uploads.
@@ -660,6 +673,8 @@ class PampaSettingsStore(
     val Vocabulary = stringPreferencesKey("vocabulary")
     val ChunkMinutes = intPreferencesKey("chunk_minutes")
     val OpenRouterTranscriptionModel = stringPreferencesKey("openrouter_transcription_model")
+    val GroqTranscriptionModel = stringPreferencesKey("groq_transcription_model")
+    val MistralTranscriptionModel = stringPreferencesKey("mistral_transcription_model")
     val GroqMaxUploadMb = intPreferencesKey("groq_max_upload_mb")
     val PreferredProvider = stringPreferencesKey("preferred_provider")
     val CustomOnly = booleanPreferencesKey("custom_only")

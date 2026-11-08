@@ -8,6 +8,9 @@ data class ChunkTranscript(
   val segments: List<RawSegment>,
   /** Untimed response, kept without inventing segment or word timestamps. */
   val fallbackText: String = "",
+  /** Exact cloud response, including punctuation/whitespace, retained independently of timing. */
+  val sourceText: String? = null,
+  val language: String? = null,
 )
 
 /**
@@ -67,6 +70,23 @@ data class StitchedTranscript(
  *     il confine del segmento in punti diversi. Si toglie il prefisso ripetuto, e solo se e' corto.
  */
 object TranscriptStitcher {
+  /** Cloud chunks have nonoverlapping audio windows. Never filter or rewrite their paid text. */
+  fun stitchCloud(chunks: List<ChunkTranscript>): StitchedTranscript {
+    val ordered = chunks.sortedBy { it.spec.index }
+    // A resumed 1.3.1 plan may include overlap. Keep its established seam rather than duplicate it.
+    if (ordered.zipWithNext().any { (before, after) -> before.spec.endMs > after.spec.startMs }) return stitch(ordered)
+    val text = ordered.map { it.sourceText ?: it.fallbackText.takeIf(String::isNotEmpty) ?: it.segments.joinToString(" ") { segment -> segment.text } }
+      .filter(String::isNotBlank).joinToString("\n\n")
+    val segments = ordered.flatMap { chunk -> chunk.segments.map { segment ->
+      StitchedSegment(chunk.spec.startMs + segment.startMs, chunk.spec.startMs + segment.endMs,
+        segment.text, segment.noSpeechProb, segment.avgLogProb, chunk.spec.index,
+        words = segment.words.map { it.copy(startMs = chunk.spec.startMs + it.startMs, endMs = chunk.spec.startMs + it.endMs) },
+        speaker = segment.speaker)
+    } }
+    fun normalized(value: String) = value.replace(Regex("\\s+"), " ").trim()
+    // Partial segment coverage must not hide the untimed part or claim exact word timing.
+    return StitchedTranscript(text, segments.takeIf { normalized(it.joinToString(" ") { segment -> segment.text }) == normalized(text) }.orEmpty())
+  }
 
   /** Oltre questo numero di parole in comune non e' piu' una ripetizione di confine: e' contenuto. */
   private const val MAX_OVERLAP_WORDS = 12

@@ -86,12 +86,12 @@ class OpenRouterTranscriptionProvider(
         throw TranscriptionError.Parse("Invalid transcription response")
       }
       val parsed = VerboseJson.parse(root)
-      val text = (root["text"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+      val text = (root["text"] as? JsonPrimitive)?.contentOrNull.orEmpty()
       // Some providers supply only partially timed text. Never throw away the untimed remainder.
       fun normalize(value: String) = value.replace(Regex("\\s+"), " ").trim()
       return if (text.isNotBlank() && normalize(text) != normalize(parsed.text)) {
         parsed.copy(text = text, segments = emptyList())
-      } else parsed.copy(segments = parsed.segments.map { segment ->
+      } else parsed.copy(text = text.ifBlank { parsed.text }, segments = parsed.segments.map { segment ->
         // Partial word lists would make the UI interpolate the missing words while claiming
         // exact alignment. Keep the real segment interval and label interpolation as estimated.
         if (segment.words.isNotEmpty() &&

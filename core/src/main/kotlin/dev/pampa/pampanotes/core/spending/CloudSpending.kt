@@ -44,6 +44,7 @@ class CloudSpending @Inject constructor(
   private val db: PampaDatabase,
   private val settings: PampaSettingsStore,
   private val keys: AiKeyStore,
+  private val credentials: dev.pampa.pampanotes.core.transcription.CloudCredentials,
   http: TranscriptionHttp,
 ) {
   private val metadata = OpenRouterCostMetadata(http)
@@ -75,11 +76,16 @@ class CloudSpending @Inject constructor(
     return FolderCloudPolicy.resolve(note?.folderId, db.folders().all().map { CloudFolder(it.id, it.parentId, it.name) }, data().folders, settings.current().customOnly && !allowExplicitCloud)
   }
 
-  suspend fun preflight(sessionId: String, provider: String? = null, allowExplicitCloud: Boolean = false): CloudPreflight {
+  suspend fun preflight(sessionId: String, provider: String? = null, allowExplicitCloud: Boolean = false, modelOverride: String? = null): CloudPreflight {
     val prefs = settings.current()
     val selected = provider ?: prefs.transcriptionProvider.id
     val policy = policyForSession(sessionId, allowExplicitCloud = allowExplicitCloud)
-    val model = if (selected == "openrouter") policy.model ?: prefs.openRouterTranscriptionModel else if (selected == "groq") "whisper-large-v3-turbo" else prefs.endpointModel
+    val model = modelOverride?.takeIf(String::isNotBlank) ?: when (selected) {
+      "openrouter" -> policy.model ?: prefs.openRouterTranscriptionModel
+      "groq" -> prefs.groqTranscriptionModel
+      "mistral" -> prefs.mistralTranscriptionModel
+      else -> prefs.endpointModel
+    }
     val audio = db.audioParts().bySession(sessionId)
     val duration = if (audio.isEmpty() || audio.any { it.durationMs <= 0 }) 0 else audio.sumOf { it.durationMs }
     val data = data()
@@ -89,11 +95,11 @@ class CloudSpending @Inject constructor(
   }
 
   @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-  fun observePreflight(sessionId: String, provider: String? = null, allowExplicitCloud: Boolean = false): Flow<CloudPreflight> =
+  fun observePreflight(sessionId: String, provider: String? = null, allowExplicitCloud: Boolean = false, modelOverride: String? = null): Flow<CloudPreflight> =
     db.sessions().observe(sessionId).flatMapLatest { session ->
       val note = session?.session?.noteId?.let { db.notes().observe(it) } ?: flowOf(null)
       combine(changes, settings.settings, db.folders().observeAll(), note, db.audioParts().observeBySession(sessionId)) { _, _, _, _, _ ->
-        preflight(sessionId, provider, allowExplicitCloud)
+        preflight(sessionId, provider, allowExplicitCloud, modelOverride)
       }
     }
 
@@ -123,7 +129,7 @@ class CloudSpending @Inject constructor(
     var policy = policyForSession(request.cloudSessionId, request.cloudPartId, allowExplicitCloud)
     if (!policy.allowed) throw TranscriptionError.CloudControl(policy.reason ?: "cloud_folder_blocked")
     checkBoundKey(provider, keyFingerprint)
-    var model = if (provider == "openrouter") policy.model ?: request.cloudDefaultModel ?: request.model else request.model
+    val model = request.model
     if (provider == "openrouter" && data().prices[model]?.fresh(System.currentTimeMillis()) != true) {
       try { refresh(model) } catch (cancel: CancellationException) { throw cancel }
       catch (unknown: TranscriptionError.UnknownModel) { throw unknown }
@@ -132,10 +138,7 @@ class CloudSpending @Inject constructor(
     // Metadata requests may take time: re-resolve a moved note and privacy immediately before reserving.
     policy = policyForSession(request.cloudSessionId, request.cloudPartId, allowExplicitCloud)
     if (!policy.allowed) throw TranscriptionError.CloudControl(policy.reason ?: "cloud_folder_blocked")
-    model = if (provider == "openrouter") policy.model ?: request.cloudDefaultModel ?: request.model else request.model
-    // Do not combine a cached earlier chunk with a different model after a folder rule change.
-    // An explicit retry resolves the new model before the runner constructs its cache signature.
-    if (model != request.model) throw TranscriptionError.CloudControl("cloud_model_changed")
+    // Folder privacy remains live; model selection is the immutable job choice from enqueue.
     checkBoundKey(provider, keyFingerprint)
     val id = UUID.randomUUID().toString()
     val now = System.currentTimeMillis()
@@ -163,7 +166,7 @@ class CloudSpending @Inject constructor(
   }
 
   private suspend fun checkBoundKey(provider: String, fingerprint: String) {
-    val key = keys.key(if (provider == "openrouter") ProviderId.OPENROUTER else ProviderId.GROQ)
+    val key = credentials.key(provider)
     if (key.isNullOrBlank() || OpenRouterCostMetadata.fingerprint(key) != fingerprint) {
       throw TranscriptionError.CloudControl("cloud_key_changed")
     }

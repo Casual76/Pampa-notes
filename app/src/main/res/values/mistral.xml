@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="cloud_waiting_quota">In attesa della quota del servizio; ripresa automatica dopo il limite</string>
+    <string name="job_phase_awaiting_mistral">Mistral trascrive</string>
+    <string name="provider_mistral">Mistral</string>
+    <string name="mistral_requirements">Usa la tua chiave API di Mistral Studio. L’audio viene inviato direttamente a Mistral e può consumare credito. La verifica legge solo il catalogo dei modelli.</string>
+    <string name="mistral_key">Chiave API Mistral</string>
+    <string name="mistral_key_hint">Crea una chiave in console.mistral.ai</string>
+    <string name="mistral_key_saved">Chiave cifrata sul dispositivo, esclusa da backup ed esportazioni</string>
+    <string name="mistral_remove_key">Rimuovi chiave Mistral</string>
+    <string name="mistral_verified">Chiave verificata senza inviare audio</string>
+    <string name="mistral_model">Modello di trascrizione Mistral</string>
+    <string name="mistral_timing">Mistral restituisce tempi dei segmenti. I tempi delle singole parole sono stime finché non vengono allineati sul computer.</string>
+    <string name="cloud_pinned_detail">Servizio e modello vengono fissati quando il lavoro entra in coda. Un limite o un errore non attiva altri servizi; Riprova conserva la scelta e i pezzi già completati.</string>
+    <string name="cloud_job_model">Modello per questa trascrizione</string>
+    <string name="cloud_account_changed">L’account è cambiato dopo l’accodamento. Torna all’account originale o avvia una nuova trascrizione.</string>
+</resources>

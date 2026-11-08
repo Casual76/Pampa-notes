@@ -201,6 +201,14 @@ class TranscriptionHttp(
    */
   private fun httpFailure(code: Int, headers: Map<String?, List<String>>, body: String): Throwable {
     val mapped = AiErrorMapper.map(code, headers, body)
+    if (code == 402) return TranscriptionError.CreditRequired("Cloud account credit required")
+    if (code == 429) {
+      val now = System.currentTimeMillis()
+      val deadline = CloudRetry.parseRetryAfter(headers.entries.firstOrNull { it.key.equals("retry-after", true) }?.value?.firstOrNull(), now)
+      val seconds = deadline?.let { (it - now).toDouble() / 1000 }
+        ?: (mapped as? dev.antigravity.fluidengine.ai.net.AiError.RateLimited)?.retryAfterSec
+      return TranscriptionError.RateLimited(seconds, "Cloud request rate limited", deadline)
+    }
     if (code != 503) return mapped
     val retryAfter = AiErrorMapper.parseRetryAfter(AiErrorMapper.normalize(headers), null, "")
     return TranscriptionError.Server(code, mapped.message ?: body, retryAfter)

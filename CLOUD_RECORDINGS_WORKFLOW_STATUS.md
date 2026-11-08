@@ -52,10 +52,11 @@ Initial three delegates launched, all actual codex / gpt-6.1-sol / reasoningEffo
 
 | Unit | Task suffix | State |
 |---|---|---|
-| Cloud/pinning/retry | 6041ac2a-8dfd-4b5a-920d-ae8c1c6ef2c0 | running |
+| Cloud/pinning/retry | 6041ac2a-8dfd-4b5a-920d-ae8c1c6ef2c0 | completed |
 | Recordings-first UX | d883446a-3153-48a8-857c-8d9ac1ee4944 | completed |
 | Python alignment API | 0f90a2ea-4831-4a5f-ba6f-89d1686b5a93 | completed |
 | Android exact source / alignment | 6c6c919c-38ab-41d4-8da8-fa600c359921 | running |
+| Per-part clock / session export | c7ae6aae-2896-4caf-9d3c-26ea4f5af7e5 | completed |
 
 Full task/child id prefix is node:delegated-task:command%3Amcp%3Aeb1c4ba6-cbfc-4f0c-bac9-1b3c1c7a2dc7%3Adelegate-task%3A plus suffix (child thread uses thread: in place of node:).
 No Gradle/device/GPU lease held. Timestamp/Android alignment agents remain queued until a slot frees and contracts are stable. PN export milestone 11a7cbc1750eb04e5e23d94950be0d34f453c2f5 acknowledged as unintegrated; future export adaptations must include PAMPA enum/options and relay attachment planning.
@@ -95,3 +96,25 @@ Completed session-first recordings UI/state, RecordingCatalog/Library/Actions, p
 Implementer executed10 standalone Kotlin/JUnit tests plus production actions/library fixtures with fake DAOs/transactions (exact delete, subset/whole move, material preservation, file independence, rollback and school-scope guards), all reported pass; source/resource/diff checks pass. Coordinator inspected stable actions/library/navigation source and scoped diff --check. Real Room execution and full app compile NOT EXECUTED, independent review still required. Device/emulator/physical/GPU NOT EXECUTED, user waived. No protected files/commits/shared status edits by implementer.
 
 Per-session export remains intentionally absent until fresh clock/export unit adds ExportScope.Sessions(sessionIds,label), constrained native/text collection and explicit associated-material policy. Existing whole-folder export remains.
+
+C6 committed snapshot191c11c. New clock/export implementer launched Sol/xhigh after C6 completed, keeping three active implementations total (cloud, Android alignment, clock/export). Owns origin-import hunks, export models/writers/gather/UI and recordings export hooks; entities/schema remain frozen. Must preserve future PN PAMPA enum/options and relay adaptations at parent integration without duplicating codec. T3 next requires ending turn without polling.
+
+## PN consolidated handoff and schema adoption
+
+Parent PN frozen implementation b52e45c; reported combined build/app-core JVM/Android test compilation/lint pass (1031pass,1opt-in Worker skip,0failures; lint0errors123warnings). This is PN-only reported evidence, NOT this workflow's integrated verification. Parent Gradle lease released; device/GPU none held. This workflow must request an actual Gradle lease before necessary --max-workers=2 --no-parallel checks; no device/GPU execution allowed.
+
+Adopted only generated schema15 from commit220854ef6cd996f244f2f18c74ae2bb6c246c72b as local3e7a997, touching no active implementer files. Coordinator compared schema14/15 JSON: exactly the six agreed nullable columns added, existing fields/indices/foreign keys unchanged, no tables added or removed. Host SQLite created the generated audio_parts/transcripts DDL and PRAGMA verified all6 nullable with implicit NULL. Comparison script initially assumed explicit false/empty schema keys (notNull/indices) and failed twice; corrected for Room's omitted defaults, final rerun PASS. Android Room/runtime migration NOT EXECUTED/user-waived. Parent PN hashed cloudSourceJson text-blob preserves null/empty/full strings, but final integration/reviews MUST assess typed RAW/part identity remapping on copies/aliases/moves; opaque string retention does not prove safe alignment applicability.
+
+PN integration commits retained for final combined parent work:11a7cbc export;65c80dc codec;8ebfda8 import;b52e45c source-blob/clock regressions(depends5c91d57);220854e schema. No PN implementation files cherry-picked into active shared writers. No incremental parent message; final stable delivery/real blocker/actual resource request only.
+
+## Reserved final integration hooks
+
+C4 saveTranscription gains optional originalParts:List<AudioPartEntity> snapshot in Android unit's owned SessionRepository, default source-compatible. Coordinator MUST forward the worker's original parts snapshot through cloud-owned TranscriptionRepository.saveTranscript after cloud ownership frees. Do not re-read current rows and attest them as original. Absent/unverified original hashes defer alignment while preserving text. Same-ID replaced bytes/SHA, move/delete during cloud request require tests. This is an internal API addition, no public entity/schema change. Android unit returns final worker/scheduler/startup/save hook list; coordinator wires only after cloud final.
+
+## C1-C3 consolidated unit delivery
+
+Cloud unit completed and released ownership. Mistral direct segment-only API, documented Voxtral models, encrypted installation-only key storage, model/provider pinned at enqueue, explicit manual overrides retained, no automatic cross-cloud fallback. Private noBackup cooldown/account-key contexts honor seconds/date Retry-After across jobs/restarts, generic Room quota phase, workers yield while waiting; completed paid chunks retained. Setup/onboarding/manual/cost/status IT/EN hooks included. Exact full/per-part source text/language cached and exposed through SessionTranscript.sourceParts.
+
+Implementer executed standalone compilation and94 JVM tests plus JobDao cancellation/retry SQL fixtures/resource/diff checks, all reported pass. Coordinator inspected actual log containing OK(94tests), relevant worker/save APIs, cooldown source and declared scope. No Gradle/full app/live inference or device/GPU/runtime checks executed; independent review remains open. Coordinator must add new global Groq/Mistral model preferences to backup mapping and reserved originalParts forwarding. Only Android alignment remains active after clock/export completed; no extra implementer launched.
+
+PN has temporarily claimed a short targeted core JVM Gradle batch2workers/no-parallel; coordinator confirmed no Gradle acquired/running here. Await explicit release before any own necessary Gradle batch. No device/GPU allowed.

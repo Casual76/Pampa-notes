@@ -67,6 +67,8 @@ data class ServicesUiState(
   val openRouterKeyPresent: Boolean = false,
   val openRouterModels: List<String> = emptyList(),
   val openRouterCheck: CheckState = CheckState.Idle,
+  val mistralKeyPresent: Boolean = false,
+  val mistralCheck: CheckState = CheckState.Idle,
   val endpointCheck: CheckState = CheckState.Idle,
   val endpointModels: List<String> = emptyList(),
   /** I modelli di chat che Groq dichiara, fra cui scegliere quello del raffinamento. */
@@ -112,6 +114,8 @@ class SettingsViewModel @Inject constructor(
   private val computerAuth: dev.pampa.pampanotes.core.transcription.ComputerAuth,
   private val companionApi: CompanionSettingsApi,
   private val transcription: TranscriptionRepository,
+  private val cloudCredentials: dev.pampa.pampanotes.core.transcription.CloudCredentials,
+  private val cooldowns: dev.pampa.pampanotes.core.transcription.CloudCooldownStore,
 ) : ViewModel() {
 
   companion object {
@@ -141,6 +145,11 @@ class SettingsViewModel @Inject constructor(
 
   init {
     viewModelScope.launch {
+      cloudCredentials.changes.collect {
+        _services.update { it.copy(mistralKeyPresent = cloudCredentials.key("mistral") != null) }
+      }
+    }
+    viewModelScope.launch {
       keys.states.collect { states ->
         val groq = states[ProviderId.GROQ]
         _services.update { it.copy(groqKeyPresent = groq?.present == true, groqVerified = groq?.verified == true,
@@ -167,14 +176,20 @@ class SettingsViewModel @Inject constructor(
   fun saveGroqKey(key: String) {
     viewModelScope.launch {
       _services.update { it.copy(groqCheck = CheckState.Running) }
+      val previousKey = keys.key(ProviderId.GROQ)
       keys.set(ProviderId.GROQ, key)
+      if (previousKey != key.trim() && transcription.queuedCount("groq") > 0) scheduler.wake("groq")
       when (val result = verifier.verify(ProviderId.GROQ)) {
         is VerifyResult.Ok -> {
           val whisper = result.catalogue.stt.map { it.id }.filter { it.contains("whisper", true) }
           // Il default dell'engine e' whisper-large-v3; qui vogliamo il turbo, che costa meno
           // secondi di quota a parita' di risultato su una lezione.
-          val picked = GroqWhisperProvider.pickModel(whisper)
-          picked?.let { aiSettings.setSttModel(ProviderId.GROQ, it) }
+          val picked = settingsStore.current().groqTranscriptionModel
+          if (picked !in whisper) {
+            _services.update { it.copy(groqModels = whisper, groqCheck = CheckState.Failed("unknown_model")) }
+            return@launch
+          }
+          aiSettings.setSttModel(ProviderId.GROQ, picked)
           _services.update {
             // Il modello *scelto*, non il primo dell'elenco: e' quello che verra' usato davvero, e
             // mostrarne un altro fa credere che la preferenza non sia stata applicata.
@@ -205,7 +220,9 @@ class SettingsViewModel @Inject constructor(
     openRouterLoad = viewModelScope.launch {
       _services.update { it.copy(openRouterModels = emptyList(), openRouterCheck = CheckState.Running) }
       try {
+        val previousKey = keys.key(ProviderId.OPENROUTER)
         keys.set(ProviderId.OPENROUTER, key)
+        if (previousKey != key.trim() && transcription.queuedCount("openrouter") > 0) scheduler.wake("openrouter")
         fetchOpenRouterModels()
       } catch (error: Exception) {
         if (error is kotlinx.coroutines.CancellationException) throw error
@@ -254,6 +271,45 @@ class SettingsViewModel @Inject constructor(
       _services.update { it.copy(openRouterModels = emptyList(), openRouterCheck = CheckState.Idle) }
     }
   }
+
+  private var mistralCheck: Job? = null
+  fun saveMistralKey(key: String) {
+    mistralCheck?.cancel()
+    mistralCheck = viewModelScope.launch {
+      _services.update { it.copy(mistralCheck = CheckState.Running) }
+      try {
+        val previousKey = cloudCredentials.key("mistral")
+        cloudCredentials.saveMistral(key)
+        if (previousKey != key.trim() && transcription.queuedCount("mistral") > 0) scheduler.wake("mistral")
+        val stored = cloudCredentials.key("mistral") ?: throw TranscriptionError.Unauthorized("Missing Mistral key")
+        val fingerprint = dev.pampa.pampanotes.core.transcription.CloudRetry.fingerprint(stored)
+        val account = dev.pampa.pampanotes.core.transcription.CloudRetry.fingerprint(settingsStore.current().syncAccount)
+        val now = System.currentTimeMillis()
+        val until = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { cooldowns.durable.deadline("mistral", fingerprint, account) }
+        if (until != null && until > now) throw TranscriptionError.RateLimited((until - now) / 1000.0, "Provider cooldown", until)
+        try {
+          val health = dev.pampa.pampanotes.core.transcription.MistralTranscriptionProvider(http, stored).health()
+          _services.update { it.copy(mistralCheck = CheckState.Ok(modelCount = health.models.size)) }
+        } catch (error: Exception) {
+          val mapped = TranscriptionError.from(error)
+          if (mapped is TranscriptionError.RateLimited) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            cooldowns.durable.extend("mistral", fingerprint, account, dev.pampa.pampanotes.core.transcription.CloudRetry.deadline(mapped, System.currentTimeMillis()))
+          }
+          throw error
+        }
+      } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+      catch (error: Exception) { _services.update { it.copy(mistralCheck = CheckState.Failed(TranscriptionError.from(error).code)) } }
+    }
+  }
+  fun clearMistralKey() {
+    mistralCheck?.cancel()
+    viewModelScope.launch {
+      cloudCredentials.saveMistral("")
+      _services.update { it.copy(mistralCheck = CheckState.Idle) }
+    }
+  }
+  fun setMistralModel(model: String) = viewModelScope.launch { settingsStore.setMistralTranscriptionModel(model) }
+  fun setGroqModel(model: String) = viewModelScope.launch { settingsStore.setGroqTranscriptionModel(model) }
 
   // --- Server personale ---
   fun setEndpoint(url: String, model: String) = viewModelScope.launch {

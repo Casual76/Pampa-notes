@@ -579,6 +579,8 @@ interface SourceDao {
 
 @Dao
 interface JobDao {
+  @Query("UPDATE jobs SET model = :model, optionsJson = :options, updatedAt = :now WHERE id = :id AND state = 'QUEUED'")
+  suspend fun pinTranscription(id: String, model: String?, options: String, now: Long): Int
   @Query("SELECT * FROM jobs ORDER BY createdAt DESC")
   fun observeAll(): Flow<List<JobEntity>>
 
@@ -655,7 +657,7 @@ interface JobDao {
   @Query("SELECT * FROM jobs WHERE provider = :provider AND type = 'TRANSCRIBE' AND state IN ('QUEUED','FAILED')")
   suspend fun movableTranscriptions(provider: String): List<JobEntity>
 
-  @Query("UPDATE jobs SET provider = :to, phase = NULL, updatedAt = :now WHERE id = :id AND provider = :from AND type = 'TRANSCRIBE' AND state IN ('QUEUED','FAILED') AND optionsJson IS :options")
+  @Query("UPDATE jobs SET provider = :to, model = NULL, phase = NULL, updatedAt = :now WHERE id = :id AND provider = :from AND type = 'TRANSCRIBE' AND state IN ('QUEUED','FAILED') AND optionsJson IS :options")
   suspend fun moveTranscription(id: String, from: String, to: String, options: String?, now: Long): Int
 
   /**
@@ -706,7 +708,7 @@ interface JobDao {
    * segnata tale nelle statistiche); le opzioni le decide chi chiama.
    */
   @Query(
-    "UPDATE jobs SET state = 'QUEUED', provider = :provider, optionsJson = :optionsJson, errorCode = NULL, " +
+    "UPDATE jobs SET state = 'QUEUED', model = CASE WHEN provider = :provider THEN model ELSE NULL END, provider = :provider, optionsJson = :optionsJson, errorCode = NULL, " +
       "errorMessage = NULL, phase = NULL, progress = 0, finishedAt = NULL, updatedAt = :now WHERE id = :id",
   )
   suspend fun retry(id: String, provider: String, optionsJson: String?, now: Long): Int
@@ -770,7 +772,7 @@ interface JobDao {
   /** Torna in fila un lavoro che il sistema ha fermato: la ripresa riparte dai pezzi gia' su disco. */
   @Query(
     "UPDATE jobs SET state = 'QUEUED', phase = :phase, progress = 0, errorCode = NULL, errorMessage = NULL, " +
-      "finishedAt = NULL, updatedAt = :updatedAt WHERE id = :id AND state != 'CANCEL_REQUESTED'",
+      "finishedAt = NULL, updatedAt = :updatedAt WHERE id = :id AND state NOT IN ('CANCEL_REQUESTED','CANCELLED','DONE')",
   )
   suspend fun requeue(id: String, phase: String?, updatedAt: Long): Int
 

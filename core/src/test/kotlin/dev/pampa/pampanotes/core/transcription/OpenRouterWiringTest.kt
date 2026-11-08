@@ -30,7 +30,7 @@ class OpenRouterWiringTest {
   private val settings = mockk<PampaSettingsStore>()
   private val keys = mockk<AiKeyStore>()
   private fun repository() = TranscriptionRepository(jobs, mockk(), mockk(), mockk(), mockk(), mockk(),
-    settings, keys, mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk())
+    settings, keys, mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk())
 
   @Test fun `provider model choice persists and backup remains compatible with old Groq settings`() = runTest {
     val data = object : DataStore<Preferences> {
@@ -71,7 +71,7 @@ class OpenRouterWiringTest {
       assertEquals("custom", repo.effectiveProvider(job))
       assertEquals(provider.id, repo.effectiveProvider(job.copy(type = JobType.REFINE)))
     }
-    assertEquals(setOf("groq", "openrouter", "custom"), TranscriptionProviderId.entries.map { it.id }.toSet())
+    assertEquals(setOf("groq", "openrouter", "mistral", "custom"), TranscriptionProviderId.entries.map { it.id }.toSet())
   }
 
   @Test fun `privacy migration preserves explicit cloud choices and moves ordinary jobs`() = runTest {
@@ -79,6 +79,7 @@ class OpenRouterWiringTest {
     val ordinary = explicit.copy(id = "ordinary", optionsJson = null)
     coEvery { jobs.movableTranscriptions("groq") } returns listOf(explicit, ordinary)
     coEvery { jobs.movableTranscriptions("openrouter") } returns emptyList()
+    coEvery { jobs.movableTranscriptions("mistral") } returns emptyList()
     coEvery { jobs.moveTranscription("ordinary", "groq", "custom", null, any()) } returns 1
     coEvery { settings.current() } returns PampaSettings(customOnly = true)
     val repo = repository()

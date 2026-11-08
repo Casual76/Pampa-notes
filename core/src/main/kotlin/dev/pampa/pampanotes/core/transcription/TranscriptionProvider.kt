@@ -21,6 +21,8 @@ data class TranscriptionCapabilities(
    * (`chunkMinutes`); il computer di casa lo dichiara qui quando l'utente ne ha scelto uno.
    */
   val maxChunkMinutes: Int? = null,
+  /** Explicit duration tolerance for services with a context limit; null keeps legacy policy. */
+  val chunkToleranceMs: Long? = null,
 ) {
   /** Il file si puo' mandare com'e'? Decide l'estensione del nome, che e' quello che il servizio guarda. */
   fun acceptsAsIs(fileName: String): Boolean {

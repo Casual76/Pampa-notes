@@ -59,10 +59,13 @@ class WorkScheduler @Inject constructor(
    * limite e' dell'account, e un lavoro nuovo lo troverebbe uguale.
    */
   fun kickAfter(providerId: String, delayMillis: Long) {
+    // WorkManager rejects arithmetic overflow for an effectively unbounded Retry-After.
+    // The authoritative provider deadline remains unchanged and is checked on every wake.
+    val safeDelay = delayMillis.coerceIn(0L, (Long.MAX_VALUE - System.currentTimeMillis() - 60_000).coerceAtLeast(0))
     val request = OneTimeWorkRequestBuilder<TranscriptionQueueWorker>()
       .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
       .setInputData(workDataOf(TranscriptionQueueWorker.KEY_PROVIDER to providerId))
-      .setInitialDelay(delayMillis.coerceAtLeast(0L), TimeUnit.MILLISECONDS)
+      .setInitialDelay(safeDelay, TimeUnit.MILLISECONDS)
       .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
       .addTag(TAG)
       .build()

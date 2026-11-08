@@ -60,13 +60,10 @@ object FailedJobs {
   /**
    * «Riprova» deve buttare quello che il lavoro aveva messo da parte in `filesDir/jobs/<id>/`?
    *
-   * Per una trascrizione si': «Riprova» riusa lo stesso id, e quei pezzi vengono dal tentativo che e'
-   * fallito. Una trascrizione finita in `no_speech` lasciava i suoi vuoti (`computer.json`,
-   * `chunk-N.json`) e ci ricadeva all'istante senza chiamare nessuno; un tentativo con Groq a pezzi
-   * da dieci minuti, rifatto sul computer con un tetto di trenta, rimetteva il vecchio 0–10 al posto
-   * del nuovo 0–30, e venti minuti di lezione sparivano. Chi riprova di solito ha cambiato qualcosa
-   * — computer, modello, vocabolario — e si riparte da capo: i pezzi di un giro fermato dal sistema a
-   * meta' invece restano, perche' quello non passa da qui ma torna in fila con i suoi.
+   * Il computer conserva il comportamento storico, e una risposta tutta muta si richiede di nuovo.
+   * Un errore cloud conserva invece i pezzi gia' pagati: provider, modello e piano sono fissati nel
+   * lavoro, e StoredChunks verifica l'identita' di ogni pezzo prima di riusarlo.
    */
-  fun discardsWorkOnRetry(job: JobEntity): Boolean = job.type == JobType.TRANSCRIBE
+  fun discardsWorkOnRetry(job: JobEntity): Boolean = job.type == JobType.TRANSCRIBE &&
+    (job.provider == "custom" || job.errorCode == NO_SPEECH)
 }
