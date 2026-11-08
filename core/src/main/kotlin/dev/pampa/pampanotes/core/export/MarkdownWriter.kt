@@ -257,10 +257,11 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels(), private 
           append(NL).append(NL)
         }
       }
-      block.startMs?.let { append('[').append(timestamp(it)).append("] ") }
+      block.startMs?.let { append('['); if (block.clockEstimated) append("≈ "); append(timestamp(it)).append("] ") }
       if (block.showClock) {
         val origin = session.parts.firstOrNull { it.id == block.partId }?.origin
-        append('[').append(SpeechClock.label(origin, block.partOffsetMs, labels)).append("] ")
+        append('['); if (block.clockEstimated) append("≈ ")
+        append(SpeechClock.label(origin, block.partOffsetMs, labels)).append("] ")
       }
       // «Chi parla»: davanti a ogni paragrafo, non solo al cambio. Un assistente cita un paragrafo
       // alla volta, e un «ha detto» senza chi l'ha detto nel paragrafo stesso si perde.

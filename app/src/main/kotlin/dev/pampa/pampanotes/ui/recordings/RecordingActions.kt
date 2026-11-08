@@ -1,9 +1,8 @@
 package dev.pampa.pampanotes.ui.recordings
 
-import androidx.room.withTransaction
 import dev.pampa.pampanotes.core.db.NoteDao
 import dev.pampa.pampanotes.core.db.NoteTagDao
-import dev.pampa.pampanotes.core.db.PampaDatabase
+import dev.pampa.pampanotes.core.repo.DatabaseTransactions
 import dev.pampa.pampanotes.core.db.SessionDao
 import dev.pampa.pampanotes.core.db.SourceDao
 import dev.pampa.pampanotes.core.files.AppFiles
@@ -22,7 +21,7 @@ import kotlinx.coroutines.withContext
 
 /** Session-scoped operations; no note deletion or expansion of a selection to unselected siblings. */
 class RecordingActions @Inject constructor(
-  private val db: PampaDatabase,
+  private val transactions: DatabaseTransactions,
   private val notes: NoteDao,
   private val sessions: SessionDao,
   private val tags: NoteTagDao,
@@ -46,12 +45,12 @@ class RecordingActions @Inject constructor(
     // Keep the backing material, including body, tags, language and sources, even after the last session.
   }
 
-  suspend fun move(ids: Set<String>, targetFolderId: String, folderId: String?) = withContext(NonCancellable + Dispatchers.IO) {
+  suspend fun move(ids: Set<String>, targetFolderId: String, folderId: String?): Unit = withContext(NonCancellable + Dispatchers.IO) {
     val copied = mutableListOf<File>()
     val held = mutableSetOf<String>()
     val owner = Any()
     try {
-      db.withTransaction {
+      transactions.run {
         val allFolders = folders.all()
         require(allFolders.any { it.id == targetFolderId }) { "Missing destination folder" }
         val personal = PersonalScope.folderIds(allFolders)

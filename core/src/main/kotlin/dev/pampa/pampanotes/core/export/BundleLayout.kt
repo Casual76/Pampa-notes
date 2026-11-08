@@ -28,6 +28,8 @@ data class TranscriptBlock(
   /** Source offset in this part, never the concatenated session offset. */
   val partOffsetMs: Long? = null,
   val showClock: Boolean = false,
+  /** A source segment anchors this block; no exact word timing was available. */
+  val clockEstimated: Boolean = false,
 ) {
   val words: Int get() = text.wordCount()
 }
@@ -56,6 +58,7 @@ object TranscriptPieces {
   /** I blocchi di una sessione, nella forma in cui si stampano. */
   fun blocks(session: ExportSession, options: ExportOptions): List<TranscriptBlock> {
     val transcript = session.transcript ?: return emptyList()
+    CloudTranscriptExport.blocks(session, options)?.let { return it }
     if ((options.timestamps || options.speechClock) && session.hasTimings) {
       val paragraphs = TranscriptParagraphs.split(session.segments, TranscriptParagraphs.MAX_SEGMENTS_IN_DOCUMENT)
       if (paragraphs.isNotEmpty()) {

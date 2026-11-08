@@ -1,6 +1,7 @@
 package dev.pampa.pampanotes.core.export
 
 import dev.pampa.pampanotes.core.db.*
+import dev.pampa.pampanotes.core.alignment.*
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.importing.*
 import io.mockk.*
@@ -15,12 +16,17 @@ class RecordingSessionGatherTest {
   @get:Rule val temp = TemporaryFolder()
   private val note = NoteEntity("n", "f", "Interview", "NONEMPTY LEGACY BODY", language = "it", createdAt = 1, updatedAt = 2)
   private val folder = FolderEntity("f", "Personal", createdAt = 1, updatedAt = 2, kind = FolderEntity.KIND_PERSONAL)
-  private val raw = TranscriptEntity("raw-old", "chosen", TranscriptKind.RAW, "fixture", "fixture", text = "OLD SELECTED RAW", wordCount = 3,
-    createdAt = 1, cloudSourceJson = "{\"exact public text\":\"  source\\n\"}")
-  private val fresh = raw.copy(id = "raw-new", text = "NEWER UNSELECTED HISTORY", createdAt = 3)
-  private val refined = raw.copy(id = "refined", kind = TranscriptKind.REFINED, parentId = raw.id, text = "SELECTED REFINEMENT", createdAt = 2)
-  private val siblingRaw = raw.copy(id = "sibling-raw", sessionId = "sibling", text = "PRIVATE SIBLING")
-  private fun part(id: String, session: String) = AudioPartEntity(id, session, 0, "$id.wav", "$id.wav", "audio/wav", 7, 1000, "hash", 9,
+  private fun cloudRaw(id: String, session: String, text: String, createdAt: Long, partId: String): TranscriptEntity {
+    val row = TranscriptEntity(id, session, TranscriptKind.RAW, "mistral", "fixture", language = "it", text = text, wordCount = 3, createdAt = createdAt)
+    val p = part(partId, session)
+    val source = CloudTextPart(p.id, p.sha256, text, "it", row.provider, row.model)
+    return row.copy(cloudSourceJson = CloudSources.encode(CloudSources.create(row, text, listOf(source))))
+  }
+  private val raw = cloudRaw("raw-old", "chosen", "OLD SELECTED RAW", 1, "a")
+  private val fresh = cloudRaw("raw-new", "chosen", "NEWER UNSELECTED HISTORY", 3, "a")
+  private val refined = raw.copy(id = "refined", kind = TranscriptKind.REFINED, parentId = raw.id, text = "SELECTED REFINEMENT", createdAt = 2, cloudSourceJson = null)
+  private val siblingRaw = cloudRaw("sibling-raw", "sibling", "PRIVATE SIBLING", 1, "b")
+  private fun part(id: String, session: String) = AudioPartEntity(id, session, 0, "$id.wav", "$id.wav", "audio/wav", 7, 1000, AlignmentProtocol.sha256("audio-$id"), 9,
     recordedAtEpochMs = 1000, recordedAtLocal = "1970-01-01T00:00:01", recordedAtZoneId = "Z", recordedAtSource = "media_metadata", recordedAtPrecision = "second")
   private fun segment(transcript: String, part: String) = SegmentEntity(transcriptId = transcript, partId = part, indexInPart = 0,
     partStartMs = 10, partEndMs = 50, sessionStartMs = 10, sessionEndMs = 50, text = "text-$transcript")
@@ -70,7 +76,10 @@ class RecordingSessionGatherTest {
     val native = PampaBundleExport.build(set, BundleLayout(set, options), options, temp.root, temp.root) {}.notes.single()
     assertEquals(listOf("chosen"), native.sessions.map { it.id })
     assertEquals(setOf("raw-old", "refined"), native.transcripts.map { it.id }.toSet())
-    assertEquals(raw.cloudSourceJson, native.transcripts.first { it.id == raw.id }.cloudSourceJson)
+    val transferredRaw = native.transcripts.first { it.id == raw.id }
+    assertEquals(raw.text, transferredRaw.text)
+    assertTrue(CloudSources.validatePortable(transferredRaw, native.parts))
+    assertEquals("portable_unbound", CloudSources.decode(transferredRaw.cloudSourceJson)!!.alignmentBinding)
     assertEquals(listOf("a"), native.parts.map { it.id })
     assertEquals(listOf("source", "container"), native.sources.map { it.id })
     assertNull(native.attachments.first { it.id == "container" }.path)

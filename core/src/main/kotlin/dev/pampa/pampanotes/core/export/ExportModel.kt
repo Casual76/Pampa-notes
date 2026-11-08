@@ -195,6 +195,8 @@ data class ExportPart(
   /** Il computer di casa ha la registrazione: se qui manca, si puo' scaricare prima di scrivere. */
   val archived: Boolean = false,
   val origin: dev.pampa.pampanotes.core.importing.RecordingOrigin? = null,
+  /** Current graph identity, required before reusing public cloud timing evidence. */
+  val sha256: String = "",
 )
 
 data class ExportSession(

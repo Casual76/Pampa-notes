@@ -17,7 +17,8 @@ class CloudTranscriptTest {
     val raw = raw(text)
     val sourceParts = texts.mapIndexed { index, body -> CloudTextPart(parts[index].id, hash, body, "en", "mistral", "fixture") }
     val overlays = sourceParts.mapIndexed { part, source ->
-      CloudOverlay(source.id, AlignmentProtocol.sha256(source.text!!), "en", AlignmentProtocol.tokens(source.text).mapIndexed { word, range ->
+      val sourceText = requireNotNull(source.text)
+      CloudOverlay(source.id, AlignmentProtocol.sha256(sourceText), "en", AlignmentProtocol.tokens(sourceText).mapIndexed { word, range ->
         if (part to word in measured) AlignmentTiming(range.first, range.last + 1, 100 + word * 100L, 180 + word * 100L, "measured")
         else AlignmentTiming(range.first, range.last + 1, null, null, "missing", "no_evidence")
       })

@@ -16,7 +16,7 @@ internal object PampaBundleExport {
       val nativeGraph = item.native ?: PampaBundleNote(
         note = n, tags = item.tags,
         sessions = item.sessions.map { SessionEntity(it.id, n.id, it.title, it.date, it.number - 1, it.transcript?.id, n.createdAt, n.updatedAt, voiceNames = VoiceNames.encode(it.voiceNames)) },
-        parts = item.sessions.flatMap { session -> session.parts.mapIndexed { index, p -> AudioPartEntity(p.id, session.id, index, p.fileName, p.originalName, "audio/mp4", p.sizeBytes, p.durationMs, "", n.createdAt,
+        parts = item.sessions.flatMap { session -> session.parts.mapIndexed { index, p -> AudioPartEntity(p.id, session.id, index, p.fileName, p.originalName, "audio/mp4", p.sizeBytes, p.durationMs, p.sha256, n.createdAt,
           recordedAtEpochMs = p.origin?.epochMs, recordedAtLocal = p.origin?.local,
           recordedAtZoneId = p.origin?.zoneId, recordedAtSource = p.origin?.source, recordedAtPrecision = p.origin?.precision) } },
         transcripts = item.sessions.flatMap { listOfNotNull(it.raw, it.transcript) }.distinctBy { it.id },

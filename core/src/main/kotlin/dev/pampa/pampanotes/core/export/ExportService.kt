@@ -501,6 +501,7 @@ class ExportService @Inject constructor(
           startMs = start,
           sizeBytes = part.sizeBytes,
           archived = part.archivedAt > 0,
+          sha256 = part.sha256,
           origin = dev.pampa.pampanotes.core.importing.RecordingOrigin(part.recordedAtEpochMs,
             part.recordedAtLocal, part.recordedAtZoneId, part.recordedAtSource, part.recordedAtPrecision),
         )
