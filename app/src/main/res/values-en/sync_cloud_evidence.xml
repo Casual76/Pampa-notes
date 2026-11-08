@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sync_cloud_evidence_too_large">Items beyond the cloud limit: %1$d. They are waiting on this device with their text and provenance preserved; other items still sync. Save a complete backup to transfer them. After editing them, try syncing again.</string>
+</resources>

@@ -7,6 +7,8 @@ import dev.pampa.pampanotes.core.db.SyncOutboxEntity
 import dev.pampa.pampanotes.core.db.SyncStateEntity
 import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
+import dev.pampa.pampanotes.core.files.Hashing
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
@@ -40,6 +42,8 @@ data class SyncReport(
   val foreignAccount: Boolean = false,
 ) {
   val ok: Boolean get() = error == null
+  /** The exchange completed even if some oversized local rows still need user action. */
+  val completed: Boolean get() = ok || (tooLarge > 0 && error == SyncSizeFailures.error(tooLarge))
 }
 
 /**
@@ -132,8 +136,9 @@ class SyncRepository @Inject constructor(
         rebaselined = pulled.rebaselined,
         seq = db.sync().state()?.lastPullSeq ?: 0,
         tooLarge = pushed.tooLarge,
+        error = if (pushed.tooLarge > 0) SyncSizeFailures.error(pushed.tooLarge) else null,
       )
-      settingsStore.setLastSync(System.currentTimeMillis(), "")
+      settingsStore.setLastSync(System.currentTimeMillis(), report.error.orEmpty())
       report
     } catch (cancelled: CancellationException) {
       throw cancelled
@@ -299,9 +304,17 @@ class SyncRepository @Inject constructor(
 
   private suspend fun push(url: String, token: String, deviceId: String, deviceName: String): Pushed {
     val sync = db.sync()
+    val scope = Hashing.sha256("wire1\n$url\n${settingsStore.syncOwnerId().orEmpty()}\n$deviceId")
+    val sizeFailures = SyncSizeFailures(File(db.openHelper.writableDatabase.path + ".sync-size-$scope.json"))
+    if (!sizeFailures.recovered) {
+      recoverCloudSourceOutbox()
+      sizeFailures.finishRecovery()
+    }
     val entries = sync.outbox()
+    sizeFailures.retain(entries.map { SyncSizeFailures.key(it.tbl, it.rowId) }.toSet())
     if (entries.isEmpty()) return Pushed()
     val now = System.currentTimeMillis()
+    var result = Pushed()
 
     // Si rilegge tutto adesso: la riga puo' essere sparita, o cambiata da quando la voce e' nata.
     val staged = mutableListOf<Pair<SyncOutboxEntity, WireChange>>()
@@ -310,19 +323,30 @@ class SyncRepository @Inject constructor(
       val meta = sync.meta(entry.tbl, entry.rowId)
       when {
         encoded == null -> {
+          sizeFailures.remove(entry.tbl, entry.rowId)
           // Non c'e' piu'. Se il server non l'ha mai saputa, non c'e' niente da dirgli.
           if (meta == null) { sync.clearOutbox(entry.tbl, entry.rowId, entry.id); continue }
           staged += entry to WireChange(entry.tbl, entry.rowId, WireChange.OP_DELETE, updatedAt = now, baseHash = meta.hash)
         }
         meta != null && meta.hash == encoded.hash -> {
+          sizeFailures.remove(entry.tbl, entry.rowId)
           // Toccata, non cambiata: `notes.touch()` e i suoi fratelli. Niente da mandare.
           sync.clearOutbox(entry.tbl, entry.rowId, entry.id)
         }
-        else -> staged += entry to WireChange(
-          tbl = entry.tbl, id = entry.rowId, op = WireChange.OP_UPSERT,
-          updatedAt = encoded.updatedAt, hash = encoded.hash, payload = encoded.payload, segments = encoded.segments,
-          baseHash = meta?.hash.orEmpty(),
-        )
+        else -> {
+          val change = WireChange(
+            tbl = entry.tbl, id = entry.rowId, op = WireChange.OP_UPSERT,
+            updatedAt = encoded.updatedAt, hash = encoded.hash, payload = encoded.payload, segments = encoded.segments,
+            baseHash = meta?.hash.orEmpty(),
+          )
+          if (sizeFailures.blocked(entry.tbl, entry.rowId, encoded.hash) || SyncSizeFailures.exceedsLimits(change)) {
+            sizeFailures.record(entry.tbl, entry.rowId, encoded.hash)
+            result += Pushed(tooLarge = 1)
+          } else {
+            sizeFailures.remove(entry.tbl, entry.rowId)
+            staged += entry to change
+          }
+        }
       }
     }
 
@@ -331,7 +355,6 @@ class SyncRepository @Inject constructor(
     // dopo aver ricevuto una sessione ci sta dietro.
     staged.sortBy { SyncMerge.orderOf(it.second.tbl) }
 
-    var result = Pushed()
     val sizes = staged.associate { it.first.id to PushPlanner.sizeOf(it.second) }
     for (batch in PushPlanner.chunk(staged, sizeOf = { sizes.getValue(it.first.id) })) {
       val batchId = PushPlanner.batchId(deviceId, batch.map { (entry, change) -> PushPlanner.Item(entry.id, change) })
@@ -340,18 +363,17 @@ class SyncRepository @Inject constructor(
       for ((entry, change) in batch) {
         when (reasons[change.tbl to change.id]) {
           null -> {
+            sizeFailures.remove(change.tbl, change.id)
             sync.clearOutbox(entry.tbl, entry.rowId, entry.id)
             if (change.isDelete) sync.deleteMeta(change.tbl, change.id)
             else sync.upsertMeta(SyncMetaEntity(change.tbl, change.id, serverSeq = response.seq, hash = change.hash, updatedAt = change.updatedAt))
             result += Pushed(sent = 1)
           }
-          // Troppo grande per l'indice: la riga resta qui, ma esce dall'outbox. Tenerla dentro
-          // voleva dire rimandare a ogni giro qualche megabyte che il server rifiuta prima di
-          // leggerlo; se cambia, i trigger la rimettono in coda e ci riprova. Non e' un conflitto,
-          // e non fa ripetere il giro.
+          // Keep the outbox and agreed server base. The durable ledger suppresses repeat uploads
+          // of this exact content, while edits/deletion/account changes can proceed normally.
           REASON_TOO_LARGE -> {
             android.util.Log.w("SyncRepository", "push: ${change.tbl}/${change.id} troppo grande per l'indice (${sizes[entry.id]} byte), resta solo qui")
-            sync.clearOutbox(entry.tbl, entry.rowId, entry.id)
+            sizeFailures.record(change.tbl, change.id, change.hash)
             result += Pushed(tooLarge = 1)
           }
           // Rifiutata: resta nell'outbox, sporca, cosi' il pull che segue la puo' biforcare.
@@ -360,6 +382,27 @@ class SyncRepository @Inject constructor(
       }
     }
     return result
+  }
+
+  /**
+   * Older releases removed rejected rows from the outbox. Once per wire codec/device identity,
+   * recover only sourced transcripts whose current content differs from the agreed server base.
+   * Read IDs first (not a whole-account text bundle); each row still uses ordinary incremental push.
+   * Finishing is durable only after every row was inspected, so interruption can safely retry.
+   */
+  private suspend fun recoverCloudSourceOutbox() {
+    val ids = db.openHelper.readableDatabase.query(
+      "SELECT id FROM transcripts WHERE cloudSourceJson IS NOT NULL AND cloudSourceJson != ''",
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+    for (id in ids) {
+      val encoded = payloads.encode("transcripts", id) ?: continue
+      db.withTransaction {
+        val sync = db.sync()
+        if (sync.outboxEntry("transcripts", id) == null && sync.meta("transcripts", id)?.hash != encoded.hash) {
+          sync.markDirty(SyncOutboxEntity(tbl = "transcripts", rowId = id, op = WireChange.OP_UPSERT))
+        }
+      }
+    }
   }
 
   private data class Pulled(val applied: Int, val deleted: Int, val forked: Int, val rebaselined: Boolean) {

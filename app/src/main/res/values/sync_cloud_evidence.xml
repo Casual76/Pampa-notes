@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sync_cloud_evidence_too_large">Elementi oltre il limite del cloud: %1$d. Restano in attesa su questo dispositivo, con testo e provenienza conservati; gli altri elementi si sincronizzano. Salva un backup completo per trasferirli. Dopo averli modificati, riprova la sincronizzazione.</string>
+</resources>

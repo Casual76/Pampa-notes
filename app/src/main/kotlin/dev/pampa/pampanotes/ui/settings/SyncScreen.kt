@@ -33,6 +33,7 @@ import dev.antigravity.fluidengine.ui.theme.FluidTone
 import dev.pampa.pampanotes.ui.cloudrelay.cloudRelaySection
 import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.ui.nav.SettingsSection
+import dev.pampa.pampanotes.core.sync.SyncSizeFailures
 
 /**
  * Text synchronization and the separate, explicitly enabled temporary file relay.
@@ -186,7 +187,9 @@ fun SyncSectionRoute(
       item {
         FluidInlineMessage(
           title = stringResource(R.string.sync_error_title),
-          message = state.lastSyncError,
+          message = SyncSizeFailures.count(state.lastSyncError).takeIf { it > 0 }?.let {
+            stringResource(R.string.sync_cloud_evidence_too_large, it)
+          } ?: state.lastSyncError,
           tone = FluidTone.Danger,
         )
       }

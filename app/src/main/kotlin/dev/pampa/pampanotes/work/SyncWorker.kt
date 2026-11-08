@@ -34,25 +34,26 @@ class SyncWorker @AssistedInject constructor(
     val report = repository.syncNow()
     // Dopo il pull, non prima: le note che un altro dispositivo ha gia' riparato arrivano sistemate,
     // e qui non si riscrive niente. Quello che cambia sale col prossimo giro.
-    if (repairs.run() && report.ok) scheduler.syncSoon()
+    if (repairs.run() && report.completed) scheduler.syncSoon()
     // Le righe nuove sono arrivate: se si e' chiesto di tenere tutto anche qui, i loro file si
     // vanno a prendere adesso. Il worker si chiude da solo se non c'e' niente da scaricare.
-    if (report.ok) relayScheduler.kick()
+    if (report.completed) relayScheduler.kick()
     val settings = settingsStore.current()
-    if (report.ok && settings.mirrorEnabled && settings.hasEndpoint) scheduler.fetchNow(settings.archiveOnlyUnmetered)
+    if (report.completed && settings.mirrorEnabled && settings.hasEndpoint) scheduler.fetchNow(settings.archiveOnlyUnmetered)
     val data = workDataOf(
       KEY_PUSHED to report.pushed,
       KEY_PULLED to report.pulled,
       KEY_DELETED to report.deleted,
       KEY_FORKED to report.forked,
       KEY_REJECTED to report.rejected,
+      KEY_TOO_LARGE to report.tooLarge,
       KEY_ERROR to report.error,
     )
     if (report.ok) return Result.success(data)
     // Un token sbagliato o un protocollo diverso non si sistemano riprovando fra un minuto: si
     // chiude con l'errore scritto, e lo si legge in pagina. Il resto — rete, server giu' — si riprova.
     // Un altro account neppure: aspetta una scelta di chi usa il telefono, non un altro tentativo.
-    val permanent = report.foreignAccount ||
+    val permanent = report.foreignAccount || report.tooLarge > 0 ||
       report.error?.let { it.contains("401") || it.contains("token") || it.contains("protocollo") } == true
     return if (permanent || runAttemptCount >= MAX_ATTEMPTS) Result.success(data) else Result.retry()
   }
@@ -63,6 +64,7 @@ class SyncWorker @AssistedInject constructor(
     const val KEY_DELETED = "deleted"
     const val KEY_FORKED = "forked"
     const val KEY_REJECTED = "rejected"
+    const val KEY_TOO_LARGE = "too_large"
     const val KEY_ERROR = "error"
     private const val MAX_ATTEMPTS = 4
   }
