@@ -769,10 +769,12 @@ interface JobDao {
     updatedAt: Long,
   ): Int
 
-  /** Torna in fila un lavoro che il sistema ha fermato: la ripresa riparte dai pezzi gia' su disco. */
+  /** Requeue interrupted work, or atomically finish a cancellation after its watcher has exited. */
   @Query(
-    "UPDATE jobs SET state = 'QUEUED', phase = :phase, progress = 0, errorCode = NULL, errorMessage = NULL, " +
-      "finishedAt = NULL, updatedAt = :updatedAt WHERE id = :id AND state NOT IN ('CANCEL_REQUESTED','CANCELLED','DONE')",
+    "UPDATE jobs SET state = CASE WHEN state = 'CANCEL_REQUESTED' THEN 'CANCELLED' ELSE 'QUEUED' END, " +
+      "phase = CASE WHEN state = 'CANCEL_REQUESTED' THEN NULL ELSE :phase END, progress = 0, errorCode = NULL, errorMessage = NULL, " +
+      "finishedAt = CASE WHEN state = 'CANCEL_REQUESTED' THEN :updatedAt ELSE NULL END, updatedAt = :updatedAt " +
+      "WHERE id = :id AND state NOT IN ('CANCELLED','DONE')",
   )
   suspend fun requeue(id: String, phase: String?, updatedAt: Long): Int
 

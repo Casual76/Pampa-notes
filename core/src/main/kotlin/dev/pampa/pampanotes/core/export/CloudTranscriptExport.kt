@@ -8,7 +8,9 @@ import dev.pampa.pampanotes.core.transcription.VoiceNames
 
 /** Human-readable exports use the same exact cloud source as the reader, never segment text. */
 internal object CloudTranscriptExport {
-  fun applies(session: ExportSession) = session.transcript?.let { it.kind == TranscriptKind.RAW && it.cloudSourceJson != null } == true
+  fun applies(session: ExportSession) = session.transcript?.let {
+    it.kind == TranscriptKind.RAW && (it.cloudSourceJson != null || CloudSources.cloud(it.provider))
+  } == true
 
   fun blocks(session: ExportSession, options: ExportOptions): List<TranscriptBlock>? {
     if (!applies(session)) return null

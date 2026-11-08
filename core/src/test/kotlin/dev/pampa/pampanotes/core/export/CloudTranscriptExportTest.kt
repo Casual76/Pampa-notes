@@ -40,6 +40,24 @@ class CloudTranscriptExportTest {
     assertTrue(markdown.contains("LEGACY MATERIAL"))
   }
 
+  @Test fun `legacy cloud RAW with null or empty provenance exports exact text without segment timing`() {
+    for (provider in listOf("groq", "openrouter", "mistral")) for (metadata in listOf(null, "")) {
+      val source = session("DIFFERENT SEGMENT WORDS")
+      val legacy = source.transcript!!.copy(provider = provider, cloudSourceJson = metadata)
+      val old = source.copy(transcript = legacy, raw = legacy)
+      for (options in listOf(ExportOptions(), ExportOptions(timestamps = true), ExportOptions(speechClock = true))) {
+        val blocks = TranscriptPieces.blocks(old, options)
+        assertEquals(text, blocks.joinToString("") { it.text })
+        assertTrue(blocks.all { it.startMs == null && it.partOffsetMs == null })
+      }
+      val note = ExportNote(NoteEntity("n", "f", "Recording", createdAt = 1, updatedAt = 1),
+        emptyList(), emptyList(), emptyList(), listOf(old))
+      val markdown = MarkdownWriter().singleNote(note, ExportOptions(timestamps = true))
+      assertTrue(markdown.contains(text))
+      assertFalse(markdown.contains("DIFFERENT SEGMENT WORDS"))
+    }
+  }
+
   @Test fun `matching coarse cloud segment has an explicitly estimated clock anchor`() {
     val block = TranscriptPieces.blocks(session(text.trim()), ExportOptions(speechClock = true)).single()
     assertEquals(text, block.text)

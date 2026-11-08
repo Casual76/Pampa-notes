@@ -110,7 +110,9 @@ class CloudSpending @Inject constructor(
     try {
       val quota = metadata.quota(key, now)
       withContext(Dispatchers.IO) { store.durable.update { it.copy(quotas = it.quotas + (quota.fingerprint to quota)) } }
-    } catch (cancel: CancellationException) { throw cancel } catch (error: Exception) { quotaError = error }
+    } catch (cancel: CancellationException) { throw cancel }
+    catch (limited: TranscriptionError.RateLimited) { throw limited }
+    catch (error: Exception) { quotaError = error }
     val selected = model?.takeIf { it.isNotBlank() } ?: settings.current().openRouterTranscriptionModel.takeIf { it.isNotBlank() }
     if (selected != null) {
       val price = metadata.prices(key, selected, now)
@@ -132,6 +134,7 @@ class CloudSpending @Inject constructor(
     val model = request.model
     if (provider == "openrouter" && data().prices[model]?.fresh(System.currentTimeMillis()) != true) {
       try { refresh(model) } catch (cancel: CancellationException) { throw cancel }
+      catch (limited: TranscriptionError.RateLimited) { throw limited }
       catch (unknown: TranscriptionError.UnknownModel) { throw unknown }
       catch (_: Exception) { /* stale stays unknown */ }
     }

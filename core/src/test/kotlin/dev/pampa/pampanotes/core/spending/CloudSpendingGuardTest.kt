@@ -69,6 +69,57 @@ class CloudSpendingGuardTest {
     server.respond { TinyHttpServer.Response(200, """{"text":"Hello","usage":{"cost":0.15}}""") }
   }
   @After fun teardown() { server.close() }
+
+  @Test fun `quota metadata 429 stops pricing and paid upload and persists the provider wait`() =
+    metadataQuota("/key")
+
+  @Test fun `pricing metadata 429 stops reservation and paid upload and persists the provider wait`() =
+    metadataQuota("/models?output_modalities=transcription")
+
+  private fun metadataQuota(limitedPath: String) = runBlocking {
+    disk.durable.update { it.copy(prices = emptyMap(), settings = it.settings.copy(unknownAction = UnknownCostAction.ALLOW)) }
+    val http = mockk<TranscriptionHttp>()
+    val lookups = mutableListOf<String>()
+    coEvery { http.getJson(any(), any(), any()) } answers {
+      val path = firstArg<String>().substringAfter(OpenRouterTranscriptionProvider.BASE_URL)
+      lookups += path
+      if (path == limitedPath) throw TranscriptionError.RateLimited(3600.0, "metadata quota")
+      Json.parseToJsonElement("""{"data":{"limit":10,"usage":0}}""")
+    }
+    val accounting = CloudSpending(disk, db, settings, keys, CloudCredentials(mockk<Context> {
+      every { noBackupFilesDir } returns temp.root
+    }, keys), http)
+    var paidCalls = 0
+    val upstream = object : TranscriptionProvider {
+      override val id = "openrouter"
+      override val capabilities = TranscriptionCapabilities(null, false, false)
+      override suspend fun listModels() = emptyList<String>()
+      override suspend fun health() = EndpointHealth(false, 0)
+      override suspend fun transcribe(file: File, mime: String, request: TranscribeRequest, onProgress: (UploadProgress) -> Unit, onRemote: (RemoteProgress) -> Unit): TranscriptResult {
+        paidCalls++
+        error("Quota must stop the paid upload")
+      }
+    }
+    val store = DurableCloudCooldowns(File(temp.root, "metadata-cooldown.json"))
+    val fingerprint = OpenRouterCostMetadata.fingerprint("fake")
+    fun guarded(): CloudTranscriptionGuard = CloudTranscriptionGuard(upstream,
+      beforeUpload = { accounting.beforeUpload("openrouter", fingerprint, it) }, beforeRequest = {
+        store.deadline("openrouter", fingerprint, "account")?.takeIf { it > System.currentTimeMillis() }?.let {
+          throw TranscriptionError.RateLimited(null, "persisted", it)
+        }
+      }, limited = {
+        TranscriptionError.RateLimited(null, "persisted", store.extend("openrouter", fingerprint, "account", CloudRetry.deadline(it, System.currentTimeMillis())))
+      }) { false }
+    val limited = runCatching { guarded().transcribe(audio(), "audio/mpeg", request()) }.exceptionOrNull() as TranscriptionError.RateLimited
+    assertTrue(limited.retryAtMillis!! > System.currentTimeMillis() + 3_500_000)
+    val calls = lookups.size
+    assertEquals(if (limitedPath == "/key") 1 else 2, calls)
+    assertTrue(runCatching { guarded().transcribe(audio(), "audio/mpeg", request()) }.exceptionOrNull() is TranscriptionError.RateLimited)
+    assertEquals(calls, lookups.size)
+    assertEquals(0, paidCalls)
+    assertTrue(disk.durable.read().charges.isEmpty())
+  }
+
   @Test fun `Mistral uses its own credential and retains honest unknown accounting with privacy gates`() = runBlocking {
     val credentials = mockk<dev.pampa.pampanotes.core.transcription.CloudCredentials>()
     coEvery { credentials.key("mistral") } returns "fixture-mistral-key"

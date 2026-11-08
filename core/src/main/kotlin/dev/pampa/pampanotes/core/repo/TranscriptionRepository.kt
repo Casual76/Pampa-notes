@@ -392,7 +392,7 @@ class TranscriptionRepository @Inject constructor(
   /**
    * Il sistema ha fermato il worker a meta' lavoro (vincoli, quota, un aggiornamento): il lavoro non
    * e' fallito, torna in fila e riparte dai pezzi gia' su disco. Un «Annulla» arrivato nel frattempo
-   * vince: la condizione della query lo lascia com'e'.
+   * vince: la query chiude atomicamente la richiesta di annullamento.
    */
   suspend fun requeueStopped(jobId: String) {
     jobs.requeue(jobId, null, System.currentTimeMillis())
@@ -402,13 +402,14 @@ class TranscriptionRepository @Inject constructor(
    * Il limite di Groq chiede di aspettare ore: il lavoro torna in fila e dice fino a quando
    * ([PHASE_RETRY_AT]), invece di fallire o di tenere una notifica accesa per tutto quel tempo.
    */
-  suspend fun requeueUntil(jobId: String, atMillis: Long, scope: String? = null) {
+  suspend fun requeueUntil(jobId: String, atMillis: Long, scope: String? = null): Boolean {
     if (scope != null) {
       val account = CloudRetry.fingerprint(settingsStore.current().syncAccount)
       kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { cooldowns.contexts.setCooldown(jobId, scope, account) }
     }
     val phase = if (scope != null) JobPhase.ProviderCooldown.encode() else "$PHASE_RETRY_AT:$atMillis"
     jobs.requeue(jobId, phase, System.currentTimeMillis())
+    return jobs.get(jobId)?.state == JobState.QUEUED
   }
 
   suspend fun markCancelled(jobId: String) = jobs.markCancelled(jobId, System.currentTimeMillis())

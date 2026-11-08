@@ -167,9 +167,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
         // il computer di casa a essersene andato: allora il lavoro torna in fila (vedi [lostComputer]).
         val translated = TranscriptionError.from(error)
         if (translated is TranscriptionError.RateLimited) {
-          val at = dev.pampa.pampanotes.core.transcription.CloudRetry.deadline(translated, System.currentTimeMillis())
-          repository.requeueUntil(job.id, at, translated.scopeFingerprint)
-          Step.ResumeAt(at)
+          quotaWait(job, translated)
         } else lostComputer(job, translated, baseUrl = null) ?: run {
           fail(job, translated)
           Step.Next
@@ -462,10 +460,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
         Step.Next
       }
     } catch (limited: TranscriptionError.RateLimited) {
-      // Every cloud rate wait releases foreground work. The provider/key deadline is durable.
-      val at = dev.pampa.pampanotes.core.transcription.CloudRetry.deadline(limited, System.currentTimeMillis())
-      repository.requeueUntil(job.id, at, limited.scopeFingerprint)
-      return Step.ResumeAt(at)
+      return quotaWait(job, limited)
     } catch (cancellation: CancellationException) {
       return cancelled(job, cancellation)
     } catch (error: Exception) {
@@ -482,6 +477,16 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       partials.clear(job.sessionId)
     }
     return Step.Next
+  }
+
+  private suspend fun quotaWait(job: JobEntity, limited: TranscriptionError.RateLimited): Step {
+    val at = dev.pampa.pampanotes.core.transcription.CloudRetry.deadline(limited, System.currentTimeMillis())
+    // A cancel before, during or after this atomic transition wins over a delayed resume.
+    if (!repository.requeueUntil(job.id, at, limited.scopeFingerprint)) {
+      runner.cleanUp(job.id)
+      return Step.Next
+    }
+    return Step.ResumeAt(at)
   }
 
   /**

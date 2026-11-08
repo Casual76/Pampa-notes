@@ -97,4 +97,41 @@ class CloudCooldownTest {
     }.join()
     assertFalse(reserved)
   }
+
+  @Test fun `preparation quota is persisted before any upload and blocks a restarted job`() = runBlocking {
+    val path = File(temp.root, "prepare-quota.json")
+    var preparations = 0
+    var uploads = 0
+    val upstream = object : TranscriptionProvider {
+      override val id = "openrouter"
+      override val capabilities = TranscriptionCapabilities(null, false, false)
+      override suspend fun listModels() = emptyList<String>()
+      override suspend fun health() = EndpointHealth(false, 0)
+      override suspend fun transcribe(file: File, mime: String, request: TranscribeRequest, onProgress: (UploadProgress) -> Unit, onRemote: (RemoteProgress) -> Unit): TranscriptResult {
+        uploads++
+        error("Must not upload")
+      }
+    }
+    fun guard(): CloudTranscriptionGuard {
+      val disk = DurableCloudCooldowns(path)
+      return CloudTranscriptionGuard(upstream, prepare = {
+        preparations++
+        throw TranscriptionError.RateLimited(3600.0, "metadata quota")
+      }, beforeRequest = {
+        disk.deadline("openrouter", "key", "account")?.takeIf { it > System.currentTimeMillis() }?.let {
+          throw TranscriptionError.RateLimited(null, "durable quota", it)
+        }
+      }, limited = {
+        TranscriptionError.RateLimited(null, "durable quota",
+          disk.extend("openrouter", "key", "account", CloudRetry.deadline(it, System.currentTimeMillis())))
+      }) { false }
+    }
+    val request = TranscribeRequest("fixture")
+    val failure = runCatching { guard().prepareRequest(request) }.exceptionOrNull() as TranscriptionError.RateLimited
+    assertTrue(failure.retryAtMillis!! > System.currentTimeMillis() + 3_500_000)
+    val restarted = runCatching { guard().transcribe(File("unused"), "audio/wav", request) }.exceptionOrNull() as TranscriptionError.RateLimited
+    assertEquals(failure.retryAtMillis, restarted.retryAtMillis)
+    assertEquals(1, preparations)
+    assertEquals(0, uploads)
+  }
 }

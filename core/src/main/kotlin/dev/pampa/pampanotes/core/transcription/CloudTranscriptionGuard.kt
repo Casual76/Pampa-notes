@@ -25,33 +25,22 @@ class CloudTranscriptionGuard(
   }
   override suspend fun listModels(): List<String> = checked { provider.listModels() }
   override suspend fun health(): EndpointHealth = checked { provider.health() }
-  suspend fun prepareRequest(request: TranscribeRequest): TranscribeRequest {
-    if (customOnly()) throw TranscriptionError.CompanionOnly()
-    beforeRequest()
-    return prepare(request)
-  }
+  suspend fun prepareRequest(request: TranscribeRequest): TranscribeRequest = checked { prepare(request) }
   override suspend fun transcribe(
     file: File,
     mime: String,
     request: TranscribeRequest,
     onProgress: (UploadProgress) -> Unit,
     onRemote: (RemoteProgress) -> Unit,
-  ): TranscriptResult {
-    if (customOnly()) throw TranscriptionError.CompanionOnly()
+  ): TranscriptResult = checked {
     kotlinx.coroutines.currentCoroutineContext().ensureActive()
-    beforeRequest()
+    // Metadata/preparation requests share the selected provider's durable quota boundary.
     val authorized = beforeUpload(request)
     // A settings change during metadata lookup must stop this attempt too.
     try {
       if (customOnly()) throw TranscriptionError.CompanionOnly()
       beforeRequest()
-      return provider.transcribe(file, mime, authorized, onProgress, onRemote)
-    } catch (cancel: kotlinx.coroutines.CancellationException) {
-      throw cancel
-    } catch (error: Exception) {
-      val mapped = TranscriptionError.from(error)
-      if (mapped is TranscriptionError.RateLimited) throw limited(mapped)
-      throw mapped
+      provider.transcribe(file, mime, authorized, onProgress, onRemote)
     } finally {
       authorized.cloudAttemptFinished?.invoke()
     }
