@@ -1,0 +1,229 @@
+{
+  "reviewedSourceSha": "351e3fd44bf64b07d6437b1d1c8b533a7bf9c79f",
+  "base": "ea4e0a2acc23f8208e943e12513195f6d1eab6dc",
+  "branch": "t3/cloud-recordings-parallel",
+  "overallDecision": "CORRECT: six deduplicated mandatory defects, not release approved",
+  "sourceInputs": 537,
+  "artifactRecords": 166,
+  "actualGradleExitCode": 0,
+  "buildSuccessfulMarker": true,
+  "buildRoot": "C:\\Users\\casua\\AppData\\Local\\PampaNotes\\build-cloud-recordings",
+  "jvm": {
+    "core": {
+      "tests": 1240,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "passed": 1239
+    },
+    "app": {
+      "tests": 67,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 67
+    }
+  },
+  "lint": {
+    "Warning": 127
+  },
+  "runtimeExecution": "NOT EXECUTED: devices/emulators/GPU/models/audio/providers/live services/Room runtime/WorkManager/instrumentation/rendered UX; AndroidTest compilation ONLY",
+  "apk": {
+    "path": "C:\\Users\\casua\\AppData\\Local\\PampaNotes\\build-cloud-recordings\\app\\outputs\\apk\\debug\\app-debug.apk",
+    "sha256": "022b0043133c45154a5c133ec730313634a731bfe8a8f322d572da653745acc2",
+    "bytes": 45261018
+  },
+  "buildSummary": "BUILD SUCCESSFUL in3m04s;422actionable tasks21executed401up-to-date",
+  "acceptedCachedOutputs": [
+    "app:testDebugUnitTest (67 historical cases accepted UP-TO-DATE)",
+    "app:assembleDebug APK accepted UP-TO-DATE"
+  ],
+  "executedCurrentTargets": [
+    "core:testDebugUnitTest",
+    "core:compileDebugAndroidTestKotlin",
+    "app:compileDebugAndroidTestKotlin",
+    "app:lintDebug"
+  ],
+  "boundFiles": [
+    {
+      "path": "C:\\Users\\casua\\AppData\\Local\\PampaNotes\\cloud-recordings-verification\\correction3-351e3fd4\\source-manifest-before.json",
+      "sha256": "34e5d9dbe812bfebdb432a25068c536ce357148d00e75cdff1661861b70821b3"
+    },
+    {
+      "path": "C:\\Users\\casua\\AppData\\Local\\PampaNotes\\cloud-recordings-verification\\correction3-351e3fd4\\verification-manifest.json",
+      "sha256": "63103ba9349b8c79d8cb67a9541082adb5fa111c8292458a958416a42097f19f"
+    },
+    {
+      "path": "C:\\Users\\casua\\AppData\\Local\\PampaNotes\\cloud-recordings-verification\\correction3-351e3fd4\\gradle.log",
+      "sha256": "d524cb6383cbc3187f096dff41ccc88e90a64e98f868932449c1a7f26dd2ad22"
+    },
+    {
+      "path": "C:\\Users\\casua\\AppData\\Local\\PampaNotes\\cloud-recordings-verification\\correction3-351e3fd4\\process-start.json",
+      "sha256": "a75dd8bfa25aabcb1516d7fac87f5b9c0a33bdb2b29b86d728ca5177e8586f16"
+    },
+    {
+      "path": "C:\\Users\\casua\\AppData\\Local\\PampaNotes\\cloud-recordings-verification\\correction3-351e3fd4\\process-exit.json",
+      "sha256": "3ee7fc2ea5a34d7b0adfbdd2641f17bcaf6dfe617eb3233fd013640b029b7f79"
+    }
+  ],
+  "historicalArchives": [
+    "correction2-3f88762/archive-manifest.json (161 records)",
+    "correction3-4d50cf6/archive-manifest.json (161 records, failed AndroidTest compiler attempt; stale core XML excluded)",
+    "correction3-7cae3c37/archive-manifest.json (166 records, failed exception-identity assertion)"
+  ],
+  "reviewerReports": [
+    {
+      "criterion": "C1",
+      "score": 6,
+      "decision": "correct",
+      "report": "C1-review.md",
+      "model": "gpt-6.1-sol",
+      "options": [
+        {
+          "id": "reasoningEffort",
+          "value": "xhigh"
+        },
+        {
+          "id": "serviceTier",
+          "value": "default"
+        }
+      ]
+    },
+    {
+      "criterion": "C2",
+      "score": 6,
+      "decision": "correct",
+      "report": "C2-review.md",
+      "model": "gpt-6.1-sol",
+      "options": [
+        {
+          "id": "reasoningEffort",
+          "value": "xhigh"
+        },
+        {
+          "id": "serviceTier",
+          "value": "default"
+        }
+      ]
+    },
+    {
+      "criterion": "C3",
+      "score": 6,
+      "decision": "correct",
+      "report": "C3-review.md",
+      "model": "gpt-6.1-sol",
+      "options": [
+        {
+          "id": "reasoningEffort",
+          "value": "xhigh"
+        },
+        {
+          "id": "serviceTier",
+          "value": "default"
+        }
+      ]
+    },
+    {
+      "criterion": "C4",
+      "score": 6,
+      "decision": "correct",
+      "report": "C4-review.md",
+      "model": "gpt-6.1-sol",
+      "options": [
+        {
+          "id": "reasoningEffort",
+          "value": "xhigh"
+        },
+        {
+          "id": "serviceTier",
+          "value": "default"
+        }
+      ]
+    },
+    {
+      "criterion": "C5",
+      "score": 9,
+      "decision": "pass",
+      "report": "C5-review.md",
+      "model": "gpt-6.1-sol",
+      "options": [
+        {
+          "id": "reasoningEffort",
+          "value": "xhigh"
+        },
+        {
+          "id": "serviceTier",
+          "value": "default"
+        }
+      ]
+    },
+    {
+      "criterion": "C6",
+      "score": 6,
+      "decision": "correct",
+      "report": "C6-review.md",
+      "model": "gpt-6.1-sol",
+      "options": [
+        {
+          "id": "reasoningEffort",
+          "value": "xhigh"
+        },
+        {
+          "id": "serviceTier",
+          "value": "default"
+        }
+      ]
+    },
+    {
+      "criterion": "C7",
+      "score": 8,
+      "decision": "pass",
+      "report": "C7-review.md",
+      "model": "gpt-6.1-sol",
+      "options": [
+        {
+          "id": "reasoningEffort",
+          "value": "xhigh"
+        },
+        {
+          "id": "serviceTier",
+          "value": "default"
+        }
+      ]
+    },
+    {
+      "criterion": "C8",
+      "score": 9,
+      "decision": "pass",
+      "report": "C8-review.md",
+      "model": "gpt-6.1-sol",
+      "options": [
+        {
+          "id": "reasoningEffort",
+          "value": "xhigh"
+        },
+        {
+          "id": "serviceTier",
+          "value": "default"
+        }
+      ]
+    },
+    {
+      "criterion": "C9",
+      "score": 9,
+      "decision": "pass",
+      "report": "C9-review.md",
+      "model": "gpt-6.1-sol",
+      "options": [
+        {
+          "id": "reasoningEffort",
+          "value": "xhigh"
+        },
+        {
+          "id": "serviceTier",
+          "value": "default"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+﻿a980faa4019593cff5bef40cd6c36b424ba26537 Document independent cloud recordings workflow criteria
+5c91d574b4901f205861c3d47dabb63e554833ce Add nullable recording origin and exact cloud source metadata contract
+925a6466e6e4d439c6da1a26fe2504dc947cce1a Add owner-bound forced alignment for existing cloud transcripts
+191c11c2823a5e12482ae228a94844fe518e8779 Open recordings as sessions and preserve associated material
+3e7a9973c6dfc117070c1e1cafd993f560196ffe Generate Room 15 schema for recording origins and cloud sources
+aca893aa239694a374d86dcaf45346ca32d47151 Add Mistral and pin cloud jobs through durable rate waits
+e00552724a8c00bc14bf705b0e62c1407545ec4a Add provenance-based speech clocks and exact-session exports
+7483874188a690415cc85816d0c589e72c22f996 Forward original cloud audio snapshot and back up model preferences
+c6eec80cb749511cff44e78cb7202505dcc059a1 Preserve exact cloud sources and queue guarded background alignment
+548414b6eda9587552b841af7fc342dcd3842d55 Render exact cloud text using only measured word evidence
+86647b8d04bc4baba75e47fdcc4fa14de73de507 Wire alignment lifecycle and prevent guessed cloud search seeks
+999db69678403658562ecf8ca4e9da6a6b56a7bd Resolve explicit language labels for alignment while preserving source values
+4d223e2ab0576fedc588dbc4f467d85803ff8207 Preserve scoped cloud provenance and timing through native transfers
+03db73dac6d3c5aabcfcb78c6436996d68592d31 Preserve exact cloud text in exports and verify integrated features
+4a69e975a864febdf52ce75c85502e5c0ca4ce9d Record independent round0 reviews and correction scope
+e7fdd6814c4796e25d128fb3140610122b407f43 Fence recording deletion atomically and retain same-audio origins
+b827b5eb56db02b865339ecde3e49e9e35aac8c1 Honor preparation quotas and cancellation while exporting legacy cloud text exactly
+dda717fc2a5663f0bedb0e8a28b3d1c7f453154c Track correction1 evidence and remaining integration checks
+11a87a4f0a26d7e04235bf818e0dc77e35515740 Bind canonical overlay languages and fence scoped transcript histories
+f6e91bfd7d75df480d8b8c5c5480272ea70046ec Track scoped source correction evidence
+2e69e395f7e7eae2e368762de3767d2885051d38 Normalize integration note trailing newline
+d2269d627e4909b7e30dd655a5b4cb9b950b6fd9 Sync exact cloud provenance compactly and retain oversized rows visibly
+61cef95130b753111ba110caf89560d8e4aaa9a4 Freeze correction1 integration contracts before verification
+2de6e0be198c9944129f992475f4e876c49138cb Separate generic timed writer fixtures from exact cloud RAW exports
+56cc16bfa2fecada3fc17b204a39dd9dd4a63901 Record nine independent round1 reviews and correction2 boundaries
+9bbf425a7428fdeb89923d3309a0ac9feb6aeda2 Protect shared audio, validate recording clocks and recover evidence before pull
+1c1d2182e2ad2c1be7fa56a16645dbd516b05ad3 Track correction2 source ownership and coordinator regressions
+06696eae1be82da3fdf3081348d4b3e72eaaa5e3 Bind companion alignment to verified owner and index authority
+556a8440c8f8ea64dafd4cc98a428de868ba8765 Retain verified cloud audio identity, exact responses and durable paid work
+1620c9b6993a372fc09abdc3bde13acc70f668c7 Document immutable responses and correction2 verification limits
+1cc9074975643e4806e80a1c4a7ec2f386c88400 Apply durable cloud request gates, atomic cancellation and legacy model pinning
+d34b172aad7cf1349f6170967d1e982e2708a669 Keep canonical orphan references and settle post-save cancellation
+d420520025f75a5e14a9989d155b930e11a63b43 Freeze correction2 contracts and bounded verification scope
+3f88762955de1d761b2eaa126eea35694e14cad7 Stabilize nullable epoch capture for Kotlin compilation
+1e396eb21aaabad3ffd041a7ad13bab654b496e8 docs: record nine independent round2 cloud reviews
+49f81303cceb58dd706b9b60222ae5b1da7c18b4 fix: retain exact legacy cloud originals through timeline changes
+a7a0e89965da2d94f09c63d467cf2d7f27dffd77 fix: fence stale cloud jobs during companion privacy migration
+184d705831cf8e1b256e918842b6d195e72de987 fix: persist definitive cloud upload rejection outcomes
+dcaabecd90837084802444d1732752e94d49785c fix: protect canonical sibling files during archive eviction
+4d50cf67fc20cd2b64e94a2220eed586f989f120 docs: freeze correction3 source before integrated checks
+7cae3c3780a4b4de54e4267784188d6debf7854c test: pass seeded provider to conditional job start fixtures
+351e3fd44bf64b07d6437b1d1c8b533a7bf9c79f test: assert recovered failure semantics and retained billing barrier
