@@ -64,7 +64,8 @@ class ExportWritersTest {
 
   @Test
   fun `il front-matter dice con che modello e in che file sta la trascrizione`() {
-    val note = note()
+    val cloud = transcript(TranscriptKind.RAW, "Prima frase.").copy(provider = "groq")
+    val note = note(sessions = listOf(session(transcript = cloud, raw = cloud)))
     val text = writer.noteFile(note, layout(listOf(note)), options, generator = "Pampa Notes 0.2.0")
 
     assertTrue(text.contains("transcript: raw"))
@@ -834,7 +835,9 @@ class ExportWritersTest {
     id = if (kind == TranscriptKind.RAW) "grezza" else "raffinata",
     sessionId = "sessione-1",
     kind = kind,
-    provider = "groq",
+    // Generic timed writer fixtures model the computer's segment-backed transcript.
+    // Cloud RAW text/evidence behavior is exercised separately by CloudTranscriptExportTest.
+    provider = "custom",
     model = model,
     language = "it",
     text = text,
