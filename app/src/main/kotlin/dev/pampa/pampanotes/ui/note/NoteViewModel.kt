@@ -3,6 +3,7 @@ package dev.pampa.pampanotes.ui.note
 import dev.pampa.pampanotes.ui.cloudrelay.lookupFiles
 import dev.pampa.pampanotes.ui.cloudrelay.relayMessage
 import dev.pampa.pampanotes.core.relay.RelayRepository
+import dev.pampa.pampanotes.core.relay.RelayFileAvailability
 import dev.pampa.pampanotes.core.relay.RelayKind
 import dev.pampa.pampanotes.core.archive.RelayUnavailable
 import dev.pampa.pampanotes.core.files.FilesInUse
@@ -112,6 +113,7 @@ class NoteViewModel @Inject constructor(
   private val handwriting: HandwritingPages,
   private val repairer: dev.pampa.pampanotes.core.importing.SdocxRepairer,
   jobDao: JobDao,
+  private val fileAvailability: RelayFileAvailability,
 ) : ViewModel() {
 
   private val noteId: String = savedStateHandle.get<String>("noteId").orEmpty()
@@ -196,6 +198,9 @@ class NoteViewModel @Inject constructor(
 
 
   init {
+    viewModelScope.launch {
+      fileAvailability.changes.collect { refreshAvailability() }
+    }
     viewModelScope.launch {
       settingsStore.settings.map { listOf(it.syncServerUrl, it.syncDeviceId, it.syncAccount, it.syncEnabled.toString()) }
         .distinctUntilChanged().collect { refreshAvailability() }

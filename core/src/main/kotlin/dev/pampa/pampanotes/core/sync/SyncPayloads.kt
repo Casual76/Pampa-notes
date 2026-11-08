@@ -15,6 +15,7 @@ import dev.pampa.pampanotes.core.db.SessionEntity
 import dev.pampa.pampanotes.core.db.SourceDao
 import dev.pampa.pampanotes.core.db.SourceEntity
 import dev.pampa.pampanotes.core.db.StatsDao
+import dev.pampa.pampanotes.core.db.SyncDao
 import dev.pampa.pampanotes.core.db.TranscriptDao
 import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.db.TranscriptionRunEntity
@@ -47,27 +48,32 @@ class SyncPayloads @Inject constructor(
   private val sources: SourceDao,
   private val presets: ExportPresetDao,
   private val runs: StatsDao,
+  private val sync: SyncDao? = null,
 ) {
   /** Null quando la riga non c'e' (piu'). */
-  suspend fun encode(table: String, id: String): Encoded? = when (table) {
-    "folders" -> folders.get(id)?.let { encode(FolderEntity.serializer(), it, it.updatedAt) }
-    "notes" -> notes.get(id)?.let { note ->
-      encode(NotePayload.serializer(), NotePayload(note, tags.tags(id)), note.updatedAt)
+  suspend fun encode(table: String, id: String): Encoded? {
+    val encoded = when (table) {
+      "folders" -> folders.get(id)?.let { encode(FolderEntity.serializer(), it, it.updatedAt) }
+      "notes" -> notes.get(id)?.let { note ->
+        encode(NotePayload.serializer(), NotePayload(note, tags.tags(id)), note.updatedAt)
+      }
+      "sessions" -> sessions.get(id)?.let { encode(SessionEntity.serializer(), it, it.updatedAt) }
+      "audio_parts" -> audioParts.get(id)?.let { SyncLocalFiles.project(sync, table, id, encode(AudioPartEntity.serializer(), it, it.createdAt)) }
+      "transcripts" -> transcripts.get(id)?.let { t ->
+        // I segmenti viaggiano accanto al payload, non dentro, cosi' il server li puo' tenere a
+        // blocchi; ma l'impronta li conta (SyncCodec.transcriptHash), o un riordino delle parti — che
+        // cambia i tempi e non il testo — non salirebbe mai.
+        val parts = segments.byTranscript(id).map { it.copy(id = 0) }
+        val base = encode(TranscriptEntity.serializer(), t, t.createdAt)
+        base.copy(hash = SyncCodec.transcriptHash(base.hash, parts), segments = parts)
+      }
+      "sources" -> sources.get(id)?.let { SyncLocalFiles.project(sync, table, id, encode(SourceEntity.serializer(), it, it.importedAt)) }
+      "export_presets" -> presets.get(id)?.let { encode(ExportPresetEntity.serializer(), it, it.lastUsedAt) }
+      "transcription_runs" -> runs.get(id)?.let(RunPayload::encode)
+      else -> null
     }
-    "sessions" -> sessions.get(id)?.let { encode(SessionEntity.serializer(), it, it.updatedAt) }
-    "audio_parts" -> audioParts.get(id)?.let { encode(AudioPartEntity.serializer(), it, it.createdAt) }
-    "transcripts" -> transcripts.get(id)?.let { t ->
-      // I segmenti viaggiano accanto al payload, non dentro, cosi' il server li puo' tenere a
-      // blocchi; ma l'impronta li conta (SyncCodec.transcriptHash), o un riordino delle parti — che
-      // cambia i tempi e non il testo — non salirebbe mai.
-      val parts = segments.byTranscript(id).map { it.copy(id = 0) }
-      val base = encode(TranscriptEntity.serializer(), t, t.createdAt)
-      base.copy(hash = SyncCodec.transcriptHash(base.hash, parts), segments = parts)
-    }
-    "sources" -> sources.get(id)?.let { encode(SourceEntity.serializer(), it, it.importedAt) }
-    "export_presets" -> presets.get(id)?.let { encode(ExportPresetEntity.serializer(), it, it.lastUsedAt) }
-    "transcription_runs" -> runs.get(id)?.let(RunPayload::encode)
-    else -> null
+    if (encoded == null && sync != null) SyncLocalFiles.forget(sync, table, id)
+    return encoded
   }
 
   companion object {

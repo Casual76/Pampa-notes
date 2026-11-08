@@ -21,7 +21,7 @@ class SessionAudioAvailabilityTest {
     assertTrue(sameAccount.fetchable)
     assertTrue(sameAccount.transcribableHere)
     assertFalse(copy.copy(missing = null).transcribableHere)
-    assertFalse(copy.copy(missing = emptyList()).playable)
+    assertTrue(copy.copy(missing = emptyList()).playable)
   }
 
   @Test fun `state RAW follows selected author rather than retained newer local history`() {
@@ -52,6 +52,6 @@ class SessionAudioAvailabilityTest {
     assertFalse(partial.fetchable)
     assertTrue(partial.copy(relayParts = setOf(second.id)).fetchable)
     assertFalse(partial.copy(missing = null).transcribableHere)
-    assertFalse(SessionUiState(parts = listOf(omitted), missing = listOf(omitted), relayParts = setOf(omitted.id)).transcribableHere)
+    assertTrue(SessionUiState(parts = listOf(omitted), missing = listOf(omitted), relayParts = setOf(omitted.id)).transcribableHere)
   }
 }

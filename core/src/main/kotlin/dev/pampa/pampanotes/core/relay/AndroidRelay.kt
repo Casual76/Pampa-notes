@@ -13,10 +13,24 @@ import dev.pampa.pampanotes.core.db.PampaDatabase
 import dev.pampa.pampanotes.core.db.SourceEntity
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.files.FilesInUse
+import dev.pampa.pampanotes.core.importing.PampaBundleOmissions
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import java.io.File
 import javax.inject.Singleton
+import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
+
+/** Disk placement need not change a Room row. Open consumers must still recheck local files. */
+@Singleton
+class RelayFileAvailability @Inject constructor() {
+  private val revision = MutableStateFlow(0L)
+  val changes: StateFlow<Long> = revision.asStateFlow()
+  internal fun placed() { revision.update { it + 1 } }
+}
 
 /** Owner validation uses the same authenticated status route as text sync. No credential goes to disk. */
 internal class AndroidRelayAccounts(
@@ -56,6 +70,7 @@ internal class AndroidRelayLocalFiles(
   private val db: PampaDatabase,
   private val files: AppFiles,
   private val inUse: FilesInUse,
+  private val availability: RelayFileAvailability = RelayFileAvailability(),
 ) : RelayLocalFiles {
   override suspend fun list(noteId: String?): List<RelayLocalFile> {
     val sessions = db.sessions().all().associate { it.id to it.noteId }
@@ -89,11 +104,16 @@ internal class AndroidRelayLocalFiles(
     return target
   }
 
-  override suspend fun placeIfCurrent(expected: RelayLocalFile, place: suspend () -> Unit): Boolean =
-    db.withTransaction {
+  override suspend fun placeIfCurrent(expected: RelayLocalFile, place: suspend () -> Unit): Boolean {
+    val placed = db.withTransaction {
       if (get(expected.kind, expected.entityId) != expected) false
       else { place(); true }
     }
+    // Publish only after placement and the transaction succeed. Keep filenames/revisions stable:
+    // RelayRepository returns the path captured before this call and retains the receipt identity.
+    if (placed) availability.placed()
+    return placed
+  }
 
   override fun hold(file: RelayLocalFile) {
     inUse.hold(listOf(key(file)), 15 * 60_000L, owner = this)
@@ -110,9 +130,18 @@ internal class AndroidRelayLocalFiles(
     relayHash(toString().toByteArray()),
   )
 
-  private fun SourceEntity.relay(): RelayLocalFile? = storedFileName?.let {
-    RelayLocalFile(RelayKind.SOURCE, id, noteId, it, originalName, mime, sha256, sizeBytes,
-      relayHash(toString().toByteArray()))
+  private suspend fun SourceEntity.relay(): RelayLocalFile? {
+    // Older omitted originals had no local reference. Reserve one before relay snapshots/holds,
+    // under the same row guard as placement. Never invent originals for clipboard/share content.
+    val row = if (storedFileName != null) this else {
+      val name = PampaBundleOmissions.expectedSourceName(this) ?: return null
+      db.withTransaction {
+        if (db.sources().get(id) != this@relay) null
+        else copy(storedFileName = name).also { db.sources().upsert(it) }
+      } ?: return null
+    }
+    return RelayLocalFile(RelayKind.SOURCE, row.id, row.noteId, row.storedFileName!!, row.originalName,
+      row.mime, row.sha256, row.sizeBytes, relayHash(row.toString().toByteArray()))
   }
 }
 
@@ -125,9 +154,9 @@ object RelayModule {
   @Provides @Singleton
   fun repository(
     @ApplicationContext context: Context, db: PampaDatabase, files: AppFiles,
-    inUse: FilesInUse, settings: PampaSettingsStore, http: RelayHttp,
+    inUse: FilesInUse, settings: PampaSettingsStore, http: RelayHttp, availability: RelayFileAvailability,
   ): RelayRepository = RelayRepository(
-    AndroidRelayAccounts(settings, http), AndroidRelayLocalFiles(db, files, inUse), http,
+    AndroidRelayAccounts(settings, http), AndroidRelayLocalFiles(db, files, inUse, availability), http,
     RelayJournal(File(context.noBackupFilesDir, "cloud-relay-v1")),
     object : RelayClock {
       override fun elapsedMillis(): Long = SystemClock.elapsedRealtime()

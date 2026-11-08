@@ -31,7 +31,7 @@ import dev.pampa.pampanotes.core.db.SessionWithParts
 import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.db.JobType
 import dev.pampa.pampanotes.core.repo.RawTranscripts
-import dev.pampa.pampanotes.core.importing.PampaBundleOmissions
+import dev.pampa.pampanotes.core.relay.RelayFileAvailability
 import dev.pampa.pampanotes.core.repo.TranscribeOptions
 import dev.pampa.pampanotes.core.db.TranscriptionRunEntity
 import dev.pampa.pampanotes.core.repo.StatsRepository
@@ -147,10 +147,10 @@ data class SessionUiState(
   val durationMs: Long get() = parts.sumOf { it.durationMs }
 
   /** Tutti i file ci sono: il lettore ha qualcosa da suonare. */
-  val playable: Boolean get() = parts.isNotEmpty() && parts.none(PampaBundleOmissions::isOmitted) && missing?.isEmpty() == true
+  val playable: Boolean get() = parts.isNotEmpty() && missing?.isEmpty() == true
 
   /** Every missing file has a durable computer copy or a live temporary transfer. */
-  val fetchable: Boolean get() = !missing.isNullOrEmpty() && missing.none(PampaBundleOmissions::isOmitted) &&
+  val fetchable: Boolean get() = !missing.isNullOrEmpty() &&
     missing.all { it.archivedAt > 0 || it.id in relayParts }
 
   /**
@@ -158,7 +158,7 @@ data class SessionUiState(
    * sola). Una registrazione che sta solo sull'altro dispositivo si trascrive da li': offrire il
    * tasto qui vuol dire un lavoro che fallisce per forza.
    */
-  val transcribableHere: Boolean get() = parts.none(PampaBundleOmissions::isOmitted) && (missing != null && (missing.isEmpty() || fetchable))
+  val transcribableHere: Boolean get() = missing != null && (missing.isEmpty() || fetchable)
   /** La grezza selezionata, o il genitore della raffinata che si sta leggendo. */
   val raw: TranscriptEntity? get() = RawTranscripts.forSelection(transcripts, session?.activeTranscriptId)
 
@@ -233,6 +233,7 @@ class SessionViewModel @Inject constructor(
   private val partials: dev.pampa.pampanotes.core.transcription.PartialTranscripts,
   private val spending: CloudSpending,
   private val cloudTranscription: dev.pampa.pampanotes.ui.cloudcost.SessionCloudTranscription,
+  private val fileAvailability: RelayFileAvailability,
 ) : ViewModel() {
 
   private val sessionId: String = savedStateHandle.get<String>("sessionId").orEmpty()
@@ -420,6 +421,9 @@ class SessionViewModel @Inject constructor(
 
   init {
     viewModelScope.launch {
+      fileAvailability.changes.collect { refreshAvailability() }
+    }
+    viewModelScope.launch {
       settingsStore.settings.map { listOf(it.syncServerUrl, it.syncDeviceId, it.syncAccount, it.syncEnabled.toString()) }
         .distinctUntilChanged().collect { refreshAvailability() }
     }
@@ -586,8 +590,7 @@ class SessionViewModel @Inject constructor(
     _relayParts.value = emptySet()
     _relayProblem.value = null
     availabilityJob = viewModelScope.launch {
-      val available = relay.lookupFiles(RelayKind.AUDIO, _missing.value.orEmpty()
-        .filterNot(PampaBundleOmissions::isOmitted).map { it.id })
+      val available = relay.lookupFiles(RelayKind.AUDIO, _missing.value.orEmpty().map { it.id })
       _relayParts.value = available.live()
       _relayProblem.value = available.problem
       availabilityExpiry?.cancel()
@@ -604,7 +607,7 @@ class SessionViewModel @Inject constructor(
 
   /** Prende dal computer di casa le parti che qui non ci sono; alla fine il lettore parte da solo. */
   fun fetchMissing() = viewModelScope.launch {
-    val wanted = uiState.value.missing.orEmpty().filterNot(PampaBundleOmissions::isOmitted)
+    val wanted = uiState.value.missing.orEmpty()
     val current = _fetch.value
     if (wanted.isEmpty() || (current != null && current.error == null)) return@launch
     _fetch.value = FetchState(0, wanted.size, wanted.first().originalName, 0f)

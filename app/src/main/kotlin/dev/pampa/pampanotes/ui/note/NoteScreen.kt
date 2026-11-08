@@ -796,8 +796,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sourcesTab(
 @Composable
 private fun partLocation(part: dev.pampa.pampanotes.core.db.AudioPartEntity, missing: Boolean, relayReady: Boolean): String = stringResource(
   when {
-    dev.pampa.pampanotes.core.importing.PampaBundleOmissions.isOmitted(part) -> R.string.note_part_omitted_bundle
     missing && relayReady -> R.string.relay_audio_title
+    dev.pampa.pampanotes.core.importing.PampaBundleOmissions.isOmitted(part, localAvailable = !missing) -> R.string.note_part_omitted_bundle
     !missing && part.archivedAt > 0 -> R.string.note_part_here_and_pc
     !missing -> R.string.note_part_here_only
     part.archivedAt > 0 -> R.string.note_part_on_pc
