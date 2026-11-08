@@ -88,7 +88,7 @@ fun ImportRoute(
 }
 
 @Composable
-private fun ImportScreen(
+internal fun ImportScreen(
   state: ImportUiState,
   onClose: () -> Unit,
   onOpenNote: (String) -> Unit,
@@ -152,6 +152,14 @@ private fun ImportScreen(
         val samsung = state.samsungNote
         if (state.blocked) {
           item { FluidInlineMessage(message = stringResource(if (state.candidates.any { it.inspectionError != null }) R.string.import_input_failed else R.string.import_bundle_combination), tone = FluidTone.Danger) }
+          state.candidates.filter { it.inspectionError != null }.forEach { candidate ->
+            item {
+              FluidListGroup {
+                FluidListRow(title = candidate.displayName,
+                  subtitle = stringResource(dev.pampa.pampanotes.core.importing.ImportFailure.fromCode(candidate.inspectionError).messageRes()))
+              }
+            }
+          }
         } else if (state.bundleCandidate != null) {
           bundleStep(state, onSelectFolder, onUpdateExisting, onNext)
         } else if (samsung != null) {
@@ -232,6 +240,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.bundleStep(
     }
   }
   item { FluidSectionFootnote(text = preview.titles.joinToString(" · ")) }
+  item { FluidSectionFootnote(text = stringResource(R.string.pn_import_contents)) }
   if (preview.audioCount > 0 && !preview.hasPreciseTimings && PampaBundleWarning.LEGACY_FORMAT !in preview.warnings) item { FluidSectionFootnote(text = stringResource(R.string.import_bundle_precision)) }
   preview.warnings.forEach { warning -> item { FluidInlineMessage(message = bundleWarningText(warning), tone = FluidTone.Warning) } }
   item {

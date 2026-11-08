@@ -11,6 +11,15 @@ class MimeSnifferTest {
   private val zipHead = byteArrayOf(0x50, 0x4B, 0x03, 0x04, 0x14, 0x00)
   private val pdfHead = "%PDF-1.7\n%âãÏÓ".toByteArray(Charsets.ISO_8859_1)
 
+  @Test fun `pn names and custom MIME stay on the archive route`() {
+    assertEquals(SourceKind.OTHER, MimeSniffer.sniff("Lezione.PN", "text/plain", zipHead))
+    assertEquals(SourceKind.OTHER, MimeSniffer.sniff("opaque-provider-id", "application/vnd.pampa.notes; charset=binary", zipHead))
+    assertTrue(MimeSniffer.isPampa("lesson.PN", "application/octet-stream"))
+    assertTrue(MimeSniffer.isPampa("download", "APPLICATION/VND.PAMPA.NOTES"))
+    assertFalse(MimeSniffer.isPampa("lesson.pn.zip", "application/zip"))
+    assertTrue(MimeSniffer.isZip(byteArrayOf(0x50, 0x4b, 0x05, 0x06)))
+  }
+
   @Test
   fun `l'estensione batte un mime generico`() {
     assertEquals(SourceKind.AUDIO, MimeSniffer.sniff("lezione.m4a", "application/octet-stream"))

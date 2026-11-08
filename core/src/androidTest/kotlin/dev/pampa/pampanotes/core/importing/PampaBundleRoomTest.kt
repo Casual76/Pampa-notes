@@ -18,6 +18,7 @@ import dev.pampa.pampanotes.core.transcription.SessionAssembler
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.async
 import org.junit.*
 import org.junit.Assert.*
 import org.junit.runner.RunWith
@@ -729,6 +730,124 @@ class PampaBundleRoomTest {
       assertEquals(before, db.notes().get("note"))
       assertEquals(localFolder, db.folders().get(inheritedFolder))
     }
+  }
+
+  /** Uses the codec workstream's real public writer rather than an import-only format fixture. */
+  private fun portable(graph: PampaBundleNote): File {
+    val input = File(directory, "pn-input").also { it.mkdirs() }
+    val native = graph.copy(parts = graph.parts.map { part ->
+      val source = File(input, "${part.id}.wav").apply { writeBytes(wav(part.durationMs.toInt())) }
+      part.copy(fileName = source.name, originalName = source.name, mime = "audio/wav", sizeBytes = source.length(),
+        sha256 = source.inputStream().use { dev.pampa.pampanotes.core.files.Hashing.sha256(it) })
+    })
+    val folder = FolderEntity("folder", "Subject", createdAt = 1, updatedAt = 2)
+    val export = ExportNote(native.note, listOf(folder.name), native.tags, emptyList(), emptyList(), native = native)
+    return File(directory, "${UUID.randomUUID()}.PN").also { file -> file.outputStream().use {
+      PampaNoteWriter(input, input).write(ExportSet("Subject", "subject", listOf(export), "Pampa Notes test", 1, folders = listOf(folder)), it)
+    } }
+  }
+
+  @Test fun pn_pipeline_keeps_long_histories_word_timing_speakers_and_untimed_text_through_update_and_copy() = runTest {
+    val initial = graph("session" to listOf("A"))
+    val raw = initial.transcripts.single()
+    val histories = (0 until 40).map { index -> raw.copy(id = "untimed-$index", provider = "openrouter", model = "transcription",
+      text = "Untimed OpenRouter text $index. ".repeat(1000), createdAt = index + 10L) }
+    val refined = histories.last().copy(id = "refined", kind = TranscriptKind.REFINED, parentId = histories.last().id, text = "Refined text without timing", createdAt = 100)
+    val words = (0 until 256).map { index -> SegmentEntity(transcriptId = raw.id, partId = "A", indexInPart = index,
+      partStartMs = index * 3L, partEndMs = index * 3L + 2, sessionStartMs = index * 3L, sessionEndMs = index * 3L + 2,
+      text = "word$index", wordsJson = "0,2,word$index", speaker = "SPEAKER_00") }
+    val graph = initial.copy(tags = listOf("history"), transcripts = listOf(raw) + histories + refined, segments = words,
+      sessions = initial.sessions.map { it.copy(activeTranscriptId = refined.id) })
+    // Use the real voice-name encoder; archive metadata must not synthesize speaker references.
+    val complete = graph.copy(sessions = graph.sessions.map { it.copy(voiceNames = dev.pampa.pampanotes.core.transcription.VoiceNames.encode(mapOf("A|SPEAKER_00" to "Teacher"))) })
+    val file = portable(complete)
+    assertFalse(importer.inspect(file).hasPreciseTimings)
+    val progress = mutableListOf<Float>()
+    val first = importer.import(file) { value, _ -> progress += value }
+    assertEquals(1, first.importedNotes)
+    assertTrue(progress.zipWithNext().all { (a, b) -> b >= a })
+    assertTrue(progress.dropLast(1).all { it < 1f })
+    assertEquals(1f, progress.last())
+    val restored = storedGraph()
+    assertEquals(complete.transcripts.toSet(), restored.transcripts.toSet())
+    assertEquals(words, restored.segments.map { it.copy(id = 0) })
+    assertEquals(refined.id, restored.sessions.single().activeTranscriptId)
+    assertEquals(complete.sessions.single().voiceNames, restored.sessions.single().voiceNames)
+    assertTrue(restored.segments.none { it.transcriptId in histories.map { t -> t.id } })
+    assertArrayEquals(wav(1000), files.audioFile(restored.parts.single().fileName).readBytes())
+    db.notes().updateBody("note", restored.note.body + "\nLocal appendix", 200)
+    db.sessions().setActiveTranscript("session", histories[5].id, 300)
+    repeat(2) { assertEquals(1, importer.import(file).updatedNotes) }
+    assertTrue(db.notes().get("note")!!.body.endsWith("Local appendix"))
+    assertEquals(histories[5].id, db.sessions().get("session")!!.activeTranscriptId)
+    assertEquals(1, db.audioParts().all().size)
+    val copy = importer.import(file, updateExisting = false, intoFolderId = "folder")
+    assertEquals(1, copy.importedNotes)
+    assertTrue(copy.noteIds.single() != "note")
+    val copiedSession = db.sessions().plainByNote(copy.noteIds.single()).single()
+    assertTrue(copiedSession.id != "session")
+    assertEquals(complete.transcripts.size, db.transcripts().bySession(copiedSession.id).size)
+    assertEquals(256, db.segments().byTranscript(db.transcripts().bySession(copiedSession.id).single { it.kind == TranscriptKind.RAW && it.text == raw.text }.id).size)
+    db.openHelper.writableDatabase.query("PRAGMA foreign_key_check").use { assertFalse(it.moveToFirst()) }
+  }
+
+  @Test fun metadata_preview_defers_media_hashing_but_corruption_and_cancelled_staging_never_commit() = runTest {
+    val file = portable(graph("session" to listOf("A")))
+    importer.import(file)
+    val before = storedGraph()
+    val audioBefore = files.audio.listFiles()!!.map { it.name }.toSet()
+    val read = PampaBundleArchive.read(file, verifyAttachments = false)
+    val blob = read.root + read.data.notes.single().attachments.single().path!!
+    val damaged = File(directory, "damaged.pn")
+    ZipFile(file).use { zip -> ZipOutputStream(damaged.outputStream()).use { output ->
+      zip.entries().asSequence().forEach { entry ->
+        output.putNextEntry(ZipEntry(entry.name))
+        val bytes = zip.getInputStream(entry).use { it.readBytes() }
+        if (entry.name == blob) bytes[bytes.lastIndex] = (bytes.last().toInt() xor 1).toByte()
+        output.write(bytes); output.closeEntry()
+      }
+    } }
+    assertEquals(1, importer.inspect(damaged).noteCount)
+    try { importer.import(damaged); fail("Expected media verification to fail") } catch (_: IllegalArgumentException) { }
+    assertEquals(before, storedGraph())
+    assertEquals(audioBefore, files.audio.listFiles()!!.map { it.name }.toSet())
+    val longRecording = graph("session" to listOf("A")).let { it.copy(parts = it.parts.map { part -> part.copy(durationMs = 60_000) }) }
+    val large = portable(longRecording)
+    kotlinx.coroutines.supervisorScope {
+      val transfer = async {
+        importer.import(large) { value, phase ->
+          if (phase.phase == PampaBundlePhase.STAGING_ATTACHMENTS && value > 0.1f) throw kotlinx.coroutines.CancellationException("cancel fixture")
+        }
+      }
+      try { transfer.await(); fail("Expected cancellation") } catch (_: kotlinx.coroutines.CancellationException) { }
+    }
+    assertEquals(before, storedGraph())
+    assertEquals(audioBefore, files.audio.listFiles()!!.map { it.name }.toSet())
+  }
+
+  @Test fun pn_text_only_note_imports_updates_and_rejects_same_folder_nesting_without_side_effects() = runTest {
+    val graph = graph()
+    val file = portable(graph)
+    val preview = importer.inspect(file)
+    assertEquals(1, preview.noteCount); assertEquals(0, preview.audioCount)
+    assertEquals(1, importer.import(file).importedNotes)
+    assertEquals(graph.note.body, db.notes().get("note")!!.body)
+    assertEquals(graph.note.createdAt, db.notes().get("note")!!.createdAt)
+    assertEquals(1, importer.import(file).updatedNotes)
+    val before = db.notes().get("note")
+    try { importer.import(file, intoFolderId = "folder"); fail("Expected cyclic destination rejection") }
+    catch (error: IllegalArgumentException) { assertEquals(ImportFailure.DESTINATION, ImportFailure.of(error)) }
+    assertEquals(before, db.notes().get("note")); assertTrue(files.audio.listFiles()!!.isEmpty())
+  }
+
+  @Test fun empty_packages_never_report_a_successful_zero_note_import() = runTest {
+    val folder = FolderEntity("folder", "Subject", createdAt = 1, updatedAt = 2)
+    val empty = File(directory, "empty.zip")
+    empty.outputStream().use { BundleWriter(directory, directory).write(
+      ExportSet("Subject", "subject", emptyList(), "Pampa Notes test", 1, folders = listOf(folder)), ExportOptions(), it) }
+    try { importer.inspect(empty); fail("Expected empty package rejection") } catch (error: IllegalArgumentException) { assertEquals(ImportFailure.EMPTY, ImportFailure.of(error)) }
+    try { importer.import(empty); fail("Expected empty package rejection") } catch (error: IllegalArgumentException) { assertEquals(ImportFailure.EMPTY, ImportFailure.of(error)) }
+    assertTrue(db.notes().all().isEmpty()); assertTrue(files.audio.listFiles()!!.isEmpty())
   }
 
 }

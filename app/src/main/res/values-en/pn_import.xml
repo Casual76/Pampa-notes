@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="pn_import_access">Access to this file has expired. Select it again from Import.</string>
+  <string name="pn_import_unavailable">The file is unavailable. Download it to this device and select it again.</string>
+  <string name="pn_import_empty">The file is empty or the package contains no notes. Ask for a new export.</string>
+  <string name="pn_import_unsupported">This archive is not a Pampa Notes package. Ask for a .pn file or a ZIP exported by Pampa Notes.</string>
+  <string name="pn_import_version">The package uses a newer format version. Update Pampa Notes and try again.</string>
+  <string name="pn_import_corrupt">The package is incomplete or damaged. Download it again or ask for a new export.</string>
+  <string name="pn_import_too_large">The package exceeds import limits. Ask for fewer notes per export.</string>
+  <string name="pn_import_no_space">There is not enough space to prepare the files. Free up space on this device and try again.</string>
+  <string name="pn_import_destination">The selected folder is unavailable or cannot contain this update. Reopen the package and choose the original folders or another destination.</string>
+  <string name="pn_import_active_job">A transcription is using a recording that needs updating. Wait for it to finish or cancel it, then reopen the package.</string>
+  <string name="pn_import_conflict">The package data conflicts with an existing note. Reopen it and choose Create copies, or ask for a new export.</string>
+  <string name="pn_import_failed">The package could not be imported. Reopen the file and try again; if it happens again, ask for a new export.</string>
+  <string name="pn_import_contents">Restores the text, recordings and transcript versions included in this package. Timing and speakers are available only when they were present in the export.</string>
+</resources>

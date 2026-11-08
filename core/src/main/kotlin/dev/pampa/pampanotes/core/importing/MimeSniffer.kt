@@ -1,6 +1,7 @@
 package dev.pampa.pampanotes.core.importing
 
 import dev.pampa.pampanotes.core.db.SourceKind
+import dev.pampa.pampanotes.core.export.PampaNoteFormat
 
 /**
  * Che cos'e' davvero questo file.
@@ -27,11 +28,11 @@ object MimeSniffer {
    */
   fun sniff(name: String, declaredMime: String?, head: ByteArray? = null): SourceKind {
     val extension = name.substringAfterLast('.', "").lowercase()
-    val mime = declaredMime?.lowercase().orEmpty()
+    val mime = declaredMime?.substringBefore(';')?.trim()?.lowercase().orEmpty()
 
     // 1. L'estensione, quando dice qualcosa di preciso.
     when (extension) {
-      "zip" -> return SourceKind.OTHER
+      "zip", PampaNoteFormat.EXTENSION -> return SourceKind.OTHER
       "pdf" -> return SourceKind.PDF
       "docx" -> return SourceKind.DOCX
       "sdocx", "sdoc" -> return SourceKind.SDOCX
@@ -44,6 +45,7 @@ object MimeSniffer {
     // 2. Il MIME dichiarato, se non e' il generico che non dice niente.
     when {
       mime == "application/zip" || mime == "application/x-zip-compressed" -> return SourceKind.OTHER
+      mime == PampaNoteFormat.MIME_TYPE -> return SourceKind.OTHER
       mime.startsWith("audio/") -> return SourceKind.AUDIO
       mime.startsWith("image/") -> return SourceKind.IMAGE
       mime == "application/pdf" -> return SourceKind.PDF
@@ -58,12 +60,20 @@ object MimeSniffer {
     if (head != null) {
       if (head.startsWith(PDF_MAGIC)) return SourceKind.PDF
       // Uno ZIP senza un'estensione che lo spieghi: la distinzione docx/sdocx la fa chi lo apre.
-      if (head.startsWith(ZIP_MAGIC)) return SourceKind.OTHER
+      if (isZip(head)) return SourceKind.OTHER
       if (looksLikeText(head)) return SourceKind.TEXT
     }
 
     return SourceKind.OTHER
   }
+
+  fun isPampa(name: String, declaredMime: String?): Boolean =
+    name.substringAfterLast('.', "").equals(PampaNoteFormat.EXTENSION, true) ||
+      declaredMime?.substringBefore(';')?.trim()?.equals(PampaNoteFormat.MIME_TYPE, true) == true
+
+  /** Empty ZIPs have an end-of-directory header rather than a local-file header. */
+  fun isZip(head: ByteArray): Boolean = head.startsWith(ZIP_MAGIC) ||
+    head.startsWith(byteArrayOf(0x50, 0x4B, 0x05, 0x06)) || head.startsWith(byteArrayOf(0x50, 0x4B, 0x07, 0x08))
 
   /** Vero quando i byte sembrano testo: niente zero, pochi byte di controllo. */
   fun looksLikeText(head: ByteArray): Boolean {
