@@ -55,7 +55,7 @@ Initial three delegates launched, all actual codex / gpt-6.1-sol / reasoningEffo
 | Cloud/pinning/retry | 6041ac2a-8dfd-4b5a-920d-ae8c1c6ef2c0 | completed |
 | Recordings-first UX | d883446a-3153-48a8-857c-8d9ac1ee4944 | completed |
 | Python alignment API | 0f90a2ea-4831-4a5f-ba6f-89d1686b5a93 | completed |
-| Android exact source / alignment | 6c6c919c-38ab-41d4-8da8-fa600c359921 | running |
+| Android exact source / alignment | 6c6c919c-38ab-41d4-8da8-fa600c359921 | completed |
 | Per-part clock / session export | c7ae6aae-2896-4caf-9d3c-26ea4f5af7e5 | completed |
 
 Full task/child id prefix is node:delegated-task:command%3Amcp%3Aeb1c4ba6-cbfc-4f0c-bac9-1b3c1c7a2dc7%3Adelegate-task%3A plus suffix (child thread uses thread: in place of node:).
@@ -128,3 +128,11 @@ Standalone compiler+104 JUnit tests (23new), source/resources/diff checks report
 Coordinator identified a remaining interaction for Android source codec: app immutable originals retain pre-split/full text, so exact-session exports must project/redact source metadata to prevent sibling text leaking through originals/reportedText. Copies/aliases also remap graph IDs while opaque source JSON still references prior IDs. Android unit requested typed pure portable projection/remap/validation helper + tests; coordinator wires adapters only after final. App-local originals stay intact. Safe alignment inapplicability must be explicit when identity cannot be honestly rebound.
 
 Stable cloud snapshot aca893a; stable clock/session-export snapshot e005527. Coordinator forwarded original worker parts through TranscriptionRepository.saveTranscript to optional SessionRepository snapshot argument (no current-row substitution). Added Groq/Mistral public STT model preferences to BackupSettings.toBackup and restoreSettings, with legacy/default/model roundtrip JVM tests prepared. These new coordinator tests and integrated app compile remain NOT EXECUTED until final necessary Gradle batch. Only Android alignment unit still writing; no initial review until integrated snapshot frozen.
+
+## C4 consolidated unit delivery
+
+Android unit completed SessionRepository/RawTimelinePlan,9new core/alignment files,2new worker/scheduler files and7tests. Exact cloud text/immutable originals retained through timeline operations; original hashes only worker before-image, unknown hashes defer. Private durable snapshot/deadline/cancel/retry queue in noBackupFilesDir. Companion alignment endpoint only, no transcription fallback. Nullable timing overlays separate from WordTimings.complete. Pure portable helpers project selected content, remove sibling originals/reportedText, mark portable_unbound, safe invalidation survives recomposition.
+
+Executed by implementer:58pure/fixture tests (incl RAW regressions)+6in-memory HTTP tests=64pass; changed Android sources standalone compilation and scoped whitespace checks pass. Coordinator inspected actual OK58/OK6 logs and scheduler/presentation/source APIs. Gradle/Hilt/Room/device/GPU/real audio/provider/accuracy NOT EXECUTED. All unit writes finished; remaining substantial adapters use fresh context implementers with separate UI and portable-source ownership. Coordinator owns startup/endpoint/save/cancel/restore/logout hooks. No initial review until those adapters and integrated checks are complete.
+
+Portable follow-through must preserve existing measured timing overlays through native roundtrip while source identity remains explicitly unbound for future alignment. Full native public provenance/history must not be silently dropped; exact-session exports cannot leak sibling originals. UI must show exact text with nullable missing timings and avoid coarse interpolation; these two ready work units are independent.

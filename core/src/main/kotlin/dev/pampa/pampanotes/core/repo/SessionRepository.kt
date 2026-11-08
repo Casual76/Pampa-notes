@@ -20,6 +20,8 @@ import dev.pampa.pampanotes.core.model.wordCount
 import dev.pampa.pampanotes.core.transcription.SessionTranscript
 import dev.pampa.pampanotes.core.transcription.TranscriptPlacement
 import dev.pampa.pampanotes.core.transcription.VoiceNames
+import dev.pampa.pampanotes.core.alignment.CloudSources
+import dev.pampa.pampanotes.core.alignment.CloudSavePlan
 import androidx.room.withTransaction
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -374,6 +376,8 @@ class SessionRepository @Inject constructor(
     jobSessionId: String,
     partIds: List<String>,
     result: SessionTranscript,
+    /** Worker before-image, including ORIGINAL audio hashes even if rows moved/disappeared. */
+    originalParts: List<AudioPartEntity> = emptyList(),
   ): SavedTranscription? = db.withTransaction {
     val alive = partIds.mapNotNull { parts.get(it) }.associate { it.id to it.sessionId }
     val targets = TranscriptPlacement.plan(jobSessionId, partIds, alive)
@@ -394,7 +398,7 @@ class SessionRepository @Inject constructor(
       // insieme ne lasciavano due, e la schermata mostrava la piu' vecchia (vedi [RawTranscripts]).
       val previous = transcripts.bySession(target.sessionId).filter { it.kind == TranscriptKind.RAW }
 
-      val transcript = TranscriptEntity(
+      var transcript = TranscriptEntity(
         id = Ids.newId(),
         sessionId = target.sessionId,
         kind = TranscriptKind.RAW,
@@ -406,7 +410,12 @@ class SessionRepository @Inject constructor(
         wordCount = 0,
         createdAt = now,
       )
-      if (previous.size <= 1) inSession.forEach { segments.deleteByPart(it.id) }
+      val preserveSources = CloudSources.cloud(result.provider) || previous.any { it.cloudSourceJson != null }
+      if (CloudSources.cloud(result.provider)) {
+        val composed = CloudSavePlan.build(transcript, partIds, result, originalParts, inSession, written, selected, kept)
+        transcript = transcript.copy(text = composed.first, wordCount = composed.first.wordCount(), cloudSourceJson = CloudSources.encode(composed.second))
+      }
+      if (!preserveSources && previous.size <= 1) inSession.forEach { segments.deleteByPart(it.id) }
       transcripts.upsert(transcript)
       segments.insertAll(
         kept.map { it.copy(id = 0, transcriptId = transcript.id) } +
@@ -428,11 +437,12 @@ class SessionRepository @Inject constructor(
             )
           },
       )
-      if (previous.size <= 1) previous.forEach {
+      if (!preserveSources && previous.size <= 1) previous.forEach {
         transcripts.deleteChildren(it.id)
         transcripts.delete(it.id)
       }
-      sessions.setActiveTranscript(target.sessionId, transcript.id, now)
+      val currentActive = sessions.get(target.sessionId)?.activeTranscriptId?.let { transcripts.get(it) }
+      if (!preserveSources || currentActive?.kind != TranscriptKind.REFINED) sessions.setActiveTranscript(target.sessionId, transcript.id, now)
       // Le parti appena trascritte hanno una separazione delle voci nuova, con etichette ridate da
       // capo: i nomi di prima potrebbero finire sulle frasi di un altro (vedi `VoiceNames.forget`).
       sessions.get(target.sessionId)?.let { session ->
@@ -459,7 +469,10 @@ class SessionRepository @Inject constructor(
     val ordered = parts.bySession(sessionId)
     if (ordered.isEmpty()) return emptyList()
     val selected = RawTranscripts.forSelection(transcripts.bySession(sessionId), sessions.get(sessionId)?.activeTranscriptId)
-    val covered = selected?.let { segments.byTranscript(it.id).mapTo(mutableSetOf()) { row -> row.partId } }.orEmpty()
+    val covered = selected?.let {
+      (segments.byTranscript(it.id).map { row -> row.partId } + CloudSources.decode(it.cloudSourceJson)?.parts.orEmpty()
+        .filter { p -> p.text != null }.map { p -> p.id }).toSet()
+    }.orEmpty()
     return ordered.filterNot { it.id in covered }
   }
 
@@ -468,6 +481,8 @@ class SessionRepository @Inject constructor(
   /** Una sessione rimasta senza parti e senza parole non serve piu' a niente: se ne va da sola. */
   private suspend fun deleteIfEmpty(sessionId: String) {
     if (parts.countIn(sessionId) > 0) return
+    // Deleting the final audio part must not cascade away recoverable cloud originals.
+    if (transcripts.bySession(sessionId).any { it.cloudSourceJson != null }) return
     val session = sessions.get(sessionId) ?: return
     sessions.delete(sessionId)
     renumberSessions(session.noteId)

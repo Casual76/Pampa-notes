@@ -1,6 +1,8 @@
 package dev.pampa.pampanotes.core.repo
 
 import dev.pampa.pampanotes.core.db.*
+import dev.pampa.pampanotes.core.alignment.CloudSources
+import dev.pampa.pampanotes.core.alignment.CloudTextPart
 import dev.pampa.pampanotes.core.model.wordCount
 import dev.pampa.pampanotes.core.transcription.SessionAssembler
 import dev.pampa.pampanotes.core.transcription.SessionSegment
@@ -56,7 +58,10 @@ internal object RawTimelinePlan {
 
     before.transcripts.filter { it.kind == TranscriptKind.RAW }.forEach { raw ->
       val original = own[raw.id].orEmpty()
-      val groups = original.filter { it.partId in byPart }.groupBy { byPart.getValue(it.partId).sessionId }
+      val source = CloudSources.decode(raw.cloudSourceJson)?.takeIf { CloudSources.matches(it, raw) }
+        ?: CloudSources.legacy(raw, before.parts.filter { it.sessionId == raw.sessionId })
+      val coverage = (original.map { it.partId } + source?.parts.orEmpty().map { it.id }).distinct().filter { it in byPart }
+      val groups = coverage.groupBy { byPart.getValue(it).sessionId }.mapValues { (_, ids) -> original.filter { it.partId in ids } }
       val primary = when {
         raw.sessionId in groups -> raw.sessionId
         groups.isNotEmpty() -> groups.keys.sortedWith(compareBy({ currentSessions[it]?.position ?: Int.MAX_VALUE }, { it })).first()
@@ -72,9 +77,11 @@ internal object RawTimelinePlan {
         val segments = rebase(id, destination, groups[destination].orEmpty())
         fun content(rows: List<SegmentEntity>) = rows.map { it.copy(id = 0, transcriptId = "", sessionStartMs = 0, sessionEndMs = 0) }
         val unchanged = original.isEmpty() || raw.text.isNotBlank() && content(original) == content(segments)
-        val body = if (unchanged) raw.text else text(segments, destination)
+        val projected = source?.let { CloudSources.project(it, raw.copy(id = id), ordered[destination].orEmpty().map { p -> p.id }, segments) }
+        val body = projected?.first ?: if (unchanged) raw.text else text(segments, destination)
         if (body != raw.text) changed += id
-        rows[id] = raw.copy(id = id, sessionId = destination, text = body, wordCount = if (unchanged) raw.wordCount else body.wordCount())
+        rows[id] = raw.copy(id = id, sessionId = destination, text = body, wordCount = if (body == raw.text) raw.wordCount else body.wordCount(),
+          cloudSourceJson = projected?.second?.let(CloudSources::encode) ?: raw.cloudSourceJson)
         timed[id] = segments
         placement[raw.id to destination] = id
       }
@@ -109,8 +116,8 @@ internal object RawTimelinePlan {
       val chosen = mutableListOf<String>()
       val covered = mutableSetOf<String>()
       candidates.forEach { id ->
-        val coverage = timed[id].orEmpty().mapTo(mutableSetOf()) { it.partId }
-        if (chosen.isEmpty() || coverage.isNotEmpty() && coverage.none { it in covered } && timed[chosen.first()].orEmpty().isNotEmpty()) {
+        val coverage = (timed[id].orEmpty().map { it.partId } + CloudSources.decode(rows.getValue(id).cloudSourceJson)?.parts.orEmpty().map { it.id }).toSet()
+        if (chosen.isEmpty() || coverage.isNotEmpty() && coverage.none { it in covered } && covered.isNotEmpty()) {
           chosen += id; covered += coverage
         }
       }
@@ -120,8 +127,19 @@ internal object RawTimelinePlan {
         require(id !in rows) { "Composed RAW identity collision" }
         val segments = rebase(id, session.id, chosen.flatMap { timed[it].orEmpty() })
         val origins = chosen.map { rows.getValue(it) }
-        val body = if (chosen.size == 1 && segments.isEmpty()) origins.first().text else text(segments, session.id)
-        rows[id] = origins.first().copy(id = id, sessionId = session.id, parentId = null, text = body, wordCount = body.wordCount(),
+        val draft = origins.first().copy(id = id, sessionId = session.id, createdAt = now)
+        val cloud = if (origins.any { it.cloudSourceJson != null }) {
+          val docs = origins.map { origin -> CloudSources.decode(origin.cloudSourceJson) ?: run {
+            val coveredIds = timed[origin.id].orEmpty().map { it.partId }.toSet()
+            val mapped = ordered[session.id].orEmpty().filter { it.id in coveredIds }.map { p ->
+              CloudTextPart(p.id, p.sha256, if (coveredIds.size == 1) origin.text else null, origin.language, origin.provider, origin.model)
+            }
+            CloudSources.create(origin, origin.text, mapped)
+          } }
+          CloudSources.combine(draft, ordered[session.id].orEmpty(), docs, segments)
+        } else null
+        val body = cloud?.first ?: if (chosen.size == 1 && segments.isEmpty()) origins.first().text else text(segments, session.id)
+        rows[id] = draft.copy(parentId = null, text = body, wordCount = body.wordCount(), cloudSourceJson = cloud?.second?.let(CloudSources::encode),
           model = origins.map { it.model }.distinct().filter { it.isNotBlank() }.joinToString(" + "), createdAt = now)
         timed[id] = segments
         id
