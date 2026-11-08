@@ -109,7 +109,12 @@ class CloudWorkStorageFailureTest {
   @Test fun `unknown connection or cancellation outcome never loops or repeats a paid request after restart`() = runBlocking {
     for (failure in listOf(IOException("lost connection after send"), kotlinx.coroutines.CancellationException("system stop"))) {
       val files = files(); val p = part(files); val provider = Provider().also { it.failure = failure }
-      assertSame(failure, runCatching { TranscriptionRunner(files, mockk()).transcribeSession("job", listOf(p), provider, request, 10) }.exceptionOrNull())
+      val observed = runCatching { TranscriptionRunner(files, mockk()).transcribeSession("job", listOf(p), provider, request, 10) }.exceptionOrNull()
+      // Coroutine stack-trace recovery may copy the exception at withContext boundaries.
+      // Preserve its type, message and original cause, rather than requiring wrapper identity.
+      assertEquals(failure.javaClass, observed?.javaClass)
+      assertEquals(failure.message, observed?.message)
+      assertTrue(generateSequence(observed) { it.cause }.any { it === failure })
       assertEquals(1, provider.calls)
       provider.failure = null
       assertTrue(runCatching { TranscriptionRunner(files, mockk()).transcribeSession("job", listOf(p), provider, request, 10) }.exceptionOrNull() is IOException)
