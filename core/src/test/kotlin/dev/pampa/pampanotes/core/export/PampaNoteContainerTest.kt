@@ -112,6 +112,35 @@ class PampaNoteContainerTest {
     }
   }
 
+  @Test fun `recording origins and exact cloud source survive null empty and large values`() {
+    val base = graph()
+    val exact = "{\"schema\":1,\"text\":\"" + "Caffè,  due spazi!  ".repeat(90_000) + "\"}"
+    val first = base.parts.first()
+    val parts = listOf(
+      first.copy(recordedAtEpochMs = java.time.Instant.parse("2026-11-08T22:59:59.123Z").toEpochMilli(),
+        recordedAtLocal = "2026-11-08T23:59:59.123", recordedAtZoneId = "Europe/Rome",
+        recordedAtSource = "media_metadata", recordedAtPrecision = "millisecond"),
+      base.parts.last().copy(recordedAtLocal = "2026-11-09", recordedAtSource = "filename", recordedAtPrecision = "day"),
+      first.copy(id = "unknown-origin", position = 2),
+      first.copy(id = "local-origin", position = 3, recordedAtLocal = "2026-11-08T14:32",
+        recordedAtSource = "samsung_recording", recordedAtPrecision = "minute"),
+    )
+    val sources = listOf(null, "", exact, "{\"schema\":1,\"text\":\"  source\\nunchanged  \"}")
+    val transcripts = base.transcripts.mapIndexed { index, transcript -> transcript.copy(cloudSourceJson = sources[index]) }
+    val file = write(listOf(base.copy(parts = parts, transcripts = transcripts)))
+    val result = PampaBundleArchive.read(file, verifyAttachments = false).data.notes.single()
+    assertEquals(parts.map { it.copy(fileName = "", archivedAt = 0) }, result.parts)
+    assertEquals(transcripts, result.transcripts)
+    assertNull(result.parts[1].recordedAtEpochMs)
+    assertNull(result.parts[2].recordedAtPrecision)
+    assertNull(result.parts[3].recordedAtZoneId)
+    val stored = entries(file)
+    assertTrue(stored.filterKeys { it.endsWith("jsonl") }.values.all { it.size <= 1024 * 1024 })
+    assertArrayEquals(exact.toByteArray(), stored.getValue("blobs/" + hash(exact.toByteArray())))
+    rejected(rewrite(file) { name, bytes -> name to if (name == "blobs/" + hash(exact.toByteArray()))
+      bytes.copyOf().also { it[0] = '['.code.toByte() } else bytes }, metadataOnly = true)
+  }
+
   @Test fun `selected note includes ancestors and excludes unrelated folders`() {
     val n = PampaBundleNote(note)
     val output = temp.newFile()
@@ -255,9 +284,26 @@ class PampaNoteContainerTest {
     assertEquals(65, data.notes.size)
     assertTrue(data.notes.all { it.note.body == body })
     assertEquals(1, entries(file).keys.count { it.startsWith("blobs/") })
-    // Source-backed self-incompatibility: the existing AI writer has no global native.json limit,
-    // while its reader rejects the very same output once the native payload exceeds 64 MiB.
-    val legacy = temp.newFile().also { f -> f.outputStream().use { BundleWriter(audio, sources).write(set(notes), ExportOptions(), it) } }
+    // Construct the oversized legacy payload incrementally. Asking the old global JSON writer to
+    // materialize 65 MiB also requires several complete intermediate strings and can exhaust the
+    // default test heap before the reader's actual size guard is reached.
+    val seed = temp.newFile().also { f -> f.outputStream().use { BundleWriter(audio, sources).write(set(listOf(notes.first())), ExportOptions(), it) } }
+    val legacy = temp.newFile().also { f ->
+      ZipFile(seed).use { input -> ZipOutputStream(f.outputStream()).use { output ->
+        input.entries().asSequence().forEach { entry ->
+          output.putNextEntry(ZipEntry(entry.name))
+          if (entry.name.endsWith("native.json")) {
+            output.write("{\"version\":1,\"notes\":[".toByteArray())
+            notes.forEachIndexed { index, item ->
+              if (index > 0) output.write(','.code)
+              output.write(PampaBundleArchive.json.encodeToString(PampaBundleNote.serializer(), item).toByteArray())
+            }
+            output.write("]}".toByteArray())
+          } else input.getInputStream(entry).use { it.copyTo(output) }
+          output.closeEntry()
+        }
+      } }
+    }
     val failure = assertThrows(IllegalArgumentException::class.java) { PampaBundleArchive.read(legacy) }
     assertTrue(failure.message!!.contains("Text entry too large"))
   }

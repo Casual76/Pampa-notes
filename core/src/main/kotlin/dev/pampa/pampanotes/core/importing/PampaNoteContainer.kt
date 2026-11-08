@@ -39,7 +39,7 @@ internal sealed class PampaNoteRecord {
   @Serializable @SerialName("tag") data class Tag(val value: String) : PampaNoteRecord()
   @Serializable @SerialName("session") data class Session(val value: SessionEntity) : PampaNoteRecord()
   @Serializable @SerialName("part") data class Part(val value: AudioPartEntity) : PampaNoteRecord()
-  @Serializable @SerialName("transcript") data class Transcript(val value: TranscriptEntity, val text: PampaNoteBlob) : PampaNoteRecord()
+  @Serializable @SerialName("transcript") data class Transcript(val value: TranscriptEntity, val text: PampaNoteBlob, val cloudSource: PampaNoteBlob? = null) : PampaNoteRecord()
   @Serializable @SerialName("segment") data class Segment(val value: SegmentEntity, val text: PampaNoteBlob? = null, val words: PampaNoteBlob? = null) : PampaNoteRecord()
   @Serializable @SerialName("source") data class Source(val value: SourceEntity) : PampaNoteRecord()
   @Serializable @SerialName("attachment") data class Attachment(val value: PampaBundleAttachment) : PampaNoteRecord()
@@ -131,7 +131,8 @@ internal object PampaNoteContainer {
               }
               is PampaNoteRecord.Transcript -> {
                 require(record.value.text.isEmpty()) { "Inline transcript text" }
-                note.transcripts += record.value.copy(text = text(record.text))
+                require(record.value.cloudSourceJson == null) { "Inline cloud source text" }
+                note.transcripts += record.value.copy(text = text(record.text), cloudSourceJson = record.cloudSource?.let(::text))
               }
               is PampaNoteRecord.Segment -> {
                 val content = record.text?.let { require(record.value.text.isEmpty()) { "Conflicting segment text" }; text(it) } ?: record.value.text

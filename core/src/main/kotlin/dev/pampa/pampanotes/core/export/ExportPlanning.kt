@@ -121,7 +121,7 @@ object ExportEstimator {
     val textBytes = set.notes.sumOf { note ->
       val native = note.native
       note.note.body.toByteArray(Charsets.UTF_8).size.toLong() +
-        (native?.transcripts?.sumOf { it.text.toByteArray(Charsets.UTF_8).size.toLong() }
+        (native?.transcripts?.sumOf { it.text.toByteArray(Charsets.UTF_8).size.toLong() + (it.cloudSourceJson?.toByteArray(Charsets.UTF_8)?.size ?: 0) }
           ?: note.sessions.sumOf { it.transcript?.text?.toByteArray(Charsets.UTF_8)?.size?.toLong() ?: 0L }) +
         (native?.segments?.sumOf { it.text.toByteArray(Charsets.UTF_8).size.toLong() + (it.wordsJson?.toByteArray(Charsets.UTF_8)?.size ?: 0) + 256L } ?: 0L) +
         2048L + (native?.transcripts?.size ?: note.sessions.size) * 512L +

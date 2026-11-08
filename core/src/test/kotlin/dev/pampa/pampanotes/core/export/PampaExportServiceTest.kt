@@ -36,7 +36,8 @@ class PampaExportServiceTest {
       "b".repeat(64), storedFileName = "original.pdf", importedAt = 21)
     val page = source.copy(id = "page", originalName = "Derived page", storedFileName = "page.png", derivedFromId = source.id)
     val allSources = listOf(source, page, source.copy(id = "no-file", storedFileName = null))
-    val notes = mockk<NoteDao> { coEvery { get(note.id) } returns note }
+    val notes = mockk<NoteDao>()
+    coEvery { notes.get(note.id) } returns note
     val folders = mockk<FolderDao> { coEvery { all() } returns listOf(folder) }
     val tags = mockk<NoteTagDao> { coEvery { tags(note.id) } returns listOf("tag") }
     val sessions = mockk<SessionDao> { coEvery { byNote(note.id) } returns listOf(SessionWithParts(session, listOf(part))) }

@@ -46,8 +46,12 @@ with a final newline. A record never crosses chunks. Records use a `type` discri
 `tag`, `session`, `part`, `transcript`, `segment`, `source` and `attachment` records belong to it.
 Groups may cross chunk boundaries. No global JSON array contains the entire semester.
 
-Note bodies and transcript texts use a separate `body`/`text` reference with `bytes` and `sha256`.
-Their corresponding inline entity fields are empty. Ordinary segment text and word timing strings
+Note bodies, transcript texts and exact cloud source provenance use a separate `body`/`text`/`cloudSource` reference with `bytes` and `sha256`.
+Their corresponding inline entity fields are empty (`cloudSourceJson` is null inline and its
+absent/null, empty and nonempty values remain distinct).
+Recording-origin instant/local time/explicit zone/source/precision remain nullable and are preserved
+per part; import never derives an instant or zone from the device clock or a date-only origin.
+Ordinary segment text and word timing strings
 stay in the metadata chunk so neighboring phrases share a DEFLATE dictionary. When their combined
 length exceeds 32,768 UTF-16 code units, they also use `text`/`words` blob references. A reference
 and conflicting inline value are rejected. A null word timing string stays null; an empty string

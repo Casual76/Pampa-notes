@@ -32,7 +32,7 @@ class PampaNoteWriter(
       note.parts.forEach { weigh(it.sizeBytes) }
       note.sources.forEach { weigh(it.sizeBytes) }
       weigh(note.note.body.length * 3L)
-      note.transcripts.forEach { weigh(it.text.length * 3L) }
+      note.transcripts.forEach { weigh(it.text.length * 3L); weigh((it.cloudSourceJson?.length ?: 0) * 3L) }
       note.segments.forEach { weigh(it.text.length * 3L); weigh((it.wordsJson?.length ?: 0) * 3L) }
     }
     estimated = estimated.coerceAtLeast(1)
@@ -98,7 +98,9 @@ class PampaNoteWriter(
         note.tags.forEach { yield(PampaNoteRecord.Tag(it)) }
         note.sessions.forEach { yield(PampaNoteRecord.Session(it)) }
         note.parts.forEach { yield(PampaNoteRecord.Part(it)) }
-        note.transcripts.forEach { yield(PampaNoteRecord.Transcript(it.copy(text = ""), text(it.text))) }
+        note.transcripts.forEach {
+          yield(PampaNoteRecord.Transcript(it.copy(text = "", cloudSourceJson = null), text(it.text), it.cloudSourceJson?.let(::text)))
+        }
         note.segments.forEach {
           // Small segment text/words share the chunk's DEFLATE dictionary. One tiny ZIP entry per
           // phrase would cost more in filenames/headers than the text it was meant to compress.
