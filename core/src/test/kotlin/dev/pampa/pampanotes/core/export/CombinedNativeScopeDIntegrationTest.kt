@@ -175,21 +175,27 @@ class CombinedNativeScopeDIntegrationTest {
     assertEquals(listOf("tag"), read.tags)
   }
 
-  @Test fun `unsafe refinement and multipart originals fall back before both visible and native collections`() = runBlocking {
+  @Test fun `unsafe refinement blocks complete PN while AI projection excludes private sibling content`() = runBlocking {
     val doc = CloudSources.decode(raw.cloudSourceJson)!!
     val text = raw.text + "\n\n" + sibling.text
     val shared = raw.copy(cloudSourceJson = CloudSources.encode(doc.copy(originals = listOf(doc.originals.single().copy(
       text = text, textSha256 = AlignmentProtocol.sha256(text), parts = doc.parts + CloudSources.decode(sibling.cloudSourceJson)!!.parts,
       reportedText = "PRIVATE_SIBLING_REPORT")))))
     val f = Fixture(listOf(shared, refined.copy(text = "PRIVATE_SIBLING_REFINEMENT"), newer, otherRefined, sibling))
-    val set = f.gather(ExportScope.Sessions(listOf("s"), "Selected"), ExportTarget.PAMPA.defaults())
+    val selected = ExportScope.Sessions(listOf("s"), "Selected")
+    try {
+      f.gather(selected, ExportTarget.PAMPA.defaults())
+      fail("PN silently reduced the requested history")
+    } catch (failure: PampaHistoryScopeException) {
+      assertEquals(listOf(note.id), failure.noteIds)
+    }
+    coVerify(exactly = 0) { f.fetcher.relayAvailable(any(), any()) }
+    val options = ExportTarget.CHAT.defaults()
+    val set = f.gather(selected, options)
     assertEquals(raw.id, set.notes.single().sessions.single().transcript!!.id)
-    assertEquals(raw.id, set.notes.single().native!!.sessions.single().activeTranscriptId)
-    val file = f.service.export(set, ExportTarget.PAMPA.defaults(), ExportDestination.Share).file!!
-    val transferred = PampaBundleArchive.read(file).data.notes.single().transcripts.single { it.id == raw.id }
-    assertEquals(raw.text, transferred.text)
-    assertEquals("portable_projection", CloudSources.decode(transferred.cloudSourceJson)!!.originals.single().contentScope)
-    ZipFile(file).use { zip -> zip.entries().asSequence().filter { it.name.startsWith("records/") || it.name.startsWith("blobs/") }.forEach { entry ->
+    assertEquals(raw.text, set.notes.single().sessions.single().transcript!!.text)
+    val file = f.service.export(set, options, ExportDestination.Share).file!!
+    ZipFile(file).use { zip -> zip.entries().asSequence().filterNot { it.isDirectory }.forEach { entry ->
       assertFalse(zip.getInputStream(entry).use { String(it.readBytes()) }.contains("PRIVATE_SIBLING_"))
     } }
   }

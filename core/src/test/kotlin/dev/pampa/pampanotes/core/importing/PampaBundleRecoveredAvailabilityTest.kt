@@ -33,8 +33,11 @@ class PampaBundleRecoveredAvailabilityTest {
     assertTrue(name.matches(Regex("missing-[a-f0-9-]{36}")))
     assertEquals(name, PampaBundleOmissions.expectedFileName(source.id))
     assertEquals(name, PampaBundleOmissions.expectedSourceName(source.copy(originalName = "renamed.pdf")))
-    assertNull(PampaBundleOmissions.expectedSourceName(source.copy(kind = SourceKind.CLIPBOARD)))
-    assertNull(PampaBundleOmissions.expectedSourceName(source.copy(kind = SourceKind.SHARE)))
+    for (kind in listOf(SourceKind.CLIPBOARD, SourceKind.SHARE)) {
+      assertEquals(name, PampaBundleOmissions.expectedSourceName(source.copy(kind = kind)))
+      assertNull(PampaBundleOmissions.expectedSourceName(source.copy(kind = kind, mime = "text/plain")))
+      assertEquals(name, PampaBundleOmissions.expectedSourceName(source.copy(kind = kind, mime = "text/plain", archivedAt = 5)))
+    }
     assertNull(PampaBundleOmissions.expectedSourceName(source.copy(sha256 = "")))
     assertNull(PampaBundleOmissions.expectedSourceName(source.copy(sha256 = "unknown")))
   }

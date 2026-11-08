@@ -77,7 +77,15 @@ class CombinedMistralR4ExactOriginalRegressionTest {
         val reportedLanguage = (language as? JsonPrimitive)?.takeIf { it.isString }?.content
         assertEquals(reportedLanguage, source.responses!!.single().language)
         assertEquals(exact, source.responses!!.single().text)
-        assertTrue(replay.segments.isEmpty()) // Partial timing must not hide untimed text.
+        // Preserve the actual coarse interval without using it to replace the full original.
+        if (exact.isBlank()) assertTrue(replay.segments.isEmpty()) else {
+          val segment = replay.segments.single()
+          assertEquals("b", segment.partId)
+          assertEquals("Timed words.", segment.text)
+          assertEquals(100L, segment.partStartMs)
+          assertEquals(1200L, segment.partEndMs)
+          assertNull(segment.wordsEncoded)
+        }
         val draft = TranscriptEntity("raw", "session", TranscriptKind.RAW, "mistral", f.model,
           replay.language, replay.text, wordCount = 2, createdAt = 42)
         val (saved, doc) = CloudSavePlan.build(draft, f.parts.map { it.id }, replay, f.parts, f.parts,
