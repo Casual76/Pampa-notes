@@ -1,5 +1,6 @@
 package dev.pampa.pampanotes.core.export
 
+import dev.pampa.pampanotes.core.importing.PampaBundleSourceFiles
 import dev.pampa.pampanotes.core.model.wordCount
 
 // -------------------------------------------------------------------------------------------------
@@ -263,7 +264,8 @@ object ExportFiles {
         add(ExportFileRef(ExportFileKind.AUDIO, part.id, part.originalName, part.fileName, part.sizeBytes,
           parts[part.id]?.archived ?: (part.archivedAt > 0)))
       }
-      native.sources.forEach { source ->
+      val declarations = native.attachments.filterNot { it.audio }.associateBy { it.id }
+      native.sources.filterNot { PampaBundleSourceFiles.isFileless(it, declarations[it.id]) }.forEach { source ->
         add(ExportFileRef(if (source.derivedFromId != null) ExportFileKind.PAGE else ExportFileKind.SOURCE,
           source.id, source.originalName, source.storedFileName.orEmpty(), source.sizeBytes,
           sources[source.id]?.archived ?: pages[source.id]?.archived ?: (source.archivedAt > 0)))

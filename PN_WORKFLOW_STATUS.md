@@ -4,9 +4,9 @@
 
 - Richiesta 2026-11-08: formato dedicato .pn, compressione senza perdita, tutti i dati disponibili e tempi audio, importazione semplice/affidabile; valutare il riuso della sync manuale cloud senza PC.
 - Caso segnalato: mittente e destinatario probabilmente su 1.2.0; nessun file, messaggio d'errore o punto di blocco più preciso disponibile. Non attribuire una causa al caso reale senza evidenza.
-- Confermato: GPT-6.1 Sol/xhigh per tutti, massimo 3 implementatori contemporanei, 3 reviewer indipendenti per giro; massimo ambiente 4 agenti incluso coordinatore. Criteri delegati riusati/adattati all'incarico. Nuova fase: massimo 3 giri di correzione dopo review iniziale, poi decisione utente secondo skill.
+- Configurazione corrente: GPT-6.1 Sol/xhigh per tutti, tetto utente di4 implementatori per ciascun gruppo e reviewer pari ai criteri:8 per PN dal prossimo giro, uno per criterio. Massimo ambiente4 agenti incluso coordinatore, quindi3 figli attivi e review in ondate. I conteggi precedenti restano storici. Criteri delegati riusati/adattati all'incarico. Massimo3 giri di correzione dopo review iniziale; attualmente correzione2/3.
 - Base verificata: main ea4e0a2, app 1.3.1/code20, engine3.0.5; include OpenRouter e relay cloud aggiunti dopo 1.2.0. Preservare la cancellazione locale preesistente companion/tools/__pycache__/holes.cpython-311.pyc.
-- Skill: agentic-workflow aggiornata (tabelle individuali e aggregate obbligatorie), fluid-engine, material3-expressive; QA dispositivi tramite device_list/device_open/agent-device secondo regole runtime, non vecchi script adb di input.
+- Skill: agentic-workflow aggiornata (tabelle individuali e aggregate obbligatorie), fluid-engine, material3-expressive. L'utente ha escluso emulatori/dispositivi: test Android soltanto compilati, nessuna esecuzione runtime richiesta o attribuita.
 
 ## Criteri osservabili e rubrica
 
@@ -19,7 +19,7 @@
 | PN5 | Export .pn recupera gli allegati disponibili dal relay cloud senza PC; contenuti importati interoperano con sync manuale esistente. Conservare trasferimenti incrementali per singolo allegato, consenso, account, scadenza e integrità. |
 | PN6 | UX IT/EN semplice: destinazione esplicita Pampa Notes, contenuto incluso spiegato, avvisi reali per allegati irrecuperabili, aggiornamento/copia e destinazione validi. |
 | PN7 | Validazione integrità/percorsi/riferimenti/limiti, staging e transazione con rollback e gestione spazio/cancellazione; archivi estranei o corrotti non modificano note esistenti. |
-| PN8 | Build/lint/test mirati + Room/migrazione se necessaria + flusso reale tra export/import e cloud; 3 review indipendenti sulla stessa versione, con evidenze e limiti espliciti. |
+| PN8 | Build/lint/test sostenibili, compilazione Room/migrazione e verifiche di codice dei flussi export/import/cloud;8 review indipendenti sulla stessa versione dal giro corrente, una per criterio. Evidenze e limiti espliciti; runtime Android/cloud reale non eseguiti e dispensati dall'utente. |
 
 Rubrica condivisa 0–10: 0–2 non soddisfatto; 3–4 parziale con difetti gravi; 5–6 implementato ma criterio ancora violato; 7–8 soddisfatto nei controlli con limiti espliciti; 9–10 soddisfatto con copertura solida dei casi pertinenti. NV non verificato, NA fuori ambito/non applicabile, voti provvisori esclusi dagli aggregati. Nessuna soglia numerica nuova: un requisito obbligatorio fallito resta aperto indipendentemente dalla media.
 
@@ -338,3 +338,47 @@ Decisione: NON approvato. Consolidati5P2+2P3 distinti. Correzione2/3 autorizzata
 - Unità export: originali idonei con riferimento nullo devono essere risolti prima del piano/scrittura con grafo aggiornato; fonti intrinsecamente senza originale non devono generare avvisi o perdere metadati. Ambito export/lettore e semantica allegati con test dedicati; nessun importer/DB/sync.
 - Unità Worker: mantenere evidenza pubblica di audio/transcript attraverso client vecchi che omettono campi, con compatibilità hash/base/tombstone e test A nuovo→B vecchio→C nuovo prima del ritorno A. Worker sync non modificato nel checkout CLOUD; proprietà esclusiva PN confermata dal coordinatore separato, nessun deploy/schema/credenziale.
 -3 contesti freschi Sol/xhigh, ambiti distinti, nessun commit dei figli. Lease Gradle ancora CLOUD/RECORDINGS: agenti senza Gradle/JVM compilazioni pesanti/server/dispositivi, eventuali sole prove pure leggere e limitate. Un solo batch integrato dopo consegne e rilascio del lease.
+
+### Risorse dopo avvio correzione2
+
+- CLOUD/RECORDINGS ha rilasciato esplicitamente Gradle dopo il suo batch; riporta1139pass/1skip/0failure e lint0error127warning, fonte coordinatore non ancora verificata qui. Avvia3 review fresche sul proprio snapshot; consegna consolidata successiva, Worker sync confermato intatto/di competenza PN.
+- Gradle attualmente libero e non ancora acquisito da PN. Le3 unità PN continuano source-only; un unico batch moderato del coordinatore dopo tutte le consegne. Nessun emulatore/dispositivo/GPU/server/cloud reale.
+
+### Consegna Worker, correzione2 (1/3 unità)
+
+- Unità Worker terminata senza commit, modificati soltanto worker/src/sync.ts, nuovo sync-public-evidence.ts e tests/pn-public-evidence.test.mjs. La lettura dei6 campi pubblici è accoppiata alseq della riga; non vengono mantenute chiavi arbitrarie/private, hash/base client rimangono opachi/compatibili e i conflitti usano stale esistente. Origine audio mantenuta solo con stessoID/SHA256 valido/dimensione, tombstone permette ricreazione.
+-13 regressioni passate nel report agente: A nuovo→B vecchio→C nuovo, null/empty/testo esatto, conflitti, cambi contenuto, cancellazioni, limiti/stale/idempotenza/repair/concorrenza. Eseguono helper e push/pull SQL produttivi con SQLite locale in memoria via adapter D1 di test; NON D1/HTTP/Cloudflare runtime. Picco riportato86,6MiB,0,5s, unaCPU.
+- Coordinatore ha letto helper e diff e rieseguito il comando leggero Node (heap64MiB, single-threaded, un file/concorrenza1) senza server/Gradle. Typecheck Worker e build Android integrata restano successive, nessuna distribuzione del codice al servizio reale.
+- Nessuna approvazione del giro attribuita. Restano attive le unità import/export; nessun nuovo agente per occupare lo slot libero, nessun commit/compilazione integrata finché scrivono.
+
+### Consegna import, correzione2 (2/3 unità)
+
+- Unità import terminata senza commit. PampaBundleMerge applica autorità temporale a titolo/data/selezione e mappe voce complete, comprese rimozioni; alias e clock seguono le parti nei movimenti. PampaBundleLegacyReconcile riserva match audio esatti/nominativi globalmente prima di fallback hash mutuo/iniettivo. Matching fonti precedente invariato.
+- Nuovo PampaBundleFileIntegrity e hook importer verificano percorso sicuro, proprietà esclusiva, dimensione eSHA256 con64KiB/checkpoint; copie staging verificate riparano riferimenti corrotti anche nei rami legacy/preserveLocalNote, senza riscrivere file esistenti. Corruzione preesistente senza copia sana rifiuta la transazione.
+- Preparati26 test sorgente:9 session authority,6 audio reservation,4 file integrity,7 Room integrazione. Nessuna compilazione/test comportamentale eseguita dall'agente; solo diff/UTF8/whitespace passati, coerentemente col limite risorse. Nessuna attestazione runtime.
+- Coordinatore ha ispezionato patch e aggiornato la vecchia fixture PampaBundleRekeyPersistenceTest: hash corrispondenti ai byte reali A/B, directory audio/sources concrete, dati owners audioParts.all e cartelle. È adattamento della fixture ai controlli effettivi, non bypass dei digest. Anche questo test resta da compilare/eseguire nel batch integrato.
+- Restano solo le scritture export. Nessun nuovo agente o Gradle finché non conclude; modifiche del coordinatore soltanto al test fuori scope degli implementatori e al documento main.
+
+### Aggiornamento configurazione richiesto dall'utente
+
+- Tetto implementatori aumentato3→4 per ciascun gruppo indipendente. Nuovo tetto reviewer pari al numero dei criteri valutati:8 perPN. Modelli invariati Sol/xhigh; nessuna modifica retroattiva ai giri già svolti.
+- Per il prossimo giro PN il coordinatore assegna8 criticità indipendenti, una per ciascun criterio PN1–PN8. Runtime effettivo4 agenti incluso coordinatore, quindi massimo3 figli attivi: esecuzione per ondate riempiendo gli slot quando si liberano. Il limite utente non crea slot tecnici aggiuntivi e non impone agenti inutili.
+- Stato dei giri resta correzione2/3, non si azzera cambiando conteggi. Tutte le3 unità del giro2 hanno ora consegnato; integrazione finale/fileless e controlli moderati del coordinatore in corso, nessun dispositivo.
+
+### Consegna export e integrazione correzione2
+
+- Terza unità terminata senza commit: ExportService risolve gli originali idonei con riferimento nullo tramite disponibilità relay prima del piano, aggiorna i riferimenti del grafo e li rilegge alla scrittura anche per snapshot del ViewModel già raccolti. Identità cambiata/cancellazione non diventano recuperi riusciti. Nessuna modifica a TTL/account/trasporto incrementale.
+- Allegati dichiarati fileless solo per provenienza testuale clipboard/share intrinsecamente senza originale. I metadati restano nel grafo; fonti binarie, derivate, archiviate o con originale effettivamente omesso continuano ad avvisare. Campo additive fileless=false compatibile con documenti precedenti.
+- Preparati14 test JVM e5 Room dall'unità export, non compilati né eseguiti dall'autore. Il coordinatore ha collegato nel persist importer la distinzione tra fileless e allegato reale clipboard/share omesso: quest'ultimo conserva un nome atteso privato, senza inventare byte o disponibilità.
+- Tutte le scritture implementative concluse. PN ha acquisito l'esclusiva Gradle dopo il rilascio CLOUD/RECORDINGS: unico batch integrato con2worker/no-parallel/no-watch-fs, assemble debug, core/app JVM, APK AndroidTest e lint. Nessun test Android viene eseguito.
+- Typecheck Worker eseguito dal coordinatore con TypeScript cached e heap192MiB: exit0. Le13 regressioni Worker con SQLite locale erano già state rieseguite con esito positivo; nessuna chiamata D1/HTTP/Cloudflare reale e nessun deploy.
+- Risultato della build e giudizio della nuova review ancora da acquisire. Nessuna approvazione attribuita alle sole consegne implementative.
+
+### Verifica integrata correzione2 completata
+
+- Batch finale %TEMP%\pampa-pn-correction2-integrated-5.log: exit0, BUILD SUCCESSFUL in1m52s. Assemble debug, core/app JVM, APK AndroidTest core/app e lintDebug app completati con2worker/no-parallel/no-watch-fs. Nessun test su dispositivo eseguito.
+- XML ricontati: core1069 casi =1068 passati+1 skipped, app44 passati, totale1112 passati/1 skipped/0 failure/error. Tutti33 nuovi JVM passano:9 metadati sessione,6 prenotazione audio,4 integrità file,8 semantica fileless,6 recupero diretto originali null. Lo skipped resta RelayWorkerInteropTest opt-in.
+- Lint corrente:0 errori,123 warning. Schema/engine/versione applicativa invariati da questo giro. Worker:13 test locali passati e TypeScript noEmit exit0; nessun servizio reale distribuito o modificato.
+- Prime compilazioni hanno intercettato un binding MockK ambiguo nel nuovo test relay; corretto usando un DAO esplicitamente qualificato. La suite ha poi intercettato la vecchia fixture persistence con AppFiles vuoto: aggiornati directory/file reali, hash SHA256 e ownership coerenti, con assert sui byte conservati. Corretto un omonimo locale del mock nel ritocco del coordinatore; nessun controllo produttivo indebolito. Log1–4 conservati come tentativi non riusciti, non conteggiati come verifiche passate.
+- Una breve sovrapposizione nel riavvio ha coinciso con la chiusura del tentativo4; terminata prima del risultato finale. Tutte le sessioni di build sono concluse. Lease Gradle esplicitamente rilasciato al coordinatore CLOUD/RECORDINGS dopo exit0 finale; nessuna risorsa pesante mantenuta per le review.
+- Esito implementativo da sottoporre a review, non approvazione automatica. Congelamento del risultato con commit locale nel worktree PN;8 nuovi critici Sol/xhigh, uno per PN1–PN8, avviati in ondate di massimo3 figli. Nessun confronto incrociato fra i reviewer e nessuna scrittura fino a tutti8 i report.

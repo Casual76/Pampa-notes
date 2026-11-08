@@ -41,6 +41,7 @@
  */
 
 import type { Env } from "./auth";
+import { RECORDING_ORIGIN_FIELDS, retainPublicEvidence } from "./sync-public-evidence";
 
 /**
  * Le tabelle che l'indice conosce. `transcription_runs` sono le statistiche delle trascrizioni
@@ -174,17 +175,18 @@ export async function push(env: Env, ownerId: string, body: PushRequest): Promis
   const planned: Planned[] = [];
 
   for (const change of body.changes) {
+    const current = existing.get(`${change.tbl}/${change.id}`);
     // Troppo grande per una riga di D1: non ci stara' mai, e un errore di D1 a meta' lotto
     // fermerebbe anche tutte le altre. Si rifiuta questa, e il resto passa.
     const kept = change.tbl === "folders" ? keepMissing(change, "folders", "kind", kinds) : keepMissing(change, "sessions", "voiceNames", voiceNames);
-    const payload = change.op === "U" ? JSON.stringify(kept) : null;
+    const evidence = retainPublicEvidence(change.tbl, kept, current?.op === "U" ? current.publicEvidence : undefined);
+    const payload = change.op === "U" ? JSON.stringify(evidence.payload) : null;
     const chunks = change.tbl === "transcripts" && change.op === "U" && Array.isArray(change.segments) ? chunkSegments(keepSpeakers(change, speakers)) : [];
     if ((payload !== null && bytesOf(payload) > MAX_ROW_BYTES) || chunks === null) {
       rejected.push({ tbl: change.tbl, id: change.id, reason: "too_large" });
       continue;
     }
 
-    const current = existing.get(`${change.tbl}/${change.id}`);
     if (current) {
       if ((change.hash ?? "") === current.hash && change.op === current.op) {
         // Stesso contenuto: niente da fare, e niente `seq` sprecato — tranne la trascrizione rimasta
@@ -207,6 +209,13 @@ export async function push(env: Env, ownerId: string, body: PushRequest): Promis
         rejected.push({ tbl: change.tbl, id: change.id, reason: "stale" });
         continue;
       }
+    }
+    // A known immutable source or incompatible recording origin is not a lossy last-writer-wins
+    // update, even from the same device. Keep the row and let the existing stale/pull path resolve
+    // it. Identical hashes above remain no-ops; a segment repair must still pass this check.
+    if (change.op === "U" && evidence.conflict) {
+      rejected.push({ tbl: change.tbl, id: change.id, reason: "stale" });
+      continue;
     }
     const bytes = (payload ? payload.length : 0) + chunks.reduce((sum, c) => sum + c.length, 0);
     planned.push({ change, payload, chunks, expectedSeq: current ? current.seq : null, bytes });
@@ -264,19 +273,27 @@ export async function push(env: Env, ownerId: string, body: PushRequest): Promis
   return result;
 }
 
-type Current = { hash: string; op: string; seq: number; deviceId: string };
+type Current = { hash: string; op: string; seq: number; deviceId: string; publicEvidence?: Record<string, unknown> };
 
 /** Quello che c'e' gia' delle righe in arrivo, in una query sola per tabella (a fette da novanta, per i cento parametri). */
 async function currentVersions(env: Env, ownerId: string, changes: Change[]): Promise<Map<string, Current>> {
   const existing = new Map<string, Current>();
   for (const tbl of TABLES) {
+    // Read only the six agreed public fields (plus audio identity), in the SAME snapshot as seq.
+    // No private/arbitrary keys are retained. A tombstone never contributes old evidence. Keep
+    // the incoming hash opaque, just as keepMissing/keepSpeakers do for older protocol-1 clients.
+    const fields = tbl === "audio_parts" ? ["id", "sha256", "sizeBytes", ...RECORDING_ORIGIN_FIELDS] : tbl === "transcripts" ? ["cloudSourceJson"] : [];
+    const projection = fields.map((field) => `, json_extract(payload, '$.${field}') AS ${field}`).join("");
     const ids = [...new Set(changes.filter((c) => c.tbl === tbl).map((c) => c.id))];
     for (let i = 0; i < ids.length; i += 90) {
       const slice = ids.slice(i, i + 90);
       const rows = await env.DB.prepare(
-        `SELECT rowId, hash, op, seq, deviceId FROM state WHERE ownerId = ? AND tbl = ? AND rowId IN (${slice.map(() => "?").join(",")})`,
-      ).bind(ownerId, tbl, ...slice).all<{ rowId: string } & Current>();
-      for (const r of rows.results) existing.set(`${tbl}/${r.rowId}`, { hash: r.hash, op: r.op, seq: r.seq, deviceId: r.deviceId });
+        `SELECT rowId, hash, op, seq, deviceId${projection} FROM state WHERE ownerId = ? AND tbl = ? AND rowId IN (${slice.map(() => "?").join(",")})`,
+      ).bind(ownerId, tbl, ...slice).all<{ rowId: string } & Current & Record<string, unknown>>();
+      for (const r of rows.results) existing.set(`${tbl}/${r.rowId}`, {
+        hash: r.hash, op: r.op, seq: r.seq, deviceId: r.deviceId,
+        publicEvidence: r.op === "U" && fields.length ? Object.fromEntries(fields.map((field) => [field, r[field]])) : undefined,
+      });
     }
   }
   return existing;

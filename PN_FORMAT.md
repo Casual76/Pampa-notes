@@ -85,6 +85,30 @@ hash. Missing content yields `OMITTED_ATTACHMENTS`, and remains unavailable afte
 files with known wrong sizes/hashes cause export failure; they are not relabeled as omitted. A
 blank local hash can be filled from verified bytes. Local storage paths cannot leave their roots.
 
+An attachment declaration can additionally contain `fileless: true`, exclusively for textual
+`CLIPBOARD`/`SHARE` provenance with no stored file, archive receipt or derived-parent relationship.
+The source row, its text-content size/hash and all other metadata remain intact; the note body
+still carries the imported text. This declaration has `path: null` but does not report an omitted
+original and does not request relay/companion retrieval. `fileless` defaults to `false`, preserving
+the conservative omission semantics of old PN and ZIP declarations. Audio, PDF, image, binary
+share and derived-source declarations cannot use it. A clipboard/share source with an actual
+stored attachment retains normal file hashing, retrieval and missing-file warnings; an existing
+non-fileless declaration also prevents a stripped filename from being reclassified as text-only.
+All rows still require one declaration and the same reference, count, size and hash validation.
+Persistence must likewise reserve an expected local reference for an explicitly omitted actual
+clipboard/share file (`fileless: false`), while keeping a truly fileless text source's reference
+null. That distinction must survive Room import and the next export; an expected reference does
+not create a blob or claim local availability.
+
+Before a direct PN export is planned, known genuine originals whose old local reference is null
+are looked up through the existing authenticated relay availability path. Its Room adapter reserves
+an expected filename under a row guard; no bytes or remote filename are invented. Planning and file
+holds then use the refreshed reference, with one availability lookup per missing original. The
+service refreshes storage references again immediately before writing, including when the UI has
+kept the original gathered snapshot while confirming partial failures. Only the identical gathered
+source content/relationships may adopt a new local reference. Relay account, consent, expiry,
+incremental transport and byte verification remain the responsibility of the existing relay.
+
 ## Integrity, resource bounds and cancellation
 
 The reader rejects unsafe paths, duplicate names (including case aliases and file/directory name

@@ -57,7 +57,7 @@ object PampaBundleArchive {
     }
     if (PampaNoteContainer.isNative(zip)) {
       val data = PampaNoteContainer.read(zip, verifyAttachments, checkpoint)
-      val warnings = if (data.notes.any { n -> n.attachments.any { it.path == null } }) listOf(PampaBundleWarning.OMITTED_ATTACHMENTS) else emptyList()
+      val warnings = if (data.notes.any { n -> n.attachments.any { it.path == null && !it.fileless } }) listOf(PampaBundleWarning.OMITTED_ATTACHMENTS) else emptyList()
       return@use Read(data, "", warnings, hasPreciseWordCoverage(data, checkpoint))
     }
     val manifestPath = rootManifest(zip) ?: error("Missing Pampa manifest")
@@ -95,7 +95,7 @@ object PampaBundleArchive {
     }
     val warnings = buildList {
       if (manifest.schema < 3) add(PampaBundleWarning.LEGACY_FORMAT)
-      if (data.notes.any { n -> n.attachments.any { it.path == null } }) add(PampaBundleWarning.OMITTED_ATTACHMENTS)
+      if (data.notes.any { n -> n.attachments.any { it.path == null && !it.fileless } }) add(PampaBundleWarning.OMITTED_ATTACHMENTS)
     }
     Read(data, root, warnings, manifest.schema == 3 && hasPreciseWordCoverage(data, checkpoint))
   }
@@ -210,6 +210,11 @@ object PampaBundleArchive {
       }
       unique(n.attachments.map { "${it.audio}:${it.id}" })
       require(n.attachments.filter { it.audio }.map { it.id }.toSet() == parts.keys && n.attachments.filter { !it.audio }.map { it.id }.toSet() == n.sources.map { it.id }.toSet()) { "Missing attachment declaration" }
+      n.attachments.filter { it.fileless }.forEach { a ->
+        require(!a.audio && a.path == null && PampaBundleSourceFiles.isFileless(sources.getValue(a.id))) { "Invalid fileless source declaration" }
+        val source = sources.getValue(a.id)
+        require(a.bytes == source.sizeBytes && (source.sha256.isBlank() || source.sha256.equals(a.sha256, true))) { "Fileless source metadata conflict" }
+      }
       n.attachments.filter { it.path != null }.forEach { a ->
         val size = if (a.audio) parts.getValue(a.id).sizeBytes else sources.getValue(a.id).sizeBytes
         val hash = if (a.audio) parts.getValue(a.id).sha256 else sources.getValue(a.id).sha256

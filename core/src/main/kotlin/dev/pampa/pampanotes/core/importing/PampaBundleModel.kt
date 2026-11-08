@@ -27,11 +27,21 @@ data class PampaBundleNote(
 data class PampaBundleAttachment(
   val id: String,
   val audio: Boolean,
-  /** Null means omitted or unavailable, never playable. */
+  /** Null means omitted/unavailable, or intrinsically fileless when [fileless] is true. */
   val path: String? = null,
   val bytes: Long = 0,
   val sha256: String? = null,
+  /** Text clipboard/share provenance has no original file. Absent in older documents: omitted. */
+  val fileless: Boolean = false,
 )
+
+/** Only positive domain evidence can waive an original; unknown/binary/derived sources still warn. */
+object PampaBundleSourceFiles {
+  fun isFileless(source: SourceEntity, declaration: PampaBundleAttachment? = null): Boolean =
+    (source.kind == SourceKind.CLIPBOARD || source.kind == SourceKind.SHARE) && source.storedFileName == null &&
+      source.derivedFromId == null && source.archivedAt == 0L &&
+      source.mime.substringBefore(';').trim().startsWith("text/", ignoreCase = true) && declaration?.fileless != false
+}
 
 data class PampaBundlePreview(
   val noteCount: Int,

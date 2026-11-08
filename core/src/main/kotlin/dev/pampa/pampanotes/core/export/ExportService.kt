@@ -22,6 +22,7 @@ import dev.pampa.pampanotes.core.db.SourceDao
 import dev.pampa.pampanotes.core.db.TranscriptDao
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.files.FilesInUse
+import dev.pampa.pampanotes.core.importing.PampaBundleOmissions
 import dev.pampa.pampanotes.core.model.slugify
 import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.repo.PersonalScope
@@ -218,8 +219,32 @@ class ExportService @Inject constructor(
    */
   suspend fun plan(set: ExportSet, options: ExportOptions): ExportFetchPlan = withContext(io) {
     inUse.hold(ExportFiles.wanted(set, options).filter { it.fileName.isNotBlank() }.map(::heldName), PLAN_HOLD_MS)
-    val plan = ExportFiles.plan(set, options, ::isPresent)
-    ExportAttachmentFetch.plan(plan, ::relayAvailable)
+    var prepared = if (options.isPampa) refreshSourceReferences(set) else set
+    // AndroidRelayLocalFiles.get reserves a guarded, deterministic reference for old genuine
+    // originals. Do this BEFORE planning/holds: a blank snapshot must not prevent discovery.
+    // Only known original identities qualify; text-only clipboard/share never makes this call.
+    val probes = mutableMapOf<String, Pair<Boolean, IOException?>>()
+    if (options.isPampa) {
+      prepared.notes.flatMap { it.native?.sources.orEmpty() }.filter {
+        it.id.isNotBlank() && it.storedFileName == null && PampaBundleOmissions.expectedSourceName(it) != null
+      }.forEach { source ->
+        currentCoroutineContext().ensureActive()
+        probes[source.id] = try { fetcher.relayAvailable(RelayKind.SOURCE, source.id) to null }
+        catch (error: IOException) { false to error }
+      }
+      // Availability may have reserved a name even if discovery failed. Read guarded Room refs,
+      // keeping the selected graph/text snapshot and refusing another row's changed identity.
+      if (probes.isNotEmpty()) prepared = refreshSourceReferences(prepared)
+    }
+    inUse.hold(ExportFiles.wanted(prepared, options).filter { it.fileName.isNotBlank() }.map(::heldName), PLAN_HOLD_MS)
+    val plan = ExportFiles.plan(prepared, options, ::isPresent)
+    ExportAttachmentFetch.plan(plan) { file ->
+      val probe = if (file.kind != ExportFileKind.AUDIO) probes[file.id] else null
+      if (probe == null) relayAvailable(file) else {
+        probe.second?.let { throw it }
+        probe.first
+      }
+    }
   }
 
   /**
@@ -267,14 +292,17 @@ class ExportService @Inject constructor(
       if (value.isFinite()) lastProgress = maxOf(lastProgress, value.coerceIn(0f, 1f))
       onProgress(lastProgress)
     }
-    val wanted = ExportFiles.wanted(set, options)
+    // The ViewModel deliberately retains its gathered snapshot through the missing-file prompt.
+    // Refresh only storage refs here as well, after relay/fetch, so PN writes the recovered bytes.
+    val prepared = if (options.isPampa) refreshSourceReferences(set) else set
+    val wanted = ExportFiles.wanted(prepared, options)
     val held = wanted.filter { it.fileName.isNotBlank() }.map(::heldName)
     inUse.hold(held, WRITE_HOLD_MS)
     try {
       val presentBefore = wanted.filter(::isPresent).toSet()
       val result = write(
         // PN must retain unavailable source metadata and every native historical version.
-        set = if (options.isPampa) set else ExportFiles.withoutMissingPages(set) { files.sourceFile(it.storedFileName).isFile },
+        set = if (options.isPampa) prepared else ExportFiles.withoutMissingPages(prepared) { files.sourceFile(it.storedFileName).isFile },
         options = options,
         destination = destination,
         labels = labels,
@@ -296,6 +324,31 @@ class ExportService @Inject constructor(
       inUse.release(held)
     }
   }
+
+  /** Storage changes are safe to adopt only for the exact gathered source content/relationships. */
+  private suspend fun refreshSourceReferences(set: ExportSet): ExportSet = set.copy(notes = set.notes.map { note ->
+    val native = note.native ?: return@map note
+    val refreshed = native.sources.map { source ->
+      currentCoroutineContext().ensureActive()
+      val current = sources.get(source.id)
+      if (current != null && current.copy(storedFileName = source.storedFileName, archivedAt = source.archivedAt) == source) {
+        source.copy(storedFileName = current.storedFileName, archivedAt = current.archivedAt)
+      } else source
+    }.associateBy { it.id }
+    fun reference(source: ExportSource): ExportSource = refreshed[source.id]?.let {
+      source.copy(storedFileName = it.storedFileName, archived = it.archivedAt > 0)
+    } ?: source
+    note.copy(
+      native = native.copy(sources = native.sources.map { refreshed.getValue(it.id) }),
+      sources = note.sources.map(::reference),
+      sourceFiles = note.sourceFiles.map(::reference),
+      handwriting = note.handwriting.map { page ->
+        refreshed[page.id]?.let { source -> source.storedFileName?.let {
+          page.copy(storedFileName = it, archived = source.archivedAt > 0)
+        } } ?: page
+      },
+    )
+  })
 
   private suspend fun write(
     set: ExportSet,
@@ -520,7 +573,9 @@ class ExportService @Inject constructor(
         parts = sessionRows.flatMap { it.partsSorted }.map { it.copy(archivedAt = 0) },
         transcripts = versionsBySession.values.flatten(),
         segments = segmentsByTranscript.values.flatten(),
-        sources = allSources.map { it.copy(archivedAt = 0) },
+        // The PN writer strips archive state. Keep it until then to distinguish genuine fileless
+        // text from a clipboard/share source that actually had an archived attachment.
+        sources = allSources,
       ),
       handwriting = pages.mapIndexed { index, page ->
         ExportImage(page.storedFileName!!, index + 1, page.sizeBytes, id = page.id, archived = page.archivedAt > 0)

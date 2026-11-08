@@ -63,8 +63,13 @@ class PampaNoteWriter(
     val notes = native.mapIndexed { index, value ->
       check()
       require(value.note.id == set.notes[index].note.id && value.note.folderId == set.notes[index].note.folderId) { "Native note identity mismatch" }
+      val declarations = value.attachments.filterNot { it.audio }.associateBy { it.id }
       val attachments = value.parts.map { attachment(it.id, true, it.fileName, it.sizeBytes, it.sha256) } +
-        value.sources.map { attachment(it.id, false, it.storedFileName, it.sizeBytes, it.sha256) }
+        value.sources.map {
+          if (PampaBundleSourceFiles.isFileless(it, declarations[it.id])) PampaBundleAttachment(it.id, false,
+            bytes = it.sizeBytes, sha256 = it.sha256.takeIf(String::isNotBlank), fileless = true)
+          else attachment(it.id, false, it.storedFileName, it.sizeBytes, it.sha256)
+        }
       val audio = attachments.filter { it.audio }.associateBy { it.id }
       val sources = attachments.filterNot { it.audio }.associateBy { it.id }
       value.copy(

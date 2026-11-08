@@ -53,23 +53,24 @@ internal object PampaBundleLegacyReconcile {
     old.parts.forEach { part ->
       target.parts.firstOrNull { it.id == part.id && hash(it.sha256, part.sha256) }?.let { matchedParts[part.id] = it.id }
     }
-    old.parts.filter { isSynthetic(it.id) && it.id !in matchedParts }.forEach { part ->
-      val available = target.parts.filter { it.id !in reservedParts }
-      var matches = available.filter { hash(it.sha256, part.sha256) }
-      if (matches.size > 1) {
-        matches = matches.filter { text(it.originalName) == text(part.originalName) }
-        check(matches.size == 1) { "Ambiguous repeated legacy audio identity" }
-      }
+    val legacyParts = old.parts.filter { isSynthetic(it.id) && it.id !in matchedParts }
+    // Reserve named matches across the whole graph before hash-only fallback. A B visited
+    // before an identical A must not consume native A when B was omitted from the update.
+    for (named in listOf(true, false)) legacyParts.filterNot { it.id in matchedParts }.forEach { part ->
+      val matches = target.parts.filter { it.id !in reservedParts && hash(it.sha256, part.sha256) &&
+        (!named || text(it.originalName) == text(part.originalName)) }
       check(matches.size <= 1) { "Ambiguous legacy audio identity" }
-      if (matches.isEmpty()) {
-        // No matching content is omission, not permission to reuse an occupied positional ID.
-        // Unknown hashes, however, cannot distinguish omission from an unidentified recording.
-        check(target.parts.none { it.sha256.isBlank() } && (target.parts.isEmpty() || part.sha256.isNotBlank())) { "Legacy audio identity is unavailable" }
-      } else {
-        val match = matches.single()
+      matches.singleOrNull()?.let { match ->
+        val competitors = legacyParts.filter { it.id !in matchedParts && hash(it.sha256, match.sha256) &&
+          (!named || text(it.originalName) == text(match.originalName)) }
+        check(competitors.size == 1) { "Ambiguous repeated legacy audio identity" }
         matchedParts[part.id] = match.id
         reservedParts += match.id
       }
+    }
+    legacyParts.filterNot { it.id in matchedParts }.forEach { part ->
+      // Unknown hashes cannot distinguish omission from an unidentified recording.
+      check(target.parts.none { it.sha256.isBlank() } && (target.parts.isEmpty() || part.sha256.isNotBlank())) { "Legacy audio identity is unavailable" }
     }
     partAliases += matchedParts.filter { (oldId, newId) -> oldId != newId }
 
@@ -149,12 +150,8 @@ internal object PampaBundleLegacyReconcile {
     }
     val changed = rekey(old, sessionAliases, partAliases, sourceAliases)
     return if (forward) {
-      // Legacy exports contain no voice aliases, so any local names were explicitly added here.
-      val withLocalVoices = received.copy(sessions = received.sessions.map { session ->
-        val localSession = changed.sessions.firstOrNull { it.id == session.id }
-        session.copy(voiceNames = VoiceNames.encode(VoiceNames.decode(session.voiceNames) + VoiceNames.decode(localSession?.voiceNames)))
-      })
-      Plan(changed, withLocalVoices, sessionAliases, partAliases, sourceAliases)
+      // Merge applies timestamped voice-map authority after part IDs have been remapped.
+      Plan(changed, received, sessionAliases, partAliases, sourceAliases)
     } else {
       // Public legacy Markdown has no native body boundaries. Never downgrade native content or selection.
       val retainedSessions = (target.sessions.sortedBy { it.position } + changed.sessions.filter { s -> target.sessions.none { it.id == s.id } }.sortedBy { it.position })

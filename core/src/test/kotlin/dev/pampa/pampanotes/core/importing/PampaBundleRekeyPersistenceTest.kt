@@ -5,6 +5,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import dev.pampa.pampanotes.core.db.*
 import dev.pampa.pampanotes.core.files.AppFiles
+import dev.pampa.pampanotes.core.files.Hashing
 import io.mockk.*
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
@@ -27,6 +28,12 @@ class PampaBundleRekeyPersistenceTest {
     val transcripts = mockk<TranscriptDao>(relaxed = true); val segments = mockk<SegmentDao>(relaxed = true)
     val sources = mockk<SourceDao>(relaxed = true); val tags = mockk<NoteTagDao>(relaxed = true)
     val jobs = mockk<JobDao>(relaxed = true); val files = mockk<AppFiles>()
+    val audioDirectory = temp.newFolder("audio")
+    val sourceDirectory = temp.newFolder("sources")
+    every { files.audio } returns audioDirectory
+    every { files.sources } returns sourceDirectory
+    every { files.audioFile(any()) } answers { File(audioDirectory, firstArg<String>()) }
+    every { files.sourceFile(any()) } answers { File(sourceDirectory, firstArg<String>()) }
     every { db.folders() } returns folders; every { db.notes() } returns notes; every { db.sessions() } returns sessions
     every { db.audioParts() } returns parts; every { db.transcripts() } returns transcripts; every { db.segments() } returns segments
     every { db.sources() } returns sources; every { db.tags() } returns tags; every { db.jobs() } returns jobs
@@ -35,17 +42,20 @@ class PampaBundleRekeyPersistenceTest {
     val oldSessions = (0..1).map { i -> SessionEntity(PampaBundleLegacyReconcile.id("session", "note:session:$i"), note.id,
       if (i == 0) "Alpha" else "Beta", "2026-11-05", i, "raw-$i", createdAt = 1, updatedAt = 1) }
     val oldParts = oldSessions.mapIndexed { i, s -> AudioPartEntity(PampaBundleLegacyReconcile.id("part", "${s.id}:part:0"), s.id, 0,
-      "$i.wav", "$i.wav", "audio/wav", 1, 1000, (if (i == 0) "A" else "B").repeat(64), 1, archivedAt = 10L + i) }
+      "$i.wav", "$i.wav", "audio/wav", 1, 1000,
+      Hashing.sha256((if (i == 0) "A" else "B").byteInputStream()), 1, archivedAt = 10L + i) }
     val oldTranscripts = oldSessions.mapIndexed { i, s -> TranscriptEntity("raw-$i", s.id, TranscriptKind.RAW, "custom", "personal", text = "WordsFrom$i", wordCount = 1, createdAt = 2) }
     val oldSegments = oldParts.mapIndexed { i, part -> SegmentEntity(transcriptId = "raw-$i", partId = part.id, indexInPart = 0,
       partStartMs = 100, partEndMs = 800, sessionStartMs = 100, sessionEndMs = 800, text = "WordsFrom$i", wordsJson = "0,700,WordsFrom$i") }
     oldParts.forEachIndexed { i, part ->
-      val file = if (recover && i == 0) File(temp.root, part.fileName) else temp.newFile(part.fileName).apply { writeText(part.sha256.take(1)) }
-      every { files.audioFile(part.fileName) } returns file
+      if (!recover || i != 0) File(audioDirectory, part.fileName).writeText(if (i == 0) "A" else "B")
     }
-    val restoredName = if (recover) temp.newFile("restored.wav").apply { writeText("A") }.name else oldParts.first().fileName
+    val restoredName = if (recover) File(audioDirectory, "restored.wav").apply { writeText("A") }.name else oldParts.first().fileName
     val staged = if (recover) mapOf((true to oldParts[1].id) to restoredName) else emptyMap()
     coEvery { folders.get(any()) } returns folder; coEvery { notes.get(note.id) } returns note
+    coEvery { folders.all() } returns listOf(folder)
+    coEvery { parts.all() } returns oldParts
+    coEvery { sources.all() } returns emptyList()
     coEvery { sessions.plainByNote(note.id) } returns oldSessions
     oldSessions.forEachIndexed { i, s ->
       coEvery { sessions.get(s.id) } returns s

@@ -15,7 +15,12 @@ internal object PampaBundleMerge {
     val incomingSessions = incoming.sessions.associateBy { it.id }
     val sessions = (incoming.sessions.sortedWith(compareBy({ it.position }, { it.id })) +
       local?.sessions.orEmpty().filter { it.id !in incomingSessions }.sortedWith(compareBy({ it.position }, { it.id })))
-      .mapIndexed { index, s -> s.copy(position = index, transcribingOn = oldSessions[s.id]?.transcribingOn, transcribingSince = oldSessions[s.id]?.transcribingSince) }
+      .mapIndexed { index, s ->
+        val old = oldSessions[s.id]
+        val metadata = old?.takeIf { it.updatedAt > s.updatedAt } ?: s
+        s.copy(position = index, title = metadata.title, date = metadata.date, updatedAt = metadata.updatedAt,
+          transcribingOn = old?.transcribingOn, transcribingSince = old?.transcribingSince)
+      }
 
     val previousParts = local?.parts.orEmpty().associateBy { it.id }
     val resolvedParts = incoming.parts.map { part ->
@@ -82,12 +87,32 @@ internal object PampaBundleMerge {
       transcripts[t.id] = if (unchanged && original != null) original else t.copy(text = text, wordCount = text.split(Regex("\\s+")).count { it.isNotBlank() })
     }
 
-    val names = (local?.sessions.orEmpty() + incoming.sessions).fold(emptyMap<String, String>()) { acc, s -> acc + VoiceNames.decode(s.voiceNames) }
+    // A voice map is a complete user edit, including absent keys (intentional removals).
+    // Choose it per recording's original owner, then carry it to the final owner after moves.
+    // A sender cannot remove aliases for local-only recordings it has never seen.
+    val localNames = oldSessions.mapValues { VoiceNames.decode(it.value.voiceNames).entries.groupBy { name -> name.key.substringBefore('|') } }
+    val incomingNames = incomingSessions.mapValues { VoiceNames.decode(it.value.voiceNames).entries.groupBy { name -> name.key.substringBefore('|') } }
+    val voiceTimes = mutableMapOf<String, Long>()
+    val names = parts.flatMap { part ->
+      val oldOwner = previousParts[part.id]?.sessionId?.let(oldSessions::get)
+      val newOwner = incomingParts[part.id]?.sessionId?.let(incomingSessions::get)
+      val keepLocal = oldOwner != null && (newOwner == null || oldOwner.updatedAt >= newOwner.updatedAt)
+      val authority = if (keepLocal) oldOwner else newOwner
+      authority?.let { voiceTimes[part.sessionId] = maxOf(voiceTimes[part.sessionId] ?: 0, it.updatedAt) }
+      val column = if (keepLocal) localNames[oldOwner?.id].orEmpty() else incomingNames[newOwner?.id].orEmpty()
+      column[part.id].orEmpty().map { it.key to it.value }
+    }.toMap()
     val finalSessions = sessions.map { s ->
-      val preferred = incomingSessions[s.id]?.activeTranscriptId ?: oldSessions[s.id]?.activeTranscriptId
-      val active = preferred?.takeIf { transcripts[it]?.sessionId == s.id }
+      val old = oldSessions[s.id]
+      val received = incomingSessions[s.id]
+      val choices = if (old != null && (received == null || old.updatedAt > received.updatedAt))
+        listOf(old.activeTranscriptId, received?.activeTranscriptId) else listOf(received?.activeTranscriptId, old?.activeTranscriptId)
+      val active = choices.firstOrNull { it != null && transcripts[it]?.sessionId == s.id }
         ?: transcripts.values.filter { it.sessionId == s.id && it.kind == TranscriptKind.RAW }.maxWithOrNull(compareBy({ it.createdAt }, { it.id }))?.id
-      s.copy(activeTranscriptId = active, voiceNames = VoiceNames.encode(names.filterKeys { partMap[it.substringBefore('|')]?.sessionId == s.id }))
+      // Carry the edit clock too, including for a removed name; a second stale import must
+      // not become newer merely because the recording moved to a younger destination row.
+      s.copy(activeTranscriptId = active, updatedAt = maxOf(s.updatedAt, voiceTimes[s.id] ?: 0),
+        voiceNames = VoiceNames.encode(names.filterKeys { partMap[it.substringBefore('|')]?.sessionId == s.id }))
     }
     return incoming.copy(
       note = if (preserveLocalNote) requireNotNull(local).note else n.copy(
