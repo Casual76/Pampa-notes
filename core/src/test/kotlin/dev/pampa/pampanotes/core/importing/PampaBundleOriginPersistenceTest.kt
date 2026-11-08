@@ -59,6 +59,7 @@ class PampaBundleOriginPersistenceTest {
     every { cursor.moveToNext() } returns false
     every { files.audioFile(any()) } answers { File(temp.root, firstArg<String>()) }
     every { files.audio } returns temp.root
+    every { files.sources } returns temp.newFolder()
     fun bytes(part: AudioPartEntity) = when (part.sha256) {
       Hashing.sha256(audioA) -> audioA
       Hashing.sha256(audioB) -> audioB
