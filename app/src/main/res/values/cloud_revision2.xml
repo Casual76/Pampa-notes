@@ -1,0 +1,9 @@
+<resources>
+    <string name="cr2_credit_mistral">Mistral richiede credito o un aggiornamento della fatturazione. Controlla il credito e la fatturazione del tuo account Mistral prima di riprovare.</string>
+    <string name="cr2_credit_groq">Groq ha rifiutato la richiesta per un problema di credito o fatturazione. Controlla i dettagli di fatturazione del tuo account Groq prima di riprovare.</string>
+    <string name="cr2_credit_openrouter">OpenRouter richiede credito. Controlla il saldo e la fatturazione del tuo account OpenRouter prima di riprovare.</string>
+    <string name="cr2_credit_unknown">Il servizio selezionato richiede credito o un aggiornamento della fatturazione. Controlla il tuo account presso quel servizio prima di riprovare.</string>
+    <string name="cr2_selected_price">Prezzo del modello selezionato</string>
+    <string name="cr2_price_unavailable">Prezzo e quota di questo servizio non disponibili qui. Il costo resta sconosciuto; valgono i limiti locali e la regola scelta per i costi sconosciuti.</string>
+    <string name="cr2_refresh_openrouter">Aggiorna consulta solo prezzo e quota del modello OpenRouter mostrato, usando la chiave OpenRouter.</string>
+</resources>

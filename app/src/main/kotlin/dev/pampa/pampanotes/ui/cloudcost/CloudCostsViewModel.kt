@@ -38,9 +38,9 @@ class CloudCostsViewModel @Inject constructor(
       }
     }
   }
-  fun refresh() = viewModelScope.launch {
+  fun refresh(openRouterModel: String? = null) = viewModelScope.launch {
     mutable.update { it.copy(refreshing = true, error = null) }
-    attempt { spending.refresh() }
+    attempt { spending.refresh(openRouterModel) }
     mutable.update { it.copy(refreshing = false) }
   }
   fun save(settings: CloudCostSettings, onSaved: () -> Unit) = viewModelScope.launch {

@@ -247,8 +247,13 @@ class TranscriptionRepository @Inject constructor(
     val pinned = options.copy(cloudChunkMinutes = options.cloudChunkMinutes ?: legacyPlan?.get(1)?.toIntOrNull()?.takeIf { it in 3..20 } ?: settings.chunkMinutes,
       groqMaxUploadMb = options.groqMaxUploadMb ?: legacyPlan?.get(2)?.toLongOrNull()?.div(1024 * 1024)?.toInt()?.takeIf { it in 5..100 } ?: settings.groqMaxUploadMb)
     val legacyModel = legacyPlan?.getOrNull(3)?.takeIf { job.provider == OpenRouterTranscriptionProvider.ID && it.isNotBlank() }
-    jobs.pinTranscription(job.id, legacyModel ?: job.model ?: modelAtEnqueue(job.provider, settings, options.overrides),
-      json.encodeToString(TranscribeOptions.serializer(), pinned), System.currentTimeMillis())
+    // Pre-upgrade queued rows did not save a model. Recover the same folder preference that
+    // governed their first dispatch, without catalog/probe requests. Established choices win.
+    val folderModel = if (job.model == null && legacyModel == null && options.overrides?.model.isNullOrBlank() && job.provider == OpenRouterTranscriptionProvider.ID)
+      spending.policyForSession(job.sessionId, allowExplicitCloud = options.overrides?.explicitlyChoosesCloud(job.provider) == true).model
+    else null
+    jobs.pinTranscription(job.id, job.model ?: legacyModel ?: modelAtEnqueue(job.provider, settings, options.overrides, folderModel),
+      json.encodeToString(TranscribeOptions.serializer(), pinned), System.currentTimeMillis(), job.model, job.optionsJson)
     return jobs.get(job.id) ?: job
   }
 
@@ -470,15 +475,11 @@ class TranscriptionRepository @Inject constructor(
   /**
    * Un lavoro che l'utente vuole fermare: il worker se ne accorge subito (guarda la riga).
    *
-   * Due `UPDATE` condizionati e non una lettura seguita da una scrittura: fra le due il worker poteva
-   * far partire il lavoro, e la scrittura della copia letta lo riportava a «annullato» mentre lui
-   * lavorava. Se e' ancora in fila si chiude adesso; se nel frattempo e' partito, la seconda lo trova
-   * in corso e chiede di fermarlo.
+   * Un solo UPDATE: anche se il worker lo rimette in fila per quota dopo l'uscita del watcher,
+   * l'annullamento trova o la riga in corso o quella in fila, senza perdere la richiesta.
    */
   suspend fun requestCancel(jobId: String) {
-    val now = System.currentTimeMillis()
-    if (jobs.cancelIfQueued(jobId, now) > 0) return
-    jobs.requestCancelIfRunning(jobId, now)
+    jobs.requestCancel(jobId, System.currentTimeMillis())
   }
 
   /**
@@ -658,7 +659,7 @@ class TranscriptionRepository @Inject constructor(
       if (until != null && until > now) throw TranscriptionError.RateLimited((until - now) / 1000.0, "Provider cooldown", until, CloudRetry.scope(provider.id, fingerprint, account))
     }, limited = { error ->
       val now = System.currentTimeMillis()
-      val until = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+      val until = kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable + kotlinx.coroutines.Dispatchers.IO) {
         cooldowns.durable.extend(provider.id, fingerprint, account, CloudRetry.deadline(error, now))
       }
       TranscriptionError.RateLimited((until - now) / 1000.0, "Provider cooldown", until, CloudRetry.scope(provider.id, fingerprint, account))

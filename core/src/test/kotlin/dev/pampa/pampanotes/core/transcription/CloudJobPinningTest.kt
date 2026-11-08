@@ -24,6 +24,8 @@ class CloudJobPinningTest {
   private val cooldowns = mockk<CloudCooldownStore>()
   private val saved = mutableMapOf<String, JobEntity>()
   private var prefs = PampaSettings(preferredProvider = TranscriptionProviderId.MISTRAL, syncAccount = "fixture-account")
+  private val http = mockk<TranscriptionHttp>()
+  private val files = mockk<dev.pampa.pampanotes.core.files.AppFiles>()
   private fun repository(): TranscriptionRepository {
     every { cooldowns.contexts } returns DurableCloudJobContexts(java.io.File(temp.root, "job-contexts.json"))
     coEvery { settings.current() } answers { prefs }
@@ -32,13 +34,20 @@ class CloudJobPinningTest {
     coEvery { spending.policyForSession(any(), any(), any()) } returns EffectiveCloudPolicy(true)
     coEvery { jobs.upsert(any()) } answers { val job = firstArg<JobEntity>(); saved[job.id] = job }
     coEvery { jobs.get(any()) } answers { saved[firstArg()] }
+    every { files.jobs } returns java.io.File(temp.root, "jobs")
+    coEvery { jobs.pinTranscription(any(), any(), any(), any(), any(), any()) } answers {
+      val old = saved[firstArg<String>()] ?: return@answers 0
+      if (old.state != JobState.QUEUED || old.model != arg<String?>(4) || old.optionsJson != arg<String?>(5)) return@answers 0
+      saved[old.id] = old.copy(model = secondArg(), optionsJson = thirdArg())
+      1
+    }
     coEvery { jobs.retry(any(), any(), any(), any()) } answers {
       val old = saved[firstArg<String>()]!!
       saved[old.id] = old.copy(provider = secondArg(), optionsJson = thirdArg(), state = JobState.QUEUED)
       1
     }
     return TranscriptionRepository(jobs, sessions, mockk(), mockk(), mockk(), mockk(), settings, mockk(),
-      mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), spending, credentials, cooldowns)
+      http, mockk(), mockk(), mockk(), mockk(), mockk(), files, spending, credentials, cooldowns)
   }
 
   @Test fun `first automatic job pins provider model and plan despite changed defaults then retry`() = runTest {
@@ -115,5 +124,60 @@ class CloudJobPinningTest {
       assertEquals(model, job.model)
     }
     coVerify(exactly = 0) { credentials.key(any()) }
+  }
+
+  @Test fun `legacy null and old options recover folder choice before different or absent global and never repin`() = runTest {
+    val repo = repository()
+    for (global in listOf("fixture/global-B", "")) for (options in listOf(null, "{}", """{"endpointLosses":1}""")) {
+      prefs = prefs.copy(openRouterTranscriptionModel = global)
+      coEvery { spending.policyForSession(any(), any(), any()) } returns EffectiveCloudPolicy(true, model = "fixture/folder-A")
+      val old = JobEntity("legacy-$global-$options", "s", JobType.TRANSCRIBE, "openrouter", createdAt = 1, updatedAt = 1, optionsJson = options)
+      saved[old.id] = old
+      val pinned = repo.pinForRun(old)
+      assertEquals("fixture/folder-A", pinned.model)
+      prefs = prefs.copy(openRouterTranscriptionModel = "fixture/changed")
+      coEvery { spending.policyForSession(any(), any(), any()) } returns EffectiveCloudPolicy(true, model = "fixture/folder-changed")
+      assertEquals(pinned, repo.pinForRun(pinned))
+      // Even a stale caller holding the original row cannot overwrite the first pin.
+      assertEquals(pinned, repo.pinForRun(old))
+    }
+    coVerify(exactly = 0) { http.getJson(any(), any(), any()) }
+  }
+
+  @Test fun `legacy choices keep known model plan and explicit override ahead of folder and global`() = runTest {
+    val repo = repository()
+    coEvery { spending.policyForSession(any(), any(), any()) } returns EffectiveCloudPolicy(true, model = "fixture/folder-A")
+    for ((id, known, options, attempts, expected) in listOf(
+      listOf("known", "fixture/known", null, 0, "fixture/known"),
+      listOf("plan", null, null, 1, "fixture/plan"),
+      listOf("manual", null, """{"overrides":{"provider":"openrouter","model":"fixture/manual"}}""", 0, "fixture/manual"),
+    )) {
+      val row = JobEntity(id as String, "s", JobType.TRANSCRIBE, "openrouter", model = known as String?, optionsJson = options as String?, attempts = attempts as Int, createdAt = 1, updatedAt = 1)
+      if (attempts > 0) java.io.File(files.jobs, "$id/work.json").apply { parentFile!!.mkdirs(); writeText("openrouter|10|26214400|fixture/plan") }
+      saved[row.id] = row
+      assertEquals(expected, repo.pinForRun(row).model)
+    }
+    coVerify(exactly = 0) { spending.policyForSession(any(), any(), any()) }
+    coVerify(exactly = 0) { http.getJson(any(), any(), any()) }
+  }
+
+  @Test fun `legacy without folder falls through to global while explicit model remains manual with privacy enabled`() = runTest {
+    val repo = repository()
+    prefs = prefs.copy(openRouterTranscriptionModel = "fixture/global", customOnly = true)
+    val row = JobEntity("legacy", "s", JobType.TRANSCRIBE, "openrouter", createdAt = 1, updatedAt = 1)
+    saved[row.id] = row
+    assertEquals("fixture/global", repo.pinForRun(row).model)
+    val manual = repo.enqueue("s", TranscriptionProviderId.OPENROUTER, TranscribeOverrides(provider = "openrouter", model = "fixture/manual"))!!
+    assertEquals("openrouter", manual.provider)
+    assertEquals("fixture/manual", repo.pinForRun(manual).model)
+  }
+
+  @Test fun `repository cancellation calls one atomic DAO operation for running queued terminal and missing rows`() = runTest {
+    val repo = repository()
+    coEvery { jobs.requestCancel(any(), any()) } returns 1
+    for (id in listOf("running", "queued", "terminal", "missing")) repo.requestCancel(id)
+    coVerify(exactly = 4) { jobs.requestCancel(any(), any()) }
+    coVerify(exactly = 0) { jobs.cancelIfQueued(any(), any()) }
+    coVerify(exactly = 0) { jobs.requestCancelIfRunning(any(), any()) }
   }
 }

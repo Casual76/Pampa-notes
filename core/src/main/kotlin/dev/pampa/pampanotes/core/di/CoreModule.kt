@@ -51,9 +51,13 @@ object CoreModule {
 
   @Provides
   @Singleton
-  fun transcriptionHttp(@ApplicationContext context: Context): TranscriptionHttp {
+  fun transcriptionHttp(@ApplicationContext context: Context, cooldowns: dev.pampa.pampanotes.core.transcription.CloudCooldownStore,
+    settings: PampaSettingsStore, credentials: dev.pampa.pampanotes.core.transcription.CloudCredentials): TranscriptionHttp {
     val version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
-    return TranscriptionHttp(userAgent = "PampaNotes/$version")
+    val gate = dev.pampa.pampanotes.core.transcription.CloudRequestGate(cooldowns.durable,
+      account = { dev.pampa.pampanotes.core.transcription.CloudRetry.fingerprint(settings.current().syncAccount) },
+      key = { provider -> credentials.key(provider)?.let(dev.pampa.pampanotes.core.transcription.CloudRetry::fingerprint) })
+    return TranscriptionHttp(userAgent = "PampaNotes/$version", cloudGate = gate)
   }
 
   @Provides

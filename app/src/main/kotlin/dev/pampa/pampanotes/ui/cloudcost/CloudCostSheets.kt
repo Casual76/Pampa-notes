@@ -110,10 +110,17 @@ fun CloudCostsSheet(onDismiss: () -> Unit, viewModel: CloudCostsViewModel = hilt
           }
           FluidSectionFootnote(text = stringResource(R.string.cloud_cost_zone, saved.zoneId))
         }
+        if (provider == "mistral" || provider == "groq") {
+          FluidSectionHeader(title = stringResource(R.string.cr2_selected_price))
+          Text(model, style = MaterialTheme.typography.titleMedium)
+          FluidSectionFootnote(text = stringResource(R.string.cr2_price_unavailable))
+        }
         FluidSectionHeader(title = stringResource(R.string.cloud_cost_price))
-        Text(model.ifBlank { stringResource(R.string.cloud_cost_model_unselected) }, style = MaterialTheme.typography.titleMedium)
-        PriceSummary(data.prices[model])
-        FluidButton(text = stringResource(R.string.cloud_cost_refresh), onClick = { viewModel.refresh() },
+        val openRouterModel = state.settings.openRouterTranscriptionModel
+        Text(openRouterModel.ifBlank { stringResource(R.string.cloud_cost_model_unselected) }, style = MaterialTheme.typography.titleMedium)
+        PriceSummary(data.prices[openRouterModel])
+        FluidSectionFootnote(text = stringResource(R.string.cr2_refresh_openrouter))
+        FluidButton(text = stringResource(R.string.cloud_cost_refresh), onClick = { viewModel.refresh(openRouterModel) },
           loading = state.refreshing, enabled = !state.refreshing, style = FluidButtonStyle.Tinted, fillWidth = true)
         FluidSectionHeader(title = stringResource(R.string.cloud_cost_key))
         val quota = state.quota

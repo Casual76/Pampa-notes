@@ -69,12 +69,57 @@ class CloudRequeueSqlTest(unittest.TestCase):
         self.assertIsNotNone(self.db.execute(query("nextQueued"), self.params).fetchone())
 
     def test_terminal_or_missing_jobs_cannot_be_requeued(self):
-        for state in ("DONE", "CANCELLED"):
+        for state in ("DONE", "CANCELLED", "FAILED"):
             self.db.execute("UPDATE jobs SET state=?, phase='terminal', finishedAt=7", (state,))
             self.assertEqual(0, self.db.execute(query("requeue"), self.params).rowcount)
             self.assertEqual((state, "terminal", 7), tuple(self.row()[key] for key in ("state", "phase", "finishedAt")))
         self.db.execute("DELETE FROM jobs")
         self.assertEqual(0, self.db.execute(query("requeue"), self.params).rowcount)
+
+    def test_atomic_cancel_closes_the_old_two_statement_gap(self):
+        # Exact reviewer interleaving: first old cancellation UPDATE misses running state,
+        # watcher has exited, quota requeues, then the replacement atomic operation must cancel.
+        self.assertEqual(0, self.db.execute(query("cancelIfQueued"), self.params).rowcount)
+        self.db.execute(query("requeue"), self.params)
+        self.assertEqual(1, self.db.execute(query("requestCancel"), self.params).rowcount)
+        self.assertEqual("CANCELLED", self.row()["state"])
+        self.assertIsNotNone(self.row()["finishedAt"])
+        self.assertIsNone(self.row()["phase"])
+        self.assertIsNone(self.db.execute(query("activeForSession"), self.params).fetchone())
+        self.assertIsNone(self.db.execute(query("nextQueued"), self.params).fetchone())
+
+    def test_atomic_cancel_and_requeue_in_both_orders_without_watcher(self):
+        for requeue in ("requeue", "requeueWithOptions"):
+            for first in (True, False):
+                with self.subTest(requeue=requeue, cancel_first=first):
+                    self.db.execute("UPDATE jobs SET state='TRANSCRIBING', phase='upload', finishedAt=NULL")
+                    self.params["optionsJson"] = '{"fixture":"keep"}'
+                    operations = ["requestCancel", requeue] if first else [requeue, "requestCancel"]
+                    for op in operations:
+                        self.db.execute(query(op), self.params)
+                    self.assertEqual("CANCELLED", self.row()["state"])
+                    self.assertIsNotNone(self.row()["finishedAt"])
+                    self.assertIsNone(self.row()["phase"])
+                    self.assertEqual("voxtral-mini-transcribe-3", self.row()["model"])
+                    self.assertEqual('{"fixture":"keep"}', self.row()["optionsJson"])
+
+    def test_cancel_missing_terminal_and_late_progress_cannot_resurrect(self):
+        self.params.update(state="TRANSCRIBING", progress=0.5, chunkTotal=3, chunkDone=1, optionsJson=None)
+        for state in ("DONE", "CANCELLED", "FAILED"):
+            self.db.execute("UPDATE jobs SET state=?, finishedAt=7", (state,))
+            for op in ("requestCancel", "requeue", "requeueWithOptions", "publishProgress", "markDone"):
+                self.assertEqual(0, self.db.execute(query(op), self.params).rowcount)
+                self.assertEqual(state, self.row()["state"])
+        self.db.execute("DELETE FROM jobs")
+        self.assertEqual(0, self.db.execute(query("requestCancel"), self.params).rowcount)
+
+    def test_atomic_pin_cannot_overwrite_first_choice_from_a_stale_row(self):
+        self.db.execute("UPDATE jobs SET state='QUEUED', model=NULL, optionsJson=NULL")
+        self.params.update(model="folder/A", options='{"cloudChunkMinutes":10}', expectedModel=None, expectedOptions=None)
+        self.assertEqual(1, self.db.execute(query("pinTranscription"), self.params).rowcount)
+        self.params["model"] = "changed/B"
+        self.assertEqual(0, self.db.execute(query("pinTranscription"), self.params).rowcount)
+        self.assertEqual("folder/A", self.row()["model"])
 
 
 if __name__ == "__main__":

@@ -579,8 +579,8 @@ interface SourceDao {
 
 @Dao
 interface JobDao {
-  @Query("UPDATE jobs SET model = :model, optionsJson = :options, updatedAt = :now WHERE id = :id AND state = 'QUEUED'")
-  suspend fun pinTranscription(id: String, model: String?, options: String, now: Long): Int
+  @Query("UPDATE jobs SET model = :model, optionsJson = :options, updatedAt = :now WHERE id = :id AND state = 'QUEUED' AND model IS :expectedModel AND optionsJson IS :expectedOptions")
+  suspend fun pinTranscription(id: String, model: String?, options: String, now: Long, expectedModel: String?, expectedOptions: String?): Int
   @Query("SELECT * FROM jobs ORDER BY createdAt DESC")
   fun observeAll(): Flow<List<JobEntity>>
 
@@ -674,7 +674,7 @@ interface JobDao {
   /** Finito bene: solo le colonne dell'esito, senza riscrivere la riga con una copia vecchia. */
   @Query(
     "UPDATE jobs SET state = 'DONE', progress = 1, phase = NULL, errorCode = NULL, errorMessage = NULL, " +
-      "finishedAt = :now, updatedAt = :now WHERE id = :id",
+      "finishedAt = :now, updatedAt = :now WHERE id = :id AND state IN ('QUEUED','PREPARING','UPLOADING','TRANSCRIBING','STITCHING')",
   )
   suspend fun markDone(id: String, now: Long): Int
 
@@ -699,6 +699,15 @@ interface JobDao {
       "WHERE id = :id AND state IN ('PREPARING','UPLOADING','TRANSCRIBING','STITCHING')",
   )
   suspend fun requestCancelIfRunning(id: String, now: Long): Int
+
+  /** Atomic with running-to-queued transitions; terminal and missing jobs stay untouched. */
+  @Query(
+    "UPDATE jobs SET state = CASE WHEN state = 'QUEUED' THEN 'CANCELLED' ELSE 'CANCEL_REQUESTED' END, " +
+      "phase = CASE WHEN state = 'QUEUED' THEN NULL ELSE phase END, " +
+      "finishedAt = CASE WHEN state = 'QUEUED' THEN :now ELSE finishedAt END, updatedAt = :now " +
+      "WHERE id = :id AND state IN ('QUEUED','PREPARING','UPLOADING','TRANSCRIBING','STITCHING')",
+  )
+  suspend fun requestCancel(id: String, now: Long): Int
 
   @Query("SELECT * FROM jobs WHERE state = 'FAILED'")
   suspend fun failed(): List<JobEntity>
@@ -757,7 +766,7 @@ interface JobDao {
    */
   @Query(
     "UPDATE jobs SET state = :state, progress = :progress, phase = :phase, chunkTotal = :chunkTotal, " +
-      "chunkDone = :chunkDone, updatedAt = :updatedAt WHERE id = :id AND state != 'CANCEL_REQUESTED'",
+      "chunkDone = :chunkDone, updatedAt = :updatedAt WHERE id = :id AND state IN ('QUEUED','PREPARING','UPLOADING','TRANSCRIBING','STITCHING')",
   )
   suspend fun publishProgress(
     id: String,
@@ -774,14 +783,16 @@ interface JobDao {
     "UPDATE jobs SET state = CASE WHEN state = 'CANCEL_REQUESTED' THEN 'CANCELLED' ELSE 'QUEUED' END, " +
       "phase = CASE WHEN state = 'CANCEL_REQUESTED' THEN NULL ELSE :phase END, progress = 0, errorCode = NULL, errorMessage = NULL, " +
       "finishedAt = CASE WHEN state = 'CANCEL_REQUESTED' THEN :updatedAt ELSE NULL END, updatedAt = :updatedAt " +
-      "WHERE id = :id AND state NOT IN ('CANCELLED','DONE')",
+      "WHERE id = :id AND state IN ('QUEUED','PREPARING','UPLOADING','TRANSCRIBING','STITCHING','CANCEL_REQUESTED')",
   )
   suspend fun requeue(id: String, phase: String?, updatedAt: Long): Int
 
   /** Come [requeue], e intanto aggiorna le opzioni del lavoro (il conto delle volte che il computer e' sparito). */
   @Query(
-    "UPDATE jobs SET state = 'QUEUED', phase = :phase, optionsJson = :optionsJson, progress = 0, errorCode = NULL, " +
-      "errorMessage = NULL, finishedAt = NULL, updatedAt = :updatedAt WHERE id = :id AND state != 'CANCEL_REQUESTED'",
+    "UPDATE jobs SET state = CASE WHEN state = 'CANCEL_REQUESTED' THEN 'CANCELLED' ELSE 'QUEUED' END, " +
+      "phase = CASE WHEN state = 'CANCEL_REQUESTED' THEN NULL ELSE :phase END, optionsJson = :optionsJson, progress = 0, errorCode = NULL, " +
+      "errorMessage = NULL, finishedAt = CASE WHEN state = 'CANCEL_REQUESTED' THEN :updatedAt ELSE NULL END, updatedAt = :updatedAt " +
+      "WHERE id = :id AND state IN ('QUEUED','PREPARING','UPLOADING','TRANSCRIBING','STITCHING','CANCEL_REQUESTED')",
   )
   suspend fun requeueWithOptions(id: String, phase: String?, optionsJson: String?, updatedAt: Long): Int
 

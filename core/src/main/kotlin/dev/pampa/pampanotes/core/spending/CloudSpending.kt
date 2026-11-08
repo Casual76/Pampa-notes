@@ -9,6 +9,7 @@ import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.transcription.TranscribeRequest
 import dev.pampa.pampanotes.core.transcription.TranscriptionError
 import dev.pampa.pampanotes.core.transcription.TranscriptionHttp
+import dev.pampa.pampanotes.core.transcription.OpenRouterTranscriptionProvider
 import java.io.File
 import java.util.UUID
 import javax.inject.Inject
@@ -45,7 +46,7 @@ class CloudSpending @Inject constructor(
   private val settings: PampaSettingsStore,
   private val keys: AiKeyStore,
   private val credentials: dev.pampa.pampanotes.core.transcription.CloudCredentials,
-  http: TranscriptionHttp,
+  private val http: TranscriptionHttp,
 ) {
   private val metadata = OpenRouterCostMetadata(http)
   private val inFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
@@ -105,20 +106,23 @@ class CloudSpending @Inject constructor(
 
   suspend fun refresh(model: String? = null) {
     val key = keys.key(ProviderId.OPENROUTER)?.takeIf { it.isNotBlank() } ?: throw TranscriptionError.Unauthorized("Missing OpenRouter key")
-    val now = System.currentTimeMillis()
-    var quotaError: Exception? = null
-    try {
-      val quota = metadata.quota(key, now)
-      withContext(Dispatchers.IO) { store.durable.update { it.copy(quotas = it.quotas + (quota.fingerprint to quota)) } }
-    } catch (cancel: CancellationException) { throw cancel }
-    catch (limited: TranscriptionError.RateLimited) { throw limited }
-    catch (error: Exception) { quotaError = error }
-    val selected = model?.takeIf { it.isNotBlank() } ?: settings.current().openRouterTranscriptionModel.takeIf { it.isNotBlank() }
-    if (selected != null) {
-      val price = metadata.prices(key, selected, now)
-      withContext(Dispatchers.IO) { store.durable.update { it.copy(prices = it.prices + (selected to price)) } }
+    http.cloudSession<Unit>(OpenRouterTranscriptionProvider.BASE_URL, mapOf("Authorization" to "Bearer $key")) {
+      val now = System.currentTimeMillis()
+      var quotaError: Exception? = null
+      try {
+        val quota = metadata.quota(key, now)
+        withContext(Dispatchers.IO) { store.durable.update { it.copy(quotas = it.quotas + (quota.fingerprint to quota)) } }
+      } catch (cancel: CancellationException) { throw cancel }
+      catch (limited: TranscriptionError.RateLimited) { throw limited }
+      catch (control: TranscriptionError.CloudControl) { throw control }
+      catch (error: Exception) { quotaError = error }
+      val selected = model?.takeIf { it.isNotBlank() } ?: settings.current().openRouterTranscriptionModel.takeIf { it.isNotBlank() }
+      if (selected != null) {
+        val price = metadata.prices(key, selected, now)
+        withContext(Dispatchers.IO) { store.durable.update { it.copy(prices = it.prices + (selected to price)) } }
+      }
+      quotaError?.let { throw it }
     }
-    quotaError?.let { throw it }
   }
 
   suspend fun currentQuota(): KeyQuota? {
@@ -135,6 +139,7 @@ class CloudSpending @Inject constructor(
     if (provider == "openrouter" && data().prices[model]?.fresh(System.currentTimeMillis()) != true) {
       try { refresh(model) } catch (cancel: CancellationException) { throw cancel }
       catch (limited: TranscriptionError.RateLimited) { throw limited }
+      catch (control: TranscriptionError.CloudControl) { throw control }
       catch (unknown: TranscriptionError.UnknownModel) { throw unknown }
       catch (_: Exception) { /* stale stays unknown */ }
     }

@@ -79,6 +79,7 @@ class CloudSpendingGuardTest {
   private fun metadataQuota(limitedPath: String) = runBlocking {
     disk.durable.update { it.copy(prices = emptyMap(), settings = it.settings.copy(unknownAction = UnknownCostAction.ALLOW)) }
     val http = mockk<TranscriptionHttp>()
+    coEvery { http.cloudSession<Unit>(any(), any(), any()) } coAnswers { thirdArg<suspend () -> Unit>().invoke() }
     val lookups = mutableListOf<String>()
     coEvery { http.getJson(any(), any(), any()) } answers {
       val path = firstArg<String>().substringAfter(OpenRouterTranscriptionProvider.BASE_URL)
