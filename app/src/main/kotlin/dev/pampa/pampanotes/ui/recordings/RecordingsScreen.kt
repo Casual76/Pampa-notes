@@ -380,7 +380,7 @@ private fun recordingSubtitle(item: RecordingItem): String = buildList {
   add(item.session.session.date)
   item.folder?.name?.let(::add)
   if (item.session.parts.isNotEmpty()) add(Formats.durationShort(item.session.durationMs))
-}.joinToString(" ? ")
+}.joinToString(" · ")
 
 @Composable
 private fun recordingBadge(item: RecordingItem): (@Composable () -> Unit)? {

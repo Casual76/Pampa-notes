@@ -2,8 +2,10 @@ package dev.pampa.pampanotes.core.importing
 
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
+import java.time.temporal.ChronoUnit
 
 /** Source evidence for the start of ONE audio file. Never a note's sorting/import timestamp. */
 data class RecordingOrigin(
@@ -13,6 +15,23 @@ data class RecordingOrigin(
   val source: String? = null,
   val precision: String? = null,
 ) {
+  /** Independently usable evidence only; never combine contradictory source representations.
+   * Epoch storage has millisecond precision, so finer source fractions compare at that boundary. */
+  fun evidenceQuality(): Int {
+    if (source.isNullOrBlank()) return 0
+    if (precision == "day") return if (epochMs == null && zoneId == null &&
+      runCatching { LocalDate.parse(local) }.isSuccess) 10 else 0
+    val rank = when (precision) { "minute" -> 20; "second" -> 30; "millisecond" -> 40; else -> return 0 }
+    if (source == "file_modified") return 0
+    val wall = local?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() ?: return 0 }
+    if (wall == null && epochMs == null) return 0
+    val zone = zoneId?.let { runCatching { ZoneId.of(it) }.getOrNull() ?: return 0 }
+    if (wall != null && zone != null && epochMs != null &&
+      runCatching { Instant.ofEpochMilli(epochMs).atZone(zone).toLocalDateTime().truncatedTo(ChronoUnit.MILLIS) }
+        .getOrNull() != wall.truncatedTo(ChronoUnit.MILLIS)) return 0
+    return rank + (if (epochMs != null) 4 else 0) + (if (wall != null) 2 else 0) + (if (zone != null) 1 else 0)
+  }
+
   companion object {
     private val dateTime = Regex(
       """^(\d{4})[-: ]?(\d{2})[-: ]?(\d{2})[T ](\d{2}):?(\d{2})(?::?(\d{2})(?:[.,](\d{1,9}))?)?\s*(Z|[+-]\d{2}:?\d{2})?(?:\[([^]]+)])?$""",
@@ -56,7 +75,9 @@ data class RecordingOrigin(
 
     fun fromFileName(name: String): RecordingOrigin? {
       // Keep the final extension out without removing dotted date/time tokens in extensionless names.
-      val stem = name.replace(Regex("""\.[a-zA-Z0-9]{2,5}$"""), "")
+      val extension = name.substringAfterLast('.', "")
+      val stem = if (extension.length in 2..5 && extension.all(Char::isLetterOrDigit) && extension.any(Char::isLetter))
+        name.dropLast(extension.length + 1) else name
       namedTime.forEachIndexed { index, regex ->
         regex.findAll(stem).forEach { m ->
           val g = m.groupValues

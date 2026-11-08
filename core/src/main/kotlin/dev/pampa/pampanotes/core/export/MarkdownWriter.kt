@@ -240,14 +240,15 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels(), private 
   private fun blocksText(session: ExportSession, blocks: List<TranscriptBlock>, announceFirst: Boolean): String = buildString {
     var currentPart: String? = if (announceFirst) null else blocks.firstOrNull()?.partId
     blocks.forEachIndexed { index, block ->
-      if (index > 0) append(NL).append(NL)
+      if (index > 0) append(block.separatorBefore ?: (NL + NL))
       // Un silenzio lungo si dice, su una riga sua, in corsivo e fra parentesi quadre: senza, sedici
       // minuti di niente sembravano la pausa di un respiro, e la frase dopo la risposta a quella
       // prima. Le parentesi dicono a chi legge — e a un assistente — che non l'ha detto nessuno.
       block.silenceBeforeMs?.let { silence ->
         append("*[").append(silenceLine(silence)).append("]*").append(NL).append(NL)
       }
-      if (block.partId != null && block.partId != currentPart && session.parts.size > 1) {
+      if (block.partId != null && block.partId != currentPart && session.parts.size > 1 &&
+        (!CloudTranscriptExport.applies(session) || block.startMs != null || block.showClock)) {
         currentPart = block.partId
         val position = session.parts.indexOfFirst { it.id == block.partId }
         session.parts.getOrNull(position)?.let { part ->

@@ -264,13 +264,21 @@ class SessionRepository @Inject constructor(
     }
     // Legacy graphs may share a stored path. Deleting one session must not remove a sibling's bytes.
     if (names.isEmpty()) return emptyList()
-    val retained = parts.fileNames().toHashSet()
-    return names.filterNot { it in retained }
+    // Stored names can differ while addressing the same bytes ("a.wav" / "./a.wav").
+    // If any retained path cannot be resolved safely, defer cleanup instead of risking its bytes.
+    val retained = parts.fileNames().map { audioIdentity(it) ?: return emptyList() }.toHashSet()
+    return names.filter { name -> audioIdentity(name)?.let { it !in retained } == true }
   }
 
   private fun deleteAudioFiles(names: List<String>) {
-    names.forEach { name -> runCatching { files.audioFile(name).delete() } }
+    names.forEach { name -> if (audioIdentity(name) != null) runCatching { files.audioFile(name).delete() } }
   }
+
+  /** A stored row never authorizes deletion outside this installation's audio directory. */
+  private fun audioIdentity(name: String): java.nio.file.Path? = runCatching {
+    val root = files.audio.canonicalFile.toPath()
+    files.audioFile(name).canonicalFile.toPath().takeIf { it != root && it.startsWith(root) }
+  }.getOrNull()
 
   // ---------------------------------------------------------------------------------------------
   // La riparazione

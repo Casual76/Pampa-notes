@@ -122,4 +122,60 @@ class SyncSizeRepositoryTest {
       verify(exactly = 0) { sql.query(any<String>()) }
     } finally { unmockkStatic("androidx.room.RoomDatabaseKt") }
   }
+
+  @Test fun `dropped sourced row is dirty before a nonempty first pull can apply the old server version`() =
+    recoveryBeforePull(rebaseline = false)
+
+  @Test fun `dropped sourced row is dirty before rebaseline can apply the old server version`() =
+    recoveryBeforePull(rebaseline = true)
+
+  @Test fun `old post-pull recovery marker cannot skip the corrected pre-pull protection`() =
+    recoveryBeforePull(rebaseline = false, previousRecovery = true)
+
+  private fun recoveryBeforePull(rebaseline: Boolean, previousRecovery: Boolean = false) = runBlocking {
+    mockkStatic("androidx.room.RoomDatabaseKt")
+    try {
+      coEvery { db.withTransaction<Unit>(any()) } coAnswers { secondArg<suspend () -> Unit>().invoke() }
+      val cursor = mockk<android.database.Cursor>(relaxed = true)
+      every { db.openHelper.readableDatabase.query(any<String>()) } returns cursor
+      every { cursor.moveToNext() } returnsMany listOf(true, false)
+      every { cursor.getString(0) } returns "raw"
+      if (previousRecovery) {
+        val scope = dev.pampa.pampanotes.core.files.Hashing.sha256("wire1\nhttps://offline.invalid\nfixture-owner\ndevice")
+        java.io.File(temporary.root, "fixture.db.sync-size-$scope.json")
+          .writeText("""{"@cloud-source-wire-recovery/1":"1"}""")
+      }
+      entries.clear()
+      coEvery { dao.outboxEntry("transcripts", "raw") } answers { entries.firstOrNull { it.rowId == "raw" } }
+      coEvery { dao.markDirty(any()) } answers { entries += firstArg<SyncOutboxEntity>().copy(id = 10) }
+      val remote = WireChange("transcripts", "raw", "U", 1, "old-server-hash", JsonPrimitive("OLD SERVER RAW"), seq = 1, deviceId = "other")
+      var pulls = 0
+      coEvery { api.pull(any(), any(), any(), any(), any(), any()) } answers {
+        assertTrue("Recovery must precede the first remote page", entries.any { it.tbl == "transcripts" && it.rowId == "raw" })
+        pulls++
+        if (rebaseline && pulls == 1) PullResponse(emptyList(), 0, false, rebaseline = true)
+        else PullResponse(listOf(remote), 1, false)
+      }
+      coEvery { applier.apply(any(), any(), any(), any(), any()) } coAnswers {
+        assertTrue("Remote application must see dirty local evidence", entries.any { it.rowId == "raw" })
+        assertEquals(listOf(remote), firstArg<List<WireChange>>())
+        ApplyOutcome()
+      }
+      val report = repository().syncNow()
+      assertTrue(report.ok)
+      assertEquals(1, report.pushed)
+      assertEquals(if (rebaseline) 2 else 1, pulls)
+      coVerify { api.push(any(), any(), match { it.changes.single().hash == encoded.hash }) }
+    } finally { unmockkStatic("androidx.room.RoomDatabaseKt") }
+  }
+
+  @Test fun `foreign account is rejected before recovery or pull touches local evidence`() = runBlocking {
+    coEvery { api.status(any(), any()) } returns SyncStatus("foreign-owner", 0)
+    coEvery { dao.metaCount() } returns 1
+    val report = repository().syncNow()
+    assertTrue(report.foreignAccount)
+    coVerify(exactly = 0) { api.pull(any(), any(), any(), any(), any(), any()) }
+    coVerify(exactly = 0) { dao.markDirty(any()) }
+    verify(exactly = 0) { db.openHelper.readableDatabase.query(any<String>()) }
+  }
 }

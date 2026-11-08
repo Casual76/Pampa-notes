@@ -58,6 +58,43 @@ class CloudTranscriptExportTest {
     }
   }
 
+  @Test fun `long exact cloud slices add no paragraph whitespace to plain Markdown`() {
+    val exact = "RAW-BEGIN " + "Cloud,\twords! 🚀\r\n".repeat(150) + " RAW-END"
+    for (provider in listOf("groq", "openrouter", "mistral")) {
+      val original = base.copy(provider = provider, text = exact)
+      val typed = CloudSources.encode(CloudSources.create(original, exact,
+        listOf(CloudTextPart(part.id, hash, exact, "en", provider, "fixture"))))
+      for (metadata in listOf(null, "", typed)) {
+        val raw = original.copy(cloudSourceJson = metadata)
+        val row = session("DIFFERENT").copy(transcript = raw, raw = raw)
+        val options = ExportOptions(timestamps = false, speechClock = false)
+        val blocks = TranscriptPieces.blocks(row, options)
+        assertTrue(blocks.size > 1)
+        assertEquals(exact, blocks.joinToString("") { it.text })
+        val note = ExportNote(NoteEntity("n", "f", "Recording", createdAt = 1, updatedAt = 1),
+          emptyList(), emptyList(), emptyList(), listOf(row))
+        val markdown = MarkdownWriter().singleNote(note, options)
+        assertTrue("$provider must retain every source whitespace character", markdown.contains(exact))
+      }
+    }
+  }
+
+  @Test fun `plain multipart cloud Markdown keeps source boundary whitespace without added part labels`() {
+    val second = part.copy(id = "second", startMs = part.durationMs)
+    val firstText = "FIRST " + "word ".repeat(350)
+    val secondText = "SECOND\ttext!"
+    val exact = firstText + "\n\n" + secondText
+    val before = base.copy(text = exact)
+    val doc = CloudSources.create(before, exact, listOf(
+      CloudTextPart(part.id, hash, firstText, "en", "mistral", "fixture"),
+      CloudTextPart(second.id, hash, secondText, "en", "mistral", "fixture")))
+    val raw = before.copy(cloudSourceJson = CloudSources.encode(doc))
+    val row = session("DIFFERENT").copy(parts = listOf(part, second), transcript = raw, raw = raw)
+    val note = ExportNote(NoteEntity("n", "f", "Recording", createdAt = 1, updatedAt = 1),
+      emptyList(), emptyList(), emptyList(), listOf(row))
+    assertTrue(MarkdownWriter().singleNote(note, ExportOptions(timestamps = false, speechClock = false)).contains(exact))
+  }
+
   @Test fun `matching coarse cloud segment has an explicitly estimated clock anchor`() {
     val block = TranscriptPieces.blocks(session(text.trim()), ExportOptions(speechClock = true)).single()
     assertEquals(text, block.text)

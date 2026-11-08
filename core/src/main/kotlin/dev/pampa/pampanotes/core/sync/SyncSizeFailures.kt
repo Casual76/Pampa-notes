@@ -48,7 +48,8 @@ class SyncSizeFailures(private val file: File) {
   }
 
   companion object {
-    private const val RECOVERY_KEY = "@cloud-source-wire-recovery/1"
+    // Revision2 repeats the scan for clients whose revision1 marker was written after a pull.
+    private const val RECOVERY_KEY = "@cloud-source-wire-recovery/2"
     // Mirrored read-only from worker/src/sync.ts. A single segment may exceed the 1.5 MB
     // chunk target but must fit the 1.9 MB row guard, including brackets and the size margin.
     const val MAX_ROW_BYTES = 1_900_000

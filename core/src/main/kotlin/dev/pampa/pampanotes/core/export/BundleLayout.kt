@@ -30,6 +30,8 @@ data class TranscriptBlock(
   val showClock: Boolean = false,
   /** A source segment anchors this block; no exact word timing was available. */
   val clockEstimated: Boolean = false,
+  /** Null uses the legacy paragraph separator; exact cloud slices already contain their spacing. */
+  val separatorBefore: String? = null,
 ) {
   val words: Int get() = text.wordCount()
 }

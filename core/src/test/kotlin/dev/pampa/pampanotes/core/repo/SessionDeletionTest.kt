@@ -41,6 +41,7 @@ class SessionDeletionTest {
   private var inside = false
   private var committed = false
   private var transactionCount = 0
+  private val deletedNames = mutableListOf<String>()
   private var failTouch = false
   private lateinit var repository: SessionRepository
 
@@ -85,9 +86,16 @@ class SessionDeletionTest {
     coEvery { segments.deleteByPart(any()) } answers { assertTrue(inside); Unit }
     partRows.values.forEach { File(temp.root, it.fileName).writeText("synthetic fixture") }
     temp.newFile("source.txt").writeText("Original associated material")
+    every { files.audio } returns temp.root
     every { files.audioFile(any()) } answers {
-      assertFalse(inside); assertTrue("files only after successful commit", committed)
-      File(temp.root, firstArg<String>())
+      // Resolving a path is read-only. Physical deletion alone requires a committed transaction.
+      object : File(temp.root, firstArg<String>()) {
+        override fun delete(): Boolean {
+          assertFalse(inside); assertTrue("files only after successful commit", committed)
+          deletedNames += path
+          return super.delete()
+        }
+      }
     }
     repository = SessionRepository(sessions, parts, mockk(), segments, notes, files, db)
   }
@@ -180,7 +188,7 @@ class SessionDeletionTest {
     repository.deletePersonalSessions(setOf("s"), null)
     assertTrue(File(temp.root, "s.wav").isFile)
     assertTrue("sibling" in sessionRows)
-    verify(exactly = 0) { files.audioFile(any()) }
+    assertTrue(deletedNames.isEmpty())
   }
 
   @Test fun `generic school delete remains valid with committed file cleanup`() = runTest {
@@ -189,5 +197,30 @@ class SessionDeletionTest {
     assertFalse(File(temp.root, "school-session.wav").exists())
     assertTrue(File(temp.root, "s.wav").isFile)
     assertEquals(schoolMaterial, noteRows.getValue("school-note").copy(updatedAt = schoolMaterial.updatedAt))
+  }
+
+  @Test fun `equivalent audio paths preserve sibling bytes for personal and generic deletion`() = runTest {
+    partRows["part-sibling"] = partRows.getValue("part-sibling").copy(fileName = "./s.wav")
+    repository.deletePersonalSessions(setOf("s"), null)
+    assertTrue(File(temp.root, "s.wav").isFile)
+    assertTrue("sibling" in sessionRows)
+    assertEquals("./s.wav", partRows.getValue("part-sibling").fileName)
+    partRows["part-sibling"] = partRows.getValue("part-sibling").copy(fileName = "./school-session.wav")
+    repository.deleteSession("school-session")
+    assertTrue(File(temp.root, "school-session.wav").isFile)
+    assertTrue("sibling" in sessionRows)
+    assertTrue(deletedNames.isEmpty())
+  }
+
+  @Test fun `a stored path outside audio root cannot delete other private material`() = runTest {
+    val audioRoot = temp.newFolder("bounded-audio")
+    val kept = temp.newFile("keep-private.wav").apply { writeText("private original") }
+    every { files.audio } returns audioRoot
+    every { files.audioFile(any()) } answers { File(audioRoot, firstArg<String>()) }
+    partRows["part-s"] = partRows.getValue("part-s").copy(fileName = "../keep-private.wav")
+    repository.deletePersonalSessions(setOf("s"), null)
+    assertFalse("s" in sessionRows)
+    assertTrue(kept.isFile)
+    assertEquals("private original", kept.readText())
   }
 }

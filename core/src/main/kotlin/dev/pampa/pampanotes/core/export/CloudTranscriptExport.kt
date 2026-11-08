@@ -49,7 +49,8 @@ internal object CloudTranscriptExport {
       TranscriptBlock(text = block.text, startMs = at.takeIf { options.timestamps }, endMs = end.takeIf { options.timestamps },
         partId = part?.id, voice = voiceKey?.let(voices::get), voiceName = voiceKey?.let(session.voiceNames::get),
         partOffsetMs = if (at != null && part != null) at - part.startMs else null,
-        showClock = options.speechClock, clockEstimated = at != null && measured == null)
+        showClock = options.speechClock, clockEstimated = at != null && measured == null,
+        separatorBefore = "")
     }
   }
 }

@@ -112,6 +112,13 @@ class SyncRepository @Inject constructor(
       // Prima di tutto il resto, computer compreso: niente deve passare da un account all'altro.
       if (!checkAccount(status.ownerId, deviceId)) return@withLock failed(FOREIGN_ACCOUNT, foreignAccount = true)
       val state = ensureIdentity(deviceId, status.ownerId, sameAccount = knownOwner == status.ownerId)
+      // Protect sourced rows dropped by older clients BEFORE any pull/rebaseline can consider
+      // their missing outbox entry proof that the older server version may overwrite them.
+      val sizeFailures = sizeFailures(url, status.ownerId, deviceId)
+      if (!sizeFailures.recovered) {
+        recoverCloudSourceOutbox()
+        sizeFailures.finishRecovery()
+      }
       // Le statistiche scritte prima che viaggiassero: prendono il nome di qui, e l'UPDATE le mette
       // nell'outbox. Dopo la seminatura di un dispositivo nuovo, cosi' non ci si pestano i piedi.
       db.stats().claimUnnamed(deviceName)
@@ -119,12 +126,12 @@ class SyncRepository @Inject constructor(
       var pulled = pull(url, token, deviceId, deviceName, names, status.ownerId, state.lastPullSeq, countOrphans = true)
       // Prima del push, sempre: i tombstone dei figli di una riga rinata non devono salire.
       reviveChildren(url, token, deviceId, deviceName, names, status.ownerId)
-      var pushed = push(url, token, deviceId, deviceName)
+      var pushed = push(url, token, deviceId, deviceName, sizeFailures)
       if (pushed.rejected > 0) {
         pulled += pull(url, token, deviceId, deviceName, names, status.ownerId, db.sync().state()?.lastPullSeq ?: 0, countOrphans = false)
         reviveChildren(url, token, deviceId, deviceName, names, status.ownerId)
         // Rifiutate e troppo grandi si contano una volta, com'e' finita: il secondo push le rimanda.
-        val again = push(url, token, deviceId, deviceName)
+        val again = push(url, token, deviceId, deviceName, sizeFailures)
         pushed = Pushed(pushed.sent + again.sent, again.rejected, again.tooLarge)
       }
       val report = SyncReport(
@@ -302,14 +309,14 @@ class SyncRepository @Inject constructor(
     operator fun plus(other: Pushed) = Pushed(sent + other.sent, rejected + other.rejected, tooLarge + other.tooLarge)
   }
 
-  private suspend fun push(url: String, token: String, deviceId: String, deviceName: String): Pushed {
+  private fun sizeFailures(url: String, ownerId: String, deviceId: String): SyncSizeFailures {
+    val scope = Hashing.sha256("wire1\n$url\n$ownerId\n$deviceId")
+    return SyncSizeFailures(File(db.openHelper.writableDatabase.path + ".sync-size-$scope.json"))
+  }
+
+  private suspend fun push(url: String, token: String, deviceId: String, deviceName: String,
+    sizeFailures: SyncSizeFailures): Pushed {
     val sync = db.sync()
-    val scope = Hashing.sha256("wire1\n$url\n${settingsStore.syncOwnerId().orEmpty()}\n$deviceId")
-    val sizeFailures = SyncSizeFailures(File(db.openHelper.writableDatabase.path + ".sync-size-$scope.json"))
-    if (!sizeFailures.recovered) {
-      recoverCloudSourceOutbox()
-      sizeFailures.finishRecovery()
-    }
     val entries = sync.outbox()
     sizeFailures.retain(entries.map { SyncSizeFailures.key(it.tbl, it.rowId) }.toSet())
     if (entries.isEmpty()) return Pushed()

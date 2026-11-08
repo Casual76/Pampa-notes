@@ -17,7 +17,7 @@ class RecordingClockExportTest {
   @get:Rule val temp = TemporaryFolder()
   private val start = Instant.parse("2025-09-22T23:59:50Z").toEpochMilli()
   private fun origin(epoch: Long = start, zone: String = "Z", precision: String? = "second") =
-    RecordingOrigin(epoch, Instant.ofEpochMilli(epoch).toString().removeSuffix("Z"), zone, "media_metadata", precision)
+    RecordingOrigin(epoch, Instant.ofEpochMilli(epoch).atZone(java.time.ZoneId.of(zone)).toLocalDateTime().toString(), zone, "media_metadata", precision)
   private val raw = TranscriptEntity("r", "s", TranscriptKind.RAW, "fixture", "fixture", text = "Prima. Dopo.", wordCount = 2, createdAt = 999999)
   private fun part(id: String, origin: RecordingOrigin?, offset: Long) = ExportPart(id, "$id.wav", "$id.wav", 60_000, offset, 2, origin = origin)
   private fun session() = ExportSession("s", 1, "Interview", "2025-09-22",

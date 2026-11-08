@@ -35,6 +35,8 @@ object SpeechClock {
     if (origin.source == "file_modified" || precision == "day" || precision !in setOf("minute", "second", "millisecond")) {
       return date?.let { "$it · ${labels.clockTimeUnknown}" } ?: labels.clockUnknown
     }
+    // Preserve contradictory imported evidence in provenance, but never promote it to a clock.
+    if (origin.evidenceQuality() == 0) return date?.let { "$it · ${labels.clockTimeUnknown}" } ?: labels.clockUnknown
     if (partOffsetMs == null || partOffsetMs < 0) return labels.clockUnknown
     val zone = origin.zoneId?.let { runCatching { ZoneId.of(it) }.getOrNull() }
     val pattern = when (precision) {
