@@ -260,3 +260,27 @@ All source units stopped. Coordinator d34b172 adds canonical orphan-reference re
 PN explicitly RESERVED correction2 Gradle lease after all writers completed, max2workers/no-parallel/no-watch-fs/external build-cloud-recordings. One necessary debug/core-appJVM/core-appAndroidTestKotlin compilation/appLint batch is next after this source freeze. No device/emulator/GPU/server/livecloud. Previous round1 evidence will be archived before output reuse. No new reviews start before actual verification completion; no functional approval claimed. Correction rounds consumed2/3.
 
 First correction2 batch atd420520 completed exit1 in1m06s during core Kotlin compilation, BEFORE JVM tests ran. Coordinator's new RecordingOrigin.evidenceQuality captured nullable epochMs inside a lambda without a stable local; compiler rejected Long?. Corrected with guarded local val, no behavior relaxation. Failed source/log/failure-manifest retained under external correction2-d420520:523unchanged input hashes, JVM execution explicitly false (old output XML is not claimed current). Gradle lease RELEASED after actual process completion; one bounded integrated retry requested, awaiting reservation. Round1's154artifacts were copied and hash-verified in correction1-2de6e0b/archive-manifest.json before output reuse. No source/data failure hidden and no tests claimed passed from this failed build.
+
+
+## Correction2 verified and ROUND2 complete
+
+Reserved retry at3f88762955de1d761b2eaa126eea35694e14cad7 completed actual exit0/BUILD SUCCESSFUL8m42s.523input hashes unchanged, same clean HEAD before/after. Core1177pass/1optionalWorker skip and app67pass:1244passed/1skip/0failures/errors. Lint0errors128warnings, sole new warning is unused old credit-message resource. Debug assembled; both AndroidTest Kotlin tasks compiled only. Evidence and161artifact hashes at %LOCALAPPDATA%/PampaNotes/cloud-recordings-verification/correction2-3f88762. Actual Gradle lease RELEASED after completion. Failed d420520 artifacts and immutable154-artifact ROUND1 archive retained separately. Current guarded companion88test archive remains synthetic, no server/models/acoustic proof.
+
+Nine fresh Sol/xhigh ROUND2 critics all completed on the same frozen SHA before any source writes; at most3active children+coordinator despite user-authorized higher ceiling. Full verbatim reports and criterion score tables copied to workflow-reviews/round2. The general table and deduplicated findings follow; R1=C1 through R9=C9, all actual GPT-6.1 Sol/xhigh. NA is outside assignment; each mean/min uses1/1assigned verified vote, no provisional/NV/NA included.
+
+| Criterion | R1 | R2 | R3 | R4 | R5 | R6 | R7 | R8 | R9 | Mean | Minimum | Decision |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| C1 | 6 | NA | NA | NA | NA | NA | NA | NA | NA | 6 (1/1 assigned) | 6 | CORRECT |
+| C2 | NA | 6 | NA | NA | NA | NA | NA | NA | NA | 6 (1/1 assigned) | 6 | CORRECT |
+| C3 | NA | NA | 6 | NA | NA | NA | NA | NA | NA | 6 (1/1 assigned) | 6 | CORRECT |
+| C4 | NA | NA | NA | 6 | NA | NA | NA | NA | NA | 6 (1/1 assigned) | 6 | CORRECT |
+| C5 | NA | NA | NA | NA | 9 | NA | NA | NA | NA | 9 (1/1 assigned) | 9 | PASS |
+| C6 | NA | NA | NA | NA | NA | 6 | NA | NA | NA | 6 (1/1 assigned) | 6 | CORRECT |
+| C7 | NA | NA | NA | NA | NA | NA | 9 | NA | NA | 9 (1/1 assigned) | 9 | PASS |
+| C8 | NA | NA | NA | NA | NA | NA | NA | 9 | NA | 9 (1/1 assigned) | 9 | PASS |
+| C9 | NA | NA | NA | NA | NA | NA | NA | NA | 9 | 9 (1/1 assigned) | 9 | PASS |
+
+Overall CORRECT. Mandatory failures: definite401/402 paid-marker recovery (C1), stale provider pin across privacy migration (C2), cancellation at known429 paid-marker recovery (C3), empty-provenance exactRAW reorder retention (C4), canonical protected shared-file archive eviction (C6). Nonblocking: Mistral word-timing wording, stale too_large docs, obsolete unused credit resource. C5/C7/C8/C9 pass only their local scope, external PN/older-client envelope+RAW integration remains NV. Runtime/device/Room/WorkManager/rendered/acoustic gates remain USER-WAIVED/NOT EXECUTED.
+
+Correction3 of maximum3 now begins with three fresh disjoint units: definitive HTTP outcomes/private work storage; legacy RAW/timeline originals; canonical archive/FilesInUse retention. Coordinator owns conditional expected-provider pin and worker re-evaluation, plus small wording/docs/resource fixes. No new schema/public contracts planned, no Worker/engine/version edits. Source/light fixtures independently; Gradle requires a new explicit reservation after all source writers stop. Parent PN final correction4 is separate; its extra-round authorization does not reset this workflow counter. If correction3 still has mandatory defects, ask user per skill before another round.
+
