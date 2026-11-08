@@ -180,3 +180,33 @@ Engine doctor PASS for engine3.0.5. Protected source diff against ea4e0a2 is emp
 Gradle lease RELEASED by actual notification to PN; no heavy resource held. PN exclusively owns the narrow Worker public-evidence backward-compatibility fix: older clients rewriting payloads can otherwise drop recordedAt*/cloudSourceJson. This checkout has no Worker writer or change. Final combined integration must include and verify PN's reviewed fix; no older-client retention claim is made here. PN source-blob/PAMPA integration likewise remains parent-owned per the two integration reports.
 
 Initial independent review round0 is next, same frozen source SHA for all three Sol/xhigh reviewers, source-read-only, no Gradle/devices/GPU/live calls. Common C1-C9 rubric above. Three reports and verified-only comparable mean/min aggregate required before delivery. Correction rounds consumed0/3. Build success is not review approval.
+
+## Round0 reviews and correction1 (current state)
+
+User increased implementation ceiling3->4 and reviewer ceiling to category count9. Actual runtime has4total slots including coordinator, so at most3active children; no exception inferred. No quota-filling implementation. Next review round uses9fresh distinct critics, one per C1-C9, queued in groups within actual capacity. Current reviews were not interrupted. Round0 added a fourth independent data-boundary reviewer; all four complete, actual codex/gpt-6.1-sol/xhigh. Sources stayed frozen03db73dac6d3c5aabcfcb78c6436996d68592d31 throughout. Full verbatim reports preserved under workflow-reviews/round0.
+
+| Criterion | R1 cloud | R2 alignment | R3 recordings | R4 data | Mean (valid/expected) | Minimum | Outcome/open issues |
+|---|---|---|---|---|---|---|---|
+| C1 | 9 | NV | NV | NV | 9 (1/4) | 9 | No confirmed defect in reviewed scope |
+| C2 | 9 | NV | NV | NV | 9 (1/4) | 9 | No confirmed defect in reviewed scope |
+| C3 | 6 | NV | NV | NV | 6 (1/4) | 6 | Preparation429 bypasses cooldown; cancel/requeue race |
+| C4 | NV | 5 | NV | 6 provisional | 5 (1/4) | 5 | Language-label overlay rejected; legacy export replaces RAW; scoped-history gaps |
+| C5 | NV | 9 | NV | NV | 9 (1/4) | 9 | Source/fixtures only, acoustic accuracy NV |
+| C6 | NV | NV | 6 | NV | 6 (1/4) | 6 | Stale personal scope can delete moved school session |
+| C7 | NV | NV | 6 | 6 provisional | 6 (1/4) | 6 | Older native update erases precise origin |
+| C8 | 8 provisional | 8 provisional | 6 | 5 local | 5.5 (2/4) | 5 | Origin loss; refinement sibling leak; legacy export failure; long provenance sync limit |
+| C9 | 9 | 9 | 9 | 9 local | 9 (4/4) | 9 | Archives inspected, runtime gates waived; no SHA attestation embedded in archives |
+
+NV/NA/provisional/missing excluded; C8 and C9 compare local checkout scope only, combined PN integration remains unverified. Scores faithfully transcribed; no majority/mean overrides confirmed mandatory defects. Decision CORRECT. Nine unique confirmed/reproduced findings, origin loss appears under both C7/C8 but counted once:
+
+1. R1-F1 metadata/preparation429 is swallowed or escapes durable callback; C3.
+2. R1-F2 cancel during429 exit strands CANCEL_REQUESTED; C3.
+3. R2-F1 canonical request language but original-label overlay fails validation; C4.
+4. R2-F2 legacy cloud RAW/null source export reconstructs segment text; C4.
+5. R3-F1 same-audio older native update erases five known origin values; C7/C8.
+6. R3-F2 scope checked before suspension, moved-to-school session still deleted; C6.
+7. R4-01 selected session BEST/native can retain pre-split refinement with sibling text; C4/C7/C8.
+8. R4-02 honest unknown legacy hash incorrectly blocks restricted text export; C8.
+9. R4-03 valid500k RAW provenance duplicates push payload beyond1.9MB, rejected outbox silently cleared/tooLarge omitted from WorkData; C8.
+
+Correction1 of maximum3 now begins. Fresh disjoint units: typed source/selected history (R2-F1,R4-01,R4-02); Android sync long evidence/visible failures (R4-03, no Worker writes); destructive recording scope/native origin preservation (R3-F1/F2). Coordinator handles small cloud retry fixes and legacy human export. No new public entity/schema fields. PN holds current Gradle lease; source/light fixtures only until explicit release and own new lease. Protected paths and no live/device/GPU/server rules unchanged.
