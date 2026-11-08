@@ -12,6 +12,7 @@ import dev.pampa.pampanotes.core.importing.AudioGrouping
 import dev.pampa.pampanotes.core.importing.AudioPlacement
 import dev.pampa.pampanotes.core.importing.ImportCandidate
 import dev.pampa.pampanotes.core.importing.ImportCoordinator
+import dev.pampa.pampanotes.core.importing.ImportFailure
 import dev.pampa.pampanotes.core.importing.ImportOutcome
 import dev.pampa.pampanotes.core.importing.SdocxUpdate
 import dev.pampa.pampanotes.core.importing.PampaBundleImporter
@@ -214,69 +215,75 @@ class ImportViewModel @Inject constructor(
   ) {
     viewModelScope.launch {
       _uiState.value = ImportUiState(step = ImportStep.INSPECTING, selectedNoteId = intoNoteId, preferPersonal = preferPersonal)
-      val fromFiles = coordinator.inspect(uris)
-      _uiState.update { it.copy(candidates = fromFiles) }
-      val fromText = sharedText?.takeIf { it.isNotBlank() }?.let {
-        listOf(coordinator.inspectText(it, defaultTextName(it)))
-      }.orEmpty()
-      val all = fromFiles + fromText
-      _uiState.update { it.copy(candidates = all) }
+      try {
+        val fromFiles = coordinator.inspect(uris)
+        _uiState.update { it.copy(candidates = fromFiles) }
+        val fromText = sharedText?.takeIf { it.isNotBlank() }?.let {
+          listOf(coordinator.inspectText(it, defaultTextName(it)))
+        }.orEmpty()
+        val all = fromFiles + fromText
+        _uiState.update { it.copy(candidates = all) }
 
-      val allFolders = folders.all()
-      val paths = allFolders.associate { it.id to folders.parentPathString(it.id) }
-      val personal = PersonalScope.folderIds(allFolders)
-      val startFolder = intoFolderId?.takeIf { id -> allFolders.any { it.id == id } }
+        val allFolders = folders.all()
+        val paths = allFolders.associate { it.id to folders.parentPathString(it.id) }
+        val personal = PersonalScope.folderIds(allFolders)
+        val startFolder = intoFolderId?.takeIf { id -> allFolders.any { it.id == id } }
 
-      if (all.isEmpty()) {
-        _uiState.update { it.copy(step = ImportStep.REVIEW, candidates = emptyList(), folders = allFolders, folderPaths = paths, personalFolderIds = personal) }
-        return@launch
-      }
+        if (all.isEmpty()) {
+          _uiState.update { it.copy(step = ImportStep.REVIEW, candidates = emptyList(), folders = allFolders, folderPaths = paths, personalFolderIds = personal) }
+          return@launch
+        }
 
-      // Una nota di Samsung Notes porta il suo titolo: e' quello, non il nome del file.
-      val samsung = all.singleOrNull()?.sdocx?.takeIf { !it.isEmpty }
-      val defaultTitle = samsung?.title?.takeIf { it.isNotBlank() }?.let(SdocxUpdate::cleanTitle)
-        ?: all.singleOrNull()?.takeIf { it.sdocx != null }?.let { SdocxUpdate.titleFromName(it.displayName) }
-        ?: all.firstOrNull { !it.isAudio }?.displayName?.substringBeforeLast('.')
-        ?: all.first().displayName.substringBeforeLast('.')
-      // E dal titolo si indovina la materia: «Fichte» da solo non basta, ma «Storia» o «Filosofia»
-      // nel titolo o nelle prime righe si'. Quando non si indovina resta la prima cartella.
-      val guessedFolder = samsung?.takeUnless { preferPersonal }?.let { doc ->
-        val hint = FolderIcon.guessFrom(listOfNotNull(doc.title, doc.body.take(400)).joinToString(" "))
-        // Solo fra le materie: una nota di scuola non si indovina dentro Registrazioni.
-        if (hint == FolderIcon.Folder) null else allFolders.firstOrNull { it.id !in personal && FolderIcon.guessFrom(it.name) == hint }
-      }
+        // Una nota di Samsung Notes porta il suo titolo: e' quello, non il nome del file.
+        val samsung = all.singleOrNull()?.sdocx?.takeIf { !it.isEmpty }
+        val defaultTitle = samsung?.title?.takeIf { it.isNotBlank() }?.let(SdocxUpdate::cleanTitle)
+          ?: all.singleOrNull()?.takeIf { it.sdocx != null }?.let { SdocxUpdate.titleFromName(it.displayName) }
+          ?: all.firstOrNull { !it.isAudio }?.displayName?.substringBeforeLast('.')
+          ?: all.first().displayName.substringBeforeLast('.')
+        // E dal titolo si indovina la materia: «Fichte» da solo non basta, ma «Storia» o «Filosofia»
+        // nel titolo o nelle prime righe si'. Quando non si indovina resta la prima cartella.
+        val guessedFolder = samsung?.takeUnless { preferPersonal }?.let { doc ->
+          val hint = FolderIcon.guessFrom(listOfNotNull(doc.title, doc.body.take(400)).joinToString(" "))
+          // Solo fra le materie: una nota di scuola non si indovina dentro Registrazioni.
+          if (hint == FolderIcon.Folder) null else allFolders.firstOrNull { it.id !in personal && FolderIcon.guessFrom(it.name) == hint }
+        }
 
-      _uiState.update {
-        it.copy(
-          step = ImportStep.REVIEW,
-          candidates = all,
-          // I doppioni partono esclusi: reimportare due volte lo stesso PDF e' quasi sempre un errore.
-          // Non nel percorso corto, che non ha un interruttore per riammetterli: li' si avvisa e si
-          // lascia decidere con il tasto, perche' una nota Samsung ricondivisa dopo una modifica e'
-          // un caso normale, non un errore.
-          excluded = if (samsung != null) emptySet() else all.filter { candidate -> candidate.isDuplicate }.map { candidate -> candidate.id }.toSet(),
-          folders = allFolders,
-          folderPaths = paths,
-          personalFolderIds = personal,
-          // Di ripiego la prima materia, non la prima cartella qualsiasi: una lezione finita per
-          // caso in Registrazioni sparirebbe dalla home e dalle statistiche della scuola. Dalla
-          // scheda Registrazioni il contrario: la prima di Registrazioni, in ordine di elenco.
-          selectedFolderId = when {
-            all.any { it.bundle != null } -> startFolder
-            intoNoteId != null -> null
-            startFolder != null -> startFolder
-            preferPersonal -> (allFolders.filter { it.parentId == null && it.id in personal }.minByOrNull { it.sortOrder }
-              ?: allFolders.firstOrNull { it.id in personal } ?: allFolders.firstOrNull())?.id
-            else -> (guessedFolder ?: allFolders.firstOrNull { it.id !in personal } ?: allFolders.firstOrNull())?.id
-          },
-          newNoteTitle = defaultTitle,
-        ).withCompatibleBundleDestination()
-      }
-      if (intoNoteId != null) loadSessions(intoNoteId)
-      val chosen = _uiState.value.selectedFolderId
-      if (intoNoteId == null && chosen != null && (startFolder != null || preferPersonal)) {
-        val inFolder = notes.byFolder(chosen)
-        _uiState.update { it.copy(notesInFolder = inFolder) }
+        _uiState.update {
+          it.copy(
+            step = ImportStep.REVIEW,
+            candidates = all,
+            // I doppioni partono esclusi: reimportare due volte lo stesso PDF e' quasi sempre un errore.
+            // Non nel percorso corto, che non ha un interruttore per riammetterli: li' si avvisa e si
+            // lascia decidere con il tasto, perche' una nota Samsung ricondivisa dopo una modifica e'
+            // un caso normale, non un errore.
+            excluded = if (samsung != null) emptySet() else all.filter { candidate -> candidate.isDuplicate }.map { candidate -> candidate.id }.toSet(),
+            folders = allFolders,
+            folderPaths = paths,
+            personalFolderIds = personal,
+            // Di ripiego la prima materia, non la prima cartella qualsiasi: una lezione finita per
+            // caso in Registrazioni sparirebbe dalla home e dalle statistiche della scuola. Dalla
+            // scheda Registrazioni il contrario: la prima di Registrazioni, in ordine di elenco.
+            selectedFolderId = when {
+              all.any { it.bundle != null } -> startFolder
+              intoNoteId != null -> null
+              startFolder != null -> startFolder
+              preferPersonal -> (allFolders.filter { it.parentId == null && it.id in personal }.minByOrNull { it.sortOrder }
+                ?: allFolders.firstOrNull { it.id in personal } ?: allFolders.firstOrNull())?.id
+              else -> (guessedFolder ?: allFolders.firstOrNull { it.id !in personal } ?: allFolders.firstOrNull())?.id
+            },
+            newNoteTitle = defaultTitle,
+          ).withCompatibleBundleDestination()
+        }
+        if (intoNoteId != null) loadSessions(intoNoteId)
+        val chosen = _uiState.value.selectedFolderId
+        if (intoNoteId == null && chosen != null && (startFolder != null || preferPersonal)) {
+          val inFolder = notes.byFolder(chosen)
+          _uiState.update { it.copy(notesInFolder = inFolder) }
+        }
+      } catch (error: Exception) {
+        if (error is kotlinx.coroutines.CancellationException) throw error
+        android.util.Log.w("PampaNotes", "Import preparation failed", error)
+        _uiState.update { it.copy(step = ImportStep.DONE, error = null, errorRes = ImportFailure.of(error).messageRes()) }
       }
     }
   }
@@ -439,13 +446,16 @@ class ImportViewModel @Inject constructor(
         }
         val imported = result.noteIds.mapNotNull { id -> notes.get(id)?.let { CreatedNote(id, it.title, 0) } }
         _uiState.update { it.copy(step = ImportStep.DONE, bundleResult = result, createdNotes = imported, progress = 1f) }
-        val settings = settingsStore.current()
-        if (settings.archiveEnabled) scheduler.archiveNow(settings.archiveOnlyUnmetered)
-        if (settings.syncEnabled) scheduler.syncNow()
+        // The transaction has succeeded. A later scheduling failure must not claim it failed.
+        runCatching {
+          val settings = settingsStore.current()
+          if (settings.archiveEnabled) scheduler.archiveNow(settings.archiveOnlyUnmetered)
+          if (settings.syncEnabled) scheduler.syncNow()
+        }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it else android.util.Log.w("PampaNotes", "Post-import scheduling failed", it) }
       } catch (error: Exception) {
         if (error is kotlinx.coroutines.CancellationException) throw error
         android.util.Log.w("PampaNotes", "Bundle import failed", error)
-        _uiState.update { it.copy(step = ImportStep.DONE, error = null, errorRes = dev.pampa.pampanotes.R.string.import_bundle_failed_detail) }
+        _uiState.update { it.copy(step = ImportStep.DONE, error = null, errorRes = ImportFailure.of(error).messageRes()) }
       } finally {
         candidate.file?.delete()
       }

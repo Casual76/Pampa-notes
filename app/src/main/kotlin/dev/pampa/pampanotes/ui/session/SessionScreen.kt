@@ -799,13 +799,13 @@ private fun LazyListScope.jobItem(
  */
 private fun LazyListScope.remoteAudioItem(state: SessionUiState, onFetch: () -> Unit) {
   val allMissing = state.missing?.takeIf { it.isNotEmpty() } ?: return
-  if (dev.pampa.pampanotes.core.importing.PampaBundleOmissions.omitted(allMissing).isNotEmpty()) {
+  if (dev.pampa.pampanotes.core.importing.PampaBundleOmissions.omitted(allMissing, state.relayParts).isNotEmpty()) {
     item(key = "bundle-omitted-audio") {
       FluidInlineMessage(title = stringResource(R.string.session_bundle_omitted_title),
         message = stringResource(R.string.session_bundle_omitted_detail), tone = FluidTone.Warning)
     }
   }
-  val missing = dev.pampa.pampanotes.core.importing.PampaBundleOmissions.remote(allMissing).takeIf { it.isNotEmpty() } ?: return
+  val missing = allMissing
   item(key = "remote-audio") {
     val fetch = state.fetch
     val bytes = missing.sumOf { it.sizeBytes }

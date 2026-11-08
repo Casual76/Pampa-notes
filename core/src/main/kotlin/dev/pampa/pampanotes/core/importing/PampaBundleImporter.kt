@@ -6,7 +6,6 @@ import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.transcription.VoiceNames
 import java.io.File
 import java.util.UUID
-import java.util.zip.ZipFile
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.*
@@ -19,7 +18,8 @@ class PampaBundleImporter @Inject constructor(
 ) {
   suspend fun inspect(file: File): PampaBundlePreview = withContext(Dispatchers.IO) {
     val ctx = currentCoroutineContext()
-    val read = PampaBundleArchive.read(file) { ctx.ensureActive() }
+    val read = PampaBundleArchive.read(file, verifyAttachments = false) { ctx.ensureActive() }
+    if (read.data.notes.isEmpty()) throw ImportFailureException(ImportFailure.EMPTY)
     PampaBundlePreview(read.data.notes.size,
       read.data.notes.count { db.notes().get(originId(it.note.id)) != null },
       read.data.notes.sumOf { n -> n.attachments.count { it.audio && it.path != null } },
@@ -36,44 +36,40 @@ class PampaBundleImporter @Inject constructor(
     val ctx = currentCoroutineContext()
     val checkpoint = { ctx.ensureActive() }
     onProgress(0f, PampaBundleProgress(PampaBundlePhase.VALIDATING))
-    val read = PampaBundleArchive.read(file, checkpoint)
+    // Metadata/reference validation here; each included byte is hashed while it is staged below.
+    val read = PampaBundleArchive.read(file, verifyAttachments = false, checkpoint = checkpoint)
+    if (read.data.notes.isEmpty()) throw ImportFailureException(ImportFailure.EMPTY)
+    onProgress(0.1f, PampaBundleProgress(PampaBundlePhase.VALIDATING))
     val namespace = if (updateExisting) "origin" else UUID.randomUUID().toString()
     val data = remap(read.data, namespace)
-    val staged = mutableListOf<File>()
-    val stored = mutableMapOf<Pair<Boolean, String>, String>()
+    val staging = PampaBundleStaging(files.audio, files.sources)
     var committed = false
     try {
-      val attachments = data.notes.flatMap { it.attachments }.filter { it.path != null }
-      ZipFile(file).use { zip ->
-        attachments.forEachIndexed { index, a ->
-          checkpoint()
-          // Fresh immutable files: failure never overwrites an existing attachment.
-          val ext = a.path!!.substringAfterLast('.', "bin").takeIf { it.matches(Regex("[A-Za-z0-9]{1,8}")) } ?: "bin"
-          val target = File(if (a.audio) files.audio else files.sources, "${UUID.randomUUID()}.$ext")
-          staged += target
-          target.outputStream().use { out -> zip.getInputStream(zip.getEntry(read.root + a.path)).use { PampaBundleArchive.verify(it, a.bytes, a.sha256, checkpoint, out) } }
-          stored[a.audio to a.id] = target.name
-          onProgress(0.1f + 0.6f * (index + 1) / attachments.size.coerceAtLeast(1), PampaBundleProgress(PampaBundlePhase.STAGING_ATTACHMENTS))
-        }
+      val stored = staging.stage(file, read.root, data.notes.flatMap { it.attachments }, checkpoint) { progress ->
+        onProgress(0.1f + 0.6f * progress, PampaBundleProgress(PampaBundlePhase.STAGING_ATTACHMENTS))
       }
       checkpoint()
       val measured = completeAudioMetadata(data, stored, checkpoint)
       // Keep the commit result and cleanup decision in one cancellation-safe boundary.
       withContext(NonCancellable) {
         val result = db.withTransaction {
-          persist(measured, intoFolderId, stored, checkpoint, publicLegacy = PampaBundleWarning.LEGACY_FORMAT in read.warnings) { p, title -> onProgress(0.7f + 0.3f * p, title) }
+          staging.requireProtected()
+          persist(measured, intoFolderId, stored, checkpoint, publicLegacy = PampaBundleWarning.LEGACY_FORMAT in read.warnings) { p, title -> onProgress(0.7f + 0.29f * p, title) }
         }
         committed = true
         // Reconciliation can reuse an existing canonical file instead of a newly staged legacy copy.
         runCatching {
           val usedAudio = db.audioParts().all().mapTo(HashSet()) { it.fileName }
           val usedSources = db.sources().all().mapNotNullTo(HashSet()) { it.storedFileName }
-          staged.filter { if (it.parentFile == files.audio) it.name !in usedAudio else it.name !in usedSources }.forEach { it.delete() }
+          staging.files.filter { if (it.parentFile == files.audio) it.name !in usedAudio else it.name !in usedSources }.forEach { it.delete() }
         }.onFailure { android.util.Log.w("PampaNotes", "Unused bundle staging cleanup", it) }
+        onProgress(1f, PampaBundleProgress(PampaBundlePhase.IMPORTING_NOTES))
         result.copy(warnings = read.warnings)
       }
     } finally {
-      if (!committed) staged.forEach { it.delete() }
+      withContext(NonCancellable) {
+        if (!committed) staging.cleanup() else staging.release()
+      }
     }
   }
 
@@ -102,6 +98,10 @@ class PampaBundleImporter @Inject constructor(
     checkpoint: () -> Unit = {}, publicLegacy: Boolean? = null,
     onProgress: (Float, PampaBundleProgress) -> Unit = { _, _ -> },
   ): PampaBundleImportResult {
+    // New entities also need this check: merge/retained-file checks alone cannot catch a
+    // staged file that disappeared before its first DB row. The import still holds every
+    // staged path here and until the outer transaction and post-commit cleanup finish.
+    verifyIncludedFiles(data, stored, checkpoint)
     require(intoFolderId == null || db.folders().get(intoFolderId) != null) { "Destination folder missing" }
     val importedFolders = data.folders.mapTo(HashSet()) { it.id }
     val ancestors = mutableSetOf<String>()
@@ -110,19 +110,24 @@ class PampaBundleImporter @Inject constructor(
       require(ancestor !in importedFolders && ancestors.add(ancestor)) { "Destination cannot be inside the imported hierarchy" }
       ancestor = db.folders().get(ancestor)?.parentId
     }
-    val pending = data.folders.toMutableList()
-    val done = mutableSetOf<String>()
-    while (pending.isNotEmpty()) {
+    val oldFolders = db.folders().all().associateBy { it.id }
+    PampaBundleFolderPlan.build(oldFolders.values.toList(), data.folders, intoFolderId, publicLegacy).forEach { next ->
       checkpoint()
-      val next = pending.firstOrNull { it.parentId == null || it.parentId in done } ?: error("Folder cycle")
-      val old = db.folders().get(next.id)
-      // Public folder IDs are synthesized from their original paths. A native adoption or a
-      // local rename/move may retain those IDs; an older public path cannot overwrite that work.
-      if (old == null || publicLegacy != true) db.folders().upsert(next.copy(parentId = if (next.parentId == null) intoFolderId else next.parentId,
-        updatedAt = maxOf(next.updatedAt, old?.updatedAt ?: 0)))
-      done += next.id; pending.remove(next)
+      if (next != oldFolders[next.id]) db.folders().upsert(next)
     }
     val cleanupFolders = data.folders.filter { PampaBundleLegacyReconcile.isFolder(it.id) }.mapTo(HashSet()) { it.id }
+    // Canonical File keys also detect case aliases on Windows and symlink aliases on disk.
+    val audioOwners = db.audioParts().all().groupBy { files.audioFile(it.fileName).canonicalFile }.mapValues { (_, rows) -> rows.map { it.id }.toSet() }
+    val sourceOwners = db.sources().all().filter { it.storedFileName != null }.groupBy { files.sourceFile(it.storedFileName!!).canonicalFile }
+      .mapValues { (_, rows) -> rows.map { it.id }.toSet() }
+    for (audio in listOf(true, false)) {
+      val names = stored.filterKeys { it.first == audio }.values
+      val owners = if (audio) audioOwners else sourceOwners
+      val directory = if (audio) files.audio else files.sources
+      val paths = names.map { File(directory, it).canonicalFile }
+      require(paths.distinct().size == paths.size) { "Staged attachments must have independent filenames" }
+      require(paths.none { it in owners }) { "Staged attachment already has an owner" }
+    }
     var imported = 0; var updated = 0
     data.notes.forEachIndexed { index, n ->
       checkpoint()
@@ -141,6 +146,8 @@ class PampaBundleImporter @Inject constructor(
       val reconciliation = PampaBundleLegacyReconcile.plan(originalLocal, n, publicLegacy)
       val local = reconciliation.local
       val incoming = reconciliation.incoming
+      val originalPartIds = reconciliation.parts.entries.associate { it.value to it.key }
+      val originalSourceIds = reconciliation.sources.entries.associate { it.value to it.key }
       val rekeyedPartSessions = originalLocal?.parts.orEmpty().filter { it.id in reconciliation.parts }.map { it.sessionId }
       (reconciliation.sessions.keys + rekeyedPartSessions + if (reconciliation.legacyUpdate) incoming.sessions.map { it.id } else emptyList()).forEach { oldId ->
         require(db.jobs().activeForSession(oldId) == null) { "Finish the active legacy session job before upgrading" }
@@ -154,35 +161,52 @@ class PampaBundleImporter @Inject constructor(
         // contains the *previous* occupant until all final graph rows have been written.
         val old = if (part.id in reconciliation.parts.values) local?.parts?.firstOrNull { it.id == part.id } ?: persisted
           else persisted ?: local?.parts?.firstOrNull { it.id == part.id }
-        val name = if (reconciliation.preserveLocalNote && old != null) null
-          else stored[true to (reconciliation.incomingPartKeys[part.id] ?: part.id)]
+        val name = stored[true to (reconciliation.incomingPartKeys[part.id] ?: part.id)]
+        fun retainedFile(): String {
+          requireNotNull(old)
+          val owner = originalPartIds[old.id] ?: old.id
+          return PampaBundleFileIntegrity.select(files.audio, old.fileName,
+            if (part.sha256.isBlank()) old.sizeBytes else part.sizeBytes, part.sha256.ifBlank { old.sha256 },
+            audioOwners[files.audioFile(old.fileName).canonicalFile] == setOf(owner), name, checkpoint)
+            ?: PampaBundleOmissions.expectedFileName(part.id)
+        }
         if (old != null && PampaBundleLegacyReconcile.isSynthetic(part.id)) {
           require(part.sha256.isNotBlank() && old.sha256.isNotBlank() && part.sha256.equals(old.sha256, true)) { "Marked audio identity conflicts with retained content" }
         }
         val sameAudio = old != null && part.sha256.isNotBlank() && part.sha256.equals(old.sha256, true)
         if (reconciliation.legacyUpdate && old != null && PampaBundleLegacyReconcile.isSynthetic(part.id)) {
-          val localFile = files.audioFile(old.fileName).isFile
           old.copy(sessionId = part.sessionId, position = part.position,
-            fileName = if (localFile) old.fileName else name ?: old.fileName,
+            fileName = retainedFile(), sizeBytes = part.sizeBytes,
             durationMs = old.durationMs.takeIf { it > 0 } ?: part.durationMs)
         } else if (sameAudio) {
           // Keep local identity/archive metadata even when recovering an evicted blob from staging.
           // Native duration/timing metadata takes precedence over an old MMR rounding estimate.
-          part.copy(fileName = if (files.audioFile(old.fileName).isFile) old.fileName else name ?: old.fileName,
+          PampaBundleMetadataMerge.audio(old, part).copy(fileName = retainedFile(),
             archivedAt = old.archivedAt, originalName = old.originalName,
-            durationMs = part.durationMs.takeIf { it > 0 } ?: old.durationMs, sizeBytes = old.sizeBytes)
+            createdAt = old.createdAt,
+            durationMs = part.durationMs.takeIf { it > 0 } ?: old.durationMs, sizeBytes = part.sizeBytes)
         } else if (name == null && old != null) {
           require(part.sha256.isBlank() || old.sha256.isBlank() || part.sha256.equals(old.sha256, true)) { "Omitted audio conflicts with local content" }
-          old.copy(sessionId = part.sessionId, position = part.position)
-        } else part.copy(fileName = name ?: "missing-${UUID.nameUUIDFromBytes(part.id.toByteArray(Charsets.UTF_8))}", archivedAt = 0)
+          old.copy(sessionId = part.sessionId, position = part.position, fileName = retainedFile())
+        } else part.copy(fileName = name ?: PampaBundleOmissions.expectedFileName(part.id), archivedAt = 0)
+      }
+      val sourceDeclarations = incoming.attachments.filterNot { it.audio }.associateBy { it.id }
+      fun expectedSourceReference(source: SourceEntity): String? {
+        val declaration = sourceDeclarations[source.id]
+        if (declaration?.fileless == true) return null
+        // An actual shared/clipboard attachment can be explicitly omitted. Keep that expectation
+        // after Room persistence, without inventing an original for intrinsically fileless text.
+        if (declaration != null && source.kind in setOf(SourceKind.CLIPBOARD, SourceKind.SHARE)) {
+          return PampaBundleOmissions.expectedFileName(source.id)
+        }
+        return PampaBundleOmissions.expectedSourceName(source)
       }
       val incomingSources = incoming.sources.map { source ->
         val persisted = db.sources().get(source.id)
         require(persisted == null || persisted.noteId == n.note.id) { "Source belongs to another note" }
         val old = if (source.id in reconciliation.sources.values) local?.sources?.firstOrNull { it.id == source.id } ?: persisted
           else persisted ?: local?.sources?.firstOrNull { it.id == source.id }
-        val name = if (old != null && (reconciliation.preserveLocalNote || source.sha256.isNotBlank() && source.sha256.equals(old.sha256, true) && old.storedFileName?.let { files.sourceFile(it).isFile } == true)) null
-          else stored[false to (reconciliation.incomingSourceKeys[source.id] ?: source.id)]
+        val name = stored[false to (reconciliation.incomingSourceKeys[source.id] ?: source.id)]
         if (old != null && PampaBundleLegacyReconcile.isSynthetic(source.id)) {
           val placeholder = source.id.startsWith("pampa-legacy-placeholder-") && old.kind == SourceKind.OTHER && source.kind == SourceKind.OTHER &&
             old.sizeBytes == 0L && source.sizeBytes == 0L && old.sha256.isBlank() && source.sha256.isBlank() && old.storedFileName == null
@@ -199,9 +223,13 @@ class PampaBundleImporter @Inject constructor(
             require(old.sdocxCreatedAtMillis != null || sameHash) { "Cannot identify omitted Samsung original" }
           }
           old.copy(derivedFromId = if (reconciliation.legacyUpdate && old.derivedFromId != null) old.derivedFromId else source.derivedFromId,
-            storedFileName = if (old.storedFileName?.let { files.sourceFile(it).isFile } == true) old.storedFileName else name ?: old.storedFileName,
+            storedFileName = PampaBundleFileIntegrity.select(files.sources, old.storedFileName,
+              if (source.sha256.isBlank()) old.sizeBytes else source.sizeBytes, source.sha256.ifBlank { old.sha256 },
+              old.storedFileName == null || sourceOwners[files.sourceFile(old.storedFileName).canonicalFile] == setOf(originalSourceIds[old.id] ?: old.id), name, checkpoint)
+              ?: expectedSourceReference(old),
+            sizeBytes = if (source.sha256.isBlank()) old.sizeBytes else source.sizeBytes,
             sdocxCreatedAtMillis = old.sdocxCreatedAtMillis ?: source.sdocxCreatedAtMillis)
-        } else source.copy(storedFileName = name, archivedAt = 0)
+        } else source.copy(storedFileName = name ?: expectedSourceReference(source), archivedAt = 0)
       }
       val merged = PampaBundleMerge.merge(local, incoming.copy(parts = incomingParts, sources = incomingSources), reconciliation.preserveLocalNote)
       // Includes fresh identities for retained omitted content as well as incoming children.
@@ -257,6 +285,26 @@ class PampaBundleImporter @Inject constructor(
     return PampaBundleImportResult(data.notes.map { it.note.id }, imported, updated, data.notes.sumOf { n -> n.attachments.count { it.audio && it.path != null } })
   }
 
+  internal fun verifyIncludedFiles(data: PampaBundleData, stored: Map<Pair<Boolean, String>, String>, checkpoint: () -> Unit = {}) {
+    val metadata = mutableMapOf<Pair<Boolean, String>, Pair<Long, String?>>()
+    data.notes.forEach { note ->
+      // Internal host callers may supply entity metadata without archive declarations.
+      note.parts.forEach { metadata[true to it.id] = it.sizeBytes to it.sha256 }
+      note.sources.forEach { metadata[false to it.id] = it.sizeBytes to it.sha256 }
+      note.attachments.filter { it.path != null }.forEach { attachment ->
+        val key = attachment.audio to attachment.id
+        require(key in stored) { "Included attachment was not staged" }
+        metadata[key] = attachment.bytes to attachment.sha256
+      }
+    }
+    stored.forEach { (key, name) ->
+      checkpoint()
+      val (bytes, sha) = requireNotNull(metadata[key]) { "Unknown staged attachment" }
+      require(PampaBundleFileIntegrity.verified(if (key.first) files.audio else files.sources,
+        name, bytes, sha.orEmpty(), exclusivelyOwned = true, checkpoint = checkpoint)) { "Included attachment integrity unavailable" }
+    }
+  }
+
   /** Reserved, unedited synthetic folders only; never cascade through notes or children. */
   private suspend fun removeEmptyLegacyFolders(protected: Set<String>, candidates: Set<String>) {
     if (candidates.isEmpty()) return
@@ -287,7 +335,7 @@ class PampaBundleImporter @Inject constructor(
       return data.copy(folders = data.folders.map { it.copy(id = id("folder", it.id), parentId = it.parentId?.let { p -> id("folder", p) }) }, notes = data.notes.map { n ->
         n.copy(note = n.note.copy(id = id("note", n.note.id), folderId = id("folder", n.note.folderId), bundleBodyBase = null, bundleNativeAdopted = null),
           sessions = n.sessions.map { s -> s.copy(id = id("session", s.id), noteId = id("note", s.noteId), activeTranscriptId = s.activeTranscriptId?.let { id("transcript", it) }, transcribingOn = null, transcribingSince = null,
-            voiceNames = VoiceNames.encode(VoiceNames.decode(s.voiceNames).mapKeys { (key, _) -> id("part", key.substringBefore('|')) + "|" + key.substringAfter('|') })) },
+            voiceNames = VoiceNames.remap(s.voiceNames) { id("part", it) }) },
           parts = n.parts.map { it.copy(id = id("part", it.id), sessionId = id("session", it.sessionId), fileName = "", archivedAt = 0) },
           transcripts = n.transcripts.map { it.copy(id = id("transcript", it.id), sessionId = id("session", it.sessionId), parentId = it.parentId?.let { p -> id("transcript", p) }) },
           segments = n.segments.map { it.copy(id = 0, transcriptId = id("transcript", it.transcriptId), partId = id("part", it.partId)) },

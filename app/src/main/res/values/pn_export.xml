@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="pn_export_target">Pampa Notes · .pn</string>
+  <string name="pn_export_target_detail">Trasferisci le note in Pampa Notes su un altro dispositivo o condividile con una persona.</string>
+  <string name="pn_export_ai_title">Per assistenti IA</string>
+  <string name="pn_export_contents">Include appunti, cartelle, tag, tutte le versioni grezze e raffinate, la versione selezionata, audio, originali e immagini disponibili, voci, date e tempi di segmenti e parole presenti. Le versioni senza tempi restano senza tempi.</string>
+  <string name="pn_export_lossless">Un solo file .pn compresso senza perdita: gli audio conservano gli stessi byte. Prima di scrivere cerco gli allegati mancanti anche nei trasferimenti cloud disponibili, senza bisogno del PC. Gli allegati irrecuperabili vengono segnalati.</string>
+  <string name="pn_export_estimate">Dimensione indicativa prima della compressione e della deduplicazione: %1$s</string>
+  <string name="pn_export_checking">Controllo gli allegati disponibili</string>
+  <string name="pn_export_fetching">Recupero gli allegati: %1$d di %2$d</string>
+  <string name="pn_export_fetching_detail">Cerco i file su questo dispositivo, nei trasferimenti cloud ancora validi o sul computer di casa. Puoi annullare il recupero.</string>
+  <string name="pn_export_missing_help">Puoi annullare e inviare di nuovo i file dal dispositivo che li conserva, oppure riprovare con il computer acceso. Con «Esporta senza» gli allegati mancanti sono dichiarati nel risultato; nel file .pn restano anche i loro metadati.</string>
+  <string name="pn_export_missing_unreachable">nessun trasferimento cloud pronto e computer di casa non raggiungibile</string>
+  <string name="pn_export_missing_failed">recupero del file non riuscito</string>
+  <string name="pn_export_missing_no_file">metadati presenti, ma nessun file originale conservato da recuperare</string>
+  <string name="pn_export_done_contents">Il file .pn conserva tutte le cronologie, la selezione, le voci, le date e i tempi disponibili.</string>
+  <plurals name="pn_export_skipped_pages">
+    <item quantity="one">%d pagina non disponibile: il file non è incluso.</item>
+    <item quantity="other">%d pagine non disponibili: i file non sono inclusi.</item>
+  </plurals>
+</resources>

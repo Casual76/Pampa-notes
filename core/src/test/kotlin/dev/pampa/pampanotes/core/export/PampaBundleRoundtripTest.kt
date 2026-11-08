@@ -137,20 +137,36 @@ class PampaBundleRoundtripTest {
     coEvery { folders.get(any()) } returns null; coEvery { notes.get(any()) } returns null
     coEvery { sessions.get(any()) } returns null; coEvery { transcripts.get(any()) } returns null
     coEvery { parts.get(any()) } returns null
-    val importer = PampaBundleImporter(db, mockk<AppFiles>())
+    val audioDirectory = temp.newFolder()
+    val sourceDirectory = temp.newFolder()
+    val files = mockk<AppFiles>()
+    every { files.audio } returns audioDirectory
+    every { files.sources } returns sourceDirectory
+    every { files.audioFile(any()) } answers { File(audioDirectory, firstArg<String>()) }
+    every { files.sourceFile(any()) } answers { File(sourceDirectory, firstArg<String>()) }
+    val importer = PampaBundleImporter(db, files)
     val phases = mutableListOf<PampaBundleProgress>()
     assertEquals(1, importer.persist(data, null, emptyMap(), onProgress = { _, progress -> phases += progress }).importedNotes)
     assertEquals(listOf(PampaBundleProgress(PampaBundlePhase.IMPORTING_NOTES, note.title)), phases)
     coEvery { notes.get("n") } returns note
-    val local = data.notes.single().parts.first().copy(fileName = "local.m4a", sha256 = "local")
+    val localBytes = byteArrayOf(1, 2, 3)
+    val localHash = java.security.MessageDigest.getInstance("SHA-256").digest(localBytes).joinToString("") { "%02x".format(it) }
+    val local = data.notes.single().parts.first().copy(fileName = "local.m4a", sha256 = localHash)
+    val localOnly = local.copy(id = "local-only-part", fileName = "local-only.m4a", position = 2)
+    File(audioDirectory, local.fileName).writeBytes(localBytes)
+    File(audioDirectory, localOnly.fileName).writeBytes(localBytes)
     coEvery { parts.get("p1") } returns local
     val localSegment = data.notes.single().segments.first().copy(partId = "local-only-part", text = "Local speech", sessionStartMs = 2000, sessionEndMs = 2500)
     coEvery { sessions.get("s") } returns data.notes.single().sessions.single()
     coEvery { sessions.plainByNote("n") } returns data.notes.single().sessions
-    coEvery { parts.bySession("s") } returns (data.notes.single().parts + local.copy(id = "local-only-part", position = 2))
+    val localParts = listOf(local) + data.notes.single().parts.drop(1) + localOnly
+    coEvery { parts.bySession("s") } returns localParts
+    coEvery { parts.all() } returns localParts
     coEvery { transcripts.bySession("s") } returns data.notes.single().transcripts
     coEvery { segments.byTranscript("raw") } returns listOf(localSegment)
     assertEquals(1, importer.persist(data, null, emptyMap()).updatedNotes)
+    assertArrayEquals(localBytes, File(audioDirectory, local.fileName).readBytes())
+    assertArrayEquals(localBytes, File(audioDirectory, localOnly.fileName).readBytes())
     coVerify { parts.upsert(local) }
     coVerify { segments.insertAll(match { rows -> rows.any { it.partId == "local-only-part" && it.text == "Local speech" } }) }
     coVerify(exactly = 0) { notes.delete(any()) }

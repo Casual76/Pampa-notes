@@ -3,6 +3,7 @@ package dev.pampa.pampanotes.ui.importing
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import dev.pampa.pampanotes.core.export.PampaNoteFormat
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -64,6 +65,7 @@ data class ImportRequest(
       "application/zip",
       "application/x-zip-compressed",
       "application/octet-stream",
+      PampaNoteFormat.MIME_TYPE,
       // Samsung Notes: il tipo che il sistema assegna a un .sdocx.
       "application/sdoc",
       "application/sdocx",
@@ -79,19 +81,25 @@ data class ImportRequest(
       val view = intent.action == Intent.ACTION_VIEW && intent.data?.scheme in FILE_SCHEMES
       if (!single && !multiple && !view) return null
 
-      val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.takeIf { it.isNotBlank() }
-      val uris = when {
+      val extraUris = when {
         single -> listOfNotNull(streamOf(intent))
         multiple -> streamsOf(intent)
         else -> listOfNotNull(intent.data)
       }
+      // DocumentsUI and messaging/file providers may put grants and URIs only in ClipData.
+      val clipUris = intent.clipData?.let { clip -> (0 until clip.itemCount).mapNotNull { clip.getItemAt(it).uri } }.orEmpty()
+      val uris = (extraUris + clipUris + listOfNotNull(intent.data)).filter { it.scheme in FILE_SCHEMES }.distinct()
+      // A caption/URL accompanying a shared file is not a second document. In particular it must
+      // not turn a single Pampa bundle into an unsupported mixed bundle + text import.
+      val text = if (uris.isEmpty()) intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.takeIf { it.isNotBlank() } else null
       if (text == null && uris.isEmpty()) return null
 
       // Gli extra si tolgono: una rotazione ricrea l'Activity con lo stesso intent, e senza questo
       // ogni giro riproporrebbe lo stesso import.
       intent.removeExtra(Intent.EXTRA_TEXT)
       intent.removeExtra(Intent.EXTRA_STREAM)
-      if (view) intent.data = null
+      intent.clipData = null
+      if (intent.data?.scheme in FILE_SCHEMES) intent.data = null
 
       return ImportRequest(uris = uris.take(MAX_ITEMS), text = text)
     }

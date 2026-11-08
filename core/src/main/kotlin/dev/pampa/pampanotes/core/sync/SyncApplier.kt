@@ -24,6 +24,10 @@ import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 
 data class ApplyOutcome(
@@ -130,43 +134,75 @@ class SyncApplier @Inject constructor(
     val deletes = SyncPlan.deletes(latest)
     val big = latest.size > BIG_PAGE
     val trash = mutableListOf<File>()
+    val created = mutableListOf<File>()
+    val fileWrites = SyncLocalFiles.beginWrites()
 
-    val outcome = db.withTransaction {
-      val sync = db.sync()
-      sync.setApplying(1)
-      // Su una pagina grande i trigger dell'indice di ricerca costano una scansione lineare per
-      // riga: si tolgono, si applica, si rimettono e si ricostruisce. Il DDL in SQLite e'
-      // transazionale, quindi anche questo torna indietro se qualcosa va storto.
-      if (big) SEARCH_TRIGGER_NAMES.forEach { db.openHelper.writableDatabase.execSQL("DROP TRIGGER IF EXISTS $it") }
-      try {
-        val tally = Tally(ownerId, deviceName, deviceNames, trash, revive)
-        var pending: List<WireChange> = upserts
-        while (pending.isNotEmpty()) {
-          val parked = pending.filterNot { applyOne(it, tally) }
-          if (parked.size == pending.size) break
-          pending = parked
+    return try {
+      val outcome = db.withTransaction {
+        val sync = db.sync()
+        sync.setApplying(1)
+        // Su una pagina grande i trigger dell'indice di ricerca costano una scansione lineare per
+        // riga: si tolgono, si applica, si rimettono e si ricostruisce. Il DDL in SQLite e'
+        // transazionale, quindi anche questo torna indietro se qualcosa va storto.
+        if (big) SEARCH_TRIGGER_NAMES.forEach { db.openHelper.writableDatabase.execSQL("DROP TRIGGER IF EXISTS $it") }
+        try {
+          val sessionVoices = if (latest.any { it.tbl == "sessions" || it.tbl == "audio_parts" })
+            SyncSessionVoiceMerge(db.sessions().all(), db.audioParts().all().associate { it.id to it.sessionId }) else null
+          val tally = Tally(ownerId, deviceName, deviceNames, trash, created, fileWrites, revive)
+          var pending: List<WireChange> = upserts
+          while (pending.isNotEmpty()) {
+            val parked = pending.filterNot { applyOne(it, tally, sessionVoices) }
+            if (parked.size == pending.size) break
+            pending = parked
+          }
+          for (change in deletes) applyOne(change, tally, sessionVoices)
+          // Session maps follow the audio ownership that actually survived this page, including
+          // SKIP and moves. Bookkeeping already remembers the exact remote hash as the base.
+          if (sessionVoices != null) {
+            val owners = db.audioParts().all().associate { it.id to it.sessionId }
+            for (session in sessionVoices.resolve(db.sessions().all(), owners)) {
+              db.sessions().upsert(session)
+              if (payloads.encode("sessions", session.id)?.hash != sync.meta("sessions", session.id)?.hash)
+                sync.markDirty(SyncOutboxEntity(tbl = "sessions", rowId = session.id, op = WireChange.OP_UPSERT))
+            }
+          }
+          // Sync retains RAW histories and their refinements. Shared audio coverage does not prove
+          // equivalent words/timings, and a later page may reference any of these versions.
+          if (big) {
+            PampaDatabase.SEARCH_TRIGGERS.forEach { db.openHelper.writableDatabase.execSQL(it) }
+            db.search().rebuild()
+          }
+          tally.outcome(orphans = pending)
+        } finally {
+          sync.setApplying(0)
         }
-        for (change in deletes) applyOne(change, tally)
-        // Sync retains RAW histories and their refinements. Shared audio coverage does not prove
-        // equivalent words/timings, and a later page may reference any of these versions.
-        if (big) {
-          PampaDatabase.SEARCH_TRIGGERS.forEach { db.openHelper.writableDatabase.execSQL(it) }
-          db.search().rebuild()
+      }
+      if (trash.isNotEmpty()) db.withTransaction {
+        // Alias retirement may leave another row using the same immutable local blob.
+        // Serialize the reference check and moves with other Room writers.
+        val retained = retainedFiles()
+        trash.distinctBy { it.canonicalFile }.filterNot { it.canonicalFile in retained }.forEach(::quarantine)
+      }
+      outcome
+    } finally {
+      withContext(NonCancellable) {
+        try {
+          // Cancellation may arrive after SQLite committed but before withTransaction returns.
+          // Current references determine cleanup; a failed query leaves ordinary orphan files.
+          if (created.isNotEmpty()) runCatching {
+            db.withTransaction { SyncLocalFiles.cleanupCreated(created, retainedFiles()) }
+          }
+        } finally {
+          // Keep copies protected through commit and cleanup, including stale sweep snapshots.
+          fileWrites.close()
         }
-        tally.outcome(orphans = pending)
-      } finally {
-        sync.setApplying(0)
       }
     }
-    if (trash.isNotEmpty()) db.withTransaction {
-      // Alias retirement may leave another row using the same immutable local blob.
-      // Serialize the reference check and moves with other Room writers.
-      val retained = db.audioParts().fileNames().map { files.audioFile(it).canonicalFile }.toSet() +
-        db.sources().storedFileNames().map { files.sourceFile(it).canonicalFile }
-      trash.distinctBy { it.canonicalFile }.filterNot { it.canonicalFile in retained }.forEach(::quarantine)
-    }
-    return outcome
   }
+
+  private suspend fun retainedFiles(): Set<File> =
+    db.audioParts().fileNames().map { files.audioFile(it).canonicalFile }.toSet() +
+      db.sources().storedFileNames().map { files.sourceFile(it).canonicalFile }
 
   /** I conti di una pagina, e dove si raccolgono i file da spostare a transazione chiusa. */
   private class Tally(
@@ -174,6 +210,8 @@ class SyncApplier @Inject constructor(
     val deviceName: String,
     val deviceNames: Map<String, String>,
     val trash: MutableList<File>,
+    val created: MutableList<File>,
+    val fileWrites: SyncLocalFiles.WriteOwner,
     val revive: Set<String>,
   ) {
     var applied = 0
@@ -182,12 +220,14 @@ class SyncApplier @Inject constructor(
     var forked = 0
     var resurrected = 0
     val revived = mutableListOf<String>()
+    var audioRows: MutableMap<String, AudioPartEntity>? = null
+    var sourceRows: MutableMap<String, SourceEntity>? = null
 
     fun outcome(orphans: List<WireChange>) = ApplyOutcome(applied, deleted, skipped, forked, orphans, resurrected, revived)
   }
 
   /** @return false se la riga aspetta il suo padre: niente e' stato scritto. */
-  private suspend fun applyOne(change: WireChange, tally: Tally): Boolean {
+  private suspend fun applyOne(change: WireChange, tally: Tally, sessionVoices: SyncSessionVoiceMerge?): Boolean {
     val sync = db.sync()
     val local = payloads.encode(change.tbl, change.id)
     var entry = sync.outboxEntry(change.tbl, change.id)
@@ -228,8 +268,9 @@ class SyncApplier @Inject constructor(
         // Un tombstone per una riga che non c'e': se era rimasta una voce fantasma, via anche quella.
         if (change.isDelete && local == null && entry != null) sync.forgetOutbox(change.tbl, change.id)
         if (local != null) {
-          if (change.tbl == "sessions" && !change.isDelete) adoptRemoteMarker(change, tally.deviceName)
+          if (change.tbl == "sessions" && !change.isDelete) adoptRemoteMarker(change, tally.deviceName, sessionVoices)
           if (change.tbl == "notes" && !change.isDelete) adoptRemoteNoteProvenance(change)
+          if (!change.isDelete) adoptRemoteProvenance(change)
           rebase(change, tally.ownerId)
         } else if (!change.isDelete && view.pendingDelete) {
           // Cancellata qui, e il remoto non ha niente di nuovo: la cancellazione resta, e sale
@@ -259,7 +300,7 @@ class SyncApplier @Inject constructor(
         // Rinata sopra una cancellazione di qui: i figli se ne sono andati con la cascata, e tornano
         // col riallineamento che [SyncRepository] fa prima del push.
         val reborn = !change.isDelete && view.pendingDelete && change.tbl in CONTAINERS
-        val keptLocalContent = if (change.isDelete) { delete(change, tally.trash); false } else upsert(change, tally.deviceName)
+        val keptLocalContent = if (change.isDelete) { delete(change, tally.trash); false } else upsert(change, tally, sessionVoices)
         bookkeep(change, tally.ownerId)
         if (reborn) tally.revived += SyncPlan.key(change.tbl, change.id)
         // La sessione e' quella remota, ma il segno «in trascrizione su» e' rimasto quello di qui:
@@ -291,6 +332,7 @@ class SyncApplier @Inject constructor(
 
   private suspend fun bookkeep(change: WireChange, ownerId: String) {
     val sync = db.sync()
+    rememberAttachmentName(change)
     if (change.isDelete) {
       sync.deleteMeta(change.tbl, change.id)
       sync.deleteOrigin(change.tbl, change.id)
@@ -308,12 +350,22 @@ class SyncApplier @Inject constructor(
    */
   private suspend fun rebase(change: WireChange, ownerId: String) {
     val sync = db.sync()
+    rememberAttachmentName(change)
     if (change.isDelete) {
       sync.deleteMeta(change.tbl, change.id)
     } else {
       sync.upsertMeta(SyncMetaEntity(change.tbl, change.id, serverSeq = change.seq, hash = change.hash, updatedAt = change.updatedAt))
       sync.upsertOrigin(SyncOriginEntity(change.tbl, change.id, ownerId))
     }
+  }
+
+  private suspend fun rememberAttachmentName(change: WireChange) {
+    val payload = if (change.isDelete) null else when (change.tbl) {
+      "audio_parts" -> db.audioParts().get(change.id)?.let { json.encodeToJsonElement(AudioPartEntity.serializer(), it) }
+      "sources" -> db.sources().get(change.id)?.let { json.encodeToJsonElement(SourceEntity.serializer(), it) }
+      else -> null
+    }
+    SyncLocalFiles.remember(db.sync(), change, payload)
   }
 
   /**
@@ -416,10 +468,11 @@ class SyncApplier @Inject constructor(
    * campi sono quelli di qui, ma quello che il remoto sa degli *altri* dispositivi e' piu' fresco.
    * Sotto la guardia, quindi niente outbox: la riga e' gia' sporca, e il push la porta col segno nuovo.
    */
-  private suspend fun adoptRemoteMarker(change: WireChange, deviceName: String) {
+  private suspend fun adoptRemoteMarker(change: WireChange, deviceName: String, sessionVoices: SyncSessionVoiceMerge?) {
     val payload = change.payload ?: return
     val local = db.sessions().get(change.id) ?: return
     val remote = decode(SessionEntity.serializer(), payload)
+    sessionVoices?.receive(remote)
     val (on, since) = TranscribingMarker.merge(local.transcribingOn, local.transcribingSince, remote.transcribingOn, remote.transcribingSince, deviceName)
     if (on != local.transcribingOn || since != local.transcribingSince) db.sessions().setMarker(change.id, on, since)
   }
@@ -434,9 +487,32 @@ class SyncApplier @Inject constructor(
     }
   }
 
+  /** Evidence also survives when a newer local edit wins the ordinary three-way merge. */
+  private suspend fun adoptRemoteProvenance(change: WireChange) {
+    val payload = change.payload ?: return
+    val changed = when (change.tbl) {
+      "audio_parts" -> {
+        val local = db.audioParts().get(change.id) ?: return
+        val merged = SyncMetadataMerge.audio(decode(AudioPartEntity.serializer(), payload), local)
+        if (merged != local) db.audioParts().upsert(merged)
+        merged != local
+      }
+      "transcripts" -> {
+        val local = db.transcripts().get(change.id) ?: return
+        val merged = SyncMetadataMerge.transcript(decode(TranscriptEntity.serializer(), payload), local)
+        if (merged != local) db.transcripts().upsert(merged)
+        merged != local
+      }
+      else -> false
+    }
+    if (changed) db.sync().markDirty(SyncOutboxEntity(tbl = change.tbl, rowId = change.id, op = WireChange.OP_UPSERT))
+  }
+
   /** True when private local metadata enriches the remote row and must be pushed back. */
-  private suspend fun upsert(change: WireChange, deviceName: String): Boolean {
+  private suspend fun upsert(change: WireChange, tally: Tally, sessionVoices: SyncSessionVoiceMerge?): Boolean {
     val payload = change.payload ?: return false
+    val context = currentCoroutineContext()
+    val checkpoint = { context.ensureActive() }
     when (change.tbl) {
       "folders" -> db.folders().upsert(decode(FolderEntity.serializer(), payload))
       "notes" -> {
@@ -456,25 +532,52 @@ class SyncApplier @Inject constructor(
         // Solo chi trascrive sa se il suo lavoro c'e' ancora: il segno di questo dispositivo non lo
         // decide una copia arrivata da fuori, in nessuno dei due versi.
         val remote = decode(SessionEntity.serializer(), payload)
+        sessionVoices?.receive(remote)
         val local = db.sessions().get(remote.id)
-        val merged = if (local == null) remote else TranscribingMarker.mergeInto(local, remote, deviceName)
+        val merged = if (local == null) remote else TranscribingMarker.mergeInto(local, remote, tally.deviceName)
         db.sessions().upsert(merged)
         return merged != remote
       }
-      "audio_parts" -> db.audioParts().upsert(decode(AudioPartEntity.serializer(), payload))
+      "audio_parts" -> {
+        val remote = decode(AudioPartEntity.serializer(), payload)
+        val local = db.audioParts().get(remote.id)
+        val merged = SyncMetadataMerge.audio(local, remote)
+        val rows = tally.audioRows ?: db.audioParts().all().associateBy { it.id }.toMutableMap().also { tally.audioRows = it }
+        val others = rows.values.filter { it.id != remote.id }
+        val name = SyncLocalFiles.selectName(files.audio, remote.fileName, remote.sizeBytes, remote.sha256,
+          local?.fileName, others.map { it.fileName }, others.asSequence().filter { it.sha256.equals(remote.sha256, true) }.map { it.fileName },
+          tally.created, owner = tally.fileWrites, checkpoint = checkpoint)!!
+        val applied = merged.copy(fileName = name)
+        db.audioParts().upsert(applied)
+        rows[remote.id] = applied
+        // Public evidence must sync; the private filename alone must never echo.
+        return merged != remote
+      }
       "transcripts" -> {
-        val transcript = decode(TranscriptEntity.serializer(), payload)
+        val remote = decode(TranscriptEntity.serializer(), payload)
+        val transcript = SyncMetadataMerge.transcript(db.transcripts().get(remote.id), remote)
         db.transcripts().upsert(transcript)
         // I segmenti si rifanno in blocco, come fa `rebuildRaw`: i loro id locali non contano.
         db.segments().deleteByTranscript(transcript.id)
         change.segments?.takeIf { it.isNotEmpty() }?.let { list ->
           db.segments().insertAll(list.map { it.copy(id = 0, transcriptId = transcript.id) })
         }
+        return transcript != remote
       }
       "sources" -> {
         val remote = decode(SourceEntity.serializer(), payload)
-        val merged = SourceIdentityMerge.into(db.sources().get(remote.id), remote)
-        db.sources().upsert(merged)
+        val local = db.sources().get(remote.id)
+        val merged = SourceIdentityMerge.into(local, remote)
+        val rows = tally.sourceRows ?: db.sources().all().associateBy { it.id }.toMutableMap().also { tally.sourceRows = it }
+        val others = rows.values.filter { it.id != remote.id }
+        val name = SyncLocalFiles.selectName(files.sources, remote.storedFileName, remote.sizeBytes, remote.sha256,
+          local?.storedFileName, others.mapNotNull { it.storedFileName }, others.asSequence().filter { it.sha256.equals(remote.sha256, true) }.map { it.storedFileName },
+          tally.created, owner = tally.fileWrites,
+          preserveFileless = SyncLocalFiles.preserveFilelessSource(local, remote), checkpoint = checkpoint)
+        val applied = merged.copy(storedFileName = name)
+        db.sources().upsert(applied)
+        rows[remote.id] = applied
+        // Intrinsic identity still syncs; only the local path is projected by SyncPayloads.
         return merged != remote
       }
       "export_presets" -> db.exportPresets().upsert(decode(ExportPresetEntity.serializer(), payload))
@@ -492,8 +595,14 @@ class SyncApplier @Inject constructor(
         tree.sessions.forEach { sessionId ->
           db.jobs().activeForSession(sessionId)?.let { db.jobs().setState(it.id, JobState.CANCELLED, System.currentTimeMillis()) }
         }
-        tree.parts.forEach { trash += files.audioFile(it.fileName) }
-        tree.sources.forEach { source -> source.storedFileName?.let { trash += files.sourceFile(it) } }
+        tree.parts.forEach {
+          trash += files.audioFile(it.fileName)
+          SyncLocalFiles.forget(db.sync(), "audio_parts", it.id)
+        }
+        tree.sources.forEach { source ->
+          source.storedFileName?.let { trash += files.sourceFile(it) }
+          SyncLocalFiles.forget(db.sync(), "sources", source.id)
+        }
         when (change.tbl) {
           "folders" -> db.folders().delete(change.id)
           "notes" -> db.notes().delete(change.id)

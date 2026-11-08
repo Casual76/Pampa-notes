@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="pn_export_target">Pampa Notes · .pn</string>
+  <string name="pn_export_target_detail">Transfer notes to Pampa Notes on another device or share them with someone.</string>
+  <string name="pn_export_ai_title">For AI assistants</string>
+  <string name="pn_export_contents">Includes notes, folders, tags, every raw and refined version, the selected version, available audio, originals and images, speakers, dates, and existing segment and word timings. Untimed versions remain untimed.</string>
+  <string name="pn_export_lossless">One losslessly compressed .pn file: audio keeps the same bytes. Before writing, I also look for missing attachments in available cloud transfers, without needing a PC. Unrecoverable attachments are reported.</string>
+  <string name="pn_export_estimate">Approximate size before compression and deduplication: %1$s</string>
+  <string name="pn_export_checking">Checking available attachments</string>
+  <string name="pn_export_fetching">Getting attachments: %1$d of %2$d</string>
+  <string name="pn_export_fetching_detail">Looking for files on this device, in cloud transfers that are still valid, or on your home computer. You can cancel retrieval.</string>
+  <string name="pn_export_missing_help">You can cancel and resend the files from the device that keeps them, or retry with your computer on. “Export without” reports missing attachments in the result; a .pn file also keeps their metadata.</string>
+  <string name="pn_export_missing_unreachable">no ready cloud transfer and home computer unreachable</string>
+  <string name="pn_export_missing_failed">file retrieval failed</string>
+  <string name="pn_export_missing_no_file">metadata exists, but no stored original file is available to retrieve</string>
+  <string name="pn_export_done_contents">The .pn file keeps every history, the selection, speakers, dates and available timings.</string>
+  <plurals name="pn_export_skipped_pages">
+    <item quantity="one">%d page unavailable: its file is not included.</item>
+    <item quantity="other">%d pages unavailable: their files are not included.</item>
+  </plurals>
+</resources>

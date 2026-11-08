@@ -21,6 +21,8 @@ import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 /** Dove finisce quello che si importa. */
@@ -126,8 +128,9 @@ class ImportCoordinator @Inject constructor(
         uris.forEach { uri ->
           inspected += try { inspectOne(uri) } catch (error: Exception) {
             if (error is kotlinx.coroutines.CancellationException) throw error
+            android.util.Log.w("PampaNotes", "Import inspection failed", error)
             ImportCandidate(Ids.newId(), uri, null, runCatching { queryDisplayName(uri) }.getOrNull() ?: "import", SourceKind.OTHER,
-              "application/octet-stream", 0, "", inspectionError = error.message ?: "Unable to read file")
+              "application/octet-stream", 0, "", inspectionError = ImportFailure.of(error).name)
           }
         }
         inspected
@@ -159,14 +162,23 @@ class ImportCoordinator @Inject constructor(
   }
 
   private suspend fun inspectOne(uri: Uri): ImportCandidate {
-    val displayName = queryDisplayName(uri) ?: uri.lastPathSegment?.substringAfterLast('/') ?: "importato"
-    val declaredMime = context.contentResolver.getType(uri)
+    val ctx = currentCoroutineContext()
+    val checkpoint = { ctx.ensureActive() }
+    checkpoint()
+    val displayName = queryDisplayName(uri)?.takeIf { it.isNotBlank() }
+      ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: "import"
+    // Provider metadata is a hint. Some providers allow reading bytes but reject getType/query.
+    val declaredMime = try { context.contentResolver.getType(uri) } catch (error: Exception) {
+      if (error is kotlinx.coroutines.CancellationException) throw error
+      null
+    }
 
     val temp = files.tempFile(prefix = "import", suffix = ".part")
     try {
       val (sha, size) = context.contentResolver.openInputStream(uri)?.use { input ->
-        Hashing.copyHashing(input, temp)
-      } ?: throw IllegalStateException("non si apre: $uri")
+        ImportFileCopy.copy(input, temp, checkpoint = checkpoint)
+      } ?: throw ImportFailureException(ImportFailure.UNAVAILABLE)
+      if (size == 0L) throw ImportFailureException(ImportFailure.EMPTY)
 
       val head = temp.inputStream().use { input ->
         val buffer = ByteArray(512)
@@ -174,14 +186,19 @@ class ImportCoordinator @Inject constructor(
         if (read <= 0) ByteArray(0) else buffer.copyOf(read)
       }
       var kind = MimeSniffer.sniff(displayName, declaredMime, head)
+      checkpoint()
       val isBundle = PampaBundleArchive.isBundle(temp)
       val bundle = if (isBundle) bundleImporter.get().inspect(temp) else null
       if (bundle != null) kind = SourceKind.OTHER
-      else if (kind == SourceKind.SDOCX || (head.size >= 2 && head[0] == 0x50.toByte() && head[1] == 0x4b.toByte())) {
+      else if (kind == SourceKind.SDOCX || MimeSniffer.isZip(head)) {
         kind = runCatching { ArchiveSniffer.classify(zipEntryNames(temp)) }.getOrDefault(SourceKind.OTHER)
       }
 
-      require(!(kind == SourceKind.OTHER && bundle == null && (displayName.endsWith(".zip", true) || declaredMime in setOf("application/zip", "application/x-zip-compressed") || (head.size >= 2 && head[0] == 0x50.toByte() && head[1] == 0x4b.toByte())))) { "Unsupported ZIP archive" }
+      if (kind == SourceKind.OTHER && bundle == null && MimeSniffer.isPampa(displayName, declaredMime)) throw ImportFailureException(ImportFailure.CORRUPT)
+      if (kind == SourceKind.OTHER && bundle == null &&
+        (displayName.endsWith(".zip", true) || declaredMime?.substringBefore(';')?.trim()?.lowercase() in setOf("application/zip", "application/x-zip-compressed") || MimeSniffer.isZip(head))) {
+        throw ImportFailureException(ImportFailure.UNSUPPORTED_ARCHIVE)
+      }
 
       // Un doppione: un documento gia' importato, oppure — per l'audio, che non ha una fonte — una
       // parte con lo stesso contenuto, da cui si risale alla nota passando per la sua sessione.

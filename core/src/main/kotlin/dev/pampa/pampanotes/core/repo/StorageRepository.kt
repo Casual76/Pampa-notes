@@ -243,12 +243,20 @@ class StorageRepository @Inject constructor(
 
   /** Elimina i file che nessuna riga cita piu'. Torna quanti ne ha tolti. */
   suspend fun sweepOrphans(): Int = withContext(Dispatchers.IO) {
-    val activeJobs = jobs.all().filter { !it.state.isTerminal }.map { it.id }.toSet()
-    files.sweepOrphans(
-      referencedAudio = audioParts.fileNames().toSet(),
-      referencedSources = sources.storedFileNames().toSet(),
-      activeJobIds = activeJobs,
-    )
+    // Capture protection before the DB references: an import may commit and release its files
+    // while these queries are running. The sweep must still recognize that older snapshot.
+    val snapshot = files.beginOrphanSweep()
+    try {
+      val activeJobs = jobs.all().filter { !it.state.isTerminal }.map { it.id }.toSet()
+      files.sweepOrphans(
+        referencedAudio = audioParts.fileNames().toSet(),
+        referencedSources = sources.storedFileNames().toSet(),
+        activeJobIds = activeJobs,
+        snapshot = snapshot,
+      )
+    } finally {
+      snapshot.close()
+    }
   }
 
   suspend fun clearExports(): Int = withContext(Dispatchers.IO) { files.clearExports() }

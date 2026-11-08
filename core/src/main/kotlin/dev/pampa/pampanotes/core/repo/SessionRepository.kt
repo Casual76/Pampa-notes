@@ -62,9 +62,16 @@ class SessionRepository @Inject constructor(
   fun observeTranscripts(sessionId: String): Flow<List<TranscriptEntity>> = transcripts.observeBySession(sessionId)
 
   suspend fun rename(sessionId: String, title: String, date: String) {
-    val clean = Dates.parseOrNull(date)?.let { date } ?: sessions.get(sessionId)?.date ?: Dates.today()
-    sessions.rename(sessionId, title.trim(), clean, System.currentTimeMillis())
-    touchNote(sessionId)
+    val changed = db.withTransaction {
+      val session = sessions.get(sessionId) ?: return@withTransaction false
+      val clean = Dates.parseOrNull(date)?.let { date } ?: session.date
+      val cleanTitle = title.trim()
+      if (session.title == cleanTitle && session.date == clean) return@withTransaction false
+      captureVoiceNames(session)
+      sessions.rename(sessionId, cleanTitle, clean, System.currentTimeMillis())
+      true
+    }
+    if (changed) touchNote(sessionId)
   }
 
   /**
@@ -75,9 +82,13 @@ class SessionRepository @Inject constructor(
   suspend fun renameVoice(sessionId: String, key: String, name: String?) {
     val changed = db.withTransaction {
       val session = sessions.get(sessionId) ?: return@withTransaction false
-      val updated = VoiceNames.rename(session.voiceNames, key, name)
-      if (updated == session.voiceNames) return@withTransaction false
-      sessions.setVoiceNames(sessionId, updated, System.currentTimeMillis())
+      val actualIds = parts.bySession(sessionId).map { it.id }
+      if (key.substringBefore('|') !in actualIds || VoiceNames.decode(session.voiceNames)[key] == VoiceNames.normalize(name)) return@withTransaction false
+      val now = System.currentTimeMillis()
+      val captured = VoiceNames.capture(session.voiceNames, actualIds, session.updatedAt)
+      val updated = VoiceNames.rename(captured, key, name, now)
+      if (updated == captured) return@withTransaction false
+      sessions.setVoiceNames(sessionId, updated, now)
       true
     }
     if (changed) touchNote(sessionId)
@@ -85,8 +96,8 @@ class SessionRepository @Inject constructor(
 
   /** Quale trascrizione si mostra e si esporta: la grezza, o una delle sue raffinate. */
   suspend fun setActiveTranscript(sessionId: String, transcriptId: String?) {
-    sessions.setActiveTranscript(sessionId, transcriptId, System.currentTimeMillis())
-    touchNote(sessionId)
+    val changed = db.withTransaction { selectTranscript(sessionId, transcriptId) }
+    if (changed) touchNote(sessionId)
   }
 
   suspend fun createSession(noteId: String, date: String = Dates.today(), title: String = ""): SessionEntity {
@@ -209,9 +220,11 @@ class SessionRepository @Inject constructor(
       val part = parts.get(partId) ?: return@withTransaction null
       val session = sessions.get(part.sessionId) ?: return@withTransaction null
       val before = captureTimelines(setOf(part.sessionId))
+      val now = System.currentTimeMillis()
+      val captured = VoiceNames.capture(session.voiceNames, parts.bySession(session.id).map { it.id }, session.updatedAt)
+      val kept = VoiceNames.forget(captured, listOf(partId), now)
+      if (kept != session.voiceNames) sessions.setVoiceNames(session.id, kept, now)
       parts.delete(partId)
-      val kept = VoiceNames.forget(session.voiceNames, listOf(partId))
-      if (kept != session.voiceNames) sessions.setVoiceNames(session.id, kept, System.currentTimeMillis())
       renumber(parts.bySession(session.id))
       rebuildTimelines(before, setOf(session.id))
       deleteIfEmpty(session.id)
@@ -222,14 +235,17 @@ class SessionRepository @Inject constructor(
   }
 
   suspend fun deleteSession(sessionId: String) {
-    val session = sessions.get(sessionId) ?: return
-    parts.bySession(sessionId).forEach { part ->
-      segments.deleteByPart(part.id)
-      runCatching { files.audioFile(part.fileName).delete() }
+    val removedFiles = db.withTransaction {
+      val session = sessions.get(sessionId) ?: return@withTransaction emptyList<String>()
+      val recordings = parts.bySession(sessionId)
+      recordings.forEach { segments.deleteByPart(it.id) }
+      sessions.delete(sessionId)
+      renumberSessions(session.noteId)
+      notes.touch(session.noteId, System.currentTimeMillis())
+      recordings.map { it.fileName }
     }
-    sessions.delete(sessionId)
-    renumberSessions(session.noteId)
-    notes.touch(session.noteId, System.currentTimeMillis())
+    // Keep bytes intact if the transaction (including clock capture) fails.
+    removedFiles.forEach { name -> runCatching { files.audioFile(name).delete() } }
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -296,14 +312,17 @@ class SessionRepository @Inject constructor(
       losers.forEach { deleteIfEmpty(it) }
 
       plan.redates.forEach { (sessionId, date) ->
-        sessions.get(sessionId)?.let { sessions.rename(sessionId, it.title, date, now) }
+        sessions.get(sessionId)?.takeIf { it.date != date }?.let {
+          captureVoiceNames(it)
+          sessions.rename(sessionId, it.title, date, now)
+        }
       }
       // Le sessioni erano in ordine di data (il caso normale): ci restano, con quelle nuove al loro
       // posto. Altrimenti qualcuno le ha messe in un altro ordine, e quelle nuove vanno in fondo.
       if (wasByDate) {
         sessions.plainByNote(noteId)
           .sortedWith(compareBy<SessionEntity> { it.date }.thenBy { it.position })
-          .forEachIndexed { position, session -> if (session.position != position) sessions.setPosition(session.id, position, now) }
+          .forEachIndexed { position, session -> setSessionPosition(session, position, now) }
       } else {
         renumberSessions(noteId)
       }
@@ -345,7 +364,7 @@ class SessionRepository @Inject constructor(
     before.transcripts.forEach { segments.deleteByTranscript(it.id) }
     segments.insertAll(plan.segments)
     plan.active.forEach { (sessionId, id) ->
-      if (sessions.get(sessionId)?.activeTranscriptId != id) sessions.setActiveTranscript(sessionId, id, System.currentTimeMillis())
+      selectTranscript(sessionId, id)
     }
   }
 
@@ -432,13 +451,14 @@ class SessionRepository @Inject constructor(
         transcripts.deleteChildren(it.id)
         transcripts.delete(it.id)
       }
-      sessions.setActiveTranscript(target.sessionId, transcript.id, now)
       // Le parti appena trascritte hanno una separazione delle voci nuova, con etichette ridate da
       // capo: i nomi di prima potrebbero finire sulle frasi di un altro (vedi `VoiceNames.forget`).
       sessions.get(target.sessionId)?.let { session ->
-        val kept = VoiceNames.forget(session.voiceNames, written)
+        val captured = VoiceNames.capture(session.voiceNames, inSession.map { it.id }, session.updatedAt)
+        val kept = VoiceNames.forget(captured, written, now)
         if (kept != session.voiceNames) sessions.setVoiceNames(target.sessionId, kept, now)
       }
+      selectTranscript(target.sessionId, transcript.id, now)
       rebuildRawNow(target.sessionId)
     }
     // La nota non si tocca: una trascrizione finita non e' una modifica di chi l'ha scritta, e la
@@ -474,17 +494,20 @@ class SessionRepository @Inject constructor(
   }
 
   private suspend fun renumber(ordered: List<AudioPartEntity>) {
+    if (ordered.withIndex().none { (position, part) -> part.position != position }) return
     val now = System.currentTimeMillis()
+    val session = ordered.firstOrNull()?.sessionId?.let { sessions.get(it) }
+    if (session != null) captureVoiceNames(session)
     ordered.forEachIndexed { position, part ->
       if (part.position != position) parts.move(part.id, part.sessionId, position)
     }
-    if (ordered.isNotEmpty()) sessions.get(ordered.first().sessionId)?.let { sessions.upsert(it.copy(updatedAt = now)) }
+    if (session != null) sessions.get(session.id)?.let { sessions.upsert(it.copy(updatedAt = now)) }
   }
 
   private suspend fun renumberSessions(noteId: String) {
     val now = System.currentTimeMillis()
     sessions.plainByNote(noteId).forEachIndexed { position, session ->
-      if (session.position != position) sessions.setPosition(session.id, position, now)
+      setSessionPosition(session, position, now)
     }
   }
 
@@ -494,7 +517,7 @@ class SessionRepository @Inject constructor(
     sessions.plainByNote(after.noteId)
       .filter { it.position > after.position }
       .sortedByDescending { it.position }
-      .forEach { sessions.setPosition(it.id, it.position + 1, now) }
+      .forEach { setSessionPosition(it, it.position + 1, now) }
 
     val created = SessionEntity(
       id = Ids.newId(),
@@ -514,12 +537,39 @@ class SessionRepository @Inject constructor(
    * in quella registrazione resta la stessa persona (vedi `VoiceNames.carry`).
    */
   private suspend fun carryVoiceNames(fromSessionId: String, toSessionId: String, partIds: List<String>) {
+    if (fromSessionId == toSessionId || partIds.isEmpty()) return
     val from = sessions.get(fromSessionId) ?: return
     val to = sessions.get(toSessionId) ?: return
-    val (newFrom, newTo) = VoiceNames.carry(from.voiceNames, to.voiceNames, partIds)
+    val moving = partIds.toSet()
+    // Callers can move the DAO rows before OR after this method. Reconstruct the old owners.
+    val sourceIds = parts.bySession(fromSessionId).map { it.id }.toSet() + moving
+    val targetIds = parts.bySession(toSessionId).map { it.id }.toSet() - moving
+    val source = VoiceNames.capture(from.voiceNames, sourceIds, from.updatedAt)
+    val target = VoiceNames.capture(to.voiceNames, targetIds, to.updatedAt)
+    val (newFrom, newTo) = VoiceNames.carry(source, target, partIds)
     val now = System.currentTimeMillis()
     if (newTo != to.voiceNames) sessions.setVoiceNames(toSessionId, newTo, now)
     if (newFrom != from.voiceNames) sessions.setVoiceNames(fromSessionId, newFrom, now)
+  }
+
+  /** Capture at the old fallback. The caller's transaction then changes metadata/selection. */
+  private suspend fun captureVoiceNames(session: SessionEntity) {
+    val captured = VoiceNames.capture(session.voiceNames, parts.bySession(session.id).map { it.id }, session.updatedAt)
+    if (captured != session.voiceNames) sessions.setVoiceNames(session.id, captured, session.updatedAt)
+  }
+
+  private suspend fun selectTranscript(sessionId: String, transcriptId: String?, editedAt: Long? = null): Boolean {
+    val session = sessions.get(sessionId) ?: return false
+    if (session.activeTranscriptId == transcriptId) return false
+    captureVoiceNames(session)
+    sessions.setActiveTranscript(sessionId, transcriptId, editedAt ?: System.currentTimeMillis())
+    return true
+  }
+
+  private suspend fun setSessionPosition(session: SessionEntity, position: Int, now: Long) {
+    if (session.position == position) return
+    captureVoiceNames(session)
+    sessions.setPosition(session.id, position, now)
   }
 
   private suspend fun touchNote(sessionId: String) {

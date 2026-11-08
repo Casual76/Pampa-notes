@@ -1,13 +1,16 @@
 package dev.pampa.pampanotes.core.importing
 
 import android.media.MediaMetadataRetriever
+import androidx.room.withTransaction
 import dev.pampa.pampanotes.core.db.AudioPartDao
 import dev.pampa.pampanotes.core.db.AudioPartEntity
+import dev.pampa.pampanotes.core.db.PampaDatabase
 import dev.pampa.pampanotes.core.db.SessionDao
 import dev.pampa.pampanotes.core.db.SessionEntity
 import dev.pampa.pampanotes.core.db.SourceStatus
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.model.Ids
+import dev.pampa.pampanotes.core.transcription.VoiceNames
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -42,6 +45,7 @@ class AudioImporter @Inject constructor(
   private val files: AppFiles,
   private val sessions: SessionDao,
   private val parts: AudioPartDao,
+  private val db: PampaDatabase,
 ) {
 
   /**
@@ -140,7 +144,13 @@ class AudioImporter @Inject constructor(
       }
     }
 
-    sessions.get(sessionId)?.let { sessions.upsert(it.copy(updatedAt = System.currentTimeMillis())) }
+    if (results.any { it.status == SourceStatus.OK }) db.withTransaction {
+      // Serialize the entire read/capture/touch with SessionRepository's title and voice edits.
+      // Copying/probing and the preceding part writes deliberately stay outside this transaction.
+      val session = sessions.get(sessionId) ?: return@withTransaction
+      val captured = VoiceNames.capture(session.voiceNames, parts.bySession(sessionId).map { it.id }, session.updatedAt)
+      sessions.upsert(session.copy(voiceNames = captured, updatedAt = System.currentTimeMillis()))
+    }
     return results
   }
 

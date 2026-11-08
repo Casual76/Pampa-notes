@@ -15,6 +15,7 @@ import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.db.TranscriptKind
 import dev.pampa.pampanotes.core.db.TranscriptionRunEntity
 import dev.pampa.pampanotes.core.files.AppFiles
+import dev.pampa.pampanotes.core.files.Hashing
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -27,6 +28,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -56,7 +58,7 @@ class SyncApplierTest {
     val payloads = SyncPayloads(
       folders = db.folders(), notes = db.notes(), tags = db.tags(), sessions = db.sessions(),
       audioParts = db.audioParts(), transcripts = db.transcripts(), segments = db.segments(),
-      sources = db.sources(), presets = db.exportPresets(), runs = db.stats(),
+      sources = db.sources(), presets = db.exportPresets(), runs = db.stats(), sync = db.sync(),
     )
     applier = SyncApplier(db, files, payloads)
   }
@@ -295,16 +297,19 @@ class SyncApplierTest {
     File(trash, "p.m4a").delete(); File(trash, "x.pdf").delete()
   }
 
-  @Test fun alias_tombstones_preserve_audio_and_source_bytes_used_by_canonical_rows(): Unit = runBlocking {
+  @Test fun alias_tombstones_preserve_independent_audio_and_source_bytes_at_canonical_paths(): Unit = runBlocking {
     val suffix = java.util.UUID.randomUUID().toString()
-    val original = part("legacy-audio", "s").copy(fileName = "shared-$suffix.wav")
-    val source = SourceEntity("legacy-source", "n", SourceKind.PDF, "original.pdf", "application/pdf", 4, "source-hash",
+    val original = part("legacy-audio", "s").copy(fileName = "shared-$suffix.wav",
+      sizeBytes = "original audio bytes".toByteArray().size.toLong(), sha256 = Hashing.sha256("original audio bytes"))
+    val source = SourceEntity("legacy-source", "n", SourceKind.PDF, "original.pdf", "application/pdf",
+      "original source bytes".toByteArray().size.toLong(), Hashing.sha256("original source bytes"),
       storedFileName = "shared-$suffix.pdf", importedAt = 1)
     apply(upFolder(folder("f"), 1), upNote(note("n", "f"), 2), upSession(session("s", "n"), 3),
       up("audio_parts", original.id, 4, AudioPartEntity.serializer(), original),
       up("sources", source.id, 5, SourceEntity.serializer(), source))
     val audio = files.audioFile(original.fileName).apply { writeText("original audio bytes") }
     val document = files.sourceFile(source.storedFileName!!).apply { writeText("original source bytes") }
+    val owned = mutableListOf(audio, document)
     try {
       clean()
       val canonical = original.copy(id = "native-audio")
@@ -313,20 +318,22 @@ class SyncApplierTest {
         up("sources", canonicalSource.id, 7, SourceEntity.serializer(), canonicalSource),
         del("audio_parts", original.id, 8), del("sources", source.id, 9))
       assertNull(db.audioParts().get(original.id)); assertNull(db.sources().get(source.id))
-      assertEquals(canonical.fileName, db.audioParts().get(canonical.id)!!.fileName)
-      assertEquals(canonicalSource.storedFileName, db.sources().get(canonicalSource.id)!!.storedFileName)
-      assertEquals("original audio bytes", audio.readText())
-      assertEquals("original source bytes", document.readText())
+      val canonicalAudio = files.audioFile(db.audioParts().get(canonical.id)!!.fileName)
+      val canonicalDocument = files.sourceFile(db.sources().get(canonicalSource.id)!!.storedFileName!!)
+      owned += listOf(canonicalAudio, canonicalDocument)
+      assertNotEquals(audio, canonicalAudio)
+      assertNotEquals(document, canonicalDocument)
+      assertEquals("original audio bytes", canonicalAudio.readText())
+      assertEquals("original source bytes", canonicalDocument.readText())
       clean()
       apply(del("audio_parts", canonical.id, 10), del("sources", canonicalSource.id, 11))
-      assertFalse(audio.exists()); assertFalse(document.exists())
+      assertFalse(canonicalAudio.exists()); assertFalse(canonicalDocument.exists())
       val trash = File(files.root, "trash/" + SimpleDateFormat("yyyyMMdd", Locale.US).format(Date()))
-      assertEquals("original audio bytes", File(trash, audio.name).readText())
-      assertEquals("original source bytes", File(trash, document.name).readText())
+      assertEquals("original audio bytes", File(trash, canonicalAudio.name).readText())
+      assertEquals("original source bytes", File(trash, canonicalDocument.name).readText())
     } finally {
-      audio.delete(); document.delete()
       val trash = File(files.root, "trash/" + SimpleDateFormat("yyyyMMdd", Locale.US).format(Date()))
-      File(trash, audio.name).delete(); File(trash, document.name).delete()
+      owned.forEach { it.delete(); File(trash, it.name).delete() }
     }
   }
 

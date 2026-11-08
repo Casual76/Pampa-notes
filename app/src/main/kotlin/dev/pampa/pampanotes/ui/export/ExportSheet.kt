@@ -173,7 +173,8 @@ private fun ColumnScope.ConfiguringBody(state: ExportUiState, viewModel: ExportV
   // Il peso prima di esportare: e' qui che si capisce se una chat lo prendera' o no.
   state.estimate?.let { estimate ->
     Text(
-      text = stringResource(R.string.export_estimate, Formats.bytes(estimate.bytes), tokens(estimate.tokens)),
+      text = if (state.options.isPampa) stringResource(R.string.pn_export_estimate, Formats.bytes(estimate.bytes))
+        else stringResource(R.string.export_estimate, Formats.bytes(estimate.bytes), tokens(estimate.tokens)),
       style = MaterialTheme.typography.bodyMedium,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -266,12 +267,13 @@ private fun ColumnScope.FetchingBody(state: ExportUiState) {
   val total = fetch?.total ?: 0
   // Il file che sta arrivando, contato da uno: «1 di 12» mentre scarica il primo.
   val current = ((fetch?.done ?: 0) + 1).coerceAtMost(total.coerceAtLeast(1))
-  Text(text = stringResource(R.string.export_fetching, current, total), style = MaterialTheme.typography.titleLarge)
+  Text(text = if (fetch == null) stringResource(R.string.pn_export_checking)
+    else stringResource(R.string.pn_export_fetching, current, total), style = MaterialTheme.typography.titleLarge)
   fetch?.label?.takeIf { it.isNotBlank() }?.let { name ->
     Text(text = name, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
   }
   FluidProgressBar(progress = { fetch?.fraction ?: 0f }, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
-  FluidSectionFootnote(text = stringResource(R.string.export_fetching_detail))
+  FluidSectionFootnote(text = stringResource(R.string.pn_export_fetching_detail))
 }
 
 @Composable
@@ -287,7 +289,7 @@ private fun ColumnScope.MissingBody(state: ExportUiState) {
     FluidSectionFootnote(text = pluralStringResource(R.plurals.export_fetched, state.fetched, state.fetched))
   }
   FluidSectionFootnote(
-    text = stringResource(if (state.computerSilent) R.string.export_missing_retry else R.string.export_missing_without),
+    text = stringResource(R.string.pn_export_missing_help),
   )
 }
 
@@ -338,8 +340,9 @@ private fun kindCount(kind: ExportFileKind, count: Int): String = pluralStringRe
 private fun reasonText(reason: MissingReason): String = stringResource(
   when (reason) {
     MissingReason.NOT_ARCHIVED -> R.string.export_missing_not_archived
-    MissingReason.UNREACHABLE -> R.string.export_missing_unreachable
-    MissingReason.FAILED -> R.string.export_missing_failed
+    MissingReason.UNREACHABLE -> R.string.pn_export_missing_unreachable
+    MissingReason.FAILED -> R.string.pn_export_missing_failed
+    MissingReason.NO_FILE -> R.string.pn_export_missing_no_file
   },
 )
 
@@ -387,6 +390,7 @@ private fun ColumnScope.DoneBody(state: ExportUiState) {
       color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
   }
+  if (state.options.isPampa) FluidSectionFootnote(text = stringResource(R.string.pn_export_done_contents))
   if (state.fetched > 0) {
     Text(
       text = pluralStringResource(R.plurals.export_fetched, state.fetched, state.fetched),
@@ -398,23 +402,30 @@ private fun ColumnScope.DoneBody(state: ExportUiState) {
   if (state.missing.isNotEmpty()) {
     FluidSectionFootnote(text = stringResource(R.string.export_done_missing))
     MissingList(state.missing)
-  } else {
-    // Mancanti scoperti solo scrivendo (un file sparito fra il controllo e la scrittura): si dicono
-    // lo stesso, con le frasi di prima.
-    if (result.skippedAudio > 0) {
-      Text(
-        text = pluralStringResource(R.plurals.export_skipped_audio, result.skippedAudio, result.skippedAudio),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.error,
-      )
-    }
-    if (result.skippedSources > 0) {
-      Text(
-        text = pluralStringResource(R.plurals.export_skipped_sources, result.skippedSources, result.skippedSources),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.error,
-      )
-    }
+  }
+  // Also report new omissions discovered while writing, even if other files were already missing.
+  fun additional(kind: ExportFileKind, actual: Int) =
+    (actual - state.missing.filter { it.kind == kind }.sumOf { it.count }).coerceAtLeast(0)
+  val audio = additional(ExportFileKind.AUDIO, result.skippedAudio)
+  val sources = additional(ExportFileKind.SOURCE, result.skippedSources)
+  val pages = additional(ExportFileKind.PAGE, result.skippedPages)
+  if (audio > 0) {
+    Text(
+      text = pluralStringResource(R.plurals.export_skipped_audio, audio, audio),
+      style = MaterialTheme.typography.bodySmall,
+      color = MaterialTheme.colorScheme.error,
+    )
+  }
+  if (sources > 0) {
+    Text(
+      text = pluralStringResource(R.plurals.export_skipped_sources, sources, sources),
+      style = MaterialTheme.typography.bodySmall,
+      color = MaterialTheme.colorScheme.error,
+    )
+  }
+  if (pages > 0) {
+    Text(text = pluralStringResource(R.plurals.pn_export_skipped_pages, pages, pages),
+      style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
   }
 }
 

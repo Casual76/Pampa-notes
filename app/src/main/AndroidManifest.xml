@@ -81,6 +81,7 @@
         <data android:mimeType="application/zip" />
         <data android:mimeType="application/x-zip-compressed" />
         <data android:mimeType="application/octet-stream" />
+        <data android:mimeType="application/vnd.pampa.notes" />
         <!-- Samsung Notes condivide i suoi .sdocx cosi', e senza questa riga l'app non compare fra quelle proposte. -->
         <data android:mimeType="application/sdoc" />
         <data android:mimeType="application/sdocx" />
@@ -100,6 +101,7 @@
         <data android:mimeType="application/zip" />
         <data android:mimeType="application/x-zip-compressed" />
         <data android:mimeType="application/octet-stream" />
+        <data android:mimeType="application/vnd.pampa.notes" />
         <!-- Samsung Notes condivide i suoi .sdocx cosi', e senza questa riga l'app non compare fra quelle proposte. -->
         <data android:mimeType="application/sdoc" />
         <data android:mimeType="application/sdocx" />
@@ -122,6 +124,18 @@
         <data android:mimeType="application/zip" />
         <data android:mimeType="application/x-zip-compressed" />
         <data android:mimeType="application/octet-stream" />
+        <data android:mimeType="application/vnd.pampa.notes" />
+      </intent-filter>
+
+      <!-- Providers without a MIME may still expose the portable filename in the URI. -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:scheme="content" />
+        <data android:scheme="file" />
+        <data android:host="*" />
+        <data android:pathPattern=".*\\.pn" />
+        <data android:pathPattern=".*\\.PN" />
       </intent-filter>
 
       <!-- Il QR stampato dal server companion: pampanotes://endpoint?url=...&token=... -->

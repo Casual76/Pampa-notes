@@ -45,10 +45,13 @@ class ImportCoordinatorTest {
   private lateinit var identities: SdocxSourceIdentity
   private lateinit var coordinator: ImportCoordinator
   private lateinit var workDir: File
+  private var providerResolver: android.content.ContentResolver? = null
 
   @Before
   fun setUp() {
-    context = InstrumentationRegistry.getInstrumentation().targetContext
+    context = object : android.content.ContextWrapper(InstrumentationRegistry.getInstrumentation().targetContext) {
+      override fun getContentResolver() = providerResolver ?: super.getContentResolver()
+    }
     db = PampaDatabase.inMemory(context)
     files = AppFiles(context)
     workDir = File(context.cacheDir, "import-test").apply { deleteRecursively(); mkdirs() }
@@ -58,7 +61,7 @@ class ImportCoordinatorTest {
     val settings = PampaSettingsStore(context)
     val computerOnly = ComputerOnlyScope(settings, db.folders(), db.sync())
     val extractors = TextExtractorRegistry(PlainTextExtractor(), PdfTextExtractor(context), DocxTextExtractor())
-    val audio = AudioImporter(files, db.sessions(), db.audioParts())
+    val audio = AudioImporter(files, db.sessions(), db.audioParts(), db)
     val resolver = EndpointResolver()
     val http = ArchiveHttp(userAgent = "PampaNotes-test")
     // Senza account e senza codice: il companion qui non viene mai chiamato.
@@ -94,6 +97,8 @@ class ImportCoordinatorTest {
       // aggiornamento che la chiede la trova assente, e l'import non se ne accorge.
       repairer = { error("nessuna riparazione in questi test") },
     )
+    val bundleImporter = PampaBundleImporter(db, files)
+    coordinator.bundleImporter = dagger.Lazy { bundleImporter }
   }
 
   @After
@@ -300,4 +305,78 @@ class ImportCoordinatorTest {
 
   private fun write(name: String, content: String): File =
     File(workDir, name).apply { writeText(content) }
+
+  /** In-process real ContentProvider transport, without relying on a particular file manager. */
+  @android.annotation.TargetApi(29)
+  private fun provider(file: File, name: String?, mime: String?, failMetadata: Boolean = false): android.net.Uri {
+    org.junit.Assume.assumeTrue(android.os.Build.VERSION.SDK_INT >= 29)
+    val provider = object : android.content.ContentProvider() {
+      override fun onCreate() = true
+      override fun getType(uri: android.net.Uri): String? {
+        if (failMetadata) throw SecurityException("provider refuses optional MIME metadata")
+        return mime
+      }
+      override fun query(uri: android.net.Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): android.database.Cursor {
+        if (failMetadata) throw UnsupportedOperationException("provider has no display name")
+        return android.database.MatrixCursor(arrayOf(android.provider.OpenableColumns.DISPLAY_NAME)).apply { addRow(arrayOf<Any?>(name)) }
+      }
+      override fun openFile(uri: android.net.Uri, mode: String) = android.os.ParcelFileDescriptor.open(file, android.os.ParcelFileDescriptor.MODE_READ_ONLY)
+      override fun insert(uri: android.net.Uri, values: android.content.ContentValues?): android.net.Uri? = null
+      override fun update(uri: android.net.Uri, values: android.content.ContentValues?, selection: String?, selectionArgs: Array<out String>?) = 0
+      override fun delete(uri: android.net.Uri, selection: String?, selectionArgs: Array<out String>?) = 0
+    }
+    provider.attachInfo(context, android.content.pm.ProviderInfo().apply { authority = "pnfixture"; exported = false })
+    providerResolver = android.content.ContentResolver.wrap(provider)
+    return android.net.Uri.parse("content://pnfixture/document/opaque-provider-id")
+  }
+
+  private fun portableText(name: String = "shared.PN"): File {
+    val folder = FolderEntity("portable-folder", "Subject", createdAt = 1, updatedAt = 2)
+    val note = dev.pampa.pampanotes.core.db.NoteEntity("portable-note", folder.id, "Text only", "Complete note text", createdAt = 1, updatedAt = 2)
+    val graph = PampaBundleNote(note)
+    val export = dev.pampa.pampanotes.core.export.ExportNote(note, listOf(folder.name), emptyList(), emptyList(), emptyList(), native = graph)
+    return File(workDir, name).also { file -> file.outputStream().use {
+      dev.pampa.pampanotes.core.export.PampaNoteWriter(files.audio, files.sources).write(
+        dev.pampa.pampanotes.core.export.ExportSet("Subject", "subject", listOf(export), "Pampa Notes test", 1, folders = listOf(folder)), it)
+    } }
+  }
+
+  @Test fun portable_content_is_recognized_from_generic_wrong_and_missing_provider_metadata() = runTest {
+    val file = portableText()
+    val cases = listOf(Triple("Lezione.PN", "application/octet-stream", false), Triple("opaque", "audio/mpeg", false), Triple(null, null, true))
+    for ((name, mime, failMetadata) in cases) {
+      val candidate = coordinator.inspect(listOf(provider(file, name, mime, failMetadata))).single()
+      assertEquals(null, candidate.inspectionError)
+      assertEquals(1, candidate.bundle!!.noteCount)
+      assertEquals(SourceKind.OTHER, candidate.kind)
+      candidate.file!!.delete()
+    }
+    assertTrue(db.notes().all().isEmpty())
+  }
+
+  @Test fun empty_foreign_and_invalid_portable_inputs_do_not_succeed_or_leave_cache_files() = runTest {
+    val before = files.temp.listFiles()!!.map { it.name }.toSet()
+    val empty = File(workDir, "empty.pn").apply { writeBytes(byteArrayOf()) }
+    val foreign = File(workDir, "foreign.zip").apply { java.util.zip.ZipOutputStream(outputStream()).use { } }
+    val invalid = write("damaged.PN", "Not a portable package")
+    for ((file, expected) in listOf(empty to ImportFailure.EMPTY, foreign to ImportFailure.UNSUPPORTED_ARCHIVE, invalid to ImportFailure.CORRUPT)) {
+      val candidate = coordinator.inspect(listOf(android.net.Uri.fromFile(file))).single()
+      assertEquals(expected.name, candidate.inspectionError)
+      assertEquals(null, candidate.file)
+    }
+    assertTrue(db.notes().all().isEmpty())
+    assertEquals(before, files.temp.listFiles()!!.map { it.name }.toSet())
+  }
+
+  @Test fun generic_provider_zip_still_routes_word_and_samsung_documents_by_content() = runTest {
+    val docx = File(workDir, "word.bin").also { file -> java.util.zip.ZipOutputStream(file.outputStream()).use { zip ->
+      zip.putNextEntry(java.util.zip.ZipEntry("word/document.xml")); zip.write("<document/>".toByteArray()); zip.closeEntry()
+    } }
+    val word = coordinator.inspect(listOf(provider(docx, "opaque", "application/octet-stream"))).single()
+    assertEquals(SourceKind.DOCX, word.kind); assertEquals(null, word.bundle); word.file!!.delete()
+    val mislabeledWord = coordinator.inspect(listOf(provider(docx, "word.PN", "application/vnd.pampa.notes"))).single()
+    assertEquals(SourceKind.DOCX, mislabeledWord.kind); assertEquals(null, mislabeledWord.inspectionError); mislabeledWord.file!!.delete()
+    val samsung = coordinator.inspect(listOf(provider(samsungFile("note.bin", "Samsung title"), "opaque", "application/octet-stream"))).single()
+    assertEquals(SourceKind.SDOCX, samsung.kind); assertEquals(null, samsung.bundle); samsung.file!!.delete()
+  }
 }

@@ -1056,6 +1056,7 @@
   <string name="import_pasted_text">Pasted text</string>
   <string name="import_leave_title">Import in progress</string>
   <string name="import_leave_message">If you leave now the import stops halfway: what\'s already written stays, the rest doesn\'t.</string>
+  <string name="import_bundle_leave_message">The package is saved as a whole. Cancelling leaves no partially imported notes; a package already saved stays complete.</string>
   <string name="import_leave_stay">Wait</string>
   <string name="import_leave_anyway">Leave anyway</string>
   <string name="import_summary_unavailable">File not available</string>
@@ -1225,8 +1226,8 @@
   <string name="export_done_inside">Also inside: %1$s</string>
   <string name="export_done_missing">Not included:</string>
   <plurals name="export_fetched">
-    <item quantity="one">One file downloaded from your home computer.</item>
-    <item quantity="other">%d files downloaded from your home computer.</item>
+    <item quantity="one">One file retrieved.</item>
+    <item quantity="other">%d files retrieved.</item>
   </plurals>
   <plurals name="export_originals">
     <item quantity="one">%d original</item>

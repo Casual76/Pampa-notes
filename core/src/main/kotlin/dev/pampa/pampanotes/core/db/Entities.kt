@@ -162,6 +162,16 @@ data class AudioPartEntity(
   val createdAt: Long,
   /** Quando il computer di casa ha ricevuto questo file. Zero: non ancora, o mai. */
   @ColumnInfo(defaultValue = "0") val archivedAt: Long = 0,
+  /** Actual part start as a UTC instant only when the source supplies one; never import time. */
+  val recordedAtEpochMs: Long? = null,
+  /** Source ISO local date or date-time; a day alone must never become a guessed exact time. */
+  val recordedAtLocal: String? = null,
+  /** Explicit source IANA zone or UTC offset. Null means unknown, not the device's current zone. */
+  val recordedAtZoneId: String? = null,
+  /** Public provenance: media_metadata, samsung_recording, filename, or file_modified (date only). */
+  val recordedAtSource: String? = null,
+  /** Source resolution: day, minute, second or millisecond; null when the origin is unknown. */
+  val recordedAtPrecision: String? = null,
 )
 
 enum class TranscriptKind { RAW, REFINED }
@@ -194,6 +204,8 @@ data class TranscriptEntity(
   val wordCount: Int,
   val status: TranscriptStatus = TranscriptStatus.OK,
   val createdAt: Long,
+  /** Immutable public cloud source text/provenance; never credentials, account state or job transport. */
+  val cloudSourceJson: String? = null,
 )
 
 /** Un segmento con i tempi, sia relativi alla parte sia assoluti nella sessione: il lettore salta per questi. */

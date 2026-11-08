@@ -252,7 +252,7 @@ class ExportViewModel @Inject constructor(
     running?.cancel()
     pending = null
     running = viewModelScope.launch {
-      _uiState.update { it.copy(error = null, failure = null, fetch = null, fetched = 0, missing = emptyList(), progress = 0f) }
+      _uiState.update { it.copy(stage = ExportStage.FETCHING, error = null, failure = null, fetch = null, fetched = 0, missing = emptyList(), progress = 0f) }
       try {
         val plan = service.plan(set, options)
         val outcome = if (plan.toFetch.isEmpty()) {

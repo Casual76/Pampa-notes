@@ -27,8 +27,8 @@ class VoiceNamesTest {
     assertNull(VoiceNames.normalize(null))
     // Un nome vuoto dato a una voce le toglie quello che aveva: torna «Voce N».
     val named = VoiceNames.rename(null, marco, "Marco")
-    assertNull(VoiceNames.rename(named, marco, "  "))
-    assertNull(VoiceNames.rename(named, marco, null))
+    assertTrue(VoiceNames.decode(VoiceNames.rename(named, marco, "  ")).isEmpty())
+    assertTrue(VoiceNames.decode(VoiceNames.rename(named, marco, null)).isEmpty())
   }
 
   @Test

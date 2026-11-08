@@ -58,36 +58,51 @@ fun ExportChoices(
   Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
     Text(text = stringResource(R.string.export_where_title), style = MaterialTheme.typography.titleMedium)
     FluidListGroup {
-      ExportTarget.entries.forEachIndexed { index, target ->
+      FluidChoiceRow(
+        title = ExportTarget.PAMPA.label(),
+        subtitle = ExportTarget.PAMPA.detail(),
+        selected = options.isPampa,
+        onSelect = { if (!options.isPampa) onOptions(options.withTarget(ExportTarget.PAMPA)) },
+      )
+    }
+    if (options.isPampa) {
+      FluidSectionFootnote(text = stringResource(R.string.pn_export_contents))
+      FluidSectionFootnote(text = stringResource(R.string.pn_export_lossless))
+    }
+    Text(text = stringResource(R.string.pn_export_ai_title), style = MaterialTheme.typography.titleMedium)
+    FluidListGroup {
+      ExportTarget.entries.filter { it != ExportTarget.PAMPA }.forEachIndexed { index, target ->
         if (index > 0) FluidListDivider()
         // Una scelta singola con la spunta a destra: niente freccia «›», che promette una pagina dietro,
         // e questa e' una scelta che si fa qui. Scegliere la destinazione gia' scelta non cambia niente.
         FluidChoiceRow(
           title = target.label(),
           subtitle = target.detail(),
-          selected = options.target == target,
-          onSelect = { if (options.target != target) onOptions(options.withTarget(target)) },
+          selected = !options.isPampa && options.target == target,
+          onSelect = { if (options.isPampa || options.target != target) onOptions(options.withTarget(target)) },
         )
       }
     }
 
-    FluidListGroup {
-      FluidListRow(
-        title = stringResource(R.string.export_customize),
-        subtitle = summaryOf(options),
-        meta = if (options.isCustomized) stringResource(R.string.export_customized) else null,
-        badge = {
-          Icon(
-            imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
-        },
-        modifier = Modifier.fluidRowPressable(onClick = { expanded = !expanded }),
-      )
-    }
+    if (!options.isPampa) {
+      FluidListGroup {
+        FluidListRow(
+          title = stringResource(R.string.export_customize),
+          subtitle = summaryOf(options),
+          meta = if (options.isCustomized) stringResource(R.string.export_customized) else null,
+          badge = {
+            Icon(
+              imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+              contentDescription = null,
+              tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+          },
+          modifier = Modifier.fluidRowPressable(onClick = { expanded = !expanded }),
+        )
+      }
 
-    if (expanded) CustomizeBody(options = options, onOptions = onOptions, audioDurationMs = audioDurationMs)
+      if (expanded) CustomizeBody(options = options, onOptions = onOptions, audioDurationMs = audioDurationMs)
+    }
   }
 }
 
@@ -151,7 +166,7 @@ private fun CustomizeBody(options: ExportOptions, onOptions: (ExportOptions) -> 
   when (options.format) {
     ExportFormat.FILES -> FluidSectionFootnote(text = stringResource(R.string.export_files_no_attachments))
     ExportFormat.SINGLE -> FluidSectionFootnote(text = stringResource(R.string.export_single_no_attachments))
-    ExportFormat.BUNDLE -> Unit
+    ExportFormat.BUNDLE, ExportFormat.PAMPA -> Unit
   }
 
   if (options.isCustomized) {
@@ -195,6 +210,7 @@ fun ExportTarget.label(): String = stringResource(
     ExportTarget.PROJECT -> R.string.export_target_project
     ExportTarget.AGENT -> R.string.export_target_agent
     ExportTarget.PASTE -> R.string.export_target_paste
+    ExportTarget.PAMPA -> R.string.pn_export_target
   },
 )
 
@@ -205,5 +221,6 @@ private fun ExportTarget.detail(): String = stringResource(
     ExportTarget.PROJECT -> R.string.export_target_project_detail
     ExportTarget.AGENT -> R.string.export_target_agent_detail
     ExportTarget.PASTE -> R.string.export_target_paste_detail
+    ExportTarget.PAMPA -> R.string.pn_export_target_detail
   },
 )
