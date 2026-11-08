@@ -8,6 +8,7 @@ import dev.pampa.pampanotes.core.db.SessionEntity
 import dev.pampa.pampanotes.core.db.SourceStatus
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.model.Ids
+import dev.pampa.pampanotes.core.transcription.VoiceNames
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -140,7 +141,12 @@ class AudioImporter @Inject constructor(
       }
     }
 
-    sessions.get(sessionId)?.let { sessions.upsert(it.copy(updatedAt = System.currentTimeMillis())) }
+    if (results.any { it.status == SourceStatus.OK }) sessions.get(sessionId)?.let { session ->
+      // Capture all actual recordings at the old fallback, including an empty legacy map.
+      // Names/clocks and the new metadata timestamp are persisted in the same atomic row write.
+      val captured = VoiceNames.capture(session.voiceNames, parts.bySession(sessionId).map { it.id }, session.updatedAt)
+      sessions.upsert(session.copy(voiceNames = captured, updatedAt = System.currentTimeMillis()))
+    }
     return results
   }
 

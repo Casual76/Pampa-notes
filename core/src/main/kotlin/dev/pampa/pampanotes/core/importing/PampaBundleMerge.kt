@@ -8,6 +8,9 @@ import java.util.UUID
  * Incoming order wins; local-only siblings follow in their existing relative order.
  * All timelines use this final sequence, including local-only RAW histories. */
 internal object PampaBundleMerge {
+  // Local auto-generated row IDs and DAO insertion order are not portable timeline identity.
+  private val segmentOrder = compareBy<SegmentEntity>({ it.sessionStartMs }, { it.partId }, { it.indexInPart })
+
   fun merge(local: PampaBundleNote?, incoming: PampaBundleNote, preserveLocalNote: Boolean = false): PampaBundleNote {
     val n = incoming.note
     require(local == null || local.note.id == n.id) { "Note identity conflict" }
@@ -75,7 +78,7 @@ internal object PampaBundleMerge {
       require(segment.partStartMs >= 0 && segment.partEndMs >= segment.partStartMs && segment.partEndMs <= part.durationMs) { "Retained audio incompatible with incoming timing" }
       segment.copy(id = 0, transcriptId = transcript.id, sessionStartMs = Math.addExact(offset, segment.partStartMs), sessionEndMs = Math.addExact(offset, segment.partEndMs))
     }.distinctBy { listOf(it.transcriptId, it.partId, it.indexInPart, it.partStartMs, it.partEndMs, it.text, it.wordsJson, it.speaker) }
-      .sortedWith(compareBy({ it.sessionStartMs }, { it.partId }, { it.indexInPart }))
+      .sortedWith(segmentOrder)
 
     transcripts.values.toList().filter { it.kind == TranscriptKind.RAW && it.id in hadSegments }.forEach { t ->
       val segments = rebased.filter { it.transcriptId == t.id }
@@ -83,7 +86,7 @@ internal object PampaBundleMerge {
       // Preserve exact exported RAW text if its segment sequence and layout did not change.
       val original = incomingTranscripts[t.id] ?: local?.transcripts?.find { it.id == t.id }
       val originalSegments = if (t.id in incomingTranscripts) incoming.segments.filter { it.transcriptId == t.id } else previousSegments.filter { it.transcriptId == t.id }
-      val unchanged = originalSegments.map { it.copy(id = 0) } == segments.map { it.copy(id = 0) }
+      val unchanged = originalSegments.sortedWith(segmentOrder).map { it.copy(id = 0) } == segments.map { it.copy(id = 0) }
       transcripts[t.id] = if (unchanged && original != null) original else t.copy(text = text, wordCount = text.split(Regex("\\s+")).count { it.isNotBlank() })
     }
 
@@ -92,13 +95,26 @@ internal object PampaBundleMerge {
     // A sender cannot remove aliases for local-only recordings it has never seen.
     val localNames = oldSessions.mapValues { VoiceNames.decode(it.value.voiceNames).entries.groupBy { name -> name.key.substringBefore('|') } }
     val incomingNames = incomingSessions.mapValues { VoiceNames.decode(it.value.voiceNames).entries.groupBy { name -> name.key.substringBefore('|') } }
+    val localClocks = oldSessions.mapValues { VoiceNames.clocks(it.value.voiceNames) }
+    val incomingClocks = incomingSessions.mapValues { VoiceNames.clocks(it.value.voiceNames) }
+    val sessionTimes = sessions.associate { it.id to it.updatedAt }
     val voiceTimes = mutableMapOf<String, Long>()
+    val clockedSessions = mutableSetOf<String>()
     val names = parts.flatMap { part ->
       val oldOwner = previousParts[part.id]?.sessionId?.let(oldSessions::get)
       val newOwner = incomingParts[part.id]?.sessionId?.let(incomingSessions::get)
-      val keepLocal = oldOwner != null && (newOwner == null || oldOwner.updatedAt >= newOwner.updatedAt)
-      val authority = if (keepLocal) oldOwner else newOwner
-      authority?.let { voiceTimes[part.sessionId] = maxOf(voiceTimes[part.sessionId] ?: 0, it.updatedAt) }
+      val oldTime = oldOwner?.let { localClocks[it.id]?.get(part.id) ?: it.updatedAt }
+      val newTime = newOwner?.let { incomingClocks[it.id]?.get(part.id) ?: it.updatedAt }
+      val keepLocal = oldTime != null && (newTime == null || oldTime >= newTime)
+      val time = if (keepLocal) oldTime else newTime
+      val explicit = localClocks[oldOwner?.id]?.containsKey(part.id) == true ||
+        incomingClocks[newOwner?.id]?.containsKey(part.id) == true
+      // A complete empty map is a removal too. Persist its authority on the recording, never
+      // on title/date/selection or another recording in a younger destination session.
+      if (time != null) {
+        voiceTimes[part.id] = time
+        if (explicit || time != sessionTimes.getValue(part.sessionId)) clockedSessions += part.sessionId
+      }
       val column = if (keepLocal) localNames[oldOwner?.id].orEmpty() else incomingNames[newOwner?.id].orEmpty()
       column[part.id].orEmpty().map { it.key to it.value }
     }.toMap()
@@ -109,10 +125,9 @@ internal object PampaBundleMerge {
         listOf(old.activeTranscriptId, received?.activeTranscriptId) else listOf(received?.activeTranscriptId, old?.activeTranscriptId)
       val active = choices.firstOrNull { it != null && transcripts[it]?.sessionId == s.id }
         ?: transcripts.values.filter { it.sessionId == s.id && it.kind == TranscriptKind.RAW }.maxWithOrNull(compareBy({ it.createdAt }, { it.id }))?.id
-      // Carry the edit clock too, including for a removed name; a second stale import must
-      // not become newer merely because the recording moved to a younger destination row.
-      s.copy(activeTranscriptId = active, updatedAt = maxOf(s.updatedAt, voiceTimes[s.id] ?: 0),
-        voiceNames = VoiceNames.encode(names.filterKeys { partMap[it.substringBefore('|')]?.sessionId == s.id }))
+      s.copy(activeTranscriptId = active,
+        voiceNames = VoiceNames.encode(names.filterKeys { partMap[it.substringBefore('|')]?.sessionId == s.id },
+          if (s.id in clockedSessions) voiceTimes.filterKeys { partMap[it]?.sessionId == s.id } else emptyMap()))
     }
     return incoming.copy(
       note = if (preserveLocalNote) requireNotNull(local).note else n.copy(

@@ -23,6 +23,13 @@ The reader returns the existing `PampaBundleData`, attachment declarations, warn
 flag. Native document attachment paths are relative to the ZIP root (`Read.root == ""`). All old
 positional/trailing-lambda `read(file, checkpoint)` calls remain valid.
 
+Session `voiceNames` remains its existing JSON text column. Its optional non-string
+`_pampaVoiceClocks` object maps recording IDs to the edit times of their complete voice-name maps,
+including empty maps that record removals. These are name-edit authorities, not recording-start
+times. They travel with recordings through moves, copies and legacy reconciliation without raising
+the session metadata clock. Visible-name decoders ignore this object; absent metadata retains the
+legacy session-clock fallback, and untouched legacy null columns keep their original sync hashes.
+
 ## ZIP layout
 
 All entries use standard, lossless ZIP DEFLATE at maximum compression. There is no audio decode,

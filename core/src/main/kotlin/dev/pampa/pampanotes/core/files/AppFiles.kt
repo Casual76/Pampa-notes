@@ -41,20 +41,38 @@ class AppFiles(context: Context) {
    * Elimina i file che nessuna riga cita piu': la rete di sicurezza fra una DELETE e la sua
    * cancellazione su disco.
    *
-   * Un file giovane non si tocca anche se nessuna riga lo cita ancora: un import copia prima il file
-   * al suo posto e poi scrive la riga, e una pulizia che cade in mezzo gli toglierebbe il file da
-   * sotto. Un quarto d'ora copre anche un `.sdocx` con un'ora di registrazioni.
+   * I file giovani restano una rete di sicurezza per gli altri produttori. Lo staging PN ha una
+   * protezione esplicita condivisa con lo sweep, senza scadenza durante copia e transazione.
+   * Per riferimenti letti dal DB usare il token acquisito PRIMA delle query: la firma storica
+   * resta disponibile per snapshot gia' stabili e per i chiamanti host.
    */
   fun sweepOrphans(
     referencedAudio: Set<String>,
     referencedSources: Set<String>,
     activeJobIds: Set<String>,
     now: Long = System.currentTimeMillis(),
+  ): Int = beginOrphanSweep().use { snapshot ->
+    sweepOrphans(referencedAudio, referencedSources, activeJobIds, snapshot, now)
+  }
+
+  /** Must precede ALL DB reads used by the sweep; the caller closes it in finally. */
+  fun beginOrphanSweep(): OrphanSweepSnapshot = AppFileWriteProtection.beginSweep()
+
+  fun sweepOrphans(
+    referencedAudio: Set<String>,
+    referencedSources: Set<String>,
+    activeJobIds: Set<String>,
+    snapshot: OrphanSweepSnapshot,
+    now: Long = System.currentTimeMillis(),
   ): Int {
     var removed = 0
     fun old(file: File) = isOldEnough(file.lastModified(), now)
-    audio.listFiles()?.forEach { if (it.isFile && it.name !in referencedAudio && old(it) && it.delete()) removed++ }
-    sources.listFiles()?.forEach { if (it.isFile && it.name !in referencedSources && old(it) && it.delete()) removed++ }
+    audio.listFiles()?.forEach { file ->
+      if (AppFileWriteProtection.deleteIfUnprotected(file, snapshot) { it.isFile && it.name !in referencedAudio && old(it) }) removed++
+    }
+    sources.listFiles()?.forEach { file ->
+      if (AppFileWriteProtection.deleteIfUnprotected(file, snapshot) { it.isFile && it.name !in referencedSources && old(it) }) removed++
+    }
     jobs.listFiles()?.forEach { if (it.isDirectory && it.name !in activeJobIds && old(it) && it.deleteRecursively()) removed++ }
     return removed
   }

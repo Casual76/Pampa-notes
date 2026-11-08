@@ -53,6 +53,7 @@ class PampaBundleImporter @Inject constructor(
       // Keep the commit result and cleanup decision in one cancellation-safe boundary.
       withContext(NonCancellable) {
         val result = db.withTransaction {
+          staging.requireProtected()
           persist(measured, intoFolderId, stored, checkpoint, publicLegacy = PampaBundleWarning.LEGACY_FORMAT in read.warnings) { p, title -> onProgress(0.7f + 0.29f * p, title) }
         }
         committed = true
@@ -66,7 +67,9 @@ class PampaBundleImporter @Inject constructor(
         result.copy(warnings = read.warnings)
       }
     } finally {
-      if (!committed) staging.cleanup()
+      withContext(NonCancellable) {
+        if (!committed) staging.cleanup() else staging.release()
+      }
     }
   }
 
@@ -95,6 +98,10 @@ class PampaBundleImporter @Inject constructor(
     checkpoint: () -> Unit = {}, publicLegacy: Boolean? = null,
     onProgress: (Float, PampaBundleProgress) -> Unit = { _, _ -> },
   ): PampaBundleImportResult {
+    // New entities also need this check: merge/retained-file checks alone cannot catch a
+    // staged file that disappeared before its first DB row. The import still holds every
+    // staged path here and until the outer transaction and post-commit cleanup finish.
+    verifyIncludedFiles(data, stored, checkpoint)
     require(intoFolderId == null || db.folders().get(intoFolderId) != null) { "Destination folder missing" }
     val importedFolders = data.folders.mapTo(HashSet()) { it.id }
     val ancestors = mutableSetOf<String>()
@@ -278,6 +285,26 @@ class PampaBundleImporter @Inject constructor(
     return PampaBundleImportResult(data.notes.map { it.note.id }, imported, updated, data.notes.sumOf { n -> n.attachments.count { it.audio && it.path != null } })
   }
 
+  internal fun verifyIncludedFiles(data: PampaBundleData, stored: Map<Pair<Boolean, String>, String>, checkpoint: () -> Unit = {}) {
+    val metadata = mutableMapOf<Pair<Boolean, String>, Pair<Long, String?>>()
+    data.notes.forEach { note ->
+      // Internal host callers may supply entity metadata without archive declarations.
+      note.parts.forEach { metadata[true to it.id] = it.sizeBytes to it.sha256 }
+      note.sources.forEach { metadata[false to it.id] = it.sizeBytes to it.sha256 }
+      note.attachments.filter { it.path != null }.forEach { attachment ->
+        val key = attachment.audio to attachment.id
+        require(key in stored) { "Included attachment was not staged" }
+        metadata[key] = attachment.bytes to attachment.sha256
+      }
+    }
+    stored.forEach { (key, name) ->
+      checkpoint()
+      val (bytes, sha) = requireNotNull(metadata[key]) { "Unknown staged attachment" }
+      require(PampaBundleFileIntegrity.verified(if (key.first) files.audio else files.sources,
+        name, bytes, sha.orEmpty(), exclusivelyOwned = true, checkpoint = checkpoint)) { "Included attachment integrity unavailable" }
+    }
+  }
+
   /** Reserved, unedited synthetic folders only; never cascade through notes or children. */
   private suspend fun removeEmptyLegacyFolders(protected: Set<String>, candidates: Set<String>) {
     if (candidates.isEmpty()) return
@@ -308,7 +335,7 @@ class PampaBundleImporter @Inject constructor(
       return data.copy(folders = data.folders.map { it.copy(id = id("folder", it.id), parentId = it.parentId?.let { p -> id("folder", p) }) }, notes = data.notes.map { n ->
         n.copy(note = n.note.copy(id = id("note", n.note.id), folderId = id("folder", n.note.folderId), bundleBodyBase = null, bundleNativeAdopted = null),
           sessions = n.sessions.map { s -> s.copy(id = id("session", s.id), noteId = id("note", s.noteId), activeTranscriptId = s.activeTranscriptId?.let { id("transcript", it) }, transcribingOn = null, transcribingSince = null,
-            voiceNames = VoiceNames.encode(VoiceNames.decode(s.voiceNames).mapKeys { (key, _) -> id("part", key.substringBefore('|')) + "|" + key.substringAfter('|') })) },
+            voiceNames = VoiceNames.remap(s.voiceNames) { id("part", it) }) },
           parts = n.parts.map { it.copy(id = id("part", it.id), sessionId = id("session", it.sessionId), fileName = "", archivedAt = 0) },
           transcripts = n.transcripts.map { it.copy(id = id("transcript", it.id), sessionId = id("session", it.sessionId), parentId = it.parentId?.let { p -> id("transcript", p) }) },
           segments = n.segments.map { it.copy(id = 0, transcriptId = id("transcript", it.transcriptId), partId = id("part", it.partId)) },

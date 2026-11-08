@@ -40,6 +40,7 @@ import dev.pampa.pampanotes.core.transcription.TranscriptionHttp
 import dev.pampa.pampanotes.core.transcription.TranscriptionProvider
 import dev.pampa.pampanotes.core.transcription.RemoteTranscribing
 import dev.pampa.pampanotes.core.transcription.TranscribingMarker
+import dev.pampa.pampanotes.core.transcription.VoiceNames
 import dev.pampa.pampanotes.core.transcription.JobPhase
 import dev.pampa.pampanotes.core.sync.deviceLabel
 import kotlinx.serialization.Serializable
@@ -672,7 +673,7 @@ class TranscriptionRepository @Inject constructor(
     parentId: String,
     result: dev.pampa.pampanotes.core.refinement.RefinementResult,
     promptHash: String,
-  ): TranscriptEntity {
+  ): TranscriptEntity = db.withTransaction {
     val now = System.currentTimeMillis()
     val parent = transcripts.get(parentId)
     val transcript = TranscriptEntity(
@@ -695,8 +696,12 @@ class TranscriptionRepository @Inject constructor(
       .filter { it.kind == TranscriptKind.REFINED && it.parentId == parentId && it.preset == transcript.preset }
       .forEach { transcripts.delete(it.id) }
     transcripts.upsert(transcript)
+    sessions.get(sessionId)?.let { session ->
+      val captured = VoiceNames.capture(session.voiceNames, parts.bySession(sessionId).map { it.id }, session.updatedAt)
+      if (captured != session.voiceNames) sessions.setVoiceNames(sessionId, captured, session.updatedAt)
+    }
     sessions.setActiveTranscript(sessionId, transcript.id, now)
-    return transcript
+    transcript
   }
 
   /**

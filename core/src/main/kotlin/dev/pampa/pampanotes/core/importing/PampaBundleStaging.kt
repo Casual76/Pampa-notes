@@ -1,14 +1,35 @@
 package dev.pampa.pampanotes.core.importing
 
+import dev.pampa.pampanotes.core.files.AppFileWriteProtection
 import java.io.File
 import java.util.UUID
 import java.util.zip.ZipFile
 
-/** Fresh immutable files only. The caller owns cleanup until the Room transaction commits. */
+/** Fresh immutable files only. Cleanup on rollback; release ONLY after the Room commit/cleanup. */
 internal class PampaBundleStaging(private val audioDir: File, private val sourcesDir: File) {
   val files = mutableListOf<File>()
+  private val owner = Any()
+  private var started = false
+  private var released = false
 
   fun stage(
+    archive: File,
+    root: String,
+    attachments: List<PampaBundleAttachment>,
+    checkpoint: () -> Unit,
+    onProgress: (Float) -> Unit,
+  ): Map<Pair<Boolean, String>, String> {
+    check(!started && !released) { "Bundle staging is already used" }
+    started = true
+    try {
+      return stageFiles(archive, root, attachments, checkpoint, onProgress)
+    } catch (error: Throwable) {
+      cleanup()
+      throw error
+    }
+  }
+
+  private fun stageFiles(
     archive: File,
     root: String,
     attachments: List<PampaBundleAttachment>,
@@ -37,6 +58,9 @@ internal class PampaBundleStaging(private val audioDir: File, private val source
           // one recording remove another's bytes. Decompress a blob once, then copy locally;
           // verify each fresh file, keeping both identities and their file lifetimes independent.
           val target = File(if (reference.audio) audioDir else sourcesDir, "${UUID.randomUUID()}.$extension")
+          // Register before creation. AppFiles uses this same registry, including for the
+          // historical two-directory staging constructor and separate AppFiles instances.
+          AppFileWriteProtection.hold(target, owner)
           files += target
           (verified?.inputStream() ?: zip.getInputStream(entry)).use { input ->
             ImportFileCopy.copy(input, target, reference.bytes, reference.sha256, checkpoint) { count ->
@@ -56,5 +80,17 @@ internal class PampaBundleStaging(private val audioDir: File, private val source
     return stored
   }
 
-  fun cleanup() { files.forEach { it.delete() } }
+  fun requireProtected() {
+    check(!released && files.all { AppFileWriteProtection.heldBy(it, owner) }) { "Bundle staging is not protected" }
+  }
+
+  /** Keep committed bytes; old overlapping sweep snapshots retain their release generation. */
+  fun release() {
+    AppFileWriteProtection.release(owner)
+    released = true
+  }
+
+  fun cleanup() {
+    try { files.forEach { it.delete() } } finally { release() }
+  }
 }

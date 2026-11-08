@@ -36,7 +36,8 @@ class PampaBundleSessionAuthorityRoundTwoTest {
     val incoming = graph(session(names = mapOf("part|SPEAKER_00" to "Old name")).copy(activeTranscriptId = incomingRaw.id),
       listOf(part(), part("new").copy(position = 1))).copy(transcripts = listOf(incomingRaw))
     val merged = PampaBundleMerge.merge(local, incoming)
-    assertEquals(localSession, merged.sessions.single())
+    assertEquals(localSession.copy(voiceNames = VoiceNames.encode(mapOf("part|SPEAKER_00" to "Local name"),
+      mapOf("part" to 20L, "new" to 10L))), merged.sessions.single())
     assertEquals(setOf("part", "new"), merged.parts.map { it.id }.toSet())
     assertEquals(setOf(localRaw.id, incomingRaw.id), merged.transcripts.map { it.id }.toSet())
     assertEquals(local.segments, merged.segments)
@@ -59,7 +60,8 @@ class PampaBundleSessionAuthorityRoundTwoTest {
     val receivedSession = session(time = 30).copy(title = "Fresh sender title", date = "2026-11-08")
     val incoming = graph(receivedSession)
     val merged = PampaBundleMerge.merge(local, incoming)
-    assertEquals(receivedSession.copy(voiceNames = VoiceNames.encode(mapOf("local|SPEAKER_01" to "Local recording"))), merged.sessions.single())
+    assertEquals(receivedSession.copy(voiceNames = VoiceNames.encode(mapOf("local|SPEAKER_01" to "Local recording"),
+      mapOf("part" to 30L, "local" to 10L))), merged.sessions.single())
     assertEquals(mapOf("local|SPEAKER_01" to "Local recording"), names(merged))
     assertEquals(merged, PampaBundleMerge.merge(merged, incoming))
   }
@@ -71,7 +73,8 @@ class PampaBundleSessionAuthorityRoundTwoTest {
     val moved = PampaBundleMerge.merge(local, received)
     assertTrue(names(moved).isEmpty())
     assertEquals(mapOf("part|SPEAKER_00" to "Person"), names(moved, "destination"))
-    assertEquals(20L, moved.sessions.single { it.id == "destination" }.updatedAt)
+    assertEquals(10L, moved.sessions.single { it.id == "destination" }.updatedAt)
+    assertEquals(20L, VoiceNames.clocks(moved.sessions.single { it.id == "destination" }.voiceNames).getValue("part"))
     val stillStale = received.copy(sessions = received.sessions.map { it.copy(updatedAt = 15) })
     assertEquals(mapOf("part|SPEAKER_00" to "Person"), names(PampaBundleMerge.merge(moved, stillStale), "destination"))
     val removal = received.copy(sessions = received.sessions.map { it.copy(updatedAt = 30) })
@@ -103,7 +106,8 @@ class PampaBundleSessionAuthorityRoundTwoTest {
       listOf(part(owner = "destination")))
     val moved = PampaBundleMerge.merge(local, received)
     assertTrue(names(moved, "destination").isEmpty())
-    assertEquals(20L, moved.sessions.single { it.id == "destination" }.updatedAt)
+    assertEquals(10L, moved.sessions.single { it.id == "destination" }.updatedAt)
+    assertEquals(20L, VoiceNames.clocks(moved.sessions.single { it.id == "destination" }.voiceNames).getValue("part"))
     val intermediate = received.copy(sessions = received.sessions.map { it.copy(updatedAt = 15) })
     assertTrue(names(PampaBundleMerge.merge(moved, intermediate), "destination").isEmpty())
   }

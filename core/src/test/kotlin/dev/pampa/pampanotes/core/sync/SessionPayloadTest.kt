@@ -7,6 +7,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Una sessione sul filo, col segno «in trascrizione su» (database 8) e i nomi delle voci (database 11). */
@@ -66,15 +67,18 @@ class SessionPayloadTest {
 
   @Test
   fun `i nomi delle voci vanno e tornano, e cambiano l'impronta`() {
-    val named = session.copy(voiceNames = VoiceNames.rename(null, VoiceNames.key("p1", "SPEAKER_00"), "Marco"), updatedAt = 3)
+    val named = session.copy(voiceNames = VoiceNames.rename(null, VoiceNames.key("p1", "SPEAKER_00"), "Marco", 3), updatedAt = 3)
     val encoded = encode(named)
     assertEquals(named, SyncCodec.json.decodeFromJsonElement(SessionEntity.serializer(), encoded.payload))
     assertNotEquals(encode(session).hash, encoded.hash)
     // Un nome e' una modifica vera: alza il tempo, e vince per ultimo-che-scrive come un titolo.
     assertEquals(3L, SyncCodec.updatedAtOf(encoded.payload))
-    // Tolto l'ultimo nome, la sessione torna quella di prima.
-    val cleared = named.copy(voiceNames = VoiceNames.rename(named.voiceNames, VoiceNames.key("p1", "SPEAKER_00"), null))
-    assertEquals(encode(session).hash, encode(cleared.copy(updatedAt = session.updatedAt)).hash)
+    // Tolto l'ultimo nome resta l'autorità della rimozione, diversa da un vecchio null ignoto.
+    val cleared = named.copy(voiceNames = VoiceNames.rename(named.voiceNames, VoiceNames.key("p1", "SPEAKER_00"), null, 4), updatedAt = 4)
+    assertTrue(VoiceNames.decode(cleared.voiceNames).isEmpty())
+    assertEquals(4L, VoiceNames.clocks(cleared.voiceNames).getValue("p1"))
+    assertNotEquals(encode(session).hash, encode(cleared.copy(updatedAt = session.updatedAt)).hash)
+    assertEquals(cleared, SyncCodec.json.decodeFromJsonElement(SessionEntity.serializer(), encode(cleared).payload))
   }
 
   @Test

@@ -134,9 +134,11 @@ class SessionRepositoryTest {
     assertEquals(mapOf(VoiceNames.key("prima", "SPEAKER_00") to "Marco"), VoiceNames.decode(db.sessions().get(session)!!.voiceNames))
     assertEquals(mapOf(VoiceNames.key("seconda", "SPEAKER_01") to "Giulia"), VoiceNames.decode(db.sessions().get(created.id)!!.voiceNames))
 
-    // Un nome vuoto lo toglie, e senza nomi la colonna torna null (l'impronta di prima).
+    // Un nome vuoto lo toglie; il clock resta come tombstone per non ripristinarlo da snapshot vecchi.
     repository.renameVoice(session, VoiceNames.key("prima", "SPEAKER_00"), "")
-    assertNull(db.sessions().get(session)!!.voiceNames)
+    val removed = db.sessions().get(session)!!
+    assertTrue(VoiceNames.decode(removed.voiceNames).isEmpty())
+    assertEquals(removed.updatedAt, VoiceNames.clocks(removed.voiceNames).getValue("prima"))
   }
 
   @Test
