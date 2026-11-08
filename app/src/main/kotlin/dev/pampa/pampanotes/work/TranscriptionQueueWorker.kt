@@ -356,7 +356,8 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     }
     if (retainCurrentOwner(job)) return@withContext Step.Next
     if (repository.hasRetainedCloudWork(job)) {
-      fail(job, if (repository.uncertainCloudWork(job)) TranscriptionError.UncertainOutcome() else TranscriptionError.CompanionOnly())
+      fail(job, if (repository.uncertainCloudWork(job)) TranscriptionError.UncertainOutcome()
+        else TranscriptionError.CloudControl("cloud_recovery_changed"))
       return@withContext Step.Next
     }
     repository.requeueStopped(job)

@@ -4,6 +4,8 @@ import android.content.Context
 import dev.pampa.pampanotes.core.db.*
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
+import dev.pampa.pampanotes.core.repo.FailedJobs
+import dev.pampa.pampanotes.core.repo.FailureStanding
 import dev.pampa.pampanotes.core.transcription.*
 import io.mockk.*
 import java.io.File
@@ -18,6 +20,33 @@ import org.junit.rules.TemporaryFolder
 /** Actual Worker.cancel + runner + disk. WorkManager/Android watcher runtime is not simulated. */
 class WorkerCloudCancellationRecoveryTest {
   @get:Rule val temp = TemporaryFolder()
+  @Test fun `privacy change with received results requires a new request rather than ineffective retry`() = runBlocking {
+    val running = JobEntity("job", "session", JobType.TRANSCRIBE, "groq", "model", JobState.TRANSCRIBING,
+      attempts = 1, createdAt = 1, updatedAt = 1)
+    val repository = mockk<TranscriptionRepository>()
+    coEvery { repository.get(running.id) } returns running
+    every { repository.ownsDispatch(running, running) } returns true
+    coEvery { repository.hasRetainedCloudWork(running) } returns true
+    coEvery { repository.uncertainCloudWork(running) } returns false
+    val failure = slot<TranscriptionError>()
+    coEvery { repository.fail(running, capture(failure)) } returns TranscriptionRepository.FailOutcome.SUPERSEDED
+    val unsafe = Class.forName("sun.misc.Unsafe")
+    val instance = unsafe.getDeclaredField("theUnsafe").apply { isAccessible = true }.get(null)
+    val worker = unsafe.getMethod("allocateInstance", Class::class.java).invoke(instance, TranscriptionQueueWorker::class.java) as TranscriptionQueueWorker
+    worker.javaClass.getDeclaredField("repository").apply { isAccessible = true; set(worker, repository) }
+    val recover = worker.javaClass.declaredMethods.single { it.name == "recoverPrivacy" }.apply { isAccessible = true }
+    suspendCoroutineUninterceptedOrReturn<Any?> { continuation ->
+      try { recover.invoke(worker, running, continuation) }
+      catch (wrapped: InvocationTargetException) { throw wrapped.targetException }
+    }
+    assertEquals("cloud_recovery_changed", failure.captured.code)
+    val failed = running.copy(state = JobState.FAILED, errorCode = failure.captured.code)
+    assertEquals(FailureStanding.RECOVERY_ONLY, FailedJobs.standing(failed, true, emptyList(), emptyList()))
+    assertTrue(FailedJobs.requiresNewRequest(failed))
+    coVerify(exactly = 0) { repository.requeueStopped(any<JobEntity>()) }
+    coVerify(exactly = 0) { repository.moveCloudTranscriptionsToComputer() }
+  }
+
   @Test fun `ordinary worker cancellation preserves A and B intent and blocks a later upload`() = runBlocking {
     val context = mockk<Context>()
     every { context.filesDir } returns temp.newFolder()

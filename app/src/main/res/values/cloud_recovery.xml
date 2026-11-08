@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
   <string name="cloud_request_uncertain">L’esito finale di un invio non è confermato: il servizio potrebbe averlo ricevuto e addebitato. Il lavoro è fermo: Riprova non lo reinvia. Puoi leggere i risultati già ricevuti. Una nuova richiesta dalla registrazione richiede una scelta esplicita e potrebbe costare di nuovo; gli addebiti incerti restano protetti.</string>
+  <string name="cloud_recovery_changed">Il contesto di questo lavoro è cambiato. I risultati ricevuti restano leggibili quando verificabili. Per continuare avvia una nuova richiesta dalla registrazione: il vecchio lavoro non viene reinviato.</string>
   <string name="cloud_recovery_title">Risultati ricevuti · lavoro interrotto</string>
   <string name="cloud_recovery_open">Leggi i risultati ricevuti</string>
   <string name="cloud_recovery_local">Recupero locale, senza caricare audio</string>

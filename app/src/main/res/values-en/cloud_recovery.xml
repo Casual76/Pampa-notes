@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
   <string name="cloud_request_uncertain">The final outcome of a request is unconfirmed: the service may have received and charged for it. This job is stopped: Retry cannot resend it. You can read the results already received. A new request from the recording requires an explicit choice and may cost again; uncertain charges stay protected.</string>
+  <string name="cloud_recovery_changed">The context of this job has changed. Received results remain readable when they can be verified. To continue, start a new request from the recording: the old job will not be resent.</string>
   <string name="cloud_recovery_title">Received results · interrupted job</string>
   <string name="cloud_recovery_open">Read received results</string>
   <string name="cloud_recovery_local">Local recovery, without uploading audio</string>

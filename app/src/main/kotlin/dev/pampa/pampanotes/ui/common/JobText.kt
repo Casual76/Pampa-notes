@@ -113,7 +113,7 @@ fun jobErrorText(code: String, rawMessage: String?, provider: String? = null): S
 @StringRes
 fun jobErrorRes(code: String, provider: String? = null): Int = when (code) {
   "cloud_request_uncertain" -> R.string.cloud_request_uncertain
-  "cloud_recovery_changed" -> R.string.cloud_recovery_unavailable
+  "cloud_recovery_changed" -> R.string.cloud_recovery_changed
   "companion_only" -> R.string.cloud_error_companion
   "cloud_folder_blocked" -> R.string.cloud_error_folder
   "cloud_budget_exceeded" -> R.string.cloud_error_budget
