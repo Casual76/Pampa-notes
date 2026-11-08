@@ -13,10 +13,11 @@ object AlignmentApplication {
     if (raw.kind != TranscriptKind.RAW || raw.language != expected.rawLanguage || !CloudSources.matches(doc, raw) || raw.id != expected.request.source.rawId) return null
     if (doc.parts.map { AlignmentPart(it.id, it.sha256) } != expected.request.source.parts) return null
     val part = doc.parts.find { it.id == response.partId } ?: return null
-    if (part.text != expected.request.text || part.language != expected.request.language) return null
+    if (part.text != expected.request.text || AlignmentLanguage.code(part.language) != expected.request.language) return null
     val duration = expected.placement.singleOrNull { it.id == response.partId }?.durationMs ?: return null
     AlignmentProtocol.validate(response, expected.request, duration, jobId)
-    val overlay = CloudOverlay(response.partId, response.textSha256, response.language, response.timings)
+    // Keep the source's reported language value intact; the request/response ISO code was validated.
+    val overlay = CloudOverlay(response.partId, response.textSha256, part.language ?: return null, response.timings)
     return raw.copy(cloudSourceJson = CloudSources.encode(doc.copy(overlays = doc.overlays.filterNot { it.partId == response.partId } + overlay)))
   }
 }

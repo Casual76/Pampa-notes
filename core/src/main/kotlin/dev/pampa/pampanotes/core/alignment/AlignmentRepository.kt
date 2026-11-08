@@ -95,7 +95,7 @@ class AlignmentRepository @Inject constructor(
         }
         if (doc == null || !CloudSources.matches(doc, raw)) return@withTransaction
         for (part in doc.parts) {
-          if (!CloudSources.cloud(part.provider) || part.text == null || part.text.isBlank() || !AlignmentProtocol.validLanguage(part.language)) continue
+          if (!CloudSources.cloud(part.provider) || part.text == null || part.text.isBlank() || AlignmentLanguage.code(part.language) == null) continue
           if (doc.overlays.any { it.partId == part.id && it.timings.isNotEmpty() && it.timings.all { t -> t.status == "measured" } }) continue
           val snapshot = snapshot(session.id, part.id, who) ?: continue
           if (queue.enqueue(snapshot)) count++
@@ -118,13 +118,14 @@ class AlignmentRepository @Inject constructor(
     val boundSource = CloudSources.bindSource(doc, ordered) ?: return null
     val part = doc.parts.find { it.id == partId } ?: return null
     val text = part.text ?: return null
-    if (!CloudSources.cloud(part.provider) || !AlignmentProtocol.validLanguage(part.language) || text.length > AlignmentProtocol.MAX_TEXT || !AlignmentProtocol.validUnicode(text)) return null
+    val alignmentLanguage = AlignmentLanguage.code(part.language) ?: return null
+    if (!CloudSources.cloud(part.provider) || text.length > AlignmentProtocol.MAX_TEXT || !AlignmentProtocol.validUnicode(text)) return null
     val segments = db.segments().byTranscript(raw.id)
     val duration = byId.getValue(partId).durationMs
     val windows = AlignmentProtocol.windows(text, segments.filter { it.partId == partId }.sortedWith(compareBy({ it.partStartMs }, { it.indexInPart }))
       .map { AlignmentProtocol.CoarseSegment(it.text, it.partStartMs, it.partEndMs) }, duration)
     val request = AlignmentRequest(source = AlignmentSource(raw.id, CloudSources.version(raw), AlignmentProtocol.sha256(raw.text), boundSource),
-      partId = partId, text = text, textSha256 = AlignmentProtocol.sha256(text), language = part.language!!, segments = windows)
+      partId = partId, text = text, textSha256 = AlignmentProtocol.sha256(text), language = alignmentLanguage, segments = windows)
     AlignmentProtocol.validate(request, duration)
     val p = settings.current()
     val policy = spending.policyForSession(sessionId).toString()
