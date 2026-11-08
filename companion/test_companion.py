@@ -2397,7 +2397,7 @@ class ServerTest(StateMixin, unittest.TestCase):
             set(data["features"]),
             {
                 "by_ref", "archive_upload", "server_chunks", "file_meta", "prompt", "auto_chunks", "partial", "holes",
-                "sdocx_index", "job_options",
+                "sdocx_index", "job_options", "forced_alignment_v1",
             },
         )
 

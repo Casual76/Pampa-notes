@@ -54,7 +54,7 @@ Initial three delegates launched, all actual codex / gpt-6.1-sol / reasoningEffo
 |---|---|---|
 | Cloud/pinning/retry | 6041ac2a-8dfd-4b5a-920d-ae8c1c6ef2c0 | running |
 | Recordings-first UX | d883446a-3153-48a8-857c-8d9ac1ee4944 | running |
-| Python alignment API | 0f90a2ea-4831-4a5f-ba6f-89d1686b5a93 | running |
+| Python alignment API | 0f90a2ea-4831-4a5f-ba6f-89d1686b5a93 | completed |
 
 Full task/child id prefix is node:delegated-task:command%3Amcp%3Aeb1c4ba6-cbfc-4f0c-bac9-1b3c1c7a2dc7%3Adelegate-task%3A plus suffix (child thread uses thread: in place of node:).
 No Gradle/device/GPU lease held. Timestamp/Android alignment agents remain queued until a slot frees and contracts are stable. PN export milestone 11a7cbc1750eb04e5e23d94950be0d34f453c2f5 acknowledged as unintegrated; future export adaptations must include PAMPA enum/options and relay attachment planning.
@@ -67,4 +67,22 @@ TranscriptEntity.cloudSourceJson:String?=null is public immutable exact-source p
 
 Room source migration14->15 adds only these six nullable columns. Coordinator owns generation of core/schemas/15.json once shared Gradle lease is released. Source contract commit is not a completed or verified migration until generated schema and checks land. New JVM payload/hash tests and14->15 instrumented migration test prepared, NOT YET EXECUTED. Scoped git diff --check passed.
 
-Current resource reservations: PN owns Gradle and Pampa_Tablet emulator/device until explicit release; no compute/GPU lease requested here. Three implementers remain running. Companion first25 mocked/pure forced-alignment tests reported pass by implementer, not yet independently executed or reviewed; existing suite/API doc still in progress. Review round not started;0/3 correction rounds used.
+Current resource reservations: PN owns Gradle until explicit release; no compute/GPU lease requested here. PN released the device lease after device_open plus its advised single manual-start retry failed with emulator exit1 / FATAL Running multiple emulators with same AVD. Runtime device work stopped; no lock/session workaround and no device proof. This workflow has not attempted a device session.
+
+PN received/cherry-picks5c91d57, will generate schema15 alongside hashed cloudSourceJson/blob/null-empty-day compatibility tests and send artifact/commit for adoption. No additional DB15 changes planned; Android alignment queue should stay private in noBackupFilesDir unless fresh implementer identifies a specific blocking need. Generated schema is not executed migration evidence. Three implementers remain running. Companion first25 mocked/pure forced-alignment tests reported pass by implementer, not yet independently executed or reviewed; existing suite/API doc still in progress. Review round not started;0/3 correction rounds used.
+
+## User steering: runtime QA waiver and consolidated handoff
+
+User explicitly prohibits all emulator/device/GPU QA/plans because the PC lacks resources; no physical-device substitute. Device/runtime evidence gates are waived for this task and must be labelled NOT EXECUTED. Approval uses independent source reviews plus proportionate standalone/local tests. No live-model accuracy claim. Necessary Gradle only, coordinator-controlled, --max-workers=2 --no-parallel, after actual lease request/release. Three independent reviewers remain mandatory.
+
+Public entity/source contract frozen at5c91d57, no incremental schema/field redesign. Parent sends one consolidated source-blob/schema commit after PN compilation. Parent integrates this workflow once at stable delivery. Send parent only blocker, actual lease request, or final snapshot, avoiding repeated partial handoffs. Each implementer provides one final consolidated report; no new topic on an existing agent.
+
+C6 audit found copied source rows cannot share local paths across partial moves/computer-only eviction; implementer now allocates independent destination filenames/bytes under FilesInUse holds with rollback cleanup. C5 mocked audit reports account-bound ticket-cache verdicts and align-model-only unload lifecycle fixes. Both are still implementer findings pending final source inspection/review, not approval.
+
+## C5 consolidated unit delivery
+
+Changed companion/whisperx_server.py, test_forced_alignment.py, test_companion.py and FORCED_ALIGNMENT_API.md only. Capability forced_alignment_v1, POST /v1/audio/alignments, UTF16 offsets / part-relative ms, exact text/source identity, uploaded/archive hashes, owner-only account-bound jobs, existing status/cancel endpoints. Windows bounded30s/400UTF16units, max1000; long untimed input defers. Missing/unreliable evidence stays null; no ASR replacement or paid transcription.
+
+Implementer executed286 tests (257existing+29new),49.040s, all pass; log %LOCALAPPDATA%/Temp/pampa-forced-alignment-tests-final.txt. Coordinator inspected actual log footer (Ran286 tests / OK), source API contract, declared file list and scoped diff --check. This is archived/executed implementer test evidence, not an independent acoustic/runtime accuracy review. Legacy cancellation fixtures emitted JobCancelled task warnings without failed tests. AST/syntax checks reported pass. Gradle/device/emulator/GPU/real-model accuracy NOT EXECUTED. No forbidden paths changed or commits made by implementer.
+
+Next ready work unit: fresh Android exact-source persistence and guarded background alignment, new package/core helpers + SessionRepository/RawTimelinePlan; cloud-owned scheduler/transcription files remain reserved until cloud implementer finishes. No additional DB15 fields/tables planned.
