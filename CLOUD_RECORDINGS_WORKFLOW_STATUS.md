@@ -57,6 +57,8 @@ Initial three delegates launched, all actual codex / gpt-6.1-sol / reasoningEffo
 | Python alignment API | 0f90a2ea-4831-4a5f-ba6f-89d1686b5a93 | completed |
 | Android exact source / alignment | 6c6c919c-38ab-41d4-8da8-fa600c359921 | completed |
 | Per-part clock / session export | c7ae6aae-2896-4caf-9d3c-26ea4f5af7e5 | completed |
+| Exact cloud UI adapter | 7d965bb2-dda0-4574-afc7-cbe7ba9fad6b | completed |
+| Portable source adapters | e9c5ab5e-e70e-42f8-9a0e-895a576047fe | running |
 
 Full task/child id prefix is node:delegated-task:command%3Amcp%3Aeb1c4ba6-cbfc-4f0c-bac9-1b3c1c7a2dc7%3Adelegate-task%3A plus suffix (child thread uses thread: in place of node:).
 No Gradle/device/GPU lease held. Timestamp/Android alignment agents remain queued until a slot frees and contracts are stable. PN export milestone 11a7cbc1750eb04e5e23d94950be0d34f453c2f5 acknowledged as unintegrated; future export adaptations must include PAMPA enum/options and relay attachment planning.
@@ -136,3 +138,15 @@ Android unit completed SessionRepository/RawTimelinePlan,9new core/alignment fil
 Executed by implementer:58pure/fixture tests (incl RAW regressions)+6in-memory HTTP tests=64pass; changed Android sources standalone compilation and scoped whitespace checks pass. Coordinator inspected actual OK58/OK6 logs and scheduler/presentation/source APIs. Gradle/Hilt/Room/device/GPU/real audio/provider/accuracy NOT EXECUTED. All unit writes finished; remaining substantial adapters use fresh context implementers with separate UI and portable-source ownership. Coordinator owns startup/endpoint/save/cancel/restore/logout hooks. No initial review until those adapters and integrated checks are complete.
 
 Portable follow-through must preserve existing measured timing overlays through native roundtrip while source identity remains explicitly unbound for future alignment. Full native public provenance/history must not be silently dropped; exact-session exports cannot leak sibling originals. UI must show exact text with nullable missing timings and avoid coarse interpolation; these two ready work units are independent.
+
+C4 committed c6eec80. Two fresh Sol/xhigh implementation delegates launched (two active total): UI7d965bb2 owns SessionScreen/AlignmentPresentation/new reading-block helpers/resources/tests; portable e9c5ab5e owns CloudSources + native ZIP export/import adapters/tests. No source overlap. Coordinator retains startup/save/endpoint/cancel/restore/logout hooks, outside both scopes. New UI may use validatePortable to show retained measured overlays while portable_unbound still blocks new alignment. No additional schema/entity contract changes.
+
+PN targeted Gradle batch released per parent (70pass,0fail), no device/GPU/server held. No Gradle acquired/running here. Coordinator must request lease for final necessary2workers/no-parallel batch after source writers finish. Pending coordinator hooks: after paid save call alignment.onCloudSaved for each saved.sessionIds, isolate scheduling exceptions; application and successful endpoint wake; session cancellation and backup restore/logout stop; inspect account/privacy fences. T3 delegates' next says end turn without polling; resume automatically on completion.
+
+## Exact cloud UI consolidated delivery
+
+UI adapter finished9files: SessionScreen + CloudTranscript/Card, AlignmentPresentation/ReadingBlocks,2tests,IT/EN alignment_ui.xml. Exact whitespace/punctuation/UTF16/CRLF retained across1600unit/24line bounded blocks; measured-only highlighting/seek/autofollow, nullable missing evidence no nearby/interpolated fallback. Search crosses blocks and clips highlights. Invalid source metadata shows plain exact current RAW. Valid stored portable overlays display without granting new alignment authority. Legacy Paragraph/Card/paragraphsOf unchanged, no invented cloud chapters/voices.
+
+Executed74 standalone tests(22new+52existing) plus Kotlin syntax parsing, XML/key/placeholder/legacy comparison/whitespace checks PASS; NOT Compose typechecking. Coordinator inspected actual log. No Gradle/Compose rendering/device/GPU/providers/runtime proof. Coordinator must fix global SearchRepository.momentOf legacy interpolation and SessionViewModel.seekIfAsked pre-render seek: cloud search uses exact raw text and nullable AlignmentPresentation.timeAt, missing evidence means no automatic seek. Portable writer still active; integrated checks wait.
+
+PN claimed its next combined Gradle2worker/no-parallel build/JVM/lint batch; coordinator confirmed no lease/running batch here. No heavy resources acquired by this workflow.

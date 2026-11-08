@@ -244,7 +244,17 @@ private fun SessionScreen(
   var editingVoice by remember { mutableStateOf<VoiceLabel?>(null) }
   var voiceOrigin by remember { mutableStateOf<Rect?>(null) }
 
-  val paragraphs = remember(state.segments) { paragraphsOf(state.segments) }
+  val active = state.activeTranscript
+  val cloudRaw = CloudTranscript.appliesTo(active)
+  // Exact cloud text never enters Paragraph/WordTimings, even while its display is preparing.
+  val paragraphs = remember(state.segments, cloudRaw) { if (cloudRaw) emptyList() else paragraphsOf(state.segments) }
+  val preparedCloud by produceState<CloudTranscript?>(null, active, state.parts) {
+    value = null
+    value = if (cloudRaw && active != null) withContext(Dispatchers.Default) { CloudTranscript.prepare(active, state.parts) } else null
+  }
+  // produceState retains the previous value until its new effect starts; don't display old text
+  // or old audio evidence during a selection/parts change.
+  val cloud = preparedCloud?.takeIf { it.source == active && it.currentParts == state.parts }
   val voiceNames = remember(state.session?.voiceNames) { VoiceNames.decode(state.session?.voiceNames) }
   val resources = LocalContext.current.resources
   val runSummary = remember(resources, state.runOfRaw, state.raw, state.segments, state.parts) {
@@ -256,8 +266,14 @@ private fun SessionScreen(
   // cambia il paragrafo, cioe' ogni qualche decina di secondi, e non a ogni battito del lettore.
   // Con la posizione passata come valore (com'era prima) derivedStateOf non vedeva cambiare niente,
   // e il paragrafo attivo restava il primo per tutta la lezione.
-  val activeParagraph by remember(paragraphs) {
-    derivedStateOf { paragraphs.indexOfLast { it.startMs <= playback.value.positionMs }.coerceAtLeast(0) }
+  val activeParagraph by remember(paragraphs, cloud, active?.kind, cloudRaw) {
+    derivedStateOf {
+      when {
+        cloudRaw -> cloud?.activeBlock(playback.value.positionMs) ?: -1
+        active?.kind != TranscriptKind.RAW -> -1
+        else -> paragraphs.indexOfLast { it.startMs <= playback.value.positionMs }.coerceAtLeast(0)
+      }
+    }
   }
   val playing by remember { derivedStateOf { playback.value.playing } }
 
@@ -277,8 +293,7 @@ private fun SessionScreen(
   // evidenziare (vedi `TranscriptSearch.plainBlocks`).
   val search = rememberTranscriptSearchState()
   val scope = rememberCoroutineScope()
-  val active = state.activeTranscript
-  val searchOnRaw = active?.kind == TranscriptKind.RAW && paragraphs.isNotEmpty()
+  val searchOnRaw = active?.kind == TranscriptKind.RAW && (cloudRaw || paragraphs.isNotEmpty())
   // I blocchi della raffinata si preparano fuori dal thread della UI e solo a ricerca aperta: servono
   // solo a lei, e spezzare il testo di una registrazione di ore costava un fotogramma a ogni apertura
   // della pagina.
@@ -289,25 +304,41 @@ private fun SessionScreen(
       emptyList()
     }
   }
-  val searchBlocks = remember(paragraphs, refinedBlocks, searchOnRaw) {
-    if (searchOnRaw) paragraphs.map { it.text } else refinedBlocks
+  val searchBlocks = remember(paragraphs, cloud, refinedBlocks, searchOnRaw, cloudRaw) {
+    when {
+      cloudRaw -> cloud?.blocks?.map { it.text }.orEmpty()
+      searchOnRaw -> paragraphs.map { it.text }
+      else -> refinedBlocks
+    }
   }
+  val searchIndexBlocks = remember(searchBlocks, cloud) { cloud?.let { listOf(it.text) } ?: searchBlocks }
   // L'indice si prepara fuori dal thread della UI: diciannove ore sono un milione di caratteri.
   // Prima si butta quello vecchio: fino al nuovo non c'e' niente in cui cercare.
-  val searchIndex by produceState<TranscriptSearch.Index?>(null, searchBlocks, search.open) {
+  val preparedSearch by produceState<Pair<List<String>, TranscriptSearch.Index>?>(null, searchIndexBlocks, search.open) {
     value = null
-    value = if (search.open) withContext(Dispatchers.Default) { TranscriptSearch.Index(searchBlocks) } else null
+    value = if (search.open) withContext(Dispatchers.Default) { searchIndexBlocks to TranscriptSearch.Index(searchIndexBlocks) } else null
   }
+  val searchIndex = preparedSearch?.takeIf { search.open && it.first === searchIndexBlocks }?.second
+  var resultsForIndex by remember { mutableStateOf<TranscriptSearch.Index?>(null) }
+  var cloudHighlights by remember { mutableStateOf<Map<Int, List<IntRange>>>(emptyMap()) }
+  val cloudSearchReady = searchIndex != null && resultsForIndex === searchIndex
   // Cambiati i blocchi (un'altra scheda, un testo arrivato), le occorrenze di prima indicano posti
   // che non ci sono piu': restavano evidenziate sulla scheda nuova finche' la ricerca non ripartiva.
   LaunchedEffect(searchBlocks) { search.clearMatches() }
 
   fun revealMatch(match: TranscriptSearch.Match, seek: Boolean) {
+    if (cloudRaw && (searchIndex == null || resultsForIndex !== searchIndex)) { onUserScrolled(); return }
     scope.launch { scrollToKeyed(listState, if (searchOnRaw) PARAGRAPH_KEY else REFINED_BLOCK_KEY, match.block) }
     val paragraph = paragraphs.getOrNull(match.block)
-    if (seek && searchOnRaw && paragraph != null) {
+    val time = when {
+      !seek || !searchOnRaw -> null
+      cloudRaw -> cloud?.timeAt(match.block, match.start)
+      paragraph != null -> TranscriptSearch.timeOf(paragraph.base, match.start)
+      else -> null
+    }
+    if (time != null) {
       // Il lettore va alla parola; la lista la segue da se' (seekTo riaccende l'inseguimento).
-      onSeek(TranscriptSearch.timeOf(paragraph.base, match.start))
+      onSeek(time)
     } else {
       // Mentre si scrive si guarda, non si ascolta: la lista si ferma sull'occorrenza e non torna
       // al paragrafo che suona finche' non si tocca una frase.
@@ -344,18 +375,26 @@ private fun SessionScreen(
     // Un attimo di respiro fra una lettera e l'altra: cercare «k», «ka», «kan» e «kant» e' tre ricerche
     // buttate su una lezione intera.
     delay(SEARCH_DEBOUNCE_MS)
-    val found = withContext(Dispatchers.Default) { TranscriptSearch.find(index, query) }
+    val (found, cloudRanges) = withContext(Dispatchers.Default) {
+      val matches = TranscriptSearch.find(index, query)
+      val located = cloud?.locate(matches) ?: matches
+      located to cloud?.highlightIndex(located).orEmpty()
+    }
     val before = search.currentMatch
     search.onResults(query, found)
+    cloudHighlights = cloudRanges
+    resultsForIndex = index
     val jumpAt = jumpAtMs
     if (jumpAt != null) {
       jumpAtMs = null
       if (searchOnRaw) {
         // Il lettore e' gia' li' e la lista ci va senza toccarlo, e senza smettere di seguirlo: premuto
         // play, il testo va avanti con la voce da questo paragrafo.
-        val bases = paragraphs.map { it.base }
-        if (found.isNotEmpty()) search.current = withContext(Dispatchers.Default) { TranscriptSearch.matchAt(bases, found, jumpAt) }
-        val block = search.currentMatch?.block ?: paragraphs.indexOfLast { it.startMs <= jumpAt }.coerceAtLeast(0)
+        if (found.isNotEmpty()) search.current = withContext(Dispatchers.Default) {
+          cloud?.matchAt(found, jumpAt) ?: TranscriptSearch.matchAt(paragraphs.map { it.base }, found, jumpAt)
+        }
+        val block = search.currentMatch?.block ?: cloud?.activeBlock(jumpAt)?.takeIf { it >= 0 }
+          ?: paragraphs.indexOfLast { it.startMs <= jumpAt }.coerceAtLeast(0)
         scrollToKeyed(listState, PARAGRAPH_KEY, block)
         return@LaunchedEffect
       }
@@ -371,8 +410,8 @@ private fun SessionScreen(
   // I tratti di parlato fra i silenzi lunghi (vedi `Chapters`): confini e prime parole, mai
   // riassunti. Si calcolano fuori dal thread della UI — diciannove ore sono ventimila segmenti — e
   // solo sulla grezza a schermo, l'unica in cui un capitolo si puo' ritrovare nel testo.
-  val chapters by produceState(emptyList<Chapters.Chapter>(), state.segments, state.durationMs, searchOnRaw) {
-    value = if (searchOnRaw) {
+  val chapters by produceState(emptyList<Chapters.Chapter>(), state.segments, state.durationMs, searchOnRaw, cloudRaw) {
+    value = if (searchOnRaw && !cloudRaw) {
       withContext(Dispatchers.Default) { Chapters.index(state.segments, state.durationMs.takeIf { it > 0 }) }
     } else {
       emptyList()
@@ -553,6 +592,10 @@ private fun SessionScreen(
     }
     transcriptBody(
       state, paragraphs, activeParagraph, { playback.value.positionMs }, onSeek, runSummary,
+      cloudRaw = cloudRaw,
+      cloud = cloud,
+      cloudSearchReady = cloudSearchReady,
+      cloudHighlights = cloudHighlights,
       search = search,
       refinedBlocks = refinedBlocks.takeIf { search.open },
       chapters = chapters,
@@ -1056,6 +1099,10 @@ private fun LazyListScope.transcriptBody(
   search: TranscriptSearchState,
   /** La raffinata a blocchi di testo semplice, mentre si cerca; null quando la ricerca e' chiusa. */
   refinedBlocks: List<String>?,
+  cloudRaw: Boolean = false,
+  cloud: CloudTranscript? = null,
+  cloudSearchReady: Boolean = false,
+  cloudHighlights: Map<Int, List<IntRange>> = emptyMap(),
   /** I capitoli della grezza (vuota sotto tre): una riga sopra il testo apre l'elenco. */
   chapters: List<Chapters.Chapter> = emptyList(),
   currentChapter: Int = -1,
@@ -1066,6 +1113,30 @@ private fun LazyListScope.transcriptBody(
   onVoiceClick: ((VoiceLabel, Rect?) -> Unit)? = null,
 ) {
   val active = state.activeTranscript ?: return
+
+  if (cloudRaw) {
+    runSummary?.let { line -> item(key = "run-summary") { FluidSectionFootnote(text = line) } }
+    item(key = "cloud-alignment-evidence") {
+      FluidSectionFootnote(text = stringResource(when {
+        cloud == null -> R.string.alignment_ui_preparing
+        cloud.hasMeasured -> R.string.alignment_ui_model_times
+        else -> R.string.alignment_ui_text_only
+      }))
+    }
+    if (cloud != null) {
+      itemsIndexed(items = cloud.blocks, key = { index, _ -> "$PARAGRAPH_KEY$index" }) { index, block ->
+        CloudTranscriptCard(
+          block = block,
+          isActive = index == activeParagraph,
+          positionMs = positionMs,
+          onSeek = onSeek,
+          highlights = if (cloudSearchReady) cloudHighlights[index].orEmpty() else emptyList(),
+          currentHighlight = if (cloudSearchReady) cloud.highlights(index, listOfNotNull(search.currentMatch)).firstOrNull() else null,
+        )
+      }
+    }
+    return
+  }
 
   if (active.kind != TranscriptKind.RAW || paragraphs.isEmpty()) {
     if (active.kind == TranscriptKind.RAW && state.segments.any { it.partEndMs <= it.partStartMs }) {
@@ -1329,7 +1400,7 @@ private fun ScrollFollower(
   // paragrafo o due fuori posto. Da un paragrafo visibile qualunque si ricava di quanto sono
   // spostati tutti; se non se ne vede nessuno, ci si avvicina e si corregge.
   LaunchedEffect(targetIndex, following, playing) {
-    if (!following || !playing) return@LaunchedEffect
+    if (!following || !playing || targetIndex < 0) return@LaunchedEffect
     scrollToKeyed(listState, PARAGRAPH_KEY, targetIndex)
   }
 }

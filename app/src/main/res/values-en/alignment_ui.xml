@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="alignment_ui_preparing">Preparing the original text…</string>
+    <string name="alignment_ui_text_only">The original text is available offline too. Word timings are unavailable: reading or searching the text does not move the audio.</string>
+    <string name="alignment_ui_model_times">Timings come from model alignment, not a certain acoustic measurement. Only words with available timings are highlighted during playback and can seek the audio; other words remain untimed.</string>
+    <string name="alignment_ui_first_word">First aligned word: %1$s</string>
+    <string name="alignment_ui_no_word_times">Word timings unavailable</string>
+</resources>
