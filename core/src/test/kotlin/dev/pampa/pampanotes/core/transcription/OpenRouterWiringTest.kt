@@ -111,6 +111,7 @@ class OpenRouterWiringTest {
 
   @Test fun `turning on privacy prevents the next cloud chunk or retry from uploading`() = runTest {
     val provider = mockk<TranscriptionProvider>()
+    every { provider.id } returns "openrouter"
     var customOnly = false
     coEvery { provider.transcribe(any(), any(), any(), any(), any()) } returns TranscriptResult("words", emptyList(), null, null)
     val guarded = CloudTranscriptionGuard(provider) { customOnly }

@@ -76,6 +76,12 @@ class SessionDeletionTest {
       assertTrue(inside)
       val id = firstArg<String>(); sessionRows.getValue(id).let { sessionRows[id] = it.copy(position = secondArg(), updatedAt = thirdArg()) }; Unit
     }
+    coEvery { sessions.setVoiceNames(any(), any(), any()) } answers {
+      assertTrue(inside)
+      val id = firstArg<String>()
+      sessionRows[id] = sessionRows.getValue(id).copy(voiceNames = secondArg(), updatedAt = thirdArg())
+      Unit
+    }
     coEvery { sessions.delete(any()) } answers {
       assertTrue(inside)
       val id = firstArg<String>(); sessionRows.remove(id)

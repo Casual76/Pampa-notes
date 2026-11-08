@@ -5,6 +5,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import dev.pampa.pampanotes.core.db.*
 import dev.pampa.pampanotes.core.files.AppFiles
+import dev.pampa.pampanotes.core.files.Hashing
 import io.mockk.*
 import java.io.File
 import kotlinx.coroutines.test.runTest
@@ -18,7 +19,9 @@ class PampaBundleOriginPersistenceTest {
   @get:Rule val temp = TemporaryFolder()
   private val note = NoteEntity("n", "f", "Recording", createdAt = 1, updatedAt = 2)
   private val session = SessionEntity("s", "n", date = "2026-11-01", position = 0, createdAt = 1, updatedAt = 2)
-  private val unknown = AudioPartEntity("p", "s", 0, "p.wav", "Original", "audio/wav", 7, 1000, "a".repeat(64), 1, archivedAt = 20)
+  private val audioA = "audio-a"
+  private val audioB = "audio-b"
+  private val unknown = AudioPartEntity("p", "s", 0, "p.wav", "Original", "audio/wav", 7, 1000, Hashing.sha256(audioA), 1, archivedAt = 20)
   private val exact = unknown.copy(recordedAtEpochMs = 1793523600000, recordedAtLocal = "2026-11-01T10:00",
     recordedAtZoneId = "+01:00", recordedAtSource = "media_metadata", recordedAtPrecision = "second")
 
@@ -44,6 +47,7 @@ class PampaBundleOriginPersistenceTest {
     coEvery { sessions.upsert(any<SessionEntity>()) } answers { firstArg<SessionEntity>().let { sessionRows[it.id] = it }; Unit }
     coEvery { sessions.delete(any()) } answers { sessionRows.remove(firstArg()); Unit }
     coEvery { parts.bySession(any()) } answers { partRows.values.filter { it.sessionId == firstArg<String>() } }
+    coEvery { parts.all() } answers { partRows.values.toList() }
     coEvery { parts.get(any()) } answers { partRows[firstArg()] }
     coEvery { parts.upsert(any<AudioPartEntity>()) } answers { firstArg<AudioPartEntity>().let { partRows[it.id] = it }; Unit }
     coEvery { parts.delete(any()) } answers { partRows.remove(firstArg()); Unit }
@@ -54,11 +58,21 @@ class PampaBundleOriginPersistenceTest {
     every { sql.query("SELECT id, sessionId FROM transcription_runs") } returns cursor
     every { cursor.moveToNext() } returns false
     every { files.audioFile(any()) } answers { File(temp.root, firstArg<String>()) }
+    every { files.audio } returns temp.root
+    fun bytes(part: AudioPartEntity) = when (part.sha256) {
+      Hashing.sha256(audioA) -> audioA
+      Hashing.sha256(audioB) -> audioB
+      else -> error("Missing exact fixture bytes")
+    }
     oldParts.forEach { old ->
-      if (!staged) File(temp.root, old.fileName).writeText("synthetic fixture")
+      if (!staged) File(temp.root, old.fileName).writeText(bytes(old))
       else File(temp.root, old.fileName).delete()
     }
     val stored = if (staged) incomingParts.associate { (true to it.id) to "staged.wav" } else emptyMap()
+    if (staged) {
+      require(incomingParts.size == 1) { "Staging fixtures need independent names per entity" }
+      File(temp.root, "staged.wav").writeText(bytes(incomingParts.single()))
+    }
     val incomingSessions = incomingParts.map { it.sessionId }.distinct().mapIndexed { i, id -> session.copy(id = id, position = i) }
     val graph = PampaBundleNote(note, sessions = incomingSessions, parts = incomingParts)
     PampaBundleImporter(db, files).persist(PampaBundleData(folders = emptyList(), notes = listOf(graph)), null, stored, publicLegacy = false)
@@ -80,7 +94,7 @@ class PampaBundleOriginPersistenceTest {
   }
 
   @Test fun `changed staged audio never inherits old recording origin`() = runTest {
-    val changed = unknown.copy(sha256 = "b".repeat(64))
+    val changed = unknown.copy(sha256 = Hashing.sha256(audioB))
     val saved = persist(exact, changed, staged = true)
     assertEquals(changed.copy(fileName = "staged.wav", archivedAt = 0), saved)
     assertNull(saved.recordedAtEpochMs)
@@ -96,7 +110,7 @@ class PampaBundleOriginPersistenceTest {
     val first = exact.copy(id = PampaBundleLegacyReconcile.id("part", "first"),
       sessionId = PampaBundleLegacyReconcile.id("session", "first"))
     val second = exact.copy(id = PampaBundleLegacyReconcile.id("part", "second"),
-      sessionId = PampaBundleLegacyReconcile.id("session", "second"), fileName = "second.wav", sha256 = "b".repeat(64),
+      sessionId = PampaBundleLegacyReconcile.id("session", "second"), fileName = "second.wav", sha256 = Hashing.sha256(audioB),
       recordedAtEpochMs = exact.recordedAtEpochMs!! + 86_400_000, recordedAtLocal = "2026-11-02T10:00", recordedAtSource = "second_recorder")
     val incoming = listOf(unknown.copy(id = first.id, sessionId = first.sessionId, sha256 = second.sha256),
       unknown.copy(id = second.id, sessionId = second.sessionId, sha256 = first.sha256))

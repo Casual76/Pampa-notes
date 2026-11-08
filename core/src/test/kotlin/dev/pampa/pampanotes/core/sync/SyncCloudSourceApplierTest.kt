@@ -44,6 +44,7 @@ class SyncCloudSourceApplierTest {
     coEvery { db.sync().upsertMeta(any()) } answers { meta = firstArg() }
     coEvery { db.sessions().get("s") } returns SessionEntity(id = "s", noteId = "n", date = "2026-11-08", position = 0, createdAt = 1, updatedAt = 1)
     coEvery { db.transcripts().upsert(any()) } answers { saved = firstArg() }
+    coEvery { transcripts.get("r") } answers { saved }
   }
   @After fun teardown() { unmockkStatic("androidx.room.RoomDatabaseKt") }
 
