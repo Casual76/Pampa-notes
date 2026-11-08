@@ -709,6 +709,10 @@ interface JobDao {
   )
   suspend fun requestCancel(id: String, now: Long): Int
 
+  /** The watcher may already have exited while a result was being saved. */
+  @Query("UPDATE jobs SET state = 'CANCELLED', phase = NULL, finishedAt = :now, updatedAt = :now WHERE id = :id AND state = 'CANCEL_REQUESTED'")
+  suspend fun finishCancellation(id: String, now: Long): Int
+
   @Query("SELECT * FROM jobs WHERE state = 'FAILED'")
   suspend fun failed(): List<JobEntity>
 

@@ -121,6 +121,19 @@ class CloudRequeueSqlTest(unittest.TestCase):
         self.assertEqual(0, self.db.execute(query("pinTranscription"), self.params).rowcount)
         self.assertEqual("folder/A", self.row()["model"])
 
+    def test_cancel_during_result_save_is_finalized_without_success_or_restart(self):
+        self.db.execute("UPDATE jobs SET state='STITCHING', phase='saving', finishedAt=NULL")
+        self.assertEqual(1, self.db.execute(query("requestCancel"), self.params).rowcount)
+        self.assertEqual(0, self.db.execute(query("markDone"), self.params).rowcount)
+        self.assertEqual(1, self.db.execute(query("finishCancellation"), self.params).rowcount)
+        self.assertEqual("CANCELLED", self.row()["state"])
+        self.assertIsNone(self.db.execute(query("activeForSession"), self.params).fetchone())
+        self.assertEqual(0, self.db.execute(query("finishCancellation"), self.params).rowcount)
+        for state in ("DONE", "FAILED", "QUEUED"):
+            self.db.execute("UPDATE jobs SET state=?", (state,))
+            self.assertEqual(0, self.db.execute(query("finishCancellation"), self.params).rowcount)
+            self.assertEqual(state, self.row()["state"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

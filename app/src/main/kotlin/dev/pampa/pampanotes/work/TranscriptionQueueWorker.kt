@@ -436,7 +436,10 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       }
       // La riga puo' non esserci piu' (la sessione e' stata unita a un'altra, e la riga se n'e'
       // andata con lei): il risultato e' salvato lo stesso, e lo si dice.
-      repository.markDone(job.id)
+      if (!repository.markDone(job.id) && repository.get(job.id) != null) {
+        runner.cleanUp(job.id)
+        return Step.Next
+      }
       // Una registrazione tornata muta in mezzo a parti che parlano: la sessione lo dira'.
       repository.recordEmptyParts(job.id, result.emptyPartIds)
       runner.cleanUp(job.id)
@@ -479,14 +482,19 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     return Step.Next
   }
 
-  private suspend fun quotaWait(job: JobEntity, limited: TranscriptionError.RateLimited): Step {
+  private suspend fun quotaWait(job: JobEntity, limited: TranscriptionError.RateLimited): Step = withContext(NonCancellable) {
+    if (isStopped && stoppedByApp()) {
+      repository.markCancelled(job.id)
+      runner.cleanUp(job.id)
+      return@withContext Step.Next
+    }
     val at = dev.pampa.pampanotes.core.transcription.CloudRetry.deadline(limited, System.currentTimeMillis())
     // A cancel before, during or after this atomic transition wins over a delayed resume.
     if (!repository.requeueUntil(job.id, at, limited.scopeFingerprint)) {
       runner.cleanUp(job.id)
-      return Step.Next
+      return@withContext Step.Next
     }
-    return Step.ResumeAt(at)
+    Step.ResumeAt(at)
   }
 
   /**
@@ -660,8 +668,8 @@ class TranscriptionQueueWorker @AssistedInject constructor(
           dev.pampa.pampanotes.core.refinement.RefinementPrompts.system(options.presetOrDefault, options.customPrompt),
         ).take(16),
       )
-      repository.markDone(job.id)
-      AppNotifications.notifyRefined(applicationContext, job.id, transcript.wordCount, result.suspicious)
+      if (repository.markDone(job.id) || repository.get(job.id) == null)
+        AppNotifications.notifyRefined(applicationContext, job.id, transcript.wordCount, result.suspicious)
     } catch (cancellation: CancellationException) {
       cancelled(job, cancellation)
     } catch (error: RefinementError) {

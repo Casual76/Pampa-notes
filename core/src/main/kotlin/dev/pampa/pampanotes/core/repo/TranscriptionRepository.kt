@@ -444,7 +444,12 @@ class TranscriptionRepository @Inject constructor(
   suspend fun start(jobId: String, state: JobState, model: String?): Boolean =
     jobs.start(jobId, state, model, System.currentTimeMillis()) > 0
 
-  suspend fun markDone(jobId: String): Boolean = jobs.markDone(jobId, System.currentTimeMillis()) > 0
+  suspend fun markDone(jobId: String): Boolean {
+    val now = System.currentTimeMillis()
+    if (jobs.markDone(jobId, now) > 0) return true
+    jobs.finishCancellation(jobId, now)
+    return false
+  }
 
   /** Com'e' finito un lavoro che si voleva segnare fallito. */
   enum class FailOutcome {

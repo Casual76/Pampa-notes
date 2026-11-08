@@ -53,8 +53,17 @@ class AppFiles(context: Context) {
   ): Int {
     var removed = 0
     fun old(file: File) = isOldEnough(file.lastModified(), now)
-    audio.listFiles()?.forEach { if (it.isFile && it.name !in referencedAudio && old(it) && it.delete()) removed++ }
-    sources.listFiles()?.forEach { if (it.isFile && it.name !in referencedSources && old(it) && it.delete()) removed++ }
+    fun sweep(dir: File, referenced: Set<String>) {
+      // Equivalent stored names still reference the same bytes. An unreadable identity defers
+      // cleanup, matching session deletion rather than orphaning a retained legacy alias later.
+      val identities = runCatching { referenced.map { File(dir, it).canonicalPath }.toSet() }.getOrNull() ?: return
+      dir.listFiles()?.forEach { file ->
+        val identity = runCatching { file.canonicalPath }.getOrNull()
+        if (identity != null && file.isFile && identity !in identities && old(file) && file.delete()) removed++
+      }
+    }
+    sweep(audio, referencedAudio)
+    sweep(sources, referencedSources)
     jobs.listFiles()?.forEach { if (it.isDirectory && it.name !in activeJobIds && old(it) && it.deleteRecursively()) removed++ }
     return removed
   }
