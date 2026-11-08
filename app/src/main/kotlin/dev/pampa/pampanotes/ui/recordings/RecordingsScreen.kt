@@ -7,6 +7,7 @@ import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.IosShare
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -118,6 +119,10 @@ fun RecordingsRoute(
     onRefresh = pull.onRefresh.takeUnless { selecting },
     actions = {
       if (selecting) {
+        FluidBarAction(icon = Icons.Rounded.IosShare, contentDescription = exportLabel, enabled = selected.isNotEmpty(), onClick = {
+          exporting = ExportScope.Sessions(selected.toList(), defaultFolderName)
+          selection.exit()
+        })
         if (anyPending) FluidBarAction(icon = Icons.Rounded.Mic, contentDescription = transcribeLabel, onClick = {
           viewModel.askTranscribe(selected)
           selection.exit()
@@ -170,8 +175,9 @@ fun RecordingsRoute(
               add(FluidContextAction(label = selectLabel) { selection.start(item.id) })
               add(FluidContextAction(label = moveLabel) { selection.start(item.id); moving = true })
               if (item.toTranscribe > 0 && item.job == null) add(FluidContextAction(label = transcribeLabel) { viewModel.askTranscribe(setOf(item.id)) })
-              // Session export is deliberately absent until ExportScope.Sessions exists. Never
-              // substitute ExportScope.Note here: that would include unselected sibling sessions.
+              add(FluidContextAction(label = exportLabel) {
+                exporting = ExportScope.Sessions(listOf(item.id), item.session.session.title.ifBlank { item.note.title })
+              })
               add(FluidContextAction(label = deleteLabel, destructive = true) { deleting = setOf(item.id) })
             }
           }),

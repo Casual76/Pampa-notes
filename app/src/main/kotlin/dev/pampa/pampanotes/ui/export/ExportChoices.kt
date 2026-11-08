@@ -116,6 +116,13 @@ private fun CustomizeBody(options: ExportOptions, onOptions: (ExportOptions) -> 
       checked = options.timestamps,
       onCheckedChange = { onOptions(options.copy(timestamps = it)) },
     )
+    FluidListDivider()
+    FluidToggleRow(
+      title = stringResource(R.string.ec_option),
+      subtitle = stringResource(R.string.ec_option_detail),
+      checked = options.speechClock,
+      onCheckedChange = { onOptions(options.copy(speechClock = it)) },
+    )
     // Regole e allegati contano solo nello ZIP: i file sciolti hanno le regole in instructions.md
     // sempre, e il testo da incollare in cima. Un interruttore che non cambia niente e' un
     // interruttore che insegna a non fidarsi degli altri.
@@ -179,6 +186,7 @@ private fun summaryOf(options: ExportOptions): String {
       ),
     )
     add(stringResource(R.string.export_summary_timestamps, flag(options.timestamps)))
+    add(stringResource(R.string.ec_summary, flag(options.speechClock)))
     if (options.carriesAttachments) {
       add(stringResource(R.string.export_summary_audio, flag(options.includeAudio)))
       add(stringResource(R.string.export_summary_sources, flag(options.includeSources)))

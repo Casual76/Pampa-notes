@@ -25,6 +25,9 @@ data class TranscriptBlock(
   val voice: Int? = null,
   /** Il nome dato a quella voce («Rinomina le voci»), che si scrive al posto di «Voce N». */
   val voiceName: String? = null,
+  /** Source offset in this part, never the concatenated session offset. */
+  val partOffsetMs: Long? = null,
+  val showClock: Boolean = false,
 ) {
   val words: Int get() = text.wordCount()
 }
@@ -53,11 +56,13 @@ object TranscriptPieces {
   /** I blocchi di una sessione, nella forma in cui si stampano. */
   fun blocks(session: ExportSession, options: ExportOptions): List<TranscriptBlock> {
     val transcript = session.transcript ?: return emptyList()
-    if (options.timestamps && session.hasTimings) {
+    if ((options.timestamps || options.speechClock) && session.hasTimings) {
       val paragraphs = TranscriptParagraphs.split(session.segments, TranscriptParagraphs.MAX_SEGMENTS_IN_DOCUMENT)
       if (paragraphs.isNotEmpty()) {
         return paragraphs.map {
-          TranscriptBlock(it.text, it.startMs, it.endMs, it.partId, it.silenceBeforeMs, it.voice, it.voiceKey?.let(session.voiceNames::get))
+          TranscriptBlock(it.text, it.startMs.takeIf { options.timestamps }, it.endMs.takeIf { options.timestamps },
+            it.partId, it.silenceBeforeMs, it.voice, it.voiceKey?.let(session.voiceNames::get),
+            SpeechClock.partOffset(it.segments.first()), options.speechClock)
         }
       }
     }
@@ -183,6 +188,7 @@ class BundleLayout(
   private val options: ExportOptions,
   val loose: Boolean = false,
 ) {
+  val speechClock: Boolean get() = options.speechClock
 
   /** La cartella in cima allo ZIP. E' anche il nome della skill: Claude vuole che coincidano. */
   val root: String = SkillWriter.skillNameOf(set)
@@ -249,7 +255,7 @@ class BundleLayout(
       }
     }
     val sources = note.sources.map { source ->
-      source.storedFileName?.let { claimUnique("sources/$base/${source.originalName.sanitized()}") }
+      source.storedFileName?.takeIf { source.attachmentAllowed }?.let { claimUnique("sources/$base/${source.originalName.sanitized()}") }
     }
 
     return NoteFiles(base, notesFile, transcripts, images, audio, sources)

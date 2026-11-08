@@ -126,6 +126,10 @@ object RecordingDate {
    * come il primo gennaio sarebbe peggio del giorno dell'import.
    */
   fun parseMetadata(raw: String?, zone: ZoneId = ZoneId.systemDefault()): LocalDate? {
+    RecordingOrigin.fromMetadata(raw)?.let { origin ->
+      return origin.epochMs?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
+        ?: origin.local?.take(10)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+    }
     val value = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
     METADATA_DATE_TIME.matchEntire(value)?.let { match ->
       val (y, mo, d, h, mi, s) = match.destructured
@@ -150,6 +154,11 @@ object RecordingDate {
    * registrato.
    */
   fun parseMetadataInstant(raw: String?, zone: ZoneId = ZoneId.systemDefault()): Long? {
+    RecordingOrigin.fromMetadata(raw)?.let { origin ->
+      // This API is ONLY for legacy note sorting, which historically assumes the device zone.
+      // The actual recording origin above never makes that assumption.
+      return origin.epochMs ?: origin.local?.let { runCatching { LocalDateTime.parse(it).atZone(zone).toInstant().toEpochMilli() }.getOrNull() }
+    }
     val value = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
     val match = METADATA_DATE_TIME.matchEntire(value) ?: return null
     val (y, mo, d, h, mi, s) = match.destructured

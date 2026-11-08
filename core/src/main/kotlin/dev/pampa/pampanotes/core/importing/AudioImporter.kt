@@ -126,6 +126,11 @@ class AudioImporter @Inject constructor(
             durationMs = duration,
             sha256 = candidate.sha256,
             createdAt = System.currentTimeMillis(),
+            recordedAtEpochMs = candidate.recordingOrigin?.epochMs,
+            recordedAtLocal = candidate.recordingOrigin?.local,
+            recordedAtZoneId = candidate.recordingOrigin?.zoneId,
+            recordedAtSource = candidate.recordingOrigin?.source,
+            recordedAtPrecision = candidate.recordingOrigin?.precision,
           ),
         )
         temp.delete()

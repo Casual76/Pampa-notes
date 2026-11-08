@@ -221,6 +221,7 @@ class ImportCoordinator @Inject constructor(
         updateOfSourceId = updateOf?.let { updateOfSource?.id },
         recordedOn = recordedOn,
         recordedAtMillis = recordedAt,
+        recordingOrigin = recordedOn?.let { RecordingOrigin.resolve(it, probe?.metadataDate, displayName) },
       )
     } catch (error: Exception) {
       temp.delete()
@@ -529,6 +530,7 @@ class ImportCoordinator @Inject constructor(
           ?.let { Dates.parseOrNull(Dates.fromMillis(it)) }
           ?.let { RecordedOn(it, RecordingDateSource.METADATA) },
         recordedAtMillis = item.recording.createdAtMillis,
+        recordingOrigin = RecordingOrigin.fromSamsungEntry(item.recording.entryName),
         sequence = index,
       )
     }

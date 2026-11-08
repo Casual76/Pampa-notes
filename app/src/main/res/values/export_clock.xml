@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ec_option">Data e ora del parlato</string>
+    <string name="ec_option_detail">Dalla fonte di ogni parte, con fuso e precisione dichiarati. Le ore sconosciute restano sconosciute; separato dai tempi mm:ss.</string>
+    <string name="ec_summary">Data e ora: %1$s</string>
+    <string name="ec_material">Materiale associato</string>
+    <string name="ec_no_material">Nessun testo associato.</string>
+    <string name="ec_material_link">Il materiale associato si trova in</string>
+    <string name="ec_item">raccolta di materiale</string>
+    <string name="ec_items">raccolte di materiale</string>
+    <string name="ec_index">Ogni raccolta conserva il materiale associato e le sessioni di registrazione incluse. Apri i file per titolo e data; le registrazioni lunghe sono divise in parti.</string>
+    <string name="ec_selection_notice">Sono incluse solo le sessioni selezionate. Testo, tag, metadati e fonti associati sono conservati dalla raccolta che le contiene; le altre registrazioni della raccolta sono escluse. Gli originali che possono contenere altro audio restano come metadati, senza allegato.</string>
+    <string name="ec_unknown">data e ora sconosciute</string>
+    <string name="ec_time_unknown">ora sconosciuta</string>
+    <string name="ec_zone_unknown">fuso della fonte sconosciuto</string>
+    <string name="ec_instant_unknown">istante non determinabile</string>
+    <string name="ec_minute">precisione al minuto</string>
+    <string name="ec_no_timings">Il testo scelto non ha tempi associati: le origini delle parti non sono orari attribuiti alle sue frasi.</string>
+    <string name="ec_help">Gli orari usano l’inizio della singola parte e il suo tempo relativo, con fuso o offset esplicito. Date sole, precisione al minuto e fusi sconosciuti restano qualificati; i tempi della sessione non includono le pause tra file.</string>
+    <plurals name="ec_material_count"><item quantity="one">%d raccolta di materiale</item><item quantity="other">%d raccolte di materiale</item></plurals>
+    <plurals name="ec_done"><item quantity="one">Esportata %d raccolta di materiale.</item><item quantity="other">Esportate %d raccolte di materiale.</item></plurals>
+</resources>

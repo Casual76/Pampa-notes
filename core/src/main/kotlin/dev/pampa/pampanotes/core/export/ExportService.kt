@@ -169,6 +169,10 @@ class ExportService @Inject constructor(
       }
 
       is ExportScope.Notes -> notes.getAll(scope.ids) to scope.label
+      is ExportScope.Sessions -> {
+        val noteIds = sessions.getAll(scope.sessionIds.distinct()).map { it.noteId }.distinct()
+        notes.getAll(noteIds) to scope.label
+      }
 
       is ExportScope.Folder -> {
         // La cartella e tutte quelle che contiene: esportare "Storia" e non prendere "Storia /
@@ -187,7 +191,9 @@ class ExportService @Inject constructor(
 
     val gathered = selected
       .sortedWith(compareBy({ pathOf(it.folderId).joinToString("/") }, { -it.updatedAt }))
-      .map { note -> gatherNote(note, pathOf(note.folderId), options) }
+      .map { note -> gatherNote(note, pathOf(note.folderId), options,
+        (scope as? ExportScope.Sessions)?.sessionIds?.toSet(),
+        PersonalScope.isPersonal(note.folderId, all.values.toList())) }
 
     val personalFolders = PersonalScope.folderIds(all.values.toList())
     ExportSet(
@@ -336,7 +342,7 @@ class ExportService @Inject constructor(
       0
     }
     val skippedSources = if (format == ExportFormat.BUNDLE && options.includeSources) {
-      set.notes.sumOf { note -> note.sources.count { source -> source.storedFileName != null && !File(files.sources, source.storedFileName).exists() } }
+      set.notes.sumOf { note -> note.sources.count { source -> source.attachmentAllowed && source.storedFileName != null && !File(files.sources, source.storedFileName).exists() } }
     } else {
       0
     }
@@ -475,8 +481,9 @@ class ExportService @Inject constructor(
 
   // -----------------------------------------------------------------------------------------------
 
-  private suspend fun gatherNote(note: NoteEntity, folderPath: List<String>, options: ExportOptions): ExportNote {
-    val sessionRows = sessions.byNote(note.id)
+  private suspend fun gatherNote(note: NoteEntity, folderPath: List<String>, options: ExportOptions,
+    selectedSessionIds: Set<String>? = null, personal: Boolean = false): ExportNote {
+    val sessionRows = ExportSessionSelection.rows(sessions.byNote(note.id), selectedSessionIds)
     val versionsBySession = sessionRows.associate { it.session.id to transcripts.bySession(it.session.id) }
     val segmentsByTranscript = versionsBySession.values.flatten().associate { it.id to segments.byTranscript(it.id) }
     val gatheredSessions = sessionRows.mapIndexed { index, row ->
@@ -493,6 +500,8 @@ class ExportService @Inject constructor(
           startMs = start,
           sizeBytes = part.sizeBytes,
           archived = part.archivedAt > 0,
+          origin = dev.pampa.pampanotes.core.importing.RecordingOrigin(part.recordedAtEpochMs,
+            part.recordedAtLocal, part.recordedAtZoneId, part.recordedAtSource, part.recordedAtPrecision),
         )
       }
 
@@ -531,6 +540,8 @@ class ExportService @Inject constructor(
     }.sortedWith(compareBy({ it.importedAt }, { it.originalName }))
     return ExportNote(
       note = note,
+      selectedSessionIds = selectedSessionIds?.intersect(sessionRows.mapTo(HashSet()) { it.session.id }),
+      personal = personal,
       folderPath = folderPath,
       tags = tags.tags(note.id),
       native = dev.pampa.pampanotes.core.importing.PampaBundleNote(
@@ -555,6 +566,7 @@ class ExportService @Inject constructor(
           extractedChars = source.extractedChars,
           id = source.id,
           archived = source.archivedAt > 0,
+          attachmentAllowed = selectedSessionIds == null || ExportSessionSelection.attachmentAllowed(source, sessionRows),
         )
       },
       sessions = gatheredSessions,

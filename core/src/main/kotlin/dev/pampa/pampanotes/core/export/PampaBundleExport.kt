@@ -13,15 +13,17 @@ internal object PampaBundleExport {
       val n = item.note
       if (n.folderId !in folders) folders[n.folderId] = FolderEntity(n.folderId, item.folderName, createdAt = n.createdAt, updatedAt = n.updatedAt,
         kind = if (set.personal) FolderEntity.KIND_PERSONAL else FolderEntity.KIND_SCHOOL)
-      val native = item.native ?: PampaBundleNote(
+      val native = (item.native ?: PampaBundleNote(
         note = n, tags = item.tags,
         sessions = item.sessions.map { SessionEntity(it.id, n.id, it.title, it.date, it.number - 1, it.transcript?.id, n.createdAt, n.updatedAt, voiceNames = VoiceNames.encode(it.voiceNames)) },
-        parts = item.sessions.flatMap { session -> session.parts.mapIndexed { index, p -> AudioPartEntity(p.id, session.id, index, p.fileName, p.originalName, "audio/mp4", p.sizeBytes, p.durationMs, "", n.createdAt) } },
+        parts = item.sessions.flatMap { session -> session.parts.mapIndexed { index, p -> AudioPartEntity(p.id, session.id, index, p.fileName, p.originalName, "audio/mp4", p.sizeBytes, p.durationMs, "", n.createdAt,
+          recordedAtEpochMs = p.origin?.epochMs, recordedAtLocal = p.origin?.local,
+          recordedAtZoneId = p.origin?.zoneId, recordedAtSource = p.origin?.source, recordedAtPrecision = p.origin?.precision) } },
         transcripts = item.sessions.flatMap { listOfNotNull(it.raw, it.transcript) }.distinctBy { it.id },
         segments = item.sessions.flatMap { it.segments },
         sources = item.sources.map { SourceEntity(it.id.ifBlank { "${n.id}:source:${it.originalName}" }, n.id, it.kind, it.originalName, "application/octet-stream", it.sizeBytes, it.sha256, it.storedFileName, it.extractedChars, it.status, importedAt = n.createdAt) } +
           item.handwriting.map { SourceEntity(it.id.ifBlank { "${n.id}:page:${it.page}" }, n.id, SourceKind.IMAGE, "Page ${it.page}", "image/png", it.sizeBytes, "", it.storedFileName, importedAt = n.createdAt, derivedFromId = item.sources.firstOrNull()?.id) },
-      )
+      )).let { ExportSessionSelection.native(it, item.sessions.mapTo(HashSet()) { session -> session.id }) }
       val byTranscript = native.transcripts.associateBy { it.id }
       val chosen = item.sessions.associate { session ->
         val requested = if (options.transcript == TranscriptChoice.RAW) session.raw else session.transcript

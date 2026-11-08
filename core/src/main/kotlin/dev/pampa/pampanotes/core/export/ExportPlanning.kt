@@ -93,7 +93,7 @@ object ExportEstimator {
     val imageBytes = images.sumOf { it.sizeBytes }
     val audioBytes = if (options.carriesAttachments && options.includeAudio) set.notes.sumOf { note -> note.sessions.sumOf { s -> s.parts.sumOf { it.sizeBytes } } } else 0L
     val sourceBytes = if (options.carriesAttachments && options.includeSources) {
-      set.notes.sumOf { note -> note.sources.filter { it.storedFileName != null }.sumOf { it.sizeBytes } }
+      set.notes.sumOf { note -> note.sources.filter { it.attachmentAllowed && it.storedFileName != null }.sumOf { it.sizeBytes } }
     } else {
       0L
     }
@@ -202,6 +202,7 @@ object ExportFiles {
       }
       if (options.carriesAttachments && options.includeSources) {
         note.sources.forEach { source ->
+          if (!source.attachmentAllowed) return@forEach
           val stored = source.storedFileName ?: return@forEach
           add(ExportFileRef(ExportFileKind.SOURCE, source.id, source.originalName, stored, source.sizeBytes, source.archived))
         }

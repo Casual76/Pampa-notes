@@ -38,7 +38,7 @@ data class ExportLabels(
   val pageSingular: String = "pagina a mano",
   val indexHowTo: String = "Ogni nota ha un file di appunti e un file per ogni lezione registrata; le lezioni lunghe sono divise in parti. Scegli per titolo e per data, e apri solo i file che servono alla domanda.",
   /** Lo stesso per un pacchetto di Registrazioni ([ExportSet.personal]): niente lezioni. */
-  val indexHowToPersonal: String = "Ogni nota ha un file di appunti e un file per ogni giorno di registrazione; le registrazioni lunghe sono divise in parti. Scegli per titolo e per data, e apri solo i file che servono alla domanda.",
+  val indexHowToPersonal: String = "Ogni raccolta conserva il materiale associato e le sessioni di registrazione incluse. Apri i file per titolo e data; le registrazioni lunghe sono divise in parti.",
   val sources: String = "Fonti",
   val index: String = "Indice",
   val recording: String = "registrazione",
@@ -65,4 +65,22 @@ data class ExportLabels(
   val words: String = "parole",
   val note: String = "nota",
   val notesPlural: String = "note",
+  val personalMaterial: String = "Materiale associato",
+  val personalNoMaterial: String = "Nessun testo associato.",
+  val personalMaterialLink: String = "Il materiale associato si trova in",
+  val personalItem: String = "raccolta di materiale",
+  val personalItems: String = "raccolte di materiale",
+  val personalIndex: String = "Ogni raccolta conserva il materiale associato e le sessioni di registrazione incluse. Apri i file per titolo e data; le registrazioni lunghe sono divise in parti.",
+  val selectedSessionsNotice: String = "Sono incluse solo le sessioni selezionate. Testo, tag, metadati e fonti associati sono conservati dalla raccolta che le contiene; le altre registrazioni della raccolta sono escluse. Gli originali che possono contenere altro audio restano come metadati, senza allegato.",
+  val clockTitle: String = "Data e ora del parlato",
+  val clockUnknown: String = "data e ora sconosciute",
+  val clockTimeUnknown: String = "ora sconosciuta",
+  val clockZoneUnknown: String = "fuso della fonte sconosciuto",
+  val clockInstantUnknown: String = "istante non determinabile",
+  val clockMinutePrecision: String = "precisione al minuto",
+  val clockNoTimings: String = "Il testo scelto non ha tempi associati: le origini delle parti non sono orari attribuiti alle sue frasi.",
+  val clockHelp: String = "Gli orari usano l’inizio della singola parte e il suo tempo relativo, con fuso o offset esplicito. Date sole, precisione al minuto e fusi sconosciuti restano qualificati; i tempi della sessione non includono le pause tra file.",
 )
+
+internal fun ExportLabels.forPersonal(): ExportLabels = copy(notes = personalMaterial, noNotes = personalNoMaterial,
+  notesAreIn = personalMaterialLink, note = personalItem, notesPlural = personalItems, indexHowToPersonal = personalIndex)

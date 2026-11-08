@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ec_option">Speech date and time</string>
+    <string name="ec_option_detail">From each part’s source, with explicit zone and precision. Unknown times stay unknown; separate from mm:ss timestamps.</string>
+    <string name="ec_summary">Speech date/time: %1$s</string>
+    <string name="ec_material">Associated material</string>
+    <string name="ec_no_material">No associated text.</string>
+    <string name="ec_material_link">Associated material is in</string>
+    <string name="ec_item">material collection</string>
+    <string name="ec_items">material collections</string>
+    <string name="ec_index">Each collection preserves associated material and the included recording sessions. Open files by title and date; long recordings are split into pieces.</string>
+    <string name="ec_selection_notice">Only selected sessions are included. Associated text, tags, metadata and sources are preserved from their backing collection; its other recordings are excluded. Originals that may contain other audio remain as metadata without an attachment.</string>
+    <string name="ec_unknown">date and time unknown</string>
+    <string name="ec_time_unknown">time unknown</string>
+    <string name="ec_zone_unknown">source time zone unknown</string>
+    <string name="ec_instant_unknown">instant undetermined</string>
+    <string name="ec_minute">minute precision</string>
+    <string name="ec_no_timings">The selected text has no associated timings: part origins are not speech times attributed to its sentences.</string>
+    <string name="ec_help">Clock times use each part’s own start plus its part-relative offset, with an explicit zone or offset. Date-only values, minute precision and unknown zones remain qualified; session timestamps exclude gaps between files.</string>
+    <plurals name="ec_material_count"><item quantity="one">%d material collection</item><item quantity="other">%d material collections</item></plurals>
+    <plurals name="ec_done"><item quantity="one">Exported %d material collection.</item><item quantity="other">Exported %d material collections.</item></plurals>
+</resources>
