@@ -145,9 +145,34 @@ their established offline role. Guests and anonymous access cannot create, inspe
 owner alignment jobs or probe archive hashes through this API. No new account secret is stored.
 Cached ticket verdicts are scoped to owner and index URL; an old owner's cached ticket cannot
 authorize a new owner's request after configuration changes.
-An account snapshot is checked before/after work, on upload/hash/decode checkpoints and before
-return. Switching configured owner invalidates access and results. Refreshed tickets from the
-same owner account can read/cancel a job. Unbound PCs bind jobs to the authenticated owner token.
+The verifying owner **and index URL** are retained immutably by the authenticated caller and
+alignment job. They are captured before credential verification, never reconstructed from
+configuration after an asynchronous authentication handoff. Admission rejects a changed authority
+with 409 `account_changed` before registering a job or reading multipart. Guest/anonymous
+alignment still receives 403 before body parsing. Verification also sends its request to the
+captured index, including if configuration changes before request construction.
+
+The snapshot is checked at endpoint entry, before/after upload reads and archive lookup, before
+queue admission and worker entry, at hash/decode/alignment callbacks, after work and before
+return. Changing the configured owner **or rebinding the same owner to a different index**
+invalidates results and old-job visibility/status/partial/cancellation. Neither the old caller
+nor a caller freshly authenticated under the new authority may access the old alignment job.
+Refreshed tickets and the local owner token can still read/cancel jobs for the same bound
+owner/index. Local-token callers must also retain a currently valid local token; unbound PCs
+bind job authority to the local token hash as well as the owner/index snapshot. Binding an
+unbound PC or rotating its token invalidates that old authority. No credentials, authority or
+index configuration are added to multipart, source echoes, results or progress responses.
+
+Internal hooks (not additions to protocol 1): frozen `AuthAuthority` and `Caller.authority`;
+`authentication_authority()` captures configuration and `caller_authority_current()` checks the
+retained identity. `identify()` passes that exact snapshot through the optional keyword
+`authority` on `verify_ticket()`/`verify_guest()`; both still return their existing bool/name
+verdicts. `_post_worker(..., index_url=...)` uses the verifying index explicitly. Guest/ticket
+cache entries include owner/index. `alignment_account(caller)` now returns the caller's frozen
+authority, with no current-state fallback; the in-memory `job.alignment_account` retains it.
+`alignment_authorized()` is shared by visibility and `alignment_fence()`. Ordinary ASR retains
+its existing registration/visibility/cancellation behavior; shared header admission also rejects
+authentication from an authority changed during the handoff.
 
 - `GET /v1/jobs/{id}`: existing progress states/fraction/instance; once request validation has
   completed it also echoes `protocol_version`, `source` and `part_id`.
@@ -194,12 +219,37 @@ and no paid provider call was used during this implementation. Acoustic accuracy
 availability and real-device performance remain NV.** Pure/mocked HTTP tests prove the contract
 and guards, not alignment accuracy.
 
-Final local verification: `PYTHONDONTWRITEBYTECODE=1` / `PYTHONUTF8=1`, existing companion
+Initial implementation archive (not rerun in correction round 2): `PYTHONDONTWRITEBYTECODE=1` / `PYTHONUTF8=1`, existing companion
 interpreter, `python -m unittest test_companion test_forced_alignment -q`: **286 tests passed**
 (257 existing + 29 alignment fixtures), 49.040 s. AST parsing and `git diff --check -- companion`
 passed. Output: `%TEMP%/pampa-forced-alignment-tests-final.txt`, outside the repository. The
 legacy transcription cancellation fixtures emitted unretrieved `JobCancelled` task warnings;
 the suite still passed. New alignment tasks explicitly retrieve settled exceptions.
+
+Correction round 2, offline verification on 2026-11-08: `python -B -m unittest
+test_forced_alignment -q` passed **46 tests**. The alignment HTTP fixtures now use actual
+in-process ASGI routing/multipart parsing with mocked Worker responses, without a listener or
+application lifespan. A scoped guarded harness passed **88 tests**: the 46 alignment fixtures,
+existing authentication tests with an in-memory Worker (unreachable-Worker case uses a synthetic
+OSError), and existing pure queue/progress/registry/cancel/prompt/mock-ASR checks. Actual torch
+and WhisperX imports, external connections, HTTP server construction, uvicorn execution and
+subprocess work were forbidden by that harness. The real torch-specific OOM test and full
+legacy server suite were not run. Synthetic ASR compatibility exercises the old endpoint using
+a mocked `_transcribe`; it performs no transcription inference.
+
+Four targeted regressions were also run against the exact server source from
+`2de6e0be198c9944129f992475f4e876c49138cb`: all four fail (seven subtest/assertion failures).
+The same four pass on the corrected source. These cover ticket/local-token auth handoff,
+same-owner index and owner changes blocking old-job access, pre-work rejection and rejection
+of stale model-callback results. Additional fixtures cover captured-index verification/cache
+scope, upload/archive handoffs, queued admission, post-work result fences, refreshed tickets,
+local-token rotation, guest/anonymous denial, replay, cancellation and registry restart loss.
+Evidence/harnesses are outside the repo in `%TEMP%/pampa-c5-round2-f80e1010086d4249926a55f99811c2c6/`
+(`offline_suite.py`, `offline-suite-final.txt`, `regression_at_commit.py`,
+`regressions-exact-baseline.txt`, `regressions-corrected-final.txt`, `verification.json`). An initial harness-only socket
+guard error is retained separately; Python's internal asyncio socketpair is not an application
+listener and was allowed in the corrected harness. These results are implementation evidence,
+not independent review approval or an account-transfer/runtime exploit claim.
 
 Per user steering, emulator/device/physical-device/GPU/real-model/runtime accuracy evidence:
 **NOT EXECUTED; gates waived by the user.** No such QA or substitute is planned by this unit.

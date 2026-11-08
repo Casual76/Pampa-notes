@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 import hashlib
 import json
 import sys
 import tempfile
 import threading
+import time
 import types
 import unittest
 from pathlib import Path
@@ -46,8 +48,8 @@ class AlignmentPureTest(fixtures.StateMixin, unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name) / "synthetic.audio"
         self.path.write_bytes(AUDIO)
-        server.STATE.update(owner="owner@example.com", device="cpu")
-        self.caller = server.Caller("owner", "token", bearer="fixture-owner")
+        server.STATE.update(owner="owner@example.com", device="cpu", token="fixture-owner")
+        self.caller = server.identify("Bearer fixture-owner")
         self.progress = server.JobProgress()
         self.account = server.alignment_account(self.caller)
         self.align = mock.Mock(side_effect=lambda transcript, *a, **k: fake_result(transcript[0]["text"]))
@@ -234,6 +236,36 @@ class AlignmentPureTest(fixtures.StateMixin, unittest.TestCase):
             self.run_alignment()
         self.assertEqual(ctx.exception.detail, "account_changed")
 
+    def test_same_owner_index_change_before_work_rejects_without_model_or_hash(self):
+        server._bound(server.STATE["owner"], "https://different-index.invalid")
+        with mock.patch.object(server, "_alignment_sha") as hashing:
+            with self.assertRaises(server.HTTPException) as ctx:
+                self.run_alignment()
+        self.assertEqual((ctx.exception.status_code, ctx.exception.detail), (409, "account_changed"))
+        hashing.assert_not_called()
+        self.align.assert_not_called()
+        server.align_model_for.assert_not_called()
+        server.load_audio.assert_not_called()
+
+    def test_same_owner_index_change_in_model_callback_rejects_result(self):
+        def changed(transcript, *args, **kwargs):
+            server._bound(server.STATE["owner"], "https://different-index.invalid")
+            return fake_result(transcript[0]["text"])
+        self.align.side_effect = changed
+        with self.assertRaises(server.HTTPException) as ctx:
+            self.run_alignment()
+        self.assertEqual((ctx.exception.status_code, ctx.exception.detail), (409, "account_changed"))
+
+    def test_index_change_is_checked_in_alignment_progress_callback(self):
+        def changed(transcript, *args, **kwargs):
+            server._bound(server.STATE["owner"], "https://different-index.invalid")
+            kwargs["progress_callback"](50)
+            self.fail("stale alignment callback was accepted")
+        self.align.side_effect = changed
+        with self.assertRaises(server.HTTPException) as ctx:
+            self.run_alignment()
+        self.assertEqual(ctx.exception.detail, "account_changed")
+
     def test_queued_cancellation_never_enters_acoustic_worker(self):
         async def exercise():
             gate = server.PriorityGate()
@@ -284,22 +316,352 @@ class AlignmentPureTest(fixtures.StateMixin, unittest.TestCase):
         asyncio.run(exercise())
 
 
-class AlignmentHttpTest(fixtures.StateMixin, unittest.TestCase):
-    call = fixtures.ServerTest.call
-
-    @classmethod
-    def setUpClass(cls):
-        fixtures.ServerTest.setUpClass.__func__(cls)
-
-    @classmethod
-    def tearDownClass(cls):
-        fixtures.ServerTest.tearDownClass.__func__(cls)
+class AlignmentAuthorityTest(fixtures.StateMixin, unittest.TestCase):
+    """Actual authentication/middleware/handlers, in memory; no listener or Worker connection."""
 
     def setUp(self):
         super().setUp()
-        server.JOBS.clear()
+        server.STATE.update(owner="owner@example.com", index_url="https://index-a.invalid",
+                            token="fixture-owner", accept_anonymous=False)
+        self.real_post = server._post_worker
+        for patcher in (
+            mock.patch.object(server, "JOBS", server.JobRegistry()),
+            mock.patch.object(server, "GATE", server.PriorityGate()),
+            mock.patch.object(server, "_post_worker", side_effect=self.worker_reply),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def worker_reply(path, payload, **kwargs):
+        if path == "/v1/computer/verify":
+            return {"ok": True, "expiresAt": (time.time() + 3600) * 1000}
+        return {"name": "Fixture guest"}
+
+    async def dispatch(self, authorization="Bearer pt_fixture", path="/v1/audio/alignments", app=None):
+        sent = []
+        async def receive():
+            self.fail("authorization must settle before reading a body")
+        async def send(item):
+            sent.append(item)
+        async def accepted(scope, receive, send):
+            await server.JSONResponse({"accepted": True})(scope, receive, send)
+        scope = {"type": "http", "method": "POST", "path": path,
+                 "headers": [(b"authorization", authorization.encode()), (b"x-pampa-job", b"authority-job-123")]}
+        await server.AuthGate(app or accepted)(scope, receive, send)
+        return sent[0]["status"], scope
+
+    def test_auth_handoff_rebinding_is_rejected_before_body_or_job_admission(self):
+        async def exercise(bearer, owner, index):
+            async def handoff(func, *args, **kwargs):
+                caller = func(*args, **kwargs)  # The real identify verifies A before the handoff.
+                server._bound(owner, index)
+                return caller
+            async def forbidden(scope, receive, send):
+                await receive()
+            with mock.patch.object(server.asyncio, "to_thread", side_effect=handoff), \
+                    mock.patch.object(archive, "ARCHIVE") as store, \
+                    mock.patch.object(server, "_force_align") as acoustic:
+                status, _ = await self.dispatch("Bearer " + bearer, app=forbidden)
+            self.assertEqual(status, 409)
+            self.assertEqual(len(server.JOBS), 0)
+            store.get.assert_not_called()
+            acoustic.assert_not_called()
+        for bearer in ("pt_fixture", "fixture-owner"):
+            for owner in ("owner@example.com", "other@example.com"):
+                with self.subTest(bearer=bearer, owner=owner):
+                    server.JOBS.clear()
+                    server._bound("owner@example.com", "https://index-a.invalid")
+                    asyncio.run(exercise(bearer, owner, "https://index-b.invalid"))
+
+    def test_same_owner_new_index_cannot_read_partial_cancel_or_fence_old_job(self):
+        async def exercise(owner, index):
+            status, scope = await self.dispatch()
+            self.assertEqual(status, 200)
+            job = scope["state"]["job"]
+            old_caller = scope["state"]["caller"]
+            job.set("aligning")
+            server._bound(owner, index)
+            new_caller = server.identify("Bearer pt_new_index")
+            for caller in (old_caller, new_caller):
+                self.assertFalse(server.JOBS.visible_to(job, caller))
+                request = types.SimpleNamespace(state=types.SimpleNamespace(caller=caller), query_params={})
+                for handler in (server.job_status, server.job_partial, server.job_cancel):
+                    with self.assertRaises(server.HTTPException) as ctx:
+                        await handler(job.id, request)
+                    self.assertEqual(ctx.exception.status_code, 404)
+                with self.assertRaises(server.HTTPException) as ctx:
+                    server.alignment_fence(caller, job.alignment_account, job)
+                self.assertEqual(ctx.exception.detail, "account_changed")
+            self.assertFalse(job.cancelled)
+        for owner, index in (("owner@example.com", "https://index-b.invalid"),
+                             ("other@example.com", "https://index-a.invalid")):
+            with self.subTest(owner=owner, index=index):
+                server.JOBS.clear()
+                server._bound("owner@example.com", "https://index-a.invalid")
+                asyncio.run(exercise(owner, index))
+
+    def test_verified_authority_is_immutable_and_never_derived_from_new_state(self):
+        caller = server.identify("Bearer pt_fixture")
+        authority = server.alignment_account(caller)
+        self.assertEqual((authority.owner, authority.index_url), ("owner@example.com", "https://index-a.invalid"))
+        with self.assertRaises(AttributeError):
+            authority.index_url = "changed"
+        with self.assertRaises(AttributeError):
+            caller.authority = None
+        server._bound("other@example.com", "https://index-b.invalid")
+        self.assertIs(server.alignment_account(caller), authority)
+        self.assertFalse(server.caller_authority_current(caller))
+
+    def test_ticket_and_guest_verification_use_captured_index_and_reject_midverification_change(self):
+        # Use the actual request builder with a fake response, never open a connection.
+        original_post = self.real_post
+        for bearer in ("pt_fixture", "pg_fixture"):
+            with self.subTest(bearer=bearer):
+                server._bound("owner@example.com", "https://index-a.invalid")
+                def switched(path, payload, **kwargs):
+                    server._bound("owner@example.com", "https://index-b.invalid")
+                    return original_post(path, payload, **kwargs)
+                response = mock.MagicMock()
+                response.__enter__.return_value.read.return_value = json.dumps(
+                    {"ok": True, "name": "Guest", "expiresAt": (time.time() + 3600) * 1000}).encode()
+                with mock.patch.object(server, "_post_worker", side_effect=switched), \
+                        mock.patch.object(server.urllib.request, "urlopen", return_value=response) as opened:
+                    with self.assertRaises(server.AuthError):
+                        server.identify("Bearer " + bearer)
+                self.assertTrue(opened.call_args.args[0].full_url.startswith("https://index-a.invalid/"))
+                self.assertFalse(server.TICKET_CACHE.get(bearer)[0])
+                self.assertFalse(server.GUEST_CACHE.get(bearer)[0])
+
+    def test_cache_reuse_and_owner_or_index_reverification(self):
+        for bearer in ("pt_fixture", "pg_fixture"):
+            with self.subTest(bearer=bearer):
+                server._bound("owner@example.com", "https://index-a.invalid")
+                with mock.patch.object(server, "_post_worker", side_effect=self.worker_reply) as verify:
+                    server.identify("Bearer " + bearer)
+                    server.identify("Bearer " + bearer)
+                    self.assertEqual(verify.call_count, 1)
+                    # Direct mutation also cannot reuse a cached verdict without _bound's clear.
+                    server.STATE["index_url"] = "https://index-b.invalid"
+                    second = server.identify("Bearer " + bearer)
+                    self.assertEqual(verify.call_count, 2)
+                    self.assertEqual(second.authority.index_url, server.STATE["index_url"])
+                    server.STATE["owner"] = "other@example.com"
+                    server.identify("Bearer " + bearer)
+                    self.assertEqual(verify.call_count, 3)
+
+    def test_refreshed_ticket_and_bound_owner_token_can_still_read_and_cancel(self):
+        async def exercise():
+            status, scope = await self.dispatch()
+            self.assertEqual(status, 200)
+            job = scope["state"]["job"]
+            for bearer in ("pt_refreshed", "fixture-owner"):
+                caller = server.identify("Bearer " + bearer)
+                self.assertTrue(server.JOBS.visible_to(job, caller))
+                request = types.SimpleNamespace(state=types.SimpleNamespace(caller=caller), query_params={})
+                self.assertEqual((await server.job_status(job.id, request))["id"], job.id)
+                self.assertEqual((await server.job_partial(job.id, request))["segments"], [])
+            self.assertTrue((await server.job_cancel(job.id, request))["cancelled"])
+            self.assertTrue(job.cancelled)
+        asyncio.run(exercise())
+
+    def test_unbound_local_token_and_token_rotation_are_fenced(self):
+        async def exercise(owner, change):
+            server._bound(owner, "https://index-a.invalid" if owner else "")
+            status, scope = await self.dispatch("Bearer fixture-owner")
+            self.assertEqual(status, 200)
+            job = scope["state"]["job"]
+            caller = scope["state"]["caller"]
+            self.assertTrue(server.JOBS.visible_to(job, caller))
+            change()
+            self.assertFalse(server.JOBS.visible_to(job, caller))
+            with self.assertRaises(server.HTTPException):
+                server.alignment_fence(caller, job.alignment_account, job)
+            if not owner:
+                self.assertFalse(server.JOBS.visible_to(job, server.identify("Bearer " + server.STATE["token"])))
+        for owner in ("", "owner@example.com"):
+            for change in (lambda: server.STATE.update(token="rotated-token"),
+                           lambda: server._bound(owner, "https://index-b.invalid"),
+                           lambda: server._bound("different@example.com", "https://index-a.invalid")):
+                with self.subTest(owner=owner, change=change):
+                    server.JOBS.clear()
+                    server.STATE["token"] = "fixture-owner"
+                    asyncio.run(exercise(owner, change))
+
+    def test_missing_snapshot_and_anonymous_guest_alignment_never_read_body(self):
+        async def exercise():
+            for authorization, expected in (("Bearer pg_fixture", 403), ("", 401)):
+                status, _ = await self.dispatch(authorization)
+                self.assertEqual(status, expected)
+            server.STATE["accept_anonymous"] = True
+            status, _ = await self.dispatch("")
+            self.assertEqual(status, 403)
+            with mock.patch.object(server, "identify", return_value=server.Caller("owner", "token", bearer="fixture-owner")):
+                status, _ = await self.dispatch("Bearer fixture-owner")
+            self.assertEqual(status, 409)
+            self.assertEqual(len(server.JOBS), 0)
+        asyncio.run(exercise())
+
+    def test_queued_rebinding_rejects_before_acoustic_worker(self):
+        async def exercise():
+            gate = server.PriorityGate()
+            entered = asyncio.Event()
+            original_slot = gate.slot
+            @contextlib.asynccontextmanager
+            async def observed_slot(*args, **kwargs):
+                entered.set()
+                async with original_slot(*args, **kwargs):
+                    yield
+            caller = server.identify("Bearer pt_fixture")
+            work = server.SharedWork(None, server.JobProgress("queued-authority"))
+            with mock.patch.object(server, "GATE", gate), mock.patch.object(server, "_force_align") as acoustic:
+                async with original_slot(0):
+                    with mock.patch.object(gate, "slot", observed_slot):
+                        task = asyncio.create_task(server._run_alignment_work(work, Path("never-opened"), request_data(), caller, server.alignment_account(caller)))
+                        await asyncio.wait_for(entered.wait(), 2)
+                        server._bound(server.STATE["owner"], "https://index-b.invalid")
+                with self.assertRaises(server.HTTPException) as ctx:
+                    await task
+                self.assertEqual(ctx.exception.detail, "account_changed")
+                self.assertFalse(work.admitted)
+                self.assertEqual((gate.waiting, work.progress.state), (0, "failed"))
+                acoustic.assert_not_called()
+        asyncio.run(exercise())
+
+    def test_after_work_fence_rejects_a_stubbed_result_and_holds_gate_until_settled(self):
+        async def exercise():
+            caller = server.identify("Bearer pt_fixture")
+            work = server.SharedWork(None, server.JobProgress("admitted-authority"))
+            gate = server.PriorityGate()
+            def changed(*args):
+                self.assertTrue(gate._busy)
+                server._bound(server.STATE["owner"], "https://index-b.invalid")
+                return {"status": "deferred"}
+            with mock.patch.object(server, "GATE", gate), mock.patch.object(server, "_force_align", side_effect=changed), \
+                    mock.patch.object(server, "restart_when_idle"):
+                with self.assertRaises(server.HTTPException) as ctx:
+                    await server._run_alignment_work(work, Path("never-opened"), request_data(), caller, server.alignment_account(caller))
+            self.assertEqual(ctx.exception.detail, "account_changed")
+            self.assertTrue(work.admitted)
+            self.assertEqual(work.progress.state, "failed")
+            self.assertFalse(gate._busy)
+        asyncio.run(exercise())
+
+    def test_rebinding_after_headers_rejects_before_payload_temp_or_archive_work(self):
+        async def exercise():
+            async def downstream(scope, receive, send):
+                server._bound(server.STATE["owner"], "https://index-b.invalid")
+                request = types.SimpleNamespace(state=types.SimpleNamespace(**scope["state"]))
+                upload = types.SimpleNamespace(read=mock.AsyncMock())
+                with mock.patch.object(server, "parse_alignment") as parse, \
+                        mock.patch.object(server.tempfile, "NamedTemporaryFile") as temporary, \
+                        mock.patch.object(archive, "ARCHIVE") as store, \
+                        mock.patch.object(server, "_force_align") as acoustic:
+                    for file in (None, upload):
+                        with self.assertRaises(server.HTTPException) as ctx:
+                            await server.alignments(request, json.dumps(request_data()), file)
+                        self.assertEqual(ctx.exception.detail, "account_changed")
+                    parse.assert_not_called()
+                    temporary.assert_not_called()
+                    store.get.assert_not_called()
+                    acoustic.assert_not_called()
+                    upload.read.assert_not_called()
+                await server.JSONResponse({"detail": "account_changed"}, status_code=409)(scope, receive, send)
+            self.assertEqual((await self.dispatch(app=downstream))[0], 409)
+        asyncio.run(exercise())
+
+    def test_rebinding_at_archive_thread_handoff_prevents_archive_lookup(self):
+        async def exercise():
+            async def downstream(scope, receive, send):
+                request = types.SimpleNamespace(state=types.SimpleNamespace(**scope["state"]))
+                async def switched(func, *args, **kwargs):
+                    server._bound(server.STATE["owner"], "https://index-b.invalid")
+                    return func(*args, **kwargs)
+                with mock.patch.object(server.asyncio, "to_thread", side_effect=switched), \
+                        mock.patch.object(archive, "ARCHIVE") as store, \
+                        mock.patch.object(server, "_force_align") as acoustic:
+                    with self.assertRaises(server.HTTPException) as ctx:
+                        await server.alignments(request, json.dumps(request_data()), None)
+                    self.assertEqual(ctx.exception.detail, "account_changed")
+                    store.get.assert_not_called()
+                    acoustic.assert_not_called()
+                await server.JSONResponse({}, status_code=409)(scope, receive, send)
+            self.assertEqual((await self.dispatch(app=downstream))[0], 409)
+        asyncio.run(exercise())
+
+    def test_rebinding_at_upload_read_discards_bytes_before_work(self):
+        async def exercise():
+            async def downstream(scope, receive, send):
+                request = types.SimpleNamespace(state=types.SimpleNamespace(**scope["state"]))
+                async def changed_read(*args):
+                    server._bound(server.STATE["owner"], "https://index-b.invalid")
+                    return AUDIO
+                upload = types.SimpleNamespace(read=mock.AsyncMock(side_effect=changed_read))
+                with mock.patch.object(server, "_force_align") as acoustic:
+                    with self.assertRaises(server.HTTPException) as ctx:
+                        await server.alignments(request, json.dumps(request_data()), upload)
+                    self.assertEqual(ctx.exception.detail, "account_changed")
+                    acoustic.assert_not_called()
+                    self.assertEqual(upload.read.await_count, 1)
+                await server.JSONResponse({}, status_code=409)(scope, receive, send)
+            self.assertEqual((await self.dispatch(app=downstream))[0], 409)
+        asyncio.run(exercise())
+
+
+class AlignmentHttpTest(fixtures.StateMixin, unittest.TestCase):
+    """Real ASGI routing and multipart parsing in memory; no server lifespan or sockets."""
+
+    def setUp(self):
+        super().setUp()
+        self.worker = types.SimpleNamespace(url="https://worker-fixture.invalid")
+        self.temp = tempfile.TemporaryDirectory(prefix="pampa-alignment-asgi-")
+        self.addCleanup(self.temp.cleanup)
+        store = archive.Archive(Path(self.temp.name))
+        self.addCleanup(store.db.close)
+        for patcher in (
+            mock.patch.object(archive, "ARCHIVE", store),
+            mock.patch.object(server, "JOBS", server.JobRegistry()),
+            mock.patch.object(server, "GATE", server.PriorityGate()),
+            mock.patch.object(server, "_post_worker", side_effect=self.worker_reply),
+            mock.patch.dict(server.STATE, {"restarting": False, "restart_wanted": False, "busy": False}),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
         server.STATE.update(token="fixture-secret", owner=fixtures.FakeWorker.OWNER,
                             index_url=self.worker.url, accept_anonymous=False)
+
+    @staticmethod
+    def worker_reply(path, payload, **kwargs):
+        if payload.get("owner") != fixtures.FakeWorker.OWNER:
+            raise server.urllib.error.HTTPError("https://worker-fixture.invalid", 401, "fixture refusal", None, None)
+        if path == "/v1/computer/verify" and payload.get("ticket") in ("pt_good", "pt_far"):
+            return {"ok": True, "expiresAt": (time.time() + 3600) * 1000}
+        if path == "/v1/guests/verify" and payload.get("token") == "pg_friend":
+            return {"name": "Fixture guest"}
+        raise server.urllib.error.HTTPError("https://worker-fixture.invalid", 401, "fixture refusal", None, None)
+
+    def call(self, method, path, bearer="", body=None, headers=None):
+        async def exercise():
+            sent = []
+            data = body or b""
+            request_headers = {k.lower(): v for k, v in (headers or {}).items()}
+            if bearer:
+                request_headers["authorization"] = "Bearer " + bearer
+            request_headers["content-length"] = str(len(data))
+            scope = {"type": "http", "http_version": "1.1", "method": method, "scheme": "http",
+                     "path": path, "raw_path": path.encode(), "query_string": b"",
+                     "server": ("fixture.invalid", 80), "client": ("127.0.0.1", 1234),
+                     "headers": [(k.encode(), v.encode()) for k, v in request_headers.items()]}
+            async def receive():
+                nonlocal data
+                value, data = data, b""
+                return {"type": "http.request", "body": value, "more_body": False}
+            async def send(item):
+                sent.append(item)
+            await server.app(scope, receive, send)
+            return sent[0]["status"], {k.decode(): v.decode() for k, v in sent[0]["headers"]}, b"".join(
+                item.get("body", b"") for item in sent[1:])
+        return asyncio.run(exercise())
 
     def post(self, data=None, audio=AUDIO, bearer="pt_good", job_id="align-job-123"):
         data = data or request_data()
@@ -319,6 +681,28 @@ class AlignmentHttpTest(fixtures.StateMixin, unittest.TestCase):
         self.assertIn("forced_alignment_v1", features)
         self.assertIn("by_ref", features)
         self.assertIn("job_options", features)
+
+    def test_normal_asr_ticket_token_guest_and_anonymous_compatibility(self):
+        server.STATE["accept_anonymous"] = True
+        body, headers = fixtures.ServerTest.multipart(AUDIO)
+        result = {"task": "transcribe", "language": "en", "text": "fixture transcript",
+                  "segments": [], "device_used": "cpu", "audio_s": 20}
+        with mock.patch.object(server, "_transcribe", return_value=result) as transcribe, \
+                mock.patch.object(server, "report_usage"), \
+                mock.patch.object(server, "_force_align") as acoustic:
+            for i, bearer in enumerate(("pt_good", "fixture-secret", "pg_friend", "")):
+                job_id = f"ordinary-asr-{i}"
+                with self.subTest(bearer=bearer):
+                    status, _, answer = self.call("POST", "/v1/audio/transcriptions", bearer, body,
+                                                  headers | {"X-Pampa-Job": job_id})
+                    self.assertEqual(status, 200)
+                    self.assertEqual(json.loads(answer)["text"], result["text"])
+                    self.assertEqual(self.call("GET", "/v1/jobs/" + job_id, bearer)[0], 200)
+                    self.assertEqual(self.call("DELETE", "/v1/jobs/" + job_id, bearer)[0], 200)
+                    job = server.JOBS.get(job_id)
+                    self.assertFalse(hasattr(job, "alignment_account"))
+            self.assertEqual(transcribe.call_count, 4)
+            acoustic.assert_not_called()
 
     def test_auth_same_account_and_guest_denied(self):
         for token, expected in (("", 401), ("pt_wrong_account", 401), ("pg_friend", 403)):

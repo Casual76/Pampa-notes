@@ -548,7 +548,7 @@ class JobRegistry:
     @staticmethod
     def visible_to(job: JobProgress, caller: "Caller") -> bool:
         if hasattr(job, "alignment_account"):
-            return caller.kind == "owner" and caller.via != "anonymous" and job.alignment_account == alignment_account(caller)
+            return alignment_authorized(caller, job.alignment_account)
         if caller.kind == "owner":
             return True
         return secrets.compare_digest(job.bearer_hash, bearer_hash(caller.bearer))
@@ -617,12 +617,12 @@ class BoundedCache:
         return len(self._items)
 
 
-# Gli ospiti verificati di recente: token -> nome. Dieci minuti se e' buono, uno se no: un token
+# Gli ospiti verificati di recente: token -> (owner, indice, nome). Dieci minuti se e' buono, uno se no: un token
 # revocato smette di valere entro dieci minuti, e uno inventato non fa una richiesta al Worker a
 # ogni tentativo.
 GUEST_CACHE = BoundedCache(256)
 
-# I biglietti dell'account (`pt_…`, vedi [verify_ticket]): biglietto -> valido. Uno buono vale
+# I biglietti dell'account (`pt_…`, vedi [verify_ticket]): biglietto -> (owner, indice, valido). Uno buono vale
 # fino alla sua scadenza, che il Worker dice, e al massimo dodici ore; uno cattivo un minuto.
 TICKET_CACHE = BoundedCache(256)
 TICKET_MAX_S = 12 * 3600
@@ -1777,18 +1777,47 @@ class AuthError(Exception):
 
 
 @dataclass(frozen=True)
+class AuthAuthority:
+    """Verified account/index identity; an unbound PC also belongs to its local token hash.
+
+    Kept only in process, never returned in source/progress payloads. Bound owner tokens and
+    refreshed tickets share the same account identity, but every token caller is also checked
+    against the current local token before admission/access/work.
+    """
+
+    owner: str
+    index_url: str
+    unbound_token_hash: str = ""
+
+
+def authentication_authority() -> AuthAuthority:
+    owner, index_url = STATE["owner"], STATE["index_url"]
+    return AuthAuthority(owner, index_url, "" if owner else bearer_hash(STATE["token"] or ""))
+
+
+@dataclass(frozen=True)
 class Caller:
     """
     Chi ha fatto la richiesta, deciso una volta sola in [AuthGate] prima di leggere il corpo.
 
     `kind` e' "owner" o "guest"; `via` dice come ci si e' arrivati ("token", "ticket", "guest",
-    "anonymous"), e serve al registro e a nient'altro.
+    "anonymous"). `authority` is captured before verification, never reconstructed after an
+    async handoff. Missing authority is not sufficient to authorize alignment.
     """
 
     kind: str
     via: str
     name: str | None = None
     bearer: str = ""
+    authority: AuthAuthority | None = None
+
+
+def caller_authority_current(caller: Caller) -> bool:
+    if caller.authority is None or caller.authority != authentication_authority():
+        return False
+    if caller.via == "token":
+        return bool(caller.bearer and STATE["token"] and _same_secret(caller.bearer, STATE["token"]))
+    return True
 
 
 def _same_secret(given: str, expected: str) -> bool:
@@ -1816,18 +1845,19 @@ def identify(authorization: str) -> Caller:
         `owner` nel config.json.
     """
     bearer = authorization[7:].strip() if authorization[:7].lower() == "bearer " else ""
+    authority = authentication_authority()
     if bearer.startswith("pg_"):
-        name = verify_guest(bearer)
+        name = verify_guest(bearer, authority=authority)
         if not name:
             raise AuthError("ospite non riconosciuto")
-        return Caller("guest", "guest", name, bearer)
+        return Caller("guest", "guest", name, bearer, authority)
     expected = STATE["token"]
     if bearer and expected and _same_secret(bearer, expected):
-        return Caller("owner", "token", None, bearer)
-    if bearer.startswith("pt_") and verify_ticket(bearer):
-        return Caller("owner", "ticket", None, bearer)
+        return Caller("owner", "token", None, bearer, authority)
+    if bearer.startswith("pt_") and verify_ticket(bearer, authority=authority):
+        return Caller("owner", "ticket", None, bearer, authority)
     if STATE["accept_anonymous"]:
-        return Caller("owner", "anonymous")
+        return Caller("owner", "anonymous", authority=authority)
     if bearer.startswith("pt_"):
         raise AuthError("il computer non riconosce l'account: controlla owner e index_url nel config.json")
     if bearer:
@@ -1886,6 +1916,12 @@ class AuthGate:
                 if caller.kind != "owner" or caller.via == "anonymous":
                     await JSONResponse({"detail": "owner_only"}, status_code=403)(scope, receive, send)
                     return
+            # Identification ran on a thread. A binding may have changed while its result was
+            # handed back to this loop: do not read a body or register any job under new state.
+            if not caller_authority_current(caller):
+                await JSONResponse({"detail": "account_changed"}, status_code=409)(scope, receive, send)
+                return
+            if scope.get("method") == "POST" and scope.get("path") == "/v1/audio/alignments":
                 job_id = headers.get("x-pampa-job", "")
                 if not JOB_ID_PATTERN.fullmatch(job_id):
                     await JSONResponse({"detail": "job_id_required"}, status_code=400)(scope, receive, send)
@@ -1931,11 +1967,11 @@ def require_owner(request: Request) -> None:
 check_token = require_owner
 
 
-def _post_worker(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _post_worker(path: str, payload: dict[str, Any], *, index_url: str | None = None) -> dict[str, Any]:
     """Una POST al Worker dell'indice. Solleva `HTTPError` su un rifiuto, `OSError` sulla rete."""
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
-        STATE["index_url"].rstrip("/") + path,
+        (STATE["index_url"] if index_url is None else index_url).rstrip("/") + path,
         data=body,
         method="POST",
         headers={"Content-Type": "application/json", "User-Agent": WORKER_USER_AGENT},
@@ -1945,26 +1981,31 @@ def _post_worker(path: str, payload: dict[str, Any]) -> dict[str, Any]:
     return answer if isinstance(answer, dict) else {}
 
 
-def verify_guest(token: str) -> str | None:
+def verify_guest(token: str, *, authority: AuthAuthority | None = None) -> str | None:
     """Chiede al Worker se il token e' un ospite di questo proprietario. Il nome, o None."""
     now = time.time()
+    authority = authentication_authority() if authority is None else authority
+    if authority != authentication_authority():
+        return None
     hit, cached = GUEST_CACHE.get(token, now)
-    if hit:
-        return cached
+    if hit and isinstance(cached, tuple) and cached[:2] == (authority.owner, authority.index_url):
+        return cached[2]
     name: str | None = None
-    if STATE["index_url"] and STATE["owner"]:
+    if authority.index_url and authority.owner:
         try:
-            name = _post_worker("/v1/guests/verify", {"token": token, "owner": STATE["owner"]}).get("name") or None
+            name = _post_worker("/v1/guests/verify", {"token": token, "owner": authority.owner}, index_url=authority.index_url).get("name") or None
         except urllib.error.HTTPError:
             name = None
         except (OSError, ValueError) as error:
             log.warning("verifica dell'ospite non riuscita: %s", error)
             name = None
-    GUEST_CACHE.put(token, name, now + (600 if name else NEGATIVE_S))
+    if authority != authentication_authority():
+        return None
+    GUEST_CACHE.put(token, (authority.owner, authority.index_url, name), now + (600 if name else NEGATIVE_S))
     return name
 
 
-def verify_ticket(ticket: str) -> bool:
+def verify_ticket(ticket: str, *, authority: AuthAuthority | None = None) -> bool:
     """
     Chiede al Worker se il biglietto `pt_…` e' dell'account scritto in `owner`.
 
@@ -1975,7 +2016,10 @@ def verify_ticket(ticket: str) -> bool:
     Worker a ogni tentativo — e perche' chi corregge `owner` nel config.json non aspetti ore.
     """
     now = time.time()
-    account_config = (STATE["owner"], STATE["index_url"])
+    authority = authentication_authority() if authority is None else authority
+    if authority != authentication_authority():
+        return False
+    account_config = (authority.owner, authority.index_url)
     hit, cached = TICKET_CACHE.get(ticket, now)
     if hit and isinstance(cached, tuple) and cached[:2] == account_config:
         return bool(cached[2])
@@ -1983,7 +2027,7 @@ def verify_ticket(ticket: str) -> bool:
     valid = False
     if account_config[0] and account_config[1]:
         try:
-            answer = _post_worker("/v1/computer/verify", {"ticket": ticket, "owner": account_config[0]})
+            answer = _post_worker("/v1/computer/verify", {"ticket": ticket, "owner": authority.owner}, index_url=authority.index_url)
             expires = float(answer.get("expiresAt") or 0) / 1000
             if answer.get("ok") is True and expires > now:
                 valid = True
@@ -1992,7 +2036,7 @@ def verify_ticket(ticket: str) -> bool:
             log.info("biglietto dell'account rifiutato dal Worker (%s): controlla owner nel config.json", error.code)
         except (OSError, ValueError, TypeError) as error:
             log.warning("verifica del biglietto non riuscita: %s", error)
-    if account_config != (STATE["owner"], STATE["index_url"]):
+    if authority != authentication_authority():
         return False
     TICKET_CACHE.put(ticket, (*account_config, valid), until)
     return valid
@@ -2632,14 +2676,19 @@ ALIGN_MAX_TEXT_UNITS = 200_000
 ALIGN_MIN_CHAR_SCORE = 0.5  # Conservative filter, not a calibrated accuracy guarantee.
 
 
-def alignment_account(caller: Caller) -> str:
-    """Same account across refreshed tickets; unbound PCs retain owner-token authentication."""
-    return "account:" + STATE["owner"] if STATE["owner"] else "token:" + bearer_hash(caller.bearer)
+def alignment_account(caller: Caller) -> AuthAuthority | None:
+    """The authentication snapshot, never the configuration current after an await."""
+    return caller.authority
 
 
-def alignment_fence(caller: Caller, account: str, progress: JobProgress) -> None:
+def alignment_authorized(caller: Caller, account: AuthAuthority | None) -> bool:
+    return (caller.kind == "owner" and caller.via in ("token", "ticket")
+            and caller_authority_current(caller) and alignment_account(caller) == account)
+
+
+def alignment_fence(caller: Caller, account: AuthAuthority | None, progress: JobProgress) -> None:
     progress.check_cancelled()
-    if caller.kind != "owner" or caller.via == "anonymous" or alignment_account(caller) != account:
+    if not alignment_authorized(caller, account):
         raise HTTPException(status_code=409, detail="account_changed")
 
 
@@ -2759,9 +2808,12 @@ def _alignment_sha(path: Path, check: Callable[[], None]) -> str:
     return digest.hexdigest()
 
 
-def _force_align(source: Path, data: dict, caller: Caller, account: str, progress: JobProgress) -> dict:
+def _force_align(source: Path, data: dict, caller: Caller, account: AuthAuthority, progress: JobProgress) -> dict:
     """Bounded decode + CTC alignment of supplied words. No Whisper ASR/language detection."""
     check = functools.partial(alignment_fence, caller, account, progress)
+    def on_progress(percent: float) -> None:
+        check()
+        progress.advance(float(percent) / 100.0, "aligning")
     check()
     sha = next(p["sha256"] for p in data["source"]["parts"] if p["id"] == data["part_id"])
     if _alignment_sha(source, check) != sha:
@@ -2816,7 +2868,7 @@ def _force_align(source: Path, data: dict, caller: Caller, account: str, progres
             aligned = whisperx.align(
                 [{"start": 0.0, "end": actual_ms / 1000, "text": excerpt}], model, metadata,
                 audio, STATE["device"], interpolate_method="ignore", return_char_alignments=True,
-                progress_callback=progress.callback("aligning"),
+                progress_callback=on_progress,
             )
             check()
             overlay = alignment_overlay(excerpt, aligned, metadata["dictionary"], actual_ms)
@@ -2848,11 +2900,13 @@ def _force_align(source: Path, data: dict, caller: Caller, account: str, progres
     }
 
 
-async def _run_alignment_work(work: SharedWork, source: Path, data: dict, caller: Caller, account: str) -> dict:
+async def _run_alignment_work(work: SharedWork, source: Path, data: dict, caller: Caller, account: AuthAuthority) -> dict:
     progress = work.progress
     progress.set("queued")
     try:
+        alignment_fence(caller, account, progress)
         async with GATE.slot(0, key=progress.id):
+            alignment_fence(caller, account, progress)
             work.admitted = True
             progress.admitted()
             STATE["busy"] = True
@@ -2894,8 +2948,12 @@ async def alignments(request: Request, alignment: str = Form(...), file: UploadF
             with tempfile.NamedTemporaryFile(suffix=".audio", delete=False) as handle:
                 target = Path(handle.name)
                 digest = hashlib.sha256()
-                while chunk := await file.read(1024 * 1024):
+                while True:
                     alignment_fence(caller, account, progress)
+                    chunk = await file.read(1024 * 1024)
+                    alignment_fence(caller, account, progress)
+                    if not chunk:
+                        break
                     digest.update(chunk)
                     handle.write(chunk)
             if digest.hexdigest() != sha:
@@ -2903,7 +2961,12 @@ async def alignments(request: Request, alignment: str = Form(...), file: UploadF
             source = target
         else:
             store = archive.ARCHIVE
-            record = await asyncio.to_thread(store.get, sha) if store is not None else None
+            def owned_record() -> dict | None:
+                alignment_fence(caller, account, progress)
+                record = store.get(sha) if store is not None else None
+                alignment_fence(caller, account, progress)
+                return record
+            record = await asyncio.to_thread(owned_record)
             if record is None:
                 raise HTTPException(status_code=404, detail="blob_missing")
             source = record["path"]
