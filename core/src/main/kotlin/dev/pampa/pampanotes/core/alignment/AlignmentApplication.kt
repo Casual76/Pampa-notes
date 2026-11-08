@@ -16,8 +16,8 @@ object AlignmentApplication {
     if (part.text != expected.request.text || AlignmentLanguage.code(part.language) != expected.request.language) return null
     val duration = expected.placement.singleOrNull { it.id == response.partId }?.durationMs ?: return null
     AlignmentProtocol.validate(response, expected.request, duration, jobId)
-    // Keep the source's reported language value intact; the request/response ISO code was validated.
-    val overlay = CloudOverlay(response.partId, response.textSha256, part.language ?: return null, response.timings)
+    // The overlay carries the validated protocol code. RAW/part/original labels stay exact.
+    val overlay = CloudOverlay(response.partId, response.textSha256, response.language, response.timings)
     return raw.copy(cloudSourceJson = CloudSources.encode(doc.copy(overlays = doc.overlays.filterNot { it.partId == response.partId } + overlay)))
   }
 }

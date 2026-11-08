@@ -1,6 +1,8 @@
 package dev.pampa.pampanotes.core.export
 
 import dev.pampa.pampanotes.core.db.SessionWithParts
+import dev.pampa.pampanotes.core.db.AudioPartEntity
+import dev.pampa.pampanotes.core.db.TranscriptEntity
 import dev.pampa.pampanotes.core.db.TranscriptKind
 import dev.pampa.pampanotes.core.alignment.CloudSources
 import dev.pampa.pampanotes.core.model.wordCount
@@ -20,13 +22,56 @@ internal object ExportSessionSelection {
   fun rows(rows: List<SessionWithParts>, ids: Set<String>?): List<SessionWithParts> =
     if (ids == null) rows else rows.filter { it.session.id in ids }
 
+  data class TranscriptSelection(val versions: List<TranscriptEntity>, val activeId: String?)
+
+  /**
+   * A refinement has no per-part text mapping. Its parent ID alone is not scope evidence: timeline
+   * edits can replace that parent's visible text while retaining the complete refinement.
+   * Restricted exports therefore require every immutable source boundary to be authorized. With
+   * missing/partial lineage use the selected refinement's RAW parent, never an unrelated newer RAW.
+   * Whole-note callers keep every public history; this rule does not trim their native graph.
+   */
+  fun transcripts(versions: List<TranscriptEntity>, activeId: String?, authorizedParts: List<AudioPartEntity>,
+    retainOriginals: Boolean = false): TranscriptSelection {
+    if (retainOriginals) return TranscriptSelection(versions, activeId)
+    val byId = versions.associateBy { it.id }
+    val authorized = authorizedParts.associateBy { it.id }
+    require(byId.size == versions.size && authorized.size == authorizedParts.size) { "Ambiguous export lineage" }
+    fun confined(refined: TranscriptEntity): Boolean {
+      val raw = byId[refined.parentId]?.takeIf { it.kind == TranscriptKind.RAW && it.sessionId == refined.sessionId } ?: return false
+      val doc = CloudSources.decode(raw.cloudSourceJson)?.takeIf { CloudSources.matches(it, raw) } ?: return false
+      fun included(id: String, hash: String) = hash.isNotEmpty() && authorized[id]?.sha256 == hash
+      return doc.parts.isNotEmpty() && doc.parts.all { included(it.id, it.sha256) } && doc.originals.all { original ->
+        original.contentScope == "complete_original" && original.parts.isNotEmpty() && original.parts.all { included(it.id, it.sha256) }
+      }
+    }
+    val retained = versions.filter { it.kind == TranscriptKind.RAW || confined(it) }
+    val requested = byId[activeId]
+    val selectedId = if (requested != null && requested !in retained) {
+      val parent = byId[requested.parentId]
+      require(parent?.kind == TranscriptKind.RAW && parent.sessionId == requested.sessionId) { "Cannot scope refinement without its RAW parent" }
+      parent.id
+    } else activeId
+    return TranscriptSelection(retained, selectedId)
+  }
+
   /** Also fence caller-supplied native graphs. Associated material has note-level ownership. */
   fun native(note: PampaBundleNote, ids: Set<String>, retainOriginals: Boolean = false): PampaBundleNote {
     val sessions = note.sessions.filter { it.id in ids }
     val allowed = sessions.mapTo(HashSet()) { it.id }
-    val transcripts = note.transcripts.filter { it.sessionId in allowed }
-    val transcriptIds = transcripts.mapTo(HashSet()) { it.id }
     val parts = note.parts.filter { it.sessionId in allowed }
+    val transcripts = sessions.flatMap { session ->
+      val versions = note.transcripts.filter { it.sessionId == session.id }
+      val selection = transcripts(versions, session.activeTranscriptId, parts, retainOriginals)
+      // A caller's human selection can differ from this graph's active ID. Refuse any unsafe
+      // refinement supplied here, rather than dropping it while Markdown could still print it.
+      // Gather consumes the same rule before collecting either representation.
+      require(selection.versions.size == versions.size && selection.activeId == session.activeTranscriptId) {
+        "Native refinement is not confined to authorized source parts; consume scoped RAW selection before export"
+      }
+      selection.versions
+    }
+    val transcriptIds = transcripts.mapTo(HashSet()) { it.id }
     val partIds = parts.mapTo(HashSet()) { it.id }
     val portable = transcripts.map { raw ->
       if (raw.kind != TranscriptKind.RAW) {

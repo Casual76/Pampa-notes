@@ -485,7 +485,10 @@ class ExportService @Inject constructor(
   private suspend fun gatherNote(note: NoteEntity, folderPath: List<String>, options: ExportOptions,
     selectedSessionIds: Set<String>? = null, personal: Boolean = false): ExportNote {
     val sessionRows = ExportSessionSelection.rows(sessions.byNote(note.id), selectedSessionIds)
-    val versionsBySession = sessionRows.associate { it.session.id to transcripts.bySession(it.session.id) }
+    val authorizedParts = sessionRows.flatMap { it.partsSorted }
+    val selections = sessionRows.associate { row -> row.session.id to ExportSessionSelection.transcripts(
+      transcripts.bySession(row.session.id), row.session.activeTranscriptId, authorizedParts, retainOriginals = selectedSessionIds == null) }
+    val versionsBySession = selections.mapValues { it.value.versions }
     val segmentsByTranscript = versionsBySession.values.flatten().associate { it.id to segments.byTranscript(it.id) }
     val gatheredSessions = sessionRows.mapIndexed { index, row ->
       val ordered = row.partsSorted
@@ -508,10 +511,11 @@ class ExportService @Inject constructor(
       }
 
       val versions = versionsBySession.getValue(row.session.id)
+      val activeId = selections.getValue(row.session.id).activeId
       // Text, words and segment timings follow the selected RAW or the selected refinement's parent.
-      val raw = dev.pampa.pampanotes.core.repo.RawTranscripts.forSelection(versions, row.session.activeTranscriptId)?.let { source ->
+      val raw = dev.pampa.pampanotes.core.repo.RawTranscripts.forSelection(versions, activeId)?.let { source ->
         val projection = dev.pampa.pampanotes.core.alignment.CloudSources.portableProjection(source, row.partsSorted,
-          retainOriginals = selectedSessionIds == null, authorizedOriginalParts = sessionRows.flatMap { it.partsSorted })
+          retainOriginals = selectedSessionIds == null, authorizedOriginalParts = authorizedParts)
         source.copy(text = projection.text, cloudSourceJson = projection.cloudSourceJson,
           wordCount = if (projection.text == source.text) source.wordCount else projection.text.wordCount())
       }
@@ -519,7 +523,7 @@ class ExportService @Inject constructor(
         TranscriptChoice.RAW -> raw
         // La migliore: quella che l'utente sta guardando nell'app, altrimenti la grezza. Esportare
         // una versione diversa da quella a schermo sarebbe una sorpresa dentro un file.
-        TranscriptChoice.BEST -> versions.firstOrNull { it.id == row.session.activeTranscriptId }?.let { if (it.id == raw?.id) raw else it } ?: raw
+        TranscriptChoice.BEST -> versions.firstOrNull { it.id == activeId }?.let { if (it.id == raw?.id) raw else it } ?: raw
       }
 
       ExportSession(
@@ -553,7 +557,7 @@ class ExportService @Inject constructor(
       tags = tags.tags(note.id),
       native = dev.pampa.pampanotes.core.importing.PampaBundleNote(
         note = note, tags = tags.tags(note.id),
-        sessions = sessionRows.map { it.session.copy(transcribingOn = null, transcribingSince = null) },
+        sessions = sessionRows.map { it.session.copy(activeTranscriptId = selections.getValue(it.session.id).activeId, transcribingOn = null, transcribingSince = null) },
         parts = sessionRows.flatMap { it.partsSorted }.map { it.copy(archivedAt = 0) },
         transcripts = versionsBySession.values.flatten(),
         segments = segmentsByTranscript.values.flatten(),

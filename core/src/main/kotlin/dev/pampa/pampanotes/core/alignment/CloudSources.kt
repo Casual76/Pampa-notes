@@ -30,6 +30,7 @@ import kotlinx.serialization.json.Json
   /** A portable projection is explicitly not the complete original provider response. */
   val contentScope: String = "complete_original",
 )
+/** Protocol language code, independent of the provider's verbatim language label. */
 @Serializable data class CloudOverlay(val partId: String, val textSha256: String, val language: String, val timings: List<AlignmentTiming>)
 @Serializable data class CloudSourceDocument(
   val version: Int = 1,
@@ -88,9 +89,14 @@ object CloudSources {
     require(value.overlays.size <= value.parts.size && value.overlays.map { it.partId }.distinct().size == value.overlays.size)
     value.overlays.forEach { overlay ->
       val part = value.parts.single { it.id == overlay.partId }
-      require(part.text != null && AlignmentProtocol.sha256(part.text) == overlay.textSha256 && part.language == overlay.language && AlignmentProtocol.validLanguage(overlay.language))
+      require(part.text != null && AlignmentProtocol.sha256(part.text) == overlay.textSha256 && overlayLanguageMatches(part, overlay))
       require(validOverlay(part.text, overlay.timings))
     }
+  }
+  private fun overlayLanguageMatches(part: CloudTextPart, overlay: CloudOverlay): Boolean {
+    val sourceCode = AlignmentLanguage.code(part.language) ?: return false
+    // Accept existing lowercase ISO3 overlays (eng/ita), but never guess unsupported/auto labels.
+    return AlignmentProtocol.validLanguage(overlay.language) && AlignmentLanguage.code(overlay.language) == sourceCode
   }
   private fun validOverlay(text: String, timings: List<AlignmentTiming>): Boolean {
     val tokens = AlignmentProtocol.tokens(text)
@@ -162,7 +168,7 @@ object CloudSources {
         "Cannot scope cloud original without part boundaries"
       }
       val included = original.parts.filter { it.id in authorized }
-      require(included.all { p -> authorized.getValue(p.id).sha256 == p.sha256 }) { "Cannot scope conflicting historical audio identity" }
+      require(included.all { p -> p.sha256.isEmpty() || authorized.getValue(p.id).sha256 == p.sha256 }) { "Cannot scope conflicting historical audio identity" }
       if (included.isEmpty()) null
       else if (included == original.parts) original
       else {
@@ -265,7 +271,7 @@ object CloudSources {
   data class DisplaySpan(val textStart: Int, val textEnd: Int, val text: String, val startMs: Long?, val endMs: Long?, val evidence: String)
   fun display(part: CloudTextPart, overlay: CloudOverlay?): List<DisplaySpan> {
     val text = part.text ?: return emptyList()
-    val valid = overlay?.takeIf { it.partId == part.id && it.language == part.language && it.textSha256 == AlignmentProtocol.sha256(text) && validOverlay(text, it.timings) }
+    val valid = overlay?.takeIf { it.partId == part.id && overlayLanguageMatches(part, it) && it.textSha256 == AlignmentProtocol.sha256(text) && validOverlay(text, it.timings) }
     val evidence = valid?.timings.orEmpty().associateBy { it.textStart }
     val result = mutableListOf<DisplaySpan>()
     var cursor = 0
