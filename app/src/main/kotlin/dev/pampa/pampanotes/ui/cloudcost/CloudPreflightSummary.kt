@@ -43,7 +43,7 @@ class CloudPreflightViewModel @Inject constructor(private val spending: CloudSpe
   private val mutable = MutableStateFlow(CloudPreflightUiState())
   val state = mutable.asStateFlow()
   private val watchers = mutableListOf<Job>()
-  fun observe(sessionIds: List<String>, provider: String? = null, allowExplicitCloud: Boolean = false) {
+  fun observe(sessionIds: List<String>, provider: String? = null, allowExplicitCloud: Boolean = false, modelOverride: String? = null) {
     watchers.forEach { it.cancel() }; watchers.clear()
     mutable.value = CloudPreflightUiState()
     val results = mutableMapOf<String, CloudPreflight>()
@@ -51,7 +51,7 @@ class CloudPreflightViewModel @Inject constructor(private val spending: CloudSpe
     val refreshedModels = mutableSetOf<String>()
     val ids = sessionIds.distinct()
     ids.forEach { id -> watchers += viewModelScope.launch {
-      spending.observePreflight(id, provider, allowExplicitCloud).catch {
+      spending.observePreflight(id, provider, allowExplicitCloud, modelOverride).catch {
         failures += id
         mutable.value = mutable.value.copy(loading = results.size + failures.size < ids.size, failed = true)
       }.collect { result ->
@@ -69,9 +69,9 @@ class CloudPreflightViewModel @Inject constructor(private val spending: CloudSpe
 }
 
 @Composable
-fun CloudPreflightSummary(sessionIds: List<String>, provider: String? = null, allowExplicitCloud: Boolean = false, viewModel: CloudPreflightViewModel = hiltViewModel()) {
+fun CloudPreflightSummary(sessionIds: List<String>, provider: String? = null, allowExplicitCloud: Boolean = false, viewModel: CloudPreflightViewModel = hiltViewModel(), modelOverride: String? = null) {
   val state by viewModel.state.collectAsStateWithLifecycle()
-  LaunchedEffect(sessionIds, provider, allowExplicitCloud) { viewModel.observe(sessionIds, provider, allowExplicitCloud) }
+  LaunchedEffect(sessionIds, provider, allowExplicitCloud, modelOverride) { viewModel.observe(sessionIds, provider, allowExplicitCloud, modelOverride) }
   CloudPreflightSummary(state)
 }
 

@@ -67,12 +67,24 @@ class AppFiles(context: Context) {
   ): Int {
     var removed = 0
     fun old(file: File) = isOldEnough(file.lastModified(), now)
-    audio.listFiles()?.forEach { file ->
-      if (AppFileWriteProtection.deleteIfUnprotected(file, snapshot) { it.isFile && it.name !in referencedAudio && old(it) }) removed++
+    fun sweep(dir: File, referenced: Set<String>) {
+      // Equivalent stored names still reference the same bytes. An unreadable identity defers
+      // cleanup, matching session deletion rather than orphaning a retained legacy alias later.
+      val canonicalRoot = runCatching { dir.canonicalFile }.getOrNull() ?: return
+      if (canonicalRoot != File(root.canonicalFile, dir.name)) return
+      val identities = runCatching { referenced.map { File(dir, it).canonicalPath }.toSet() }.getOrNull() ?: return
+      dir.listFiles()?.forEach { file ->
+        // The owner/release-generation guard and physical deletion share the registry monitor.
+        // Never replace it with canonical identity or the age heuristic alone.
+        if (AppFileWriteProtection.deleteIfUnprotected(file, snapshot) {
+            val identity = it.canonicalFile
+            dir.canonicalFile == canonicalRoot && identity.parentFile == canonicalRoot &&
+              identity.path !in identities && it.isFile && old(it)
+          }) removed++
+      }
     }
-    sources.listFiles()?.forEach { file ->
-      if (AppFileWriteProtection.deleteIfUnprotected(file, snapshot) { it.isFile && it.name !in referencedSources && old(it) }) removed++
-    }
+    sweep(audio, referencedAudio)
+    sweep(sources, referencedSources)
     jobs.listFiles()?.forEach { if (it.isDirectory && it.name !in activeJobIds && old(it) && it.deleteRecursively()) removed++ }
     return removed
   }

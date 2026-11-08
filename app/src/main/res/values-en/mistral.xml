@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="cloud_waiting_quota">Waiting for the service quota; resumes automatically after the limit</string>
+    <string name="job_phase_awaiting_mistral">Mistral is transcribing</string>
+    <string name="provider_mistral">Mistral</string>
+    <string name="mistral_requirements">Use your Mistral Studio API key. Audio goes directly to Mistral and may use paid credit. Verification only reads the model catalogue.</string>
+    <string name="mistral_key">Mistral API key</string>
+    <string name="mistral_key_hint">Create a key at console.mistral.ai</string>
+    <string name="mistral_key_saved">Encrypted on this device, excluded from backups and exports</string>
+    <string name="mistral_remove_key">Remove Mistral key</string>
+    <string name="mistral_verified">Key verified without sending audio</string>
+    <string name="mistral_model">Mistral transcription model</string>
+    <string name="mistral_timing">Mistral provides segment times. Individual word times remain unavailable until alignment on your computer provides usable evidence.</string>
+    <string name="cloud_pinned_detail">The service and model are fixed when the job is queued. Limits and errors never activate another service; Retry keeps the choice and completed chunks.</string>
+    <string name="cloud_job_model">Model for this transcription</string>
+    <string name="cloud_account_changed">The account changed after this job was queued. Return to the original account or start a new transcription.</string>
+</resources>

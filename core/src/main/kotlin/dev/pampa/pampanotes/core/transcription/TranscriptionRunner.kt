@@ -169,6 +169,7 @@ data class PartTranscript(
   val text: String,
   val segments: List<StitchedSegment>,
   val language: String?,
+  val cloudSource: CloudPartText? = null,
 ) {
   /** Niente parole: una parte muta, o tutti i suoi pezzi muti. */
   val isEmpty: Boolean get() = segments.isEmpty() && text.isBlank()
@@ -187,7 +188,21 @@ data class SessionTranscript(
    * segna ([dev.pampa.pampanotes.core.repo.TranscribeOptions.emptyParts]) e la sessione lo dice.
    */
   val emptyPartIds: List<String> = emptyList(),
+  /** Immutable source input for the post-save alignment/provenance integration. No credentials. */
+  val sourceParts: List<CloudPartText> = emptyList(),
 )
+
+@kotlinx.serialization.Serializable
+data class CloudPartText(val partId: String, val text: String, val language: String?,
+  val audioSha256: String? = null, val responses: List<CloudResponseText>? = null,
+  val provider: String? = null, val model: String? = null,
+  /** False for legacy segment reconstruction: [text] is then presentation, not an original. */
+  val exactTextKnown: Boolean = false)
+
+/** Exact reported response and original audio window; null text/language mean missing evidence. */
+@kotlinx.serialization.Serializable
+data class CloudResponseText(val index: Int, val startMs: Long, val endMs: Long, val text: String?,
+  val language: String?, val audioSha256: String? = null, val provider: String? = null, val model: String? = null)
 
 data class SessionSegment(
   val partId: String,
@@ -227,10 +242,13 @@ data class SessionSegment(
  * sono del piano di adesso ([StoredChunks]): un pezzo di un altro piano al posto giusto e' un buco.
  */
 @Singleton
-class TranscriptionRunner @Inject constructor(
+class TranscriptionRunner internal constructor(
   private val files: AppFiles,
   private val fetcher: dev.pampa.pampanotes.core.archive.ArchiveFetcher,
+  private val storage: TranscriptionWorkStorage,
 ) {
+  @Inject constructor(files: AppFiles, fetcher: dev.pampa.pampanotes.core.archive.ArchiveFetcher) :
+    this(files, fetcher, TranscriptionWorkStorage())
 
   /**
    * @param jobId la cartella di lavoro, e la chiave con cui si riprende.
@@ -255,12 +273,11 @@ class TranscriptionRunner @Inject constructor(
   ): SessionTranscript {
     require(parts.isNotEmpty()) { "una sessione senza parti non si trascrive" }
     val request = if (provider is CloudTranscriptionGuard) provider.prepareRequest(request.copy(cloudSessionId = parts.first().sessionId, cloudPartId = parts.first().id)) else request
-    val workDir = files.jobDir(jobId)
-    // Lo stesso id puo' tornare con un altro servizio o un altro tetto («Riprova», «solo il computer
-    // di casa» acceso dopo): i pezzi lasciati da quel giro non sono di questo, e se ne vanno.
+    // Changed plans retain paid data. A switch to the companion uses an isolated subdirectory.
     val signature = StoredChunks.signature(provider.id, provider.capabilities, chunkMinutes) +
-      if (provider.id == OpenRouterTranscriptionProvider.ID) "|${request.model}" else ""
-    prepareWorkDir(workDir, signature)
+      // Groq's existing cache signature stays compatible; its model is now pinned in the job.
+      if (provider.id == OpenRouterTranscriptionProvider.ID || provider.id == MistralTranscriptionProvider.ID) "|${request.model}" else ""
+    val workDir = storage.prepare(files.jobDir(jobId), signature, request, provider.id != OpenAiCompatProvider.ID)
     val transcripts = mutableListOf<PartTranscript>()
     val sorted = parts.sortedBy { it.position }
     val scale = ProgressScale(
@@ -284,7 +301,9 @@ class TranscriptionRunner @Inject constructor(
 
     sorted.forEachIndexed { index, part ->
       currentCoroutineContext().ensureActive()
-      val partDir = File(workDir, "part-${part.id}").apply { mkdirs() }
+      val partDir = File(workDir, "part-${part.id}").also {
+        if (!it.isDirectory && !it.mkdirs()) throw java.io.IOException("Cannot create transcription part directory")
+      }
       computer?.let { mode ->
         transcribeOnComputer(part, index, parts.size, partDir, signature, mode, onComputer, scale, onArchived, onProgress, partials, onPartial)
           ?.let {
@@ -313,19 +332,11 @@ class TranscriptionRunner @Inject constructor(
 
     onProgress(TranscriptionProgress.Stitching)
     return SessionAssembler.assemble(transcripts, provider.id, request.model)
-      .copy(emptyPartIds = emptyParts(transcripts))
-  }
-
-  /**
-   * La cartella del lavoro e' di questo piano: se il file che lo dice manca (una cartella di una
-   * versione di prima) o parla d'altro, quello che c'e' dentro si butta. Rifare un pezzo costa una
-   * richiesta; rileggerne uno sbagliato costa un pezzo di lezione.
-   */
-  private fun prepareWorkDir(workDir: File, signature: String) {
-    val stamp = File(workDir, StoredChunks.WORK_FILE)
-    if (runCatching { stamp.readText() }.getOrNull() == signature) return
-    workDir.listFiles()?.forEach { it.deleteRecursively() }
-    runCatching { stamp.writeText(signature) }
+      .copy(emptyPartIds = emptyParts(transcripts),
+        language = if (provider.id == OpenAiCompatProvider.ID) transcripts.firstNotNullOfOrNull { it.language }
+          else dev.pampa.pampanotes.core.alignment.CloudSources.reportedLanguage(transcripts.map { it.language }),
+        sourceParts = if (provider.id == OpenAiCompatProvider.ID) emptyList()
+          else transcripts.map { requireNotNull(it.cloudSource) })
   }
 
   /** Il computer di casa che lavora da se', per un lavoro: con cosa, e fino a quando. */
@@ -537,6 +548,40 @@ class TranscriptionRunner @Inject constructor(
     onProgress: (TranscriptionProgress) -> Unit,
   ): PartTranscript {
     val source = files.audioFile(part.fileName)
+    val cloud = provider.id != OpenAiCompatProvider.ID
+    val savedInput = if (cloud) storage.identity(workDir) else null
+    if (savedInput != null && (savedInput.partId != part.id || savedInput.durationMs != part.durationMs))
+      throw java.io.IOException("Transcription input placement changed; paid results retained")
+    val existing = workDir.listFiles() ?: throw java.io.IOException("Cannot inspect saved transcription part")
+    val hasPaidData = existing.any { it.name.startsWith("whole.json") || it.name.startsWith("chunk-") || it.name == "plan.json" || it.name == "audio.pcm" || it.name.endsWith(".pending") || it.name.endsWith(".tmp") }
+    // Legacy paid results remain usable, but cannot acquire evidence from a retry's input.
+    var input = savedInput
+    fun checkedInput(): String? {
+      if (!cloud) return null
+      if (input == null && hasPaidData) throw java.io.IOException("Unknown cached audio identity; paid results retained, no automatic retranscription")
+      val hash = dev.pampa.pampanotes.core.alignment.AlignmentProtocol.sha256(source)
+      if (dev.pampa.pampanotes.core.alignment.AlignmentProtocol.validHash(part.sha256) && part.sha256 != hash)
+        throw java.io.IOException("Transcription audio does not match its saved hash")
+      if (input != null && input!!.sha256 != hash)
+        throw java.io.IOException("Original transcription audio changed; paid results retained")
+      if (input == null) {
+        input = TranscriptionWorkStorage.Input(part.id, hash, part.durationMs)
+        storage.recordInput(workDir, input!!)
+      }
+      return hash
+    }
+    fun assembled(stitched: StitchedTranscript, chunks: List<ChunkTranscript>): PartTranscript {
+      val language = if (cloud) dev.pampa.pampanotes.core.alignment.CloudSources.reportedLanguage(
+        chunks.map { chunk -> chunk.language.takeIf { chunk.reportedLanguageKnown } }) else chunks.firstNotNullOfOrNull { it.language } ?: request.language
+      val hash = chunks.map { it.audioSha256 }.distinct().singleOrNull()
+      val evidence = if (!cloud) null else CloudPartText(part.id, stitched.text, language, hash,
+        chunks.sortedBy { it.spec.index }.map { chunk -> CloudResponseText(chunk.spec.index, chunk.spec.startMs, chunk.spec.endMs,
+          chunk.sourceText, chunk.language.takeIf { chunk.reportedLanguageKnown }, chunk.audioSha256, chunk.sourceProvider, chunk.sourceModel) },
+        provider = chunks.map { it.sourceProvider }.distinct().singleOrNull(),
+        model = chunks.map { it.sourceModel }.distinct().singleOrNull(),
+        exactTextKnown = chunks.all { it.sourceText != null })
+      return PartTranscript(part, stitched.text, stitched.segments, language, evidence)
+    }
     if (!source.exists()) {
       // Relay first, then any durable companion copy. A temporary transfer never sets archivedAt.
       onProgress(TranscriptionProgress.Preparing(partIndex, partCount, 0f, scale.overall(partIndex, 0f)))
@@ -581,27 +626,48 @@ class TranscriptionRunner @Inject constructor(
     if (!chunked) {
       val spec = ChunkSpec(0, 0, part.durationMs)
       val cached = File(workDir, "whole.json")
-      var language = request.language
       val chunk = readStored(cached, spec, signature) ?: run {
+        val hash = checkedInput()
         val result = try {
-          sendWithRetry(provider, source, part.mime, request.copy(cloudDurationMs = part.durationMs), waitingReporter(onProgress), remote(1, 1), uploading(1, 1))
+          upload(cached, provider) {
+            sendWithRetry(provider, source, part.mime, request.copy(cloudDurationMs = part.durationMs), waitingReporter(onProgress), remote(1, 1), uploading(1, 1))
+          }
         } catch (silent: TranscriptionError.NoSpeech) {
           TranscriptResult("", emptyList(), null, null)
         }
-        language = result.language
-        ChunkTranscript(spec, result.segments, result.text.takeIf { result.segments.isEmpty() }.orEmpty())
-          .also { writeStored(cached, it, signature) }
+        ChunkTranscript(spec, result.segments, result.text.takeIf { result.segments.isEmpty() }.orEmpty(),
+          sourceText = result.text.takeIf { cloud }, language = result.language,
+          audioSha256 = hash?.takeIf { runCatching { dev.pampa.pampanotes.core.alignment.AlignmentProtocol.sha256(source) }.getOrNull() == it }, reportedLanguageKnown = cloud,
+          sourceProvider = provider.id.takeIf { cloud }, sourceModel = request.model.takeIf { cloud })
+          .also { writeStored(cached, it, signature); if (cloud) storage.finishUpload(cached) }
       }
       finished(1, 1)
-      val stitched = TranscriptStitcher.stitch(listOf(chunk), request.prompt)
-      return PartTranscript(part, stitched.text, stitched.segments, language)
+      val stitched = if (provider.id == OpenAiCompatProvider.ID) TranscriptStitcher.stitch(listOf(chunk), request.prompt)
+        else TranscriptStitcher.stitchCloud(listOf(chunk))
+      return assembled(stitched, listOf(chunk))
     }
 
     val pcm = File(workDir, "audio.pcm")
     // I pezzi si ricontano sulla durata vera, quella del PCM decodificato: la durata della riga puo'
     // mancare (0) o essere quella stimata dal contenitore, e un conto sbagliato qui e' un pezzo che
     // sfora il limite di Groq.
-    val plan = preparePlan(source, pcm, workDir, { totalMs -> piecesFor(provider.capabilities, totalMs, chunkMinutes) }) { fraction ->
+    val savedPlan = File(workDir, "plan.json").takeIf { it.exists() }?.let {
+      StoredChunks.decodePlan(it.readText()) ?: throw java.io.IOException("Invalid transcription chunk plan; paid results retained")
+    }
+    if (cloud && savedPlan == null && existing.any { it.name.startsWith("chunk-") && it.name.endsWith(".json") })
+      throw java.io.IOException("Missing paid transcription chunk plan; cached results retained")
+    // A complete cache needs neither current bytes nor PCM, and keeps its original identity.
+    if (savedPlan != null) {
+      val cached = savedPlan.map { readStoredChunk(workDir, it, signature) }
+      if (cached.all { it != null }) {
+        val chunks = cached.filterNotNull()
+        val stitched = if (cloud) TranscriptStitcher.stitchCloud(chunks) else TranscriptStitcher.stitch(chunks, request.prompt)
+        return assembled(stitched, chunks)
+      }
+    }
+    val hash = checkedInput()
+    val plan = preparePlan(source, pcm, workDir, { totalMs -> piecesFor(provider.capabilities, totalMs, chunkMinutes) },
+      cloud = provider.id != OpenAiCompatProvider.ID) { fraction ->
       onProgress(
         TranscriptionProgress.Preparing(partIndex, partCount, fraction, scale.overall(partIndex, scale.preparing(fraction))),
       )
@@ -622,21 +688,30 @@ class TranscriptionRunner @Inject constructor(
 
       val encoded = ChunkEncoder.encode(pcm, PcmDecoder.TARGET_SAMPLE_RATE, spec, workDir)
       try {
+        if (cloud) {
+          checkedInput()
+        }
         val result = try {
-          sendWithRetry(
-            provider, encoded.file, encoded.mime, request.copy(cloudDurationMs = spec.endMs - spec.startMs), waitingReporter(onProgress),
-            remote(chunkIndex, chunkCount), uploading(chunkIndex, chunkCount),
-          )
+          upload(chunkFile(workDir, spec.index), provider) {
+            sendWithRetry(
+              provider, encoded.file, encoded.mime, request.copy(cloudDurationMs = spec.endMs - spec.startMs), waitingReporter(onProgress),
+              remote(chunkIndex, chunkCount), uploading(chunkIndex, chunkCount),
+            )
+          }
         } catch (silent: TranscriptionError.NoSpeech) {
           // Dieci minuti di intervallo, o la classe che esce: un pezzo muto e' un pezzo vuoto, non
           // una lezione fallita. Si salva vuoto, cosi' una ripresa non lo rimanda.
           TranscriptResult("", emptyList(), null, null)
         }
         finished(chunkIndex, chunkCount)
-        val chunk = ChunkTranscript(spec, result.segments, result.text.takeIf { result.segments.isEmpty() }.orEmpty())
+        val chunk = ChunkTranscript(spec, result.segments, result.text.takeIf { result.segments.isEmpty() }.orEmpty(),
+          sourceText = result.text.takeIf { cloud }, language = result.language,
+          audioSha256 = hash, reportedLanguageKnown = cloud,
+          sourceProvider = provider.id.takeIf { cloud }, sourceModel = request.model.takeIf { cloud })
         // Prima su disco, poi in memoria: un processo ucciso fra le due cose deve poter ripartire
         // da qui, non dal pezzo precedente.
         writeStoredChunk(workDir, chunk, signature)
+        if (cloud) storage.finishUpload(chunkFile(workDir, spec.index))
         chunkTranscripts += chunk
       } finally {
         encoded.file.delete()
@@ -646,8 +721,20 @@ class TranscriptionRunner @Inject constructor(
     // Il PCM non serve piu': su un'ora sono centoquindici megabyte che non hanno motivo di restare.
     pcm.delete()
 
-    val stitched = TranscriptStitcher.stitch(chunkTranscripts, request.prompt)
-    return PartTranscript(part, stitched.text, stitched.segments, request.language)
+    val stitched = if (provider.id == OpenAiCompatProvider.ID) TranscriptStitcher.stitch(chunkTranscripts, request.prompt)
+      else TranscriptStitcher.stitchCloud(chunkTranscripts)
+    return assembled(stitched, chunkTranscripts)
+  }
+
+  private suspend fun upload(resultFile: File, provider: TranscriptionProvider, send: suspend () -> TranscriptResult): TranscriptResult {
+    if (provider.id == OpenAiCompatProvider.ID) return send()
+    val context = CloudUploadContext(storage.beginUpload(resultFile), provider.id)
+    try {
+      return kotlinx.coroutines.withContext(context) { send() }
+    } catch (error: Throwable) {
+      context.refusedBeforeDispatch(error)
+      throw error
+    }
   }
 
   /** Decodifica e pianifica, oppure rilegge il piano di un tentativo precedente. */
@@ -656,34 +743,37 @@ class TranscriptionRunner @Inject constructor(
     pcm: File,
     workDir: File,
     piecesFor: (totalMs: Long) -> Int,
+    cloud: Boolean = false,
     onProgress: (Float) -> Unit,
   ): ChunkPlan {
     val planFile = File(workDir, "plan.json")
-    if (pcm.exists() && pcm.length() > 0 && planFile.exists()) {
-      runCatching { planFile.readText() }.getOrNull()?.let(StoredChunks::decodePlan)?.let { stored ->
+    val stored = if (planFile.exists()) StoredChunks.decodePlan(planFile.readText())
+      ?: throw java.io.IOException("Invalid saved transcription plan; paid results retained") else null
+    // Cloud partial resumes regenerate derived PCM from the verified original, never trust
+    // unbound scratch bytes. Completed paid response files are still reused unchanged.
+    if (!cloud && pcm.exists() && pcm.length() > 0 && stored != null) {
         onProgress(1f)
         return ChunkPlan(chunks = stored, overlapMs = ChunkPlanner.DEFAULT_OVERLAP_MS, totalDurationMs = stored.last().endMs)
-      }
     }
 
     val decoded = PcmDecoder.decodeToPcm(source, pcm, onProgress)
     val totalMs = decoded.frameEnergies.size * decoded.frameMs
+    if (stored != null) {
+      if (stored.last().endMs != totalMs) throw java.io.IOException("Decoded audio no longer matches saved transcription plan")
+      return ChunkPlan(chunks = stored, overlapMs = ChunkPlanner.DEFAULT_OVERLAP_MS, totalDurationMs = totalMs)
+    }
     val plan = ChunkPlanner.planEqual(
       frameEnergies = decoded.frameEnergies,
       frameMs = decoded.frameMs,
       pieces = piecesFor(totalMs),
+      overlapMs = if (cloud) 0 else ChunkPlanner.DEFAULT_OVERLAP_MS,
     )
-    planFile.writeText(StoredChunks.encodePlan(plan.chunks))
+    storage.write(planFile, StoredChunks.encodePlan(plan.chunks))
     return plan
   }
 
-  /**
-   * Manda un pezzo, e riprova quando ha senso.
-   *
-   * Il limite di richieste si aspetta per il tempo che il server chiede; un guasto passeggero si
-   * riprova con attese che raddoppiano. Una chiave sbagliata o un file troppo grande non si
-   * riprovano: insistere brucia quota e ritarda il momento in cui l'utente legge cosa non va.
-   */
+  /** Cloud calls run once: 429 yields to the durable queue; uncertain paid calls never loop.
+   * Companion transient failures retain their existing bounded retry behavior. */
   private suspend fun sendWithRetry(
     provider: TranscriptionProvider,
     file: File,
@@ -692,9 +782,10 @@ class TranscriptionRunner @Inject constructor(
     onWaiting: (seconds: Int) -> Unit,
     onRemote: (RemoteProgress) -> Unit,
     onProgress: (UploadProgress) -> Unit,
-  ): TranscriptResult = withRetry(onWaiting) { provider.transcribe(file, mime, request, onProgress, onRemote) }
+  ): TranscriptResult = if (provider.id != OpenAiCompatProvider.ID) provider.transcribe(file, mime, request, onProgress, onRemote)
+    else withRetry(onWaiting) { provider.transcribe(file, mime, request, onProgress, onRemote) }
 
-  private suspend fun withRetry(onWaiting: (seconds: Int) -> Unit, send: suspend () -> TranscriptResult): TranscriptResult {
+  private suspend fun withRetry(onWaiting: (seconds: Int) -> Unit, yieldRateLimit: Boolean = false, send: suspend () -> TranscriptResult): TranscriptResult {
     var attempt = 0
     while (true) {
       currentCoroutineContext().ensureActive()
@@ -705,6 +796,7 @@ class TranscriptionRunner @Inject constructor(
         // per un guasto e segnava fallito un lavoro che l'utente — o il sistema — aveva fermato.
         if (error is kotlinx.coroutines.CancellationException) throw error
         val mapped = TranscriptionError.from(error)
+        if (yieldRateLimit && mapped is TranscriptionError.RateLimited) throw mapped
         attempt++
         if (!mapped.retryable || attempt > MAX_ATTEMPTS) throw mapped
         // Un limite che chiede ore non si aspetta qui dentro, con il worker in primo piano e la
@@ -748,19 +840,17 @@ class TranscriptionRunner @Inject constructor(
 
   private fun readStored(file: File, spec: ChunkSpec, signature: String): ChunkTranscript? {
     if (!file.exists()) return null
-    val text = runCatching { file.readText() }.getOrNull() ?: return null
-    // Di un altro piano (o di una versione che non lo scriveva): si butta, e il pezzo si rifa'.
-    return StoredChunks.decode(text, spec, signature) ?: run {
-      file.delete()
-      null
-    }
+    val text = file.readText()
+    return StoredChunks.decode(text, spec, signature)
+      ?: throw java.io.IOException("Invalid or incompatible paid transcription cache; original retained")
   }
 
   private fun writeStoredChunk(workDir: File, chunk: ChunkTranscript, signature: String) =
     writeStored(chunkFile(workDir, chunk.spec.index), chunk, signature)
 
   private fun writeStored(file: File, chunk: ChunkTranscript, signature: String) {
-    runCatching { file.writeText(StoredChunks.encode(chunk, signature)) }
+    // A successful paid chunk must be durable before another chunk can be billed.
+    storage.write(file, StoredChunks.encode(chunk, signature))
   }
 
   /** Butta tutto quello che il lavoro aveva lasciato in giro: si chiama quando finisce, in bene o in male. */
@@ -821,7 +911,7 @@ class TranscriptionRunner @Inject constructor(
         durationMs = durationMs,
         sizeBytes = sizeBytes,
         capMs = capMs,
-        toleranceMs = if (computer) ChunkPolicy.COMPUTER_TOLERANCE_MS else ChunkPolicy.GROQ_TOLERANCE_MS,
+        toleranceMs = capabilities.chunkToleranceMs ?: if (computer) ChunkPolicy.COMPUTER_TOLERANCE_MS else ChunkPolicy.GROQ_TOLERANCE_MS,
         maxUploadBytes = capabilities.maxUploadBytes,
         acceptedAsIs = capabilities.acceptsAsIs(fileName),
       )
@@ -838,7 +928,7 @@ class TranscriptionRunner @Inject constructor(
         durationMs = totalMs,
         sizeBytes = 0,
         capMs = capMs,
-        toleranceMs = if (computer) ChunkPolicy.COMPUTER_TOLERANCE_MS else ChunkPolicy.GROQ_TOLERANCE_MS,
+        toleranceMs = capabilities.chunkToleranceMs ?: if (computer) ChunkPolicy.COMPUTER_TOLERANCE_MS else ChunkPolicy.GROQ_TOLERANCE_MS,
         maxUploadBytes = capabilities.maxUploadBytes,
         acceptedAsIs = false,
       )

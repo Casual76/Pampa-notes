@@ -216,6 +216,7 @@ private fun PreferencesSectionRoute(
 
   var groqKey by remember { mutableStateOf("") }
   var openRouterKey by remember { mutableStateOf("") }
+  var mistralKey by remember { mutableStateOf("") }
   var endpointUrl by remember(settings.endpointUrl) { mutableStateOf(settings.endpointUrl) }
   var endpointRemoteUrl by remember(settings.endpointRemoteUrl) { mutableStateOf(settings.endpointRemoteUrl) }
   var endpointToken by remember { mutableStateOf("") }
@@ -264,6 +265,7 @@ private fun PreferencesSectionRoute(
           val labels = mapOf(
             TranscriptionProviderId.GROQ to stringResource(R.string.provider_groq),
             TranscriptionProviderId.OPENROUTER to stringResource(R.string.provider_openrouter),
+            TranscriptionProviderId.MISTRAL to stringResource(R.string.provider_mistral),
             TranscriptionProviderId.CUSTOM to stringResource(R.string.provider_custom),
           )
           FluidSegmentedControl(
@@ -286,6 +288,12 @@ private fun PreferencesSectionRoute(
           openRouterSettings(settings, services, openRouterKey, { openRouterKey = it }, {
             viewModel.saveOpenRouterKey(openRouterKey)
             openRouterKey = ""
+          }, viewModel)
+        }
+        if (setupProvider == TranscriptionProviderId.MISTRAL) {
+          mistralSettings(settings, services, mistralKey, { mistralKey = it }, {
+            viewModel.saveMistralKey(mistralKey)
+            mistralKey = ""
           }, viewModel)
         }
         servicesSection(
@@ -541,6 +549,7 @@ private fun LazyListScope.transcriptionSection(
       val providerLabels = mapOf(
         TranscriptionProviderId.GROQ to stringResource(R.string.provider_groq),
         TranscriptionProviderId.OPENROUTER to stringResource(R.string.provider_openrouter),
+            TranscriptionProviderId.MISTRAL to stringResource(R.string.provider_mistral),
         TranscriptionProviderId.CUSTOM to stringResource(R.string.provider_custom),
       )
       FluidSegmentedControl(
@@ -570,6 +579,20 @@ private fun LazyListScope.transcriptionSection(
     }
   }
 
+  item { FluidSectionFootnote(text = stringResource(R.string.cloud_pinned_detail)) }
+  if (settings.transcriptionProvider == TranscriptionProviderId.MISTRAL) {
+    item { FluidListGroup {
+      FluidListRow(title = stringResource(R.string.provider_mistral),
+        subtitle = stringResource(if (services.mistralKeyPresent) R.string.mistral_key_saved else R.string.mistral_key_hint), onClick = onOpenServices)
+    } }
+    item { FluidSectionHeader(title = stringResource(R.string.mistral_model)) }
+    item { FluidListGroup {
+      dev.pampa.pampanotes.core.transcription.MistralTranscriptionProvider.MODELS.forEach { model ->
+        dev.antigravity.fluidengine.ui.fluid.FluidChoiceRow(title = model, selected = model == settings.mistralTranscriptionModel, onSelect = { viewModel.setMistralModel(model) })
+      }
+    } }
+    item { FluidSectionFootnote(text = stringResource(R.string.mistral_timing)) }
+  }
   if (settings.transcriptionProvider == TranscriptionProviderId.OPENROUTER) {
     item { FluidSectionFootnote(text = stringResource(R.string.openrouter_requirements)) }
     item {
@@ -596,7 +619,7 @@ private fun LazyListScope.transcriptionSection(
       }
     }
     item { FluidSectionFootnote(text = stringResource(R.string.openrouter_timing_detail)) }
-  } else {
+  } else if (settings.transcriptionProvider != TranscriptionProviderId.MISTRAL) {
     item {
       val onComputer = settings.transcriptionProvider == TranscriptionProviderId.CUSTOM
       FluidListGroup {
@@ -616,6 +639,14 @@ private fun LazyListScope.transcriptionSection(
   }
 
   // --- 2. Cosa si sente ------------------------------------------------------------------------
+  if (settings.transcriptionProvider == TranscriptionProviderId.GROQ) {
+    item { FluidSectionHeader(title = stringResource(R.string.cloud_job_model)) }
+    item { FluidListGroup {
+      listOf("whisper-large-v3-turbo", "whisper-large-v3").forEach { model ->
+        FluidChoiceRow(title = model, selected = model == settings.groqTranscriptionModel, onSelect = { viewModel.setGroqModel(model) })
+      }
+    } }
+  }
   item { FluidSectionHeader(title = stringResource(R.string.settings_hearing_header)) }
   item {
     FluidListGroup {
@@ -687,7 +718,7 @@ private fun LazyListScope.transcriptionSection(
   // --- 5. Groq, avanzate -----------------------------------------------------------------------
   // Solo se Groq si puo' usare: con «solo il computer di casa», o senza una chiave, i pezzi di Groq
   // non contano, e restare li' li farebbe sembrare importanti.
-  if (!settings.customOnly && (services.groqKeyPresent || settings.transcriptionProvider == TranscriptionProviderId.OPENROUTER)) {
+  if (!settings.customOnly && settings.transcriptionProvider != TranscriptionProviderId.MISTRAL && (services.groqKeyPresent || settings.transcriptionProvider == TranscriptionProviderId.OPENROUTER)) {
     item { FluidSectionHeader(title = stringResource(if (settings.transcriptionProvider == TranscriptionProviderId.OPENROUTER) R.string.openrouter_chunks else R.string.settings_groq_advanced)) }
     // Ogni scelta subito sotto la sua riga: prima le due righe stavano insieme e i due selettori
     // sotto, e «25 · 100» sembrava la risposta a «Durata di un pezzo».

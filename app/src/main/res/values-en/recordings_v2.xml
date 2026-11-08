@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rv2_subtitle">Interviews, meetings and personal recordings. Open the player and transcript directly.</string>
+    <string name="rv2_import">Import recordings or material</string>
+    <string name="rv2_new_folder">New optional folder</string>
+    <string name="rv2_optional_folders">Folders</string>
+    <string name="rv2_folder_detail">Organize recordings and personal material</string>
+    <string name="rv2_associated_material">Associated material and details</string>
+    <string name="rv2_materials">Personal material</string>
+    <string name="rv2_material_detail">Preserved text, tags, sources and details</string>
+    <string name="rv2_open_recording">Open recording and transcript</string>
+    <string name="rv2_search">Search recordings and material</string>
+    <string name="rv2_empty_detail">Import audio, interviews or personal material. Use folders to organize them whenever you need them.</string>
+    <string name="rv2_transcribe_message">%1$s of audio with %2$s.</string>
+    <string name="rv2_delete_title">Delete selected recordings?</string>
+    <plurals name="rv2_delete_message">
+        <item quantity="one">%d recording, its audio and its transcripts will be deleted. Other recordings and associated material will remain.</item>
+        <item quantity="other">%d recordings, their audio and their transcripts will be deleted. Other recordings and associated material will remain.</item>
+    </plurals>
+    <plurals name="rv2_move_message">
+        <item quantity="one">Move %1$d recording to “%2$s”. Associated material follows it; if shared with other recordings, a copy stays in both folders.</item>
+        <item quantity="other">Move %1$d recordings to “%2$s”. Associated material follows them; if shared with other recordings, a copy stays in both folders.</item>
+    </plurals>
+    <string name="rv2_move_school">The selected folder is in the school section: recordings will appear there with their material. This change also reaches your other devices through sync.</string>
+    <string name="rv2_delete_folder_message">This folder, its subfolders, all their recordings and associated material, including text and sources, will be deleted.</string>
+</resources>

@@ -991,7 +991,7 @@
   <string name="onboarding_import_picker">From the import button</string>
   <string name="onboarding_import_picker_detail">Under More, from a subject screen, or from Recordings</string>
   <string name="onboarding_provider_title">Who transcribes</string>
-  <string name="onboarding_provider_detail">Groq and OpenRouter transcribe in the cloud with your API key, without a companion. The home computer transcribes on your PC. Set up a service now or later.</string>
+  <string name="onboarding_provider_detail">Groq, Mistral and OpenRouter transcribe in the cloud with your API key, without a companion. The home computer transcribes on your PC. Set up a service now or later.</string>
   <string name="onboarding_server_detail">The address of the computer at home, with its port.</string>
   <string name="onboarding_provider_later">You can continue without a service: import and organize now, then set up transcription in Settings → Services. Choose the default service under Transcription.</string>
   <string name="onboarding_backup_title">A copy kept safe</string>
@@ -1640,7 +1640,6 @@
   <string name="session_bundle_omitted_title">Audio not included in the bundle</string>
   <string name="session_bundle_omitted_detail">Ask the person who shared these notes for a bundle that includes the recordings, then import it and choose to update the notes. These files will not arrive automatically from your computer.</string>
   <string name="provider_openrouter">OpenRouter</string>
-  <string name="error_credit_required">The service requires credit. Check your OpenRouter account balance before retrying.</string>
   <string name="openrouter_requirements">Cloud transcription without a home computer. Requires an OpenRouter API key and credit for the selected model; audio is sent to OpenRouter and its provider.</string>
   <string name="openrouter_key">OpenRouter API key</string>
   <string name="openrouter_key_hint">Create a key at openrouter.ai. It stays encrypted on this device and is excluded from backups.</string>

@@ -69,6 +69,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
   private val refinement: RefinementRepository,
   private val settingsStore: PampaSettingsStore,
   private val scheduler: WorkScheduler,
+  private val alignment: AlignmentScheduler,
   private val computerOnly: dev.pampa.pampanotes.core.archive.ComputerOnlyScope,
   /** «Il testo che arriva a pezzi»: il provvisorio che la sessione mostra mentre il computer lavora. */
   private val partials: dev.pampa.pampanotes.core.transcription.PartialTranscripts,
@@ -116,7 +117,11 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       if (repository.queuedCount(OpenAiCompatProvider.ID) > 0) scheduler.kick(OpenAiCompatProvider.ID)
     }
 
-    if (repository.nextQueued(providerId) == null) return finish(providerId)
+    val first = repository.nextQueued(providerId) ?: return finish(providerId)
+    repository.waitUntil(first)?.takeIf { it > System.currentTimeMillis() }?.let { at ->
+      scheduler.kickAfter(providerId, at - System.currentTimeMillis())
+      return Result.success()
+    }
 
     // Il computer di casa e' configurato ma non risponde: non si va nemmeno in primo piano. I
     // lavori restano in fila e lo dicono, e si riprova (vedi [waitForEndpoint]).
@@ -139,6 +144,10 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     while (true) {
       if (isStopped) return Result.retry()
       val job = repository.nextQueued(providerId, skipped) ?: break
+      repository.waitUntil(job)?.takeIf { it > System.currentTimeMillis() }?.let { at ->
+        scheduler.kickAfter(providerId, at - System.currentTimeMillis())
+        return Result.success()
+      }
       // Prima di ogni lavoro, non solo del primo: il computer puo' spegnersi fra una lezione e la
       // successiva, e la seconda deve aspettare, non fallire.
       if (job.provider == OpenAiCompatProvider.ID && job.type == JobType.TRANSCRIBE &&
@@ -157,7 +166,11 @@ class TranscriptionQueueWorker @AssistedInject constructor(
         // al successivo, altrimenti un file rotto blocca tutti quelli dietro di lui. Salvo che sia
         // il computer di casa a essersene andato: allora il lavoro torna in fila (vedi [lostComputer]).
         val translated = TranscriptionError.from(error)
-        lostComputer(job, translated, baseUrl = null) ?: run {
+        if (translated is TranscriptionError.CompanionOnly && job.type == JobType.TRANSCRIBE) {
+          recoverPrivacy(job)
+        } else if (translated is TranscriptionError.RateLimited) {
+          quotaWait(job, translated)
+        } else lostComputer(job, translated, baseUrl = null) ?: run {
           fail(job, translated)
           Step.Next
         }
@@ -224,11 +237,11 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     val next: Step
     when {
       repository.endpointState() == TranscriptionRepository.EndpointState.UNREACHABLE -> {
-        requeued = repository.requeueForEndpoint(job.id)
+        requeued = repository.requeueForEndpoint(job)
         next = Step.WaitForEndpoint
       }
       baseUrl != null && repository.endpointMovedFrom(baseUrl) -> {
-        requeued = repository.requeueForNewAddress(job.id)
+        requeued = repository.requeueForNewAddress(job)
         next = Step.Next
       }
       else -> return null
@@ -305,11 +318,50 @@ class TranscriptionQueueWorker @AssistedInject constructor(
   }
 
   private suspend fun transcribe(job: JobEntity): Step {
+    val owner = repository.pinForRun(job) ?: return Step.Next
+    if (owner.state != JobState.QUEUED) return Step.Next
+    if (owner.provider != job.provider) {
+      scheduler.kick(owner.provider)
+      return Step.Next
+    }
+    // All suspended pre-start work, including binding/parts/model metadata, is inside recovery.
+    return try {
+      transcribeOwned(owner)
+    } catch (privacy: TranscriptionError.CompanionOnly) {
+      recoverPrivacy(owner)
+    } catch (cancellation: CancellationException) {
+      withContext(NonCancellable) { retainCurrentOwner(owner) }
+      cancelled(owner, cancellation)
+    } catch (error: Exception) {
+      if (retainCurrentOwner(owner)) return Step.Next
+      if (repository.effectiveProvider(owner) != owner.provider) return recoverPrivacy(owner)
+      val translated = TranscriptionError.from(error)
+      if (translated is TranscriptionError.RateLimited) quotaWait(owner, translated)
+      else lostComputer(owner, translated, null) ?: run { fail(owner, translated); Step.Next }
+    }
+  }
+
+  /** A stale pre-start outcome never mutates/cleans another dispatch, even on the same provider. */
+  private suspend fun retainCurrentOwner(job: JobEntity): Boolean {
+    val current = repository.get(job.id) ?: return true
+    if (repository.ownsDispatch(job, current)) return false
+    if (current.state == JobState.QUEUED) scheduler.kick(current.provider)
+    return true
+  }
+
+  private suspend fun recoverPrivacy(job: JobEntity): Step = withContext(NonCancellable) {
+    if (retainCurrentOwner(job)) return@withContext Step.Next
+    repository.requeueStopped(job)
+    repository.moveCloudTranscriptionsToComputer()
+    repository.get(job.id)?.takeIf { it.state == JobState.QUEUED }?.let { scheduler.kick(it.provider) }
+    Step.Next
+  }
+
+  private suspend fun transcribeOwned(job: JobEntity): Step {
     // «Solo il computer di casa» acceso dopo che il lavoro era stato accodato per Groq: non parte da
     // qui. Passa al computer (con tutti quelli nella stessa situazione) e si sveglia la sua coda.
     if (repository.effectiveProvider(job) != job.provider) {
-      if (repository.moveCloudTranscriptionsToComputer() > 0) scheduler.kick(OpenAiCompatProvider.ID)
-      return Step.Next
+      return recoverPrivacy(job)
     }
 
     // Il segno «in trascrizione su» copre solo i lavori al lavoro, e un lavoro accodato qui prima che
@@ -328,10 +380,16 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       return Step.Next
     }
 
+    // Pinning can suspend for private storage or folder policy. Re-evaluate privacy before
+    // binding this authoritative provider/model; its own queue handles a migrated identity.
+    if (repository.effectiveProvider(job) != job.provider) {
+      return recoverPrivacy(job)
+    }
     val settings = settingsStore.current()
+    val pinnedOptions = dev.pampa.pampanotes.core.repo.TranscribeOptions.decode(job.optionsJson)
     // Le impostazioni scelte da chi ha ritrascritto, per questo lavoro soltanto.
     val overrides = repository.overridesOf(job)
-    val bound = repository.bind(job.provider, overrides?.pieces, repository.explicitCloud(job)) ?: run {
+    val bound = repository.bind(job.provider, overrides?.pieces, repository.explicitCloud(job), pinnedOptions.groqMaxUploadMb, repository.accountForJob(job.id)) ?: run {
       // Configurato ma muto: si aspetta. Mai configurato: e' un errore, e lo si dice.
       if (job.provider == OpenAiCompatProvider.ID && settings.hasEndpoint) return Step.WaitForEndpoint
       fail(
@@ -352,7 +410,9 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     // La fotografia delle parti: il risultato si salva per parte, dove ognuna sta quando arriva.
     val partIds = parts.map { it.id }
 
-    val model = repository.resolveModel(provider, settings)
+    val model = job.model ?: repository.resolveModel(provider, settings)
+    if (model.isBlank()) throw TranscriptionError.UnknownModel(model, "Select a transcription model in Services")
+    repository.validatePinnedModel(provider, model)
     val request = repository.requestFor(job.sessionId, model, settings, overrides)
     // Cosa sa fare il computer: il provider se lo ricorda per il lavoro, quindi il runner non lo
     // richiede. Qui serve a segnare la prima volta che dice «holes» (vedi `RetranscribeOffer`).
@@ -361,7 +421,11 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     }
     // Annullato o tolto mentre si sceglieva il modello: non si parte. Il passaggio e' condizionato,
     // cosi' un «Annulla» che arriva proprio adesso non viene riscritto da una copia vecchia.
-    if (!repository.start(job.id, JobState.PREPARING, model)) return Step.Next
+    if (!repository.start(job, JobState.PREPARING, model)) {
+      repository.get(job.id)?.takeIf { it.state == JobState.QUEUED }
+        ?.let { scheduler.kick(it.provider) }
+      return Step.Next
+    }
     // Da qui si misura la velocita' della trascrizione: l'attesa in fila non e' lentezza di nessuno.
     val startedAt = System.currentTimeMillis()
 
@@ -370,7 +434,8 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     // Separati apposta: il progresso arriva ogni centoventotto kilobyte caricati, cioe' decine di
     // volte al secondo, e una scrittura sul database dentro il ciclo di upload rallenterebbe
     // l'upload per muovere una barra che l'occhio non riesce comunque a seguire.
-    val latest = MutableStateFlow(job.copy(state = JobState.PREPARING, model = model, attempts = job.attempts + 1))
+    val runningJob = job.copy(state = JobState.PREPARING, model = model, attempts = job.attempts + 1)
+    val latest = MutableStateFlow(runningJob)
 
     // Il tetto di tempo e' un tetto di silenzio: riparte a ogni evento di progresso (vedi
     // [withIdleTimeout]). Un tetto sull'intera sessione uccideva lezioni lunghe che andavano
@@ -379,7 +444,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     val capMs = idleMs * (parts.size + 1)
 
     try {
-      val result = watched(job, latest, keepAlive = { repository.partsOutliveSession(job.sessionId, partIds) }) {
+      val result = watched(runningJob, latest, keepAlive = { repository.partsOutliveSession(job.sessionId, partIds) }) {
         // Il watchdog annulla il lavoro, e annullandosi stacca anche la connessione
         // (`TranscriptionHttp`), che da sola aspetterebbe il suo timeout di lettura.
         withIdleTimeout(idleMs, capMs) { touch ->
@@ -388,7 +453,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
             parts = parts,
             provider = provider,
             request = request,
-            chunkMinutes = settings.chunkMinutes,
+            chunkMinutes = pinnedOptions.cloudChunkMinutes ?: settings.chunkMinutes,
             // Col computer che lavora da se', quello che sale per la trascrizione resta nel suo
             // archivio (se l'archivio e' acceso): una lezione non viaggia due volte.
             archiveUploads = settings.archiveEnabled,
@@ -408,7 +473,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       }
 
       repository.publishProgress(latest.value.copy(state = JobState.STITCHING, progress = 0.98f, phase = null))
-      val saved = repository.saveTranscript(job.sessionId, partIds, result)
+      val saved = repository.saveTranscript(job.sessionId, partIds, result, originalParts = parts)
       if (saved == null) {
         // Nessuna delle parti esiste piu': la sessione e' stata cancellata mentre il computer
         // trascriveva. Non c'e' niente da salvare, e non e' un fallimento da notificare — prima la
@@ -420,41 +485,39 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       }
       // La riga puo' non esserci piu' (la sessione e' stata unita a un'altra, e la riga se n'e'
       // andata con lei): il risultato e' salvato lo stesso, e lo si dice.
-      repository.markDone(job.id)
+      if (!repository.markDone(job.id) && repository.get(job.id) != null) {
+        runner.cleanUp(job.id)
+        return Step.Next
+      }
       // Una registrazione tornata muta in mezzo a parti che parlano: la sessione lo dira'.
       repository.recordEmptyParts(job.id, result.emptyPartIds)
       runner.cleanUp(job.id)
       val transcript = saved.transcript
       val run = transcript?.let { repository.recordRun(job.copy(sessionId = saved.sessionId, model = model), startedAt, it) }
       AppNotifications.notifyDone(applicationContext, job.id, transcript?.wordCount ?: 0, run)
+      // A failed/deferred home alignment must never fail or repeat the completed paid request.
+      if (dev.pampa.pampanotes.core.alignment.CloudSources.cloud(result.provider)) {
+        saved.sessionIds.forEach { id -> runCatching { alignment.onCloudSaved(id) } }
+      }
       archiveIfComputerOnly(saved.sessionId)
     } catch (privacy: TranscriptionError.CompanionOnly) {
-      repository.requeueStopped(job.id)
-      repository.moveCloudTranscriptionsToComputer()
-      scheduler.kick(OpenAiCompatProvider.ID)
-      return Step.Next
+      return recoverPrivacy(runningJob)
     } catch (timeout: IdleTimeoutException) {
       val error = TranscriptionError.Timeout(applicationContext.getString(dev.pampa.pampanotes.R.string.error_timeout), timeout)
-      return lostComputer(job, error, bound.baseUrl) ?: run {
-        fail(job, error)
+      return lostComputer(runningJob, error, bound.baseUrl) ?: run {
+        fail(runningJob, error)
         Step.Next
       }
     } catch (limited: TranscriptionError.RateLimited) {
-      // Il limite chiede piu' di quanto valga la pena aspettare con la notifica accesa: il lavoro
-      // torna in fila con l'ora in cui riprovare, e la coda si risveglia da sola a quell'ora.
-      val waitMs = ((limited.retryAfterSec ?: DEFAULT_RATE_LIMIT_WAIT_SEC) * 1000).toLong()
-        .coerceIn(MIN_RESUME_DELAY_MS, MAX_RESUME_DELAY_MS)
-      val at = System.currentTimeMillis() + waitMs
-      repository.requeueUntil(job.id, at)
-      return Step.ResumeAt(at)
+      return quotaWait(runningJob, limited)
     } catch (cancellation: CancellationException) {
-      return cancelled(job, cancellation)
+      return cancelled(runningJob, cancellation)
     } catch (error: Exception) {
       // Un errore di rete verso il computer di casa: qui si sa a quale indirizzo era legato il
       // lavoro, e se il computer adesso risponde da un altro si riparte da li' (vedi [lostComputer]).
       val translated = TranscriptionError.from(error)
-      return lostComputer(job, translated, bound.baseUrl) ?: run {
-        fail(job, translated)
+      return lostComputer(runningJob, translated, bound.baseUrl) ?: run {
+        fail(runningJob, translated)
         Step.Next
       }
     } finally {
@@ -463,6 +526,24 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       partials.clear(job.sessionId)
     }
     return Step.Next
+  }
+
+  private suspend fun quotaWait(job: JobEntity, limited: TranscriptionError.RateLimited): Step = withContext(NonCancellable) {
+    if (retainCurrentOwner(job)) return@withContext Step.Next
+    if (isStopped && stoppedByApp()) {
+      cancel(job)
+      return@withContext Step.Next
+    }
+    val at = dev.pampa.pampanotes.core.transcription.CloudRetry.deadline(limited, System.currentTimeMillis())
+    // A cancel before, during or after this atomic transition wins over a delayed resume.
+    if (!repository.requeueUntil(job, at, limited.scopeFingerprint)) {
+      // Re-read after the conditional SQL: migration/start/cancel may have won the race.
+      val current = repository.get(job.id)
+      if (current?.state == JobState.QUEUED) scheduler.kick(current.provider)
+      else if (current == null || current.state == JobState.CANCELLED) runner.cleanUp(job.id)
+      return@withContext Step.Next
+    }
+    Step.ResumeAt(at)
   }
 
   /**
@@ -536,26 +617,34 @@ class TranscriptionQueueWorker @AssistedInject constructor(
    * - La riga non c'e' piu': la sessione e' stata cancellata mentre si trascriveva.
    */
   private suspend fun cancelled(job: JobEntity, cancellation: CancellationException): Step {
+    val owner = withContext(NonCancellable) { repository.get(job.id) }
+    if (owner != null && (owner.provider != job.provider || owner.model != job.model ||
+        owner.optionsJson != job.optionsJson || owner.attempts != job.attempts ||
+        (owner.state != JobState.CANCEL_REQUESTED && !repository.ownsDispatch(job, owner)))) {
+      if (owner.state == JobState.QUEUED) scheduler.kick(owner.provider)
+      throw cancellation
+    }
     if (isStopped) {
       withContext(NonCancellable) {
         if (stoppedByApp()) {
-          repository.markCancelled(job.id)
-          runner.cleanUp(job.id)
+          cancel(job)
         } else {
-          repository.requeueStopped(job.id)
+          repository.requeueStopped(job)
         }
       }
       throw cancellation
     }
     if (cancellation is PrivacyChanged) {
       withContext(NonCancellable) {
-        repository.requeueStopped(job.id)
-        repository.moveCloudTranscriptionsToComputer()
-        scheduler.kick(OpenAiCompatProvider.ID)
+        recoverPrivacy(job)
       }
       return Step.Next
     }
     val current = withContext(NonCancellable) { repository.get(job.id) }
+    if (current != null && !repository.ownsDispatch(job, current) && current.state != JobState.CANCEL_REQUESTED) {
+      if (current.state == JobState.QUEUED) scheduler.kick(current.provider)
+      throw cancellation
+    }
     return when {
       current == null -> {
         runner.cleanUp(job.id)
@@ -596,8 +685,9 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     val options = refinement.decode(job.optionsJson)
 
     // Annullato mentre si sceglieva il modello: non si parte (il passaggio e' condizionato).
-    if (!repository.start(job.id, JobState.TRANSCRIBING, model)) return
-    val latest = MutableStateFlow(job.copy(state = JobState.TRANSCRIBING, model = model, attempts = job.attempts + 1))
+    if (!repository.start(job, JobState.TRANSCRIBING, model)) return
+    val runningJob = job.copy(state = JobState.TRANSCRIBING, model = model, attempts = job.attempts + 1)
+    val latest = MutableStateFlow(runningJob)
 
     try {
       val result = watched(job, latest, dev.pampa.pampanotes.R.string.notification_refining) {
@@ -636,12 +726,12 @@ class TranscriptionQueueWorker @AssistedInject constructor(
           dev.pampa.pampanotes.core.refinement.RefinementPrompts.system(options.presetOrDefault, options.customPrompt),
         ).take(16),
       )
-      repository.markDone(job.id)
-      AppNotifications.notifyRefined(applicationContext, job.id, transcript.wordCount, result.suspicious)
+      if (repository.markDone(job.id) || repository.get(job.id) == null)
+        AppNotifications.notifyRefined(applicationContext, job.id, transcript.wordCount, result.suspicious)
     } catch (cancellation: CancellationException) {
-      cancelled(job, cancellation)
+      cancelled(runningJob, cancellation)
     } catch (error: RefinementError) {
-      fail(job, TranscriptionError.from(error.cause ?: error))
+      fail(runningJob, TranscriptionError.from(error.cause ?: error))
     }
   }
 
@@ -659,8 +749,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
   }
 
   private suspend fun cancel(job: JobEntity) {
-    repository.markCancelled(job.id)
-    runner.cleanUp(job.id)
+    if (repository.markCancelled(job)) runner.cleanUp(job.id)
   }
 
   /**
@@ -669,7 +758,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
    * lavoro che non c'e' piu' non ha niente da dire: niente notifica d'errore per nessuno dei due.
    */
   private suspend fun fail(job: JobEntity, error: TranscriptionError) {
-    when (withContext(NonCancellable) { repository.fail(job.id, error) }) {
+    when (withContext(NonCancellable) { repository.fail(job, error) }) {
       TranscriptionRepository.FailOutcome.FAILED -> {
         // Muta: i pezzi messi da parte sono tutti vuoti, e tenerli farebbe fallire «Riprova» senza
         // chiedere niente a nessuno. Gli altri fallimenti li tengono, per riprendere da li'.
@@ -679,6 +768,9 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       TranscriptionRepository.FailOutcome.CANCELLED,
       TranscriptionRepository.FailOutcome.GONE,
       -> runner.cleanUp(job.id)
+      TranscriptionRepository.FailOutcome.SUPERSEDED -> {
+        repository.get(job.id)?.takeIf { it.state == JobState.QUEUED }?.let { scheduler.kick(it.provider) }
+      }
     }
   }
 
@@ -704,17 +796,12 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     /** Ogni mezzo secondo: piu' spesso di cosi' la barra non si muove comunque. */
     private const val PUBLISH_EVERY_MS = 500L
 
-    /** Un limite che non dice quanto aspettare: dieci minuti, poi si riprova. */
-    private const val DEFAULT_RATE_LIMIT_WAIT_SEC = 600.0
-
     /**
      * Ogni quanto si riguarda una sessione che un altro dispositivo sta trascrivendo: abbastanza
      * spesso da non far aspettare troppo se l'altro si e' fermato, abbastanza di rado da non
      * svegliare il telefono per niente.
      */
     private const val ELSEWHERE_RECHECK_MS = 10 * 60_000L
-    private const val MIN_RESUME_DELAY_MS = 60_000L
-    private const val MAX_RESUME_DELAY_MS = 24 * 60 * 60_000L
   }
 }
 

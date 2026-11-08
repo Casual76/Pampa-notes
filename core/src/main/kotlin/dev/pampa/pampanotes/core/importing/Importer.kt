@@ -67,6 +67,8 @@ data class ImportCandidate(
    * che va in ordine di nome.
    */
   val sequence: Int? = null,
+  /** Actual source evidence, independent of [recordedAtMillis] (which may be guessed noon). */
+  val recordingOrigin: RecordingOrigin? = null,
 ) {
   val isAudio: Boolean get() = kind == SourceKind.AUDIO
 

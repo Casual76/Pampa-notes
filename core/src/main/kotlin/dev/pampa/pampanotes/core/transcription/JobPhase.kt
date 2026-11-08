@@ -94,6 +94,8 @@ sealed interface JobPhase {
   data class Until(val atMillis: Long) : JobPhase {
     override fun encode() = "until:$atMillis"
   }
+  /** Exact cloud quotas and their account scope live in noBackupFilesDir, never in Room backups. */
+  data object ProviderCooldown : JobPhase { override fun encode() = "quota" }
 
   data object Stitching : JobPhase {
     override fun encode() = "stitching"
@@ -130,6 +132,7 @@ sealed interface JobPhase {
         return first.coerceAtLeast(1) to second.coerceAtLeast(1)
       }
       return when (fields.first()) {
+        "quota" -> ProviderCooldown
         "preparing" -> {
           val (part, parts) = pair(1) ?: (1 to 1)
           Preparing(part, parts, int(2) ?: 0)

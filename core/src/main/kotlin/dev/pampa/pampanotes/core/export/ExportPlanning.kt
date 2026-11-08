@@ -95,7 +95,7 @@ object ExportEstimator {
     val imageBytes = images.sumOf { it.sizeBytes }
     val audioBytes = if (options.carriesAttachments && options.includeAudio) set.notes.sumOf { note -> note.sessions.sumOf { s -> s.parts.sumOf { it.sizeBytes } } } else 0L
     val sourceBytes = if (options.carriesAttachments && options.includeSources) {
-      set.notes.sumOf { note -> note.sources.filter { it.storedFileName != null }.sumOf { it.sizeBytes } }
+      set.notes.sumOf { note -> note.sources.filter { it.attachmentAllowed && it.storedFileName != null }.sumOf { it.sizeBytes } }
     } else {
       0L
     }
@@ -237,6 +237,7 @@ object ExportFiles {
       }
       if (options.carriesAttachments && options.includeSources) {
         note.sources.forEach { source ->
+          if (!source.attachmentAllowed) return@forEach
           val stored = source.storedFileName ?: return@forEach
           add(ExportFileRef(ExportFileKind.SOURCE, source.id, source.originalName, stored, source.sizeBytes, source.archived))
         }
@@ -252,7 +253,9 @@ object ExportFiles {
     val native = note.native
     if (native == null) {
       parts.values.forEach { add(ExportFileRef(ExportFileKind.AUDIO, it.id, it.originalName, it.fileName, it.sizeBytes, it.archived)) }
-      sources.values.forEach { source ->
+      sources.values.filter { it.attachmentAllowed }.forEach { source ->
+        if (note.selectedSessionIds != null && source.kind in setOf(dev.pampa.pampanotes.core.db.SourceKind.DOCX,
+            dev.pampa.pampanotes.core.db.SourceKind.SDOCX, dev.pampa.pampanotes.core.db.SourceKind.OTHER)) return@forEach
         add(ExportFileRef(if (source.id in pages) ExportFileKind.PAGE else ExportFileKind.SOURCE,
           source.id, source.originalName, source.storedFileName.orEmpty(), source.sizeBytes, source.archived))
       }
@@ -260,12 +263,13 @@ object ExportFiles {
         add(ExportFileRef(ExportFileKind.PAGE, it.id, "${note.note.title} · ${it.page}", it.storedFileName, it.sizeBytes, it.archived))
       }
     } else {
-      native.parts.forEach { part ->
+      ExportSessionSelection.nativeParts(note).forEach { part ->
         add(ExportFileRef(ExportFileKind.AUDIO, part.id, part.originalName, part.fileName, part.sizeBytes,
           parts[part.id]?.archived ?: (part.archivedAt > 0)))
       }
       val declarations = native.attachments.filterNot { it.audio }.associateBy { it.id }
-      native.sources.filterNot { PampaBundleSourceFiles.isFileless(it, declarations[it.id]) }.forEach { source ->
+      native.sources.filter { ExportSessionSelection.attachmentAllowed(note, it) }
+        .filterNot { PampaBundleSourceFiles.isFileless(it, declarations[it.id]) }.forEach { source ->
         add(ExportFileRef(if (source.derivedFromId != null) ExportFileKind.PAGE else ExportFileKind.SOURCE,
           source.id, source.originalName, source.storedFileName.orEmpty(), source.sizeBytes,
           sources[source.id]?.archived ?: pages[source.id]?.archived ?: (source.archivedAt > 0)))

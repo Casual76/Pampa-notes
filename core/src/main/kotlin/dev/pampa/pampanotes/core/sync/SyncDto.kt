@@ -177,7 +177,7 @@ object SyncCodec {
     explicitNulls = true
   }
 
-  fun hash(payload: JsonElement): String = Hashing.sha256(json.encodeToString(JsonElement.serializer(), strip(payload)))
+  fun hash(payload: JsonElement): String = Hashing.sha256(json.encodeToString(JsonElement.serializer(), strip(SyncCloudSourceWire.toLocal(payload))))
 
   /**
    * L'impronta del payload come sarebbe **senza** il segno «in trascrizione su»: quella di una

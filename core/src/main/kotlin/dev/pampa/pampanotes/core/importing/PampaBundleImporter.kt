@@ -143,8 +143,10 @@ class PampaBundleImporter @Inject constructor(
       val oldTranscripts = oldSessions.flatMap { db.transcripts().bySession(it.id) }
       val originalLocal = oldNote?.let { PampaBundleNote(it, db.tags().tags(it.id), oldSessions, oldParts,
         oldTranscripts, oldTranscripts.flatMap { t -> db.segments().byTranscript(t.id) }, db.sources().byNote(it.id)) }
-      val reconciliation = PampaBundleLegacyReconcile.plan(originalLocal, n, publicLegacy)
-      val local = reconciliation.local
+      val reconciliation = PampaBundleLegacyReconcile.plan(originalLocal, PampaBundleCloudSources.remap(n, n), publicLegacy)
+      val local = reconciliation.local?.let { changed ->
+        PampaBundleCloudSources.remap(requireNotNull(originalLocal), changed, reconciliation.parts, transfer = false)
+      }
       val incoming = reconciliation.incoming
       val originalPartIds = reconciliation.parts.entries.associate { it.value to it.key }
       val originalSourceIds = reconciliation.sources.entries.associate { it.value to it.key }
@@ -181,7 +183,7 @@ class PampaBundleImporter @Inject constructor(
         } else if (sameAudio) {
           // Keep local identity/archive metadata even when recovering an evicted blob from staging.
           // Native duration/timing metadata takes precedence over an old MMR rounding estimate.
-          PampaBundleMetadataMerge.audio(old, part).copy(fileName = retainedFile(),
+          PampaBundleRecordingOrigin.retain(old, part).copy(fileName = retainedFile(),
             archivedAt = old.archivedAt, originalName = old.originalName,
             createdAt = old.createdAt,
             durationMs = part.durationMs.takeIf { it > 0 } ?: old.durationMs, sizeBytes = part.sizeBytes)
@@ -231,7 +233,7 @@ class PampaBundleImporter @Inject constructor(
             sdocxCreatedAtMillis = old.sdocxCreatedAtMillis ?: source.sdocxCreatedAtMillis)
         } else source.copy(storedFileName = name ?: expectedSourceReference(source), archivedAt = 0)
       }
-      val merged = PampaBundleMerge.merge(local, incoming.copy(parts = incomingParts, sources = incomingSources), reconciliation.preserveLocalNote)
+      val merged = PampaBundleCloudSources.merge(local, incoming.copy(parts = incomingParts, sources = incomingSources), reconciliation.preserveLocalNote)
       // Includes fresh identities for retained omitted content as well as incoming children.
       // A deterministic rekey must not overwrite a row belonging to another note.
       merged.sessions.forEach { s -> require(db.sessions().get(s.id)?.noteId.let { it == null || it == n.note.id }) { "Reconciled session belongs to another note" } }
@@ -333,7 +335,7 @@ class PampaBundleImporter @Inject constructor(
     internal fun remap(data: PampaBundleData, namespace: String): PampaBundleData {
       fun id(kind: String, value: String) = if (namespace == "origin") value else mapped(namespace, kind, value)
       return data.copy(folders = data.folders.map { it.copy(id = id("folder", it.id), parentId = it.parentId?.let { p -> id("folder", p) }) }, notes = data.notes.map { n ->
-        n.copy(note = n.note.copy(id = id("note", n.note.id), folderId = id("folder", n.note.folderId), bundleBodyBase = null, bundleNativeAdopted = null),
+        val moved = n.copy(note = n.note.copy(id = id("note", n.note.id), folderId = id("folder", n.note.folderId), bundleBodyBase = null, bundleNativeAdopted = null),
           sessions = n.sessions.map { s -> s.copy(id = id("session", s.id), noteId = id("note", s.noteId), activeTranscriptId = s.activeTranscriptId?.let { id("transcript", it) }, transcribingOn = null, transcribingSince = null,
             voiceNames = VoiceNames.remap(s.voiceNames) { id("part", it) }) },
           parts = n.parts.map { it.copy(id = id("part", it.id), sessionId = id("session", it.sessionId), fileName = "", archivedAt = 0) },
@@ -341,6 +343,7 @@ class PampaBundleImporter @Inject constructor(
           segments = n.segments.map { it.copy(id = 0, transcriptId = id("transcript", it.transcriptId), partId = id("part", it.partId)) },
           sources = n.sources.map { it.copy(id = id("source", it.id), noteId = id("note", it.noteId), storedFileName = null, archivedAt = 0, derivedFromId = it.derivedFromId?.let { p -> id("source", p) }) },
           attachments = n.attachments.map { it.copy(id = id(if (it.audio) "part" else "source", it.id)) })
+        PampaBundleCloudSources.remap(n, moved, n.parts.associate { it.id to id("part", it.id) }, n.transcripts.associate { it.id to id("transcript", it.id) })
       })
     }
   }

@@ -20,10 +20,12 @@ import dev.pampa.pampanotes.core.db.SegmentDao
 import dev.pampa.pampanotes.core.db.SessionDao
 import dev.pampa.pampanotes.core.db.SourceDao
 import dev.pampa.pampanotes.core.db.TranscriptDao
+import dev.pampa.pampanotes.core.db.TranscriptKind
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.files.FilesInUse
 import dev.pampa.pampanotes.core.importing.PampaBundleOmissions
 import dev.pampa.pampanotes.core.model.slugify
+import dev.pampa.pampanotes.core.model.wordCount
 import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.repo.PersonalScope
 import dev.pampa.pampanotes.core.transcription.VoiceNames
@@ -162,6 +164,10 @@ class ExportService @Inject constructor(
       }
 
       is ExportScope.Notes -> notes.getAll(scope.ids) to scope.label
+      is ExportScope.Sessions -> {
+        val noteIds = sessions.getAll(scope.sessionIds.distinct()).map { it.noteId }.distinct()
+        notes.getAll(noteIds) to scope.label
+      }
 
       is ExportScope.Folder -> {
         // La cartella e tutte quelle che contiene: esportare "Storia" e non prendere "Storia /
@@ -180,7 +186,9 @@ class ExportService @Inject constructor(
 
     val gathered = selected
       .sortedWith(compareBy({ pathOf(it.folderId).joinToString("/") }, { -it.updatedAt }))
-      .map { note -> gatherNote(note, pathOf(note.folderId), options) }
+      .map { note -> gatherNote(note, pathOf(note.folderId), options,
+        (scope as? ExportScope.Sessions)?.sessionIds?.toSet(),
+        PersonalScope.isPersonal(note.folderId, all.values.toList())) }
 
     val personalFolders = PersonalScope.folderIds(all.values.toList())
     ExportSet(
@@ -225,7 +233,7 @@ class ExportService @Inject constructor(
     // Only known original identities qualify; text-only clipboard/share never makes this call.
     val probes = mutableMapOf<String, Pair<Boolean, IOException?>>()
     if (options.isPampa) {
-      prepared.notes.flatMap { it.native?.sources.orEmpty() }.filter {
+      prepared.notes.flatMap { note -> note.native?.sources.orEmpty().filter { ExportSessionSelection.attachmentAllowed(note, it) } }.filter {
         it.id.isNotBlank() && it.storedFileName == null && PampaBundleOmissions.expectedSourceName(it) != null
       }.forEach { source ->
         currentCoroutineContext().ensureActive()
@@ -509,9 +517,13 @@ class ExportService @Inject constructor(
 
   // -----------------------------------------------------------------------------------------------
 
-  private suspend fun gatherNote(note: NoteEntity, folderPath: List<String>, options: ExportOptions): ExportNote {
-    val sessionRows = sessions.byNote(note.id)
-    val versionsBySession = sessionRows.associate { it.session.id to transcripts.bySession(it.session.id) }
+  private suspend fun gatherNote(note: NoteEntity, folderPath: List<String>, options: ExportOptions,
+    selectedSessionIds: Set<String>? = null, personal: Boolean = false): ExportNote {
+    val sessionRows = ExportSessionSelection.rows(sessions.byNote(note.id), selectedSessionIds)
+    val authorizedParts = sessionRows.flatMap { it.partsSorted }
+    val selections = sessionRows.associate { row -> row.session.id to ExportSessionSelection.transcripts(
+      transcripts.bySession(row.session.id), row.session.activeTranscriptId, authorizedParts, retainOriginals = selectedSessionIds == null) }
+    val versionsBySession = selections.mapValues { it.value.versions }
     val segmentsByTranscript = versionsBySession.values.flatten().associate { it.id to segments.byTranscript(it.id) }
     val gatheredSessions = sessionRows.mapIndexed { index, row ->
       val ordered = row.partsSorted
@@ -527,17 +539,26 @@ class ExportService @Inject constructor(
           startMs = start,
           sizeBytes = part.sizeBytes,
           archived = part.archivedAt > 0,
+          sha256 = part.sha256,
+          origin = dev.pampa.pampanotes.core.importing.RecordingOrigin(part.recordedAtEpochMs,
+            part.recordedAtLocal, part.recordedAtZoneId, part.recordedAtSource, part.recordedAtPrecision),
         )
       }
 
       val versions = versionsBySession.getValue(row.session.id)
+      val activeId = selections.getValue(row.session.id).activeId
       // Text, words and segment timings follow the selected RAW or the selected refinement's parent.
-      val raw = dev.pampa.pampanotes.core.repo.RawTranscripts.forSelection(versions, row.session.activeTranscriptId)
+      val raw = dev.pampa.pampanotes.core.repo.RawTranscripts.forSelection(versions, activeId)?.let { source ->
+        val projection = dev.pampa.pampanotes.core.alignment.CloudSources.portableProjection(source, row.partsSorted,
+          retainOriginals = selectedSessionIds == null, authorizedOriginalParts = authorizedParts)
+        source.copy(text = projection.text, cloudSourceJson = projection.cloudSourceJson,
+          wordCount = if (projection.text == source.text) source.wordCount else projection.text.wordCount())
+      }
       val chosen = when (options.transcript) {
         TranscriptChoice.RAW -> raw
         // La migliore: quella che l'utente sta guardando nell'app, altrimenti la grezza. Esportare
         // una versione diversa da quella a schermo sarebbe una sorpresa dentro un file.
-        TranscriptChoice.BEST -> versions.firstOrNull { it.id == row.session.activeTranscriptId } ?: raw
+        TranscriptChoice.BEST -> versions.firstOrNull { it.id == activeId }?.let { if (it.id == raw?.id) raw else it } ?: raw
       }
 
       ExportSession(
@@ -560,16 +581,19 @@ class ExportService @Inject constructor(
     // niente). Una pagina che non sta da nessuna delle due parti non si promette nemmeno.
     val pages = allSources.filter { source ->
       source.derivedFromId != null &&
+        (selectedSessionIds == null || ExportSessionSelection.attachmentAllowed(source, sessionRows)) &&
         source.storedFileName?.let { name -> files.sourceFile(name).exists() || source.archivedAt > 0 ||
           fetcher.relayAvailable(RelayKind.SOURCE, source.id) } == true
     }.sortedWith(compareBy({ it.importedAt }, { it.originalName }))
     return ExportNote(
       note = note,
+      selectedSessionIds = selectedSessionIds?.intersect(sessionRows.mapTo(HashSet()) { it.session.id }),
+      personal = personal,
       folderPath = folderPath,
       tags = tags.tags(note.id),
       native = dev.pampa.pampanotes.core.importing.PampaBundleNote(
         note = note, tags = tags.tags(note.id),
-        sessions = sessionRows.map { it.session.copy(transcribingOn = null, transcribingSince = null) },
+        sessions = sessionRows.map { it.session.copy(activeTranscriptId = selections.getValue(it.session.id).activeId, transcribingOn = null, transcribingSince = null) },
         parts = sessionRows.flatMap { it.partsSorted }.map { it.copy(archivedAt = 0) },
         transcripts = versionsBySession.values.flatten(),
         segments = segmentsByTranscript.values.flatten(),
@@ -591,11 +615,13 @@ class ExportService @Inject constructor(
           extractedChars = source.extractedChars,
           id = source.id,
           archived = source.archivedAt > 0,
+          attachmentAllowed = selectedSessionIds == null || ExportSessionSelection.attachmentAllowed(source, sessionRows),
         )
       },
       sourceFiles = allSources.map { source ->
         ExportSource(source.originalName, source.kind, source.sha256, source.sizeBytes,
-          source.storedFileName, source.status, source.extractedChars, source.id, source.archivedAt > 0)
+          source.storedFileName, source.status, source.extractedChars, source.id, source.archivedAt > 0,
+          attachmentAllowed = selectedSessionIds == null || ExportSessionSelection.attachmentAllowed(source, sessionRows))
       },
       sessions = gatheredSessions,
     )

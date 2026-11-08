@@ -79,7 +79,8 @@ class SyncPayloads @Inject constructor(
   companion object {
     fun <T> encode(serializer: kotlinx.serialization.KSerializer<T>, value: T, updatedAt: Long): Encoded {
       val element = SyncCodec.json.encodeToJsonElement(serializer, value)
-      return Encoded(payload = element, hash = SyncCodec.hash(element), updatedAt = updatedAt)
+      val wire = if (value is TranscriptEntity) SyncCloudSourceWire.toWire(element) else element
+      return Encoded(payload = wire, hash = SyncCodec.hash(element), updatedAt = updatedAt)
     }
   }
 }

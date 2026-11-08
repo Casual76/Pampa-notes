@@ -24,7 +24,7 @@ import java.util.Locale
  * stanno in file diversi — gli appunti in `<nota>.md`, ogni lezione in `<nota>--<giorno>.md` — e ogni
  * file di trascrizione lo ripete in cima.
  */
-class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
+class MarkdownWriter(private val labels: ExportLabels = ExportLabels(), private val personalLabels: Boolean = false) {
 
   private val chapterLines = ChapterLines(labels)
 
@@ -34,11 +34,13 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
    * Le trascrizioni non ci sono: qui c'e' l'elenco delle lezioni con il collegamento a ciascuna, e un
    * agente che cerca con `grep` vede dal nome del file se ha trovato un appunto o una trascrizione.
    */
-  fun noteFile(note: ExportNote, layout: BundleLayout, options: ExportOptions, generator: String = GENERATOR_PLACEHOLDER): String = buildString {
+  fun noteFile(note: ExportNote, layout: BundleLayout, options: ExportOptions, generator: String = GENERATOR_PLACEHOLDER): String =
+    if (note.personal && !personalLabels) MarkdownWriter(labels.forPersonal(), true).noteFile(note, layout, options, generator) else buildString {
     val files = layout.of(note)
     append(frontMatter(note, options, generator, files))
     append(NL)
     append("# ").append(titleOf(note)).append(NL).append(NL)
+    selectionNotice(note)?.let { append(it).append(NL).append(NL) }
 
     append("## ").append(labels.notes).append(NL).append(NL)
     append(bodyOf(note)).append(NL)
@@ -62,6 +64,7 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
         val pieces = files.transcripts[session.id]
         if (pieces == null) {
           append(" · _").append(labels.noTranscript).append('_').append(NL)
+          if (options.speechClock) append(NL).append(clockSection(session)).append(NL)
           return@forEach
         }
         append(" · ").append(kindOf(session)).append(", ").append(pieces.sumOf { it.words }).append(' ').append(labels.words)
@@ -94,17 +97,19 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
     piece: TranscriptFile,
     layout: BundleLayout,
     generator: String = GENERATOR_PLACEHOLDER,
-  ): String = buildString {
+  ): String = if (note.personal && !personalLabels) MarkdownWriter(labels.forPersonal(), true).transcriptFile(note, piece, layout, generator) else buildString {
     val files = layout.of(note)
     val session = piece.session
     val transcript = session.transcript
     val siblings = files.transcripts.getValue(session.id)
 
     append("---").append(NL)
-    append("note: ").append(yaml(titleOf(note))).append(NL)
+    append(if (note.personal) "collection: " else "note: ").append(yaml(titleOf(note))).append(NL)
     if (note.folderPath.isNotEmpty()) append("folder: ").append(yaml(note.folderPath.joinToString("/"))).append(NL)
     append("session: ").append(session.number).append(NL)
-    append("date: ").append(session.date).append(NL)
+    append(if (note.personal) "session_date: " else "date: ").append(session.date).append(NL)
+    if (note.personal) append("material_kind: recording\n")
+    if (note.selectedSessionIds != null) append("selection: exact_sessions\n")
     if (piece.count > 1) append("piece: ").append(yaml("${piece.index}/${piece.count}")).append(NL)
     rangeOf(piece)?.let { append("time: ").append(yaml(it)).append(NL) }
     transcript?.let {
@@ -119,13 +124,15 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
       append("chapters: ").append(chapterLines.of(session).size).append(NL)
       append("chapters_here: ").append(yaml("${chapters.first().number}–${chapters.last().number}")).append(NL)
     }
-    append("notes_file: ").append(yaml(layout.link(piece.path, files.notes))).append(NL)
+    append(if (note.personal) "material_file: " else "notes_file: ").append(yaml(layout.link(piece.path, files.notes))).append(NL)
     append("generator: ").append(yaml(generator)).append(NL)
     append("---").append(NL).append(NL)
 
     append("# ").append(labels.transcript).append(" — ").append(titleOf(note)).append(" · ").append(prettyDate(session.date))
     if (piece.count > 1) append(" (").append(piece.index).append(' ').append(labels.of).append(' ').append(piece.count).append(')')
     append(NL).append(NL)
+    selectionNotice(note)?.let { append(it).append(NL).append(NL) }
+    if (layout.speechClock) append(clockSection(session)).append(NL)
 
     append("> ").append(labels.machineText).append(' ').append(labels.notesAreIn).append(' ')
     append(mdLink(fileName(files.notes), layout.link(piece.path, files.notes))).append('.').append(NL).append(NL)
@@ -159,10 +166,12 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
    * Una nota intera, trascrizioni comprese: per il file da incollare, dove non ci sono altri file da
    * collegare.
    */
-  fun singleNote(note: ExportNote, options: ExportOptions, generator: String = GENERATOR_PLACEHOLDER): String = buildString {
+  fun singleNote(note: ExportNote, options: ExportOptions, generator: String = GENERATOR_PLACEHOLDER): String =
+    if (note.personal && !personalLabels) MarkdownWriter(labels.forPersonal(), true).singleNote(note, options, generator) else buildString {
     append(frontMatter(note, options, generator, files = null))
     append(NL)
     append("# ").append(titleOf(note)).append(NL).append(NL)
+    selectionNotice(note)?.let { append(it).append(NL).append(NL) }
     append("## ").append(labels.notes).append(NL).append(NL)
     append(bodyOf(note)).append(NL)
 
@@ -172,6 +181,7 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
       if (session.title.isNotBlank()) append(" · ").append(session.title)
       append(NL).append(NL)
       append(recordingsLine(session)).append('.').append(NL).append(NL)
+      if (options.speechClock) append(clockSection(session)).append(NL)
 
       if (session.transcript == null) {
         append('_').append(labels.noTranscript).append('_').append(NL)
@@ -230,22 +240,30 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
   private fun blocksText(session: ExportSession, blocks: List<TranscriptBlock>, announceFirst: Boolean): String = buildString {
     var currentPart: String? = if (announceFirst) null else blocks.firstOrNull()?.partId
     blocks.forEachIndexed { index, block ->
-      if (index > 0) append(NL).append(NL)
+      if (index > 0) append(block.separatorBefore ?: (NL + NL))
       // Un silenzio lungo si dice, su una riga sua, in corsivo e fra parentesi quadre: senza, sedici
       // minuti di niente sembravano la pausa di un respiro, e la frase dopo la risposta a quella
       // prima. Le parentesi dicono a chi legge — e a un assistente — che non l'ha detto nessuno.
       block.silenceBeforeMs?.let { silence ->
         append("*[").append(silenceLine(silence)).append("]*").append(NL).append(NL)
       }
-      if (block.partId != null && block.partId != currentPart && session.parts.size > 1) {
+      if (block.partId != null && block.partId != currentPart && session.parts.size > 1 &&
+        (!CloudTranscriptExport.applies(session) || block.startMs != null || block.showClock)) {
         currentPart = block.partId
         val position = session.parts.indexOfFirst { it.id == block.partId }
         session.parts.getOrNull(position)?.let { part ->
           append("> ").append(labels.part).append(' ').append(position + 1).append(" (`").append(part.originalName).append("`) — ")
-          append(labels.startsAt).append(' ').append(timestamp(part.startMs)).append(NL).append(NL)
+          if (block.startMs != null) append(labels.startsAt).append(' ').append(timestamp(part.startMs))
+          else append(labels.clockTitle)
+          append(NL).append(NL)
         }
       }
-      block.startMs?.let { append('[').append(timestamp(it)).append("] ") }
+      block.startMs?.let { append('['); if (block.clockEstimated) append("≈ "); append(timestamp(it)).append("] ") }
+      if (block.showClock) {
+        val origin = session.parts.firstOrNull { it.id == block.partId }?.origin
+        append('['); if (block.clockEstimated) append("≈ ")
+        append(SpeechClock.label(origin, block.partOffsetMs, labels)).append("] ")
+      }
       // «Chi parla»: davanti a ogni paragrafo, non solo al cambio. Un assistente cita un paragrafo
       // alla volta, e un «ha detto» senza chi l'ha detto nel paragrafo stesso si perde.
       // Il nome dato alla voce («Rinomina le voci») al posto di «Voce N», con la punteggiatura del
@@ -263,12 +281,15 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
     labels.silence.replace("%1\$s", TranscriptParagraphs.silenceDuration(millis, labels.hours, labels.minutes))
 
   private fun sourcesSection(note: ExportNote, options: ExportOptions): String? {
-    if (!options.includeSources || note.sources.isEmpty()) return null
+    if ((!options.includeSources && !note.personal && note.selectedSessionIds == null) || note.sources.isEmpty()) return null
     return buildString {
       append("## ").append(labels.sources).append(NL).append(NL)
       note.sources.forEach { source ->
         append("- `").append(source.originalName).append("` — ").append(source.kind.name.lowercase())
         if (source.sizeBytes > 0) append(", ").append(bytes(source.sizeBytes))
+        if (note.personal || note.selectedSessionIds != null) {
+          append(" · sha256: ").append(source.sha256).append(" · ").append(source.status.name.lowercase())
+        }
         append(NL)
       }
     }
@@ -278,6 +299,11 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
     append("---").append(NL)
     append("title: ").append(yaml(note.note.title)).append(NL)
     append("id: ").append(note.note.id).append(NL)
+    if (note.personal) append("material_kind: recording_material\n")
+    if (note.selectedSessionIds != null) {
+      append("selection: exact_sessions\nselected_session_ids: [")
+      append(note.sessions.joinToString(", ") { yaml(it.id) }).append("]\n")
+    }
     if (note.folderPath.isNotEmpty()) {
       append("folder: ").append(yaml(note.folderName)).append(NL)
       append("path: ").append(yaml(note.folderPath.joinToString("/"))).append(NL)
@@ -290,7 +316,7 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
     note.note.language?.takeIf { it.isNotBlank() }?.let { append("language: ").append(it).append(NL) }
     if (note.handwriting.isNotEmpty()) append("handwritten_pages: ").append(note.handwriting.size).append(NL)
 
-    if (options.includeSources && note.sources.isNotEmpty()) {
+    if ((options.includeSources || note.personal || note.selectedSessionIds != null) && note.sources.isNotEmpty()) {
       append("sources:").append(NL)
       note.sources.forEach { source ->
         append("  - name: ").append(yaml(source.originalName)).append(NL)
@@ -318,6 +344,22 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels()) {
 
     append("generator: ").append(yaml(generator)).append(NL)
     append("---").append(NL)
+  }
+
+  private fun selectionNotice(note: ExportNote): String? =
+    labels.selectedSessionsNotice.takeIf { note.selectedSessionIds != null }?.let { "> $it" }
+
+  private fun clockSection(session: ExportSession): String = buildString {
+    append("### ").append(labels.clockTitle).append(NL).append(NL)
+    append(labels.clockHelp).append(NL).append(NL)
+    if (!session.hasTimings) append("> ").append(labels.clockNoTimings).append(NL).append(NL)
+    session.parts.forEachIndexed { index, part ->
+      append("- ").append(labels.part).append(' ').append(index + 1).append(" (`")
+      append(escapeInline(part.originalName)).append("`): ").append(SpeechClock.label(part.origin, 0L, labels))
+      part.origin?.source?.let { append(" · source: ").append(escapeInline(it)) }
+      part.origin?.precision?.let { append(" · precision: ").append(escapeInline(it)) }
+      append(NL)
+    }
   }
 
   companion object {

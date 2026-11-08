@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rv2_subtitle">Interviste, incontri e registrazioni personali. Apri subito il lettore e la trascrizione.</string>
+    <string name="rv2_import">Importa registrazioni o materiale</string>
+    <string name="rv2_new_folder">Nuova cartella facoltativa</string>
+    <string name="rv2_optional_folders">Cartelle</string>
+    <string name="rv2_folder_detail">Organizza registrazioni e materiale personale</string>
+    <string name="rv2_associated_material">Materiale associato e dettagli</string>
+    <string name="rv2_materials">Materiale personale</string>
+    <string name="rv2_material_detail">Testo, tag, fonti e dettagli conservati</string>
+    <string name="rv2_open_recording">Apri registrazione e trascrizione</string>
+    <string name="rv2_search">Cerca registrazioni e materiale</string>
+    <string name="rv2_empty_detail">Importa audio, interviste o materiale personale. Puoi usare le cartelle per organizzarti, quando ti servono.</string>
+    <string name="rv2_transcribe_message">%1$s di audio con %2$s.</string>
+    <string name="rv2_delete_title">Eliminare le registrazioni selezionate?</string>
+    <plurals name="rv2_delete_message">
+        <item quantity="one">Verrà eliminata %d registrazione con il suo audio e le sue trascrizioni. Le altre registrazioni e il materiale associato restano.</item>
+        <item quantity="other">Verranno eliminate %d registrazioni con il loro audio e le loro trascrizioni. Le altre registrazioni e il materiale associato restano.</item>
+    </plurals>
+    <plurals name="rv2_move_message">
+        <item quantity="one">Sposta %1$d registrazione in «%2$s». Il materiale associato la segue; se è condiviso con altre registrazioni ne viene conservata una copia in entrambe le cartelle.</item>
+        <item quantity="other">Sposta %1$d registrazioni in «%2$s». Il materiale associato le segue; se è condiviso con altre registrazioni ne viene conservata una copia in entrambe le cartelle.</item>
+    </plurals>
+    <string name="rv2_move_school">La cartella scelta è nella sezione delle materie: le registrazioni compariranno lì con il loro materiale. La modifica arriva anche agli altri dispositivi con la sincronizzazione.</string>
+    <string name="rv2_delete_folder_message">Verranno eliminati questa cartella, le sottocartelle, tutte le loro registrazioni e il materiale associato, inclusi testo e fonti.</string>
+</resources>

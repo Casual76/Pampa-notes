@@ -1,0 +1,9 @@
+<resources>
+    <string name="cr2_credit_mistral">Mistral requires credit or a billing update. Check your Mistral account credit and billing before retrying.</string>
+    <string name="cr2_credit_groq">Groq declined the request because of a credit or billing issue. Check your Groq account billing details before retrying.</string>
+    <string name="cr2_credit_openrouter">OpenRouter requires credit. Check your OpenRouter account balance and billing before retrying.</string>
+    <string name="cr2_credit_unknown">The selected service requires credit or a billing update. Check your account with that service before retrying.</string>
+    <string name="cr2_selected_price">Selected model price</string>
+    <string name="cr2_price_unavailable">Price and quota for this service are unavailable here. Cost remains unknown; local limits and your unknown cost rule still apply.</string>
+    <string name="cr2_refresh_openrouter">Refresh checks only the price and quota for the displayed OpenRouter model, using the OpenRouter key.</string>
+</resources>

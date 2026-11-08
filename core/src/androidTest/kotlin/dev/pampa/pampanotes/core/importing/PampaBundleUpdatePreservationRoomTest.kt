@@ -4,6 +4,7 @@ import android.content.ContextWrapper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.pampa.pampanotes.core.db.*
+import dev.pampa.pampanotes.core.alignment.*
 import dev.pampa.pampanotes.core.export.*
 import dev.pampa.pampanotes.core.files.AppFiles
 import java.io.File
@@ -42,13 +43,15 @@ class PampaBundleUpdatePreservationRoomTest {
     File(audio, "audio.bin").writeBytes(bytes)
     val folder = FolderEntity("folder", "Sender folder", createdAt = 1, updatedAt = 2)
     val note = NoteEntity("note", folder.id, "Sender title", "Base", createdAt = 1, updatedAt = 2)
-    val raw = TranscriptEntity("raw", "session", TranscriptKind.RAW, "cloud", "model", text = "Exact cloud text",
-      wordCount = 3, createdAt = 1, cloudSourceJson = if (known) "{\"text\":\"  Exact cloud text  \"}" else null)
+    val rawRow = TranscriptEntity("raw", "session", TranscriptKind.RAW, "cloud", "model", text = "Exact cloud text",
+      wordCount = 3, createdAt = 1)
     val part = AudioPartEntity("part", "session", 0, "audio.bin", "audio.m4a", "audio/mp4", bytes.size.toLong(), 1000,
       MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }, 1,
       recordedAtEpochMs = if (known) 1794178800123 else null, recordedAtLocal = if (known) "2026-11-09T00:00:00.123" else null,
       recordedAtZoneId = if (known) "Europe/Rome" else null, recordedAtSource = if (known) "media_metadata" else null,
       recordedAtPrecision = if (known) "millisecond" else null)
+    val raw = rawRow.copy(cloudSourceJson = if (known) CloudSources.encode(CloudSources.create(rawRow, rawRow.text,
+      listOf(CloudTextPart(part.id, part.sha256, rawRow.text, null, rawRow.provider, rawRow.model)))) else null)
     val session = SessionEntity("session", note.id, date = "2026-11-09", position = 0, activeTranscriptId = raw.id, createdAt = 1, updatedAt = 2)
     val graph = PampaBundleNote(note, sessions = listOf(session), parts = listOf(part), transcripts = listOf(raw))
     val exported = ExportNote(note, listOf(folder.name), emptyList(), emptyList(), listOf(ExportSession(session.id, 1, "", session.date,

@@ -8,6 +8,15 @@ data class ChunkTranscript(
   val segments: List<RawSegment>,
   /** Untimed response, kept without inventing segment or word timestamps. */
   val fallbackText: String = "",
+  /** Exact cloud response, including punctuation/whitespace, retained independently of timing. */
+  val sourceText: String? = null,
+  val language: String? = null,
+  /** Hash of the original input, verified before this response was requested. Null in old caches. */
+  val audioSha256: String? = null,
+  /** Older caches may contain a requested hint masquerading as a reported language. */
+  val reportedLanguageKnown: Boolean = false,
+  val sourceProvider: String? = null,
+  val sourceModel: String? = null,
 )
 
 /**
@@ -67,6 +76,24 @@ data class StitchedTranscript(
  *     il confine del segmento in punti diversi. Si toglie il prefisso ripetuto, e solo se e' corto.
  */
 object TranscriptStitcher {
+  /** Cloud chunks have nonoverlapping audio windows. Never filter or rewrite their paid text. */
+  fun stitchCloud(chunks: List<ChunkTranscript>): StitchedTranscript {
+    val ordered = chunks.sortedBy { it.spec.index }
+    // Old overlap plans have no proven text seam. Keep every paid response, even repetitions;
+    // these are ordered response strings, not a claimed deduplicated verbatim recording.
+    val overlaps = ordered.zipWithNext().any { (before, after) -> before.spec.endMs > after.spec.startMs }
+    val text = ordered.map { it.sourceText ?: it.fallbackText.takeIf(String::isNotEmpty) ?: it.segments.joinToString(" ") { segment -> segment.text } }
+      .joinToString("\n\n")
+    val segments = ordered.flatMap { chunk -> chunk.segments.map { segment ->
+      StitchedSegment(chunk.spec.startMs + segment.startMs, chunk.spec.startMs + segment.endMs,
+        segment.text, segment.noSpeechProb, segment.avgLogProb, chunk.spec.index,
+        words = segment.words.map { it.copy(startMs = chunk.spec.startMs + it.startMs, endMs = chunk.spec.startMs + it.endMs) },
+        speaker = segment.speaker)
+    } }
+    fun normalized(value: String) = value.replace(Regex("\\s+"), " ").trim()
+    // Partial segment coverage must not hide the untimed part or claim exact word timing.
+    return StitchedTranscript(text, segments.takeIf { !overlaps && normalized(it.joinToString(" ") { segment -> segment.text }) == normalized(text) }.orEmpty())
+  }
 
   /** Oltre questo numero di parole in comune non e' piu' una ripetizione di confine: e' contenuto. */
   private const val MAX_OVERLAP_WORDS = 12

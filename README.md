@@ -1,6 +1,6 @@
 # Pampa Notes
 
-Gli appunti che hai già preso, pronti da dare a un'IA.
+Appunti e registrazioni, organizzati e pronti da condividere.
 
 Pampa Notes non è un'app per prendere appunti: è quella che li **raccoglie**. Importi il testo e le
 registrazioni che hai fatto altrove — Samsung Notes, un registratore, un PDF, un documento Word — li
@@ -9,21 +9,28 @@ ChatGPT o Gemini come fonte per riassunti, domande e ripasso.
 
 ## Cosa fa
 
-- **Importa** i pacchetti ZIP condivisi da Pampa Notes, testo, Markdown, PDF, Word, gli archivi `.sdocx` di Samsung Notes e audio in tutti i
+- **Importa** i file `.pn` e i precedenti pacchetti ZIP di Pampa Notes, testo, Markdown, PDF, Word, gli archivi `.sdocx` di Samsung Notes e audio in tutti i
   formati comuni (m4a, mp3, wav, ogg, flac, opus). Dal selettore file, dalla condivisione di
   un'altra app, o incollando.
-- **Riceve e aggiorna note condivise**: i nuovi ZIP conservano cartelle, appunti, pagine a mano,
-  trascrizioni e tempi audio. Le registrazioni sono riproducibili quando incluse nel pacchetto;
-  i vecchi ZIP si possono importare con i limiti indicati nell'app. Una nuova versione della
+- **Trasferisce i dati con un file `.pn`**: conserva cartelle, appunti, pagine a mano, registrazioni,
+  tutte le versioni delle trascrizioni, la versione selezionata e i tempi disponibili. Comprime
+  senza ricodificare l'audio e salva una volta i file con gli stessi byte, mantenendo distinte le
+  registrazioni e le fonti. Segnala gli allegati mancanti prima dell'esportazione. I precedenti ZIP
+  restano importabili entro i limiti indicati nell'app. Una nuova versione della
   stessa nota propone l'aggiornamento, conservando le aggiunte locali; si possono anche creare copie.
-- **Trascrive** le registrazioni con Groq o OpenRouter nel cloud, usando la tua chiave API, oppure
+- **Trascrive** le registrazioni con Groq, Mistral o OpenRouter nel cloud, usando la tua chiave API, oppure
   con WhisperX sul tuo computer (il server opzionale sta in `companion/`). I tempi audio dipendono
   dal modello: una risposta solo testuale resta una trascrizione leggibile, senza tempi inventati.
   Quando il servizio restituisce i tempi, il lettore segue la trascrizione mentre scorre.
+- **Separa le registrazioni dagli appunti**: nella raccolta Registrazioni apri direttamente una
+  sessione, il suo audio e la trascrizione. Puoi organizzarle in cartelle ed esportare soltanto
+  quelle selezionate, con istruzioni adatte a registrazioni personali.
 - **Raggruppa** le registrazioni come sono andate davvero: se la registrazione si è interrotta e l'hai
   ripresa, le due parti diventano una trascrizione sola; un altro giorno è un'altra sessione.
 - **Esporta** un bundle con le note, le trascrizioni, un indice e un file di istruzioni che spiega
   all'assistente come leggere il materiale e come citarlo.
+- **Aggiunge data e ora del parlato**, se richiesto nell'export e se l'origine della registrazione
+  le rende conoscibili. Una data senza ora o un fuso sconosciuto non diventano un orario inventato.
 
 Puoi importare, organizzare ed esportare dal telefono senza account, chiavi API o computer.
 Il backup locale si scrive nella cartella che scegli tu. La trascrizione cloud e la
@@ -31,12 +38,21 @@ sincronizzazione sono funzioni opzionali che inviano dati ai rispettivi servizi.
 
 ## Cloud e computer opzionale
 
-In **Impostazioni → Servizi** scegli il modulo Groq, OpenRouter o computer per configurarlo;
+In **Impostazioni → Servizi** scegli il modulo Groq, Mistral, OpenRouter o computer per configurarlo;
 in **Trascrizione** scegli chi trascrive per impostazione predefinita. Configurare una chiave
 non avvia una trascrizione. L'audio viene inviato quando chiedi di trascriverlo oppure dopo
 un import se **Trascrivi dopo import** è attivo: nei nuovi avvii è spento e una scelta già salvata viene conservata. Costi, credito disponibile,
 modelli e limiti dipendono dal provider e dal tuo piano: l'app non promette API gratuite o illimitate.
-La modalità **Solo il computer di casa** esclude sia Groq sia OpenRouter, anche per le scelte automatiche.
+Ogni trascrizione mantiene il provider e il modello scelti: un limite di quota non la sposta
+automaticamente su un altro servizio. Quando il provider richiede un'attesa, il lavoro resta in
+coda e riprova rispettando l'attesa disponibile. La modalità **Solo il computer di casa** esclude
+tutti i provider cloud, anche per le scelte automatiche.
+
+Se una trascrizione cloud non contiene tempi delle parole, puoi allineare il testo con il
+computer di casa, usando un companion aggiornato con il supporto all'allineamento. Il testo
+originale del servizio resta conservato; l'allineamento aggiunge i tempi misurati senza chiedere
+un'altra trascrizione cloud. Se il computer non è disponibile il lavoro può aspettare. Le parole
+senza un tempo misurato restano indicate come tali.
 
 In **Trascrizione → Costi e autorizzazioni cloud** trovi budget giornaliero o mensile, limite per
 trascrizione, previsioni e registro degli importi confermati o ancora incerti. Le opzioni avanzate
@@ -77,7 +93,8 @@ esegui `:core:testDebugUnitTest --tests "*RelayWorkerInteropTest"`.
 ## Requisiti
 
 Android 8.0 o più recente. Per la trascrizione cloud servono internet e una chiave
-[Groq](https://console.groq.com) o [OpenRouter](https://openrouter.ai), con accesso al modello scelto.
+[Groq](https://console.groq.com), [Mistral](https://console.mistral.ai) o
+[OpenRouter](https://openrouter.ai), con accesso al modello scelto.
 In alternativa puoi usare un computer raggiungibile con il server di `companion/`.
 
 ## Per chi sviluppa

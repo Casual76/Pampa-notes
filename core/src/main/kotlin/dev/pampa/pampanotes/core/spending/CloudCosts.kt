@@ -174,6 +174,8 @@ object CloudEstimates {
   val settledAt: Long? = null,
   val reconciled: Boolean = false,
   val priceVerified: Boolean = false,
+  /** Private definitive refusal, provisionally zero until any reported usage arrives. */
+  val refusedAt: Long? = null,
 )
 
 @Serializable data class CloudCostData(
@@ -191,7 +193,7 @@ object SpendingLedger {
     val from = maxOf(data.settings.periodStart(now), data.settings.resetAt)
     val actual = data.charges.filter { it.settledAt != null && it.settledAt >= from }
       .fold(BigDecimal.ZERO) { sum, it -> sum + (Usd.amount(it.actualUsd) ?: BigDecimal.ZERO) }
-    // Unsettled requests survive period changes and reset. Only explicit reconciliation releases them.
+    // Unknown requests survive periods/resets. Only exact refusals or reconciliation release them.
     val pending = data.charges.filter { it.settledAt == null }
     val reserved = pending.fold(BigDecimal.ZERO) { sum, it -> sum + (Usd.amount(it.reservedUsd) ?: BigDecimal.ZERO) }
     return SpendingTotals(actual.toPlainString(), reserved.toPlainString(), pending.count { !it.priceVerified },

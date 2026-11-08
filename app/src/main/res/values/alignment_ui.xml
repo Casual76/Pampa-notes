@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="alignment_ui_cancel">Ferma l’allineamento automatico</string>
+    <string name="alignment_ui_preparing">Preparazione del testo originale…</string>
+    <string name="alignment_ui_text_only">Testo originale disponibile anche offline. I tempi delle parole non sono disponibili: leggere o cercare nel testo non sposta l’audio.</string>
+    <string name="alignment_ui_model_times">I tempi derivano dall’allineamento di un modello, non da una misura acustica certa. Solo le parole con tempi disponibili si evidenziano durante l’ascolto e permettono di spostare l’audio; le altre restano senza tempo.</string>
+    <string name="alignment_ui_first_word">Prima parola allineata: %1$s</string>
+    <string name="alignment_ui_no_word_times">Tempi delle parole non disponibili</string>
+</resources>

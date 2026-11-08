@@ -244,7 +244,6 @@ fun NavGraphBuilder.listDestinations(actions: PampaNavActions, host: NavHostCont
         // `openSession` sul tablet le registrazioni si impilavano una sull'altra nel dettaglio.
         onListenSession = actions::resumeSession,
         onImportInto = actions.pickFilesIntoFolder,
-        onImportPersonal = actions.pickFilesPersonal,
       )
     }
   }
@@ -285,6 +284,7 @@ fun NavGraphBuilder.listDestinations(actions: PampaNavActions, host: NavHostCont
       onImport = actions.pickFiles,
       onOpenEditor = actions::openEditor,
       onImportInto = actions.pickFilesIntoFolder,
+      onListenSession = actions::resumeSession,
     )
   }
 }
@@ -324,6 +324,7 @@ fun NavGraphBuilder.detailDestinations(actions: PampaNavActions, host: NavHostCo
     transition = FluidPageTransition.Expand,
   ) { entry ->
     SessionRoute(
+      onOpenNote = actions::openNote,
       onBack = { host.popBackStack() },
       onJumpUsed = { entry.savedStateHandle[SESSION_JUMP_USED] = true },
       // Separare una sessione apre quella nuova al posto di questa: e' li' che si finisce il

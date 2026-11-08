@@ -17,11 +17,26 @@ class PampaNoteWriter(
   private val checkpoint: () -> Unit = {},
 ) {
   fun write(set: ExportSet, out: OutputStream, onProgress: (Float) -> Unit = {}) {
+    writePrepared(set, out, onProgress, typed = true)
+  }
+
+  /** Transport-only fixture boundary: opaque future strings remain testable without authorizing
+   * typed mutation/import. Production exports must use [write]. */
+  internal fun writeContainer(set: ExportSet, out: OutputStream, onProgress: (Float) -> Unit = {}) {
+    writePrepared(set, out, onProgress, typed = false)
+  }
+
+  private fun writePrepared(set: ExportSet, out: OutputStream, onProgress: (Float) -> Unit, typed: Boolean) {
     check()
     onProgress(0f)
     val blobs = linkedMapOf<String, Blob>()
     val textRefs = hashMapOf<String, PampaNoteBlob>()
-    val native = set.notes.map { requireNotNull(it.native) { "Pampa note export requires the complete native graph" } }
+    val native = set.notes.map { item ->
+      val graph = requireNotNull(item.native) { "Pampa note export requires the complete native graph" }
+      require(typed || item.selectedSessionIds == null) { "Restricted exports require typed scope validation" }
+      if (typed) ExportSessionSelection.native(graph, item.selectedSessionIds ?: graph.sessions.mapTo(HashSet()) { it.id },
+        retainOriginals = item.selectedSessionIds == null) else graph
+    }
     var estimated = 0L
     fun weigh(bytes: Long) {
       require(bytes >= 0 && bytes <= PampaNoteContainer.MAX_TOTAL_BYTES - estimated) { "Pampa note export too large or invalid size" }
@@ -65,17 +80,25 @@ class PampaNoteWriter(
       require(value.note.id == set.notes[index].note.id && value.note.folderId == set.notes[index].note.folderId) { "Native note identity mismatch" }
       val declarations = value.attachments.filterNot { it.audio }.associateBy { it.id }
       val attachments = value.parts.map { attachment(it.id, true, it.fileName, it.sizeBytes, it.sha256) } +
-        value.sources.map {
-          if (PampaBundleSourceFiles.isFileless(it, declarations[it.id])) PampaBundleAttachment(it.id, false,
-            bytes = it.sizeBytes, sha256 = it.sha256.takeIf(String::isNotBlank), fileless = true)
-          else attachment(it.id, false, it.storedFileName, it.sizeBytes, it.sha256)
+        value.sources.map { source ->
+          if (PampaBundleSourceFiles.isFileless(source, declarations[source.id])) PampaBundleAttachment(source.id, false,
+            bytes = source.sizeBytes, sha256 = source.sha256.takeIf(String::isNotBlank), fileless = true)
+          else attachment(source.id, false, source.storedFileName.takeIf { ExportSessionSelection.attachmentAllowed(set.notes[index], source) }, source.sizeBytes, source.sha256)
         }
       val audio = attachments.filter { it.audio }.associateBy { it.id }
       val sources = attachments.filterNot { it.audio }.associateBy { it.id }
+      // Included bytes have now been hashed. A replacement destination file cannot attest old
+      // source/overlay evidence; validation uses the final rows that will actually be serialized.
+      val parts = value.parts.map { it.copy(fileName = "", archivedAt = 0, sha256 = audio.getValue(it.id).sha256 ?: it.sha256) }
+      if (typed) value.transcripts.filter { it.kind == dev.pampa.pampanotes.core.db.TranscriptKind.RAW }.forEach { raw ->
+        require(dev.pampa.pampanotes.core.alignment.CloudSources.validatePortable(raw, parts.filter { it.sessionId == raw.sessionId })) {
+          "Portable cloud source conflicts with exported audio"
+        }
+      }
       value.copy(
         note = value.note.copy(bundleBodyBase = null, bundleNativeAdopted = null),
         sessions = value.sessions.map { it.copy(transcribingOn = null, transcribingSince = null) },
-        parts = value.parts.map { it.copy(fileName = "", archivedAt = 0, sha256 = audio.getValue(it.id).sha256 ?: it.sha256) },
+        parts = parts,
         sources = value.sources.map { it.copy(storedFileName = null, archivedAt = 0, sha256 = sources.getValue(it.id).sha256 ?: it.sha256) },
         attachments = attachments,
       )

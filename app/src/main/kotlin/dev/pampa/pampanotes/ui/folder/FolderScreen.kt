@@ -72,9 +72,20 @@ fun FolderRoute(
   onOpenEditor: (String) -> Unit = {},
   /** Importa dentro questa cartella: e' quello che fa «Importa» in una cartella di Registrazioni. */
   onImportInto: (String) -> Unit = {},
+  onListenSession: (String) -> Unit = {},
   viewModel: FolderViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
+  if (state.personal) {
+    dev.pampa.pampanotes.ui.recordings.RecordingsRoute(
+      onOpenFolder = onOpenFolder,
+      onOpenNote = onOpenNote,
+      onListenSession = onListenSession,
+      onImportInto = onImportInto,
+      onBack = onBack,
+    )
+    return
+  }
   FolderScreen(
     state = state,
     onBack = onBack,

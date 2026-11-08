@@ -27,6 +27,7 @@ class CloudSpendingGuardTest {
   private lateinit var settings: PampaSettingsStore
   private lateinit var keys: AiKeyStore
   private lateinit var provider: CloudTranscriptionGuard
+  private lateinit var cooldowns: dev.pampa.pampanotes.core.transcription.CloudCooldownStore
   private var prefs = PampaSettings(preferredProvider = TranscriptionProviderId.OPENROUTER)
   private var noteFolder = "root"
   private var partSession = "session"
@@ -39,6 +40,7 @@ class CloudSpendingGuardTest {
     val context = mockk<Context>()
     every { context.noBackupFilesDir } returns temp.root
     disk = CloudCostStore(context)
+    cooldowns = dev.pampa.pampanotes.core.transcription.CloudCooldownStore(context)
     settings = mockk()
     coEvery { settings.current() } answers { prefs }
     keys = mockk(relaxed = true)
@@ -61,12 +63,81 @@ class CloudSpendingGuardTest {
     disk.durable.update { it.copy(
       folders = mapOf("denied" to FolderCloudSetting(CloudFolderRule.DENY)),
       prices = mapOf(model to ModelPrice(model, PriceUnit.AUDIO_SECOND, "0.003", "0.003", fetchedAt = System.currentTimeMillis(), complete = true))) }
-    spending = CloudSpending(disk, db, settings, keys, TranscriptionHttp("test"))
+    spending = CloudSpending(disk, db, settings, keys, dev.pampa.pampanotes.core.transcription.CloudCredentials(context, keys), TranscriptionHttp("test"))
     provider = CloudTranscriptionGuard(OpenRouterTranscriptionProvider(TranscriptionHttp("test"), "fake", server.url("/api/v1")),
       beforeUpload = { spending.beforeUpload("openrouter", OpenRouterCostMetadata.fingerprint("fake"), it) }) { prefs.customOnly }
     server.respond { TinyHttpServer.Response(200, """{"text":"Hello","usage":{"cost":0.15}}""") }
   }
   @After fun teardown() { server.close() }
+
+  @Test fun `quota metadata 429 stops pricing and paid upload and persists the provider wait`() =
+    metadataQuota("/key")
+
+  @Test fun `pricing metadata 429 stops reservation and paid upload and persists the provider wait`() =
+    metadataQuota("/models?output_modalities=transcription")
+
+  private fun metadataQuota(limitedPath: String) = runBlocking {
+    disk.durable.update { it.copy(prices = emptyMap(), settings = it.settings.copy(unknownAction = UnknownCostAction.ALLOW)) }
+    val http = mockk<TranscriptionHttp>()
+    coEvery { http.cloudSession<Unit>(any(), any(), any()) } coAnswers { thirdArg<suspend () -> Unit>().invoke() }
+    val lookups = mutableListOf<String>()
+    coEvery { http.getJson(any(), any(), any()) } answers {
+      val path = firstArg<String>().substringAfter(OpenRouterTranscriptionProvider.BASE_URL)
+      lookups += path
+      if (path == limitedPath) throw TranscriptionError.RateLimited(3600.0, "metadata quota")
+      Json.parseToJsonElement("""{"data":{"limit":10,"usage":0}}""")
+    }
+    val accounting = CloudSpending(disk, db, settings, keys, CloudCredentials(mockk<Context> {
+      every { noBackupFilesDir } returns temp.root
+    }, keys), http)
+    var paidCalls = 0
+    val upstream = object : TranscriptionProvider {
+      override val id = "openrouter"
+      override val capabilities = TranscriptionCapabilities(null, false, false)
+      override suspend fun listModels() = emptyList<String>()
+      override suspend fun health() = EndpointHealth(false, 0)
+      override suspend fun transcribe(file: File, mime: String, request: TranscribeRequest, onProgress: (UploadProgress) -> Unit, onRemote: (RemoteProgress) -> Unit): TranscriptResult {
+        paidCalls++
+        error("Quota must stop the paid upload")
+      }
+    }
+    val store = DurableCloudCooldowns(File(temp.root, "metadata-cooldown.json"))
+    val fingerprint = OpenRouterCostMetadata.fingerprint("fake")
+    fun guarded(): CloudTranscriptionGuard = CloudTranscriptionGuard(upstream,
+      beforeUpload = { accounting.beforeUpload("openrouter", fingerprint, it) }, beforeRequest = {
+        store.deadline("openrouter", fingerprint, "account")?.takeIf { it > System.currentTimeMillis() }?.let {
+          throw TranscriptionError.RateLimited(null, "persisted", it)
+        }
+      }, limited = {
+        TranscriptionError.RateLimited(null, "persisted", store.extend("openrouter", fingerprint, "account", CloudRetry.deadline(it, System.currentTimeMillis())))
+      }) { false }
+    val limited = runCatching { guarded().transcribe(audio(), "audio/mpeg", request()) }.exceptionOrNull() as TranscriptionError.RateLimited
+    assertTrue(limited.retryAtMillis!! > System.currentTimeMillis() + 3_500_000)
+    val calls = lookups.size
+    assertEquals(if (limitedPath == "/key") 1 else 2, calls)
+    assertTrue(runCatching { guarded().transcribe(audio(), "audio/mpeg", request()) }.exceptionOrNull() is TranscriptionError.RateLimited)
+    assertEquals(calls, lookups.size)
+    assertEquals(0, paidCalls)
+    assertTrue(disk.durable.read().charges.isEmpty())
+  }
+
+  @Test fun `Mistral uses its own credential and retains honest unknown accounting with privacy gates`() = runBlocking {
+    val credentials = mockk<dev.pampa.pampanotes.core.transcription.CloudCredentials>()
+    coEvery { credentials.key("mistral") } returns "fixture-mistral-key"
+    val mistralSpending = CloudSpending(disk, db, settings, keys, credentials, TranscriptionHttp("test"))
+    val mistralRequest = request().copy(model = "voxtral-small-transcribe-3")
+    val fingerprint = OpenRouterCostMetadata.fingerprint("fixture-mistral-key")
+    val authorized = mistralSpending.beforeUpload("mistral", fingerprint, mistralRequest)
+    val charge = disk.durable.read().charges.single()
+    assertEquals("mistral", charge.provider)
+    assertEquals(mistralRequest.model, charge.model)
+    assertEquals(fingerprint, charge.keyFingerprint)
+    assertNull(charge.actualUsd)
+    authorized.cloudAttemptFinished?.invoke()
+    prefs = prefs.copy(customOnly = true)
+    assertEquals("companion_only", reason { mistralSpending.beforeUpload("mistral", fingerprint, mistralRequest) })
+    assertTrue(server.requests.isEmpty())
+  }
   private suspend fun upload() = provider.transcribe(audio(), "audio/mpeg", request())
   private suspend fun reason(block: suspend () -> Unit): String? = try { block(); null } catch (e: TranscriptionError) { e.code }
 
@@ -170,7 +241,7 @@ class CloudSpendingGuardTest {
     coEvery { jobs.activeForSession(any()) } returns null
     coEvery { jobs.upsert(any()) } just Runs
     val repo = TranscriptionRepository(jobs, db.sessions(), db.notes(), db.audioParts(), mockk(), mockk(),
-      settings, keys, mockk(), mockk(), db, mockk(), mockk(), mockk(), mockk(), spending)
+      settings, keys, mockk(), mockk(), db, mockk(), mockk(), mockk(), mockk(), spending, mockk(), cooldowns)
     noteFolder = "denied"
     val refused = repo.enqueue("session", TranscriptionProviderId.OPENROUTER)!!
     assertEquals(JobState.FAILED, refused.state)
@@ -196,20 +267,23 @@ class CloudSpendingGuardTest {
     assertEquals(OpenRouterCostMetadata.fingerprint("fake"), spending.data().charges.single().keyFingerprint)
   }
 
-  @Test fun `folder model change between chunks stops instead of mixing cached model results`() = runBlocking {
+  @Test fun `folder model change between chunks retains the pinned request model`() = runBlocking {
     upload()
     spending.setFolder("root", FolderCloudSetting(openRouterModel = "google/gemini-3.5-transcribe"))
     // Unknown metadata is not required to identify a model change. Preload it to keep this test offline.
     disk.durable.update { it.copy(prices = it.prices + ("google/gemini-3.5-transcribe" to ModelPrice("google/gemini-3.5-transcribe",
       fetchedAt = System.currentTimeMillis()))) }
-    assertEquals("cloud_model_changed", reason { upload() })
-    assertEquals(1, server.requests.size)
+    assertNull(reason { upload() })
+    assertEquals(2, server.requests.size)
+    assertTrue(server.requests.all { it.body.toString(Charsets.UTF_8).contains(model) })
   }
 
-  @Test fun `removing a folder model override restores the job default before the next attempt`() = runBlocking {
+  @Test fun `removing a folder model override cannot change a pinned job`() = runBlocking {
     val previouslyPrepared = request().copy(model = "google/gemini-3.5-transcribe", cloudDefaultModel = model)
-    assertEquals("cloud_model_changed", reason { provider.transcribe(audio(), "audio/mpeg", previouslyPrepared) })
-    assertTrue(server.requests.isEmpty())
+    disk.durable.update { it.copy(prices = it.prices + (previouslyPrepared.model to ModelPrice(previouslyPrepared.model, PriceUnit.AUDIO_SECOND, "0.003", "0.003", fetchedAt = System.currentTimeMillis(), complete = true))) }
+    assertNull(reason { provider.transcribe(audio(), "audio/mpeg", previouslyPrepared) })
+    assertEquals(1, server.requests.size)
+    assertTrue(server.requests.single().body.toString(Charsets.UTF_8).contains(previouslyPrepared.model))
   }
 
   @Test fun `runner cached whole audio skips uploads and charge accounting on recovery`() = runBlocking {

@@ -20,6 +20,8 @@ import dev.pampa.pampanotes.core.model.wordCount
 import dev.pampa.pampanotes.core.transcription.SessionTranscript
 import dev.pampa.pampanotes.core.transcription.TranscriptPlacement
 import dev.pampa.pampanotes.core.transcription.VoiceNames
+import dev.pampa.pampanotes.core.alignment.CloudSources
+import dev.pampa.pampanotes.core.alignment.CloudSavePlan
 import androidx.room.withTransaction
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -216,9 +218,9 @@ class SessionRepository @Inject constructor(
 
   /** Cancella una parte, il suo file e i suoi segmenti; la sessione si ricompone senza di lei. */
   suspend fun deletePart(partId: String) {
-    val name = db.withTransaction {
-      val part = parts.get(partId) ?: return@withTransaction null
-      val session = sessions.get(part.sessionId) ?: return@withTransaction null
+    val names = db.withTransaction {
+      val part = parts.get(partId) ?: return@withTransaction emptyList<AudioDeletion>()
+      val session = sessions.get(part.sessionId) ?: return@withTransaction emptyList<AudioDeletion>()
       val before = captureTimelines(setOf(part.sessionId))
       val now = System.currentTimeMillis()
       val captured = VoiceNames.capture(session.voiceNames, parts.bySession(session.id).map { it.id }, session.updatedAt)
@@ -229,24 +231,77 @@ class SessionRepository @Inject constructor(
       rebuildTimelines(before, setOf(session.id))
       deleteIfEmpty(session.id)
       notes.touch(session.noteId, System.currentTimeMillis())
-      part.fileName
+      unreferencedAudioFiles(listOf(part.fileName))
     }
-    name?.let { runCatching { files.audioFile(it).delete() } }
+    deleteAudioFiles(names)
   }
 
   suspend fun deleteSession(sessionId: String) {
-    val removedFiles = db.withTransaction {
-      val session = sessions.get(sessionId) ?: return@withTransaction emptyList<String>()
-      val recordings = parts.bySession(sessionId)
-      recordings.forEach { segments.deleteByPart(it.id) }
-      sessions.delete(sessionId)
-      renumberSessions(session.noteId)
-      notes.touch(session.noteId, System.currentTimeMillis())
-      recordings.map { it.fileName }
+    val names = db.withTransaction {
+      deleteSessionsNow(listOfNotNull(sessions.get(sessionId)))
     }
-    // Keep bytes intact if the transaction (including clock capture) fails.
-    removedFiles.forEach { name -> runCatching { files.audioFile(name).delete() } }
+    // Keep bytes intact if the transaction (including voice-clock capture) fails.
+    deleteAudioFiles(names)
   }
+
+  /** Final personal/current-folder fence, AFTER the caller has awaited job cancellations.
+   * Scope reads and all deletions share one transaction; denied/missing rows yield no file cleanup.
+   * Generic [deleteSession] remains available to school callers. */
+  suspend fun deletePersonalSessions(sessionIds: Set<String>, folderId: String?) {
+    if (sessionIds.isEmpty()) return
+    val names = db.withTransaction {
+      val personal = PersonalScope.folderIds(db.folders().all())
+      val selected = sessions.getAll(sessionIds.toList()).filter { session ->
+        session.id in sessionIds && notes.get(session.noteId)?.let { note ->
+          note.folderId in personal && (folderId == null || note.folderId == folderId)
+        } == true
+      }
+      deleteSessionsNow(selected)
+    }
+    deleteAudioFiles(names)
+  }
+
+  /** Transaction-only: keep the note's material and unselected siblings, and collect file names.
+   * Files cannot be removed here: a later DB failure must leave the rolled-back graph playable. */
+  private suspend fun deleteSessionsNow(selected: List<SessionEntity>): List<AudioDeletion> {
+    val names = linkedSetOf<String>()
+    selected.forEach { session ->
+      parts.bySession(session.id).forEach { part ->
+        names += part.fileName
+        segments.deleteByPart(part.id)
+      }
+      sessions.delete(session.id)
+    }
+    selected.map { it.noteId }.distinct().forEach { noteId ->
+      renumberSessions(noteId)
+      notes.touch(noteId, System.currentTimeMillis())
+    }
+    // Legacy graphs may share a stored path. Deleting one session must not remove a sibling's bytes.
+    return unreferencedAudioFiles(names)
+  }
+
+  private data class AudioDeletion(val name: String, val identity: java.nio.file.Path)
+
+  private suspend fun unreferencedAudioFiles(names: Collection<String>): List<AudioDeletion> {
+    if (names.isEmpty()) return emptyList()
+    // Stored names can differ while addressing the same bytes ("a.wav" / "./a.wav").
+    // If any retained path cannot be resolved safely, defer cleanup instead of risking its bytes.
+    val retained = parts.fileNames().map { audioIdentity(it) ?: return emptyList() }.toHashSet()
+    return names.mapNotNull { name -> audioIdentity(name)?.takeIf { it !in retained }?.let { AudioDeletion(name, it) } }
+  }
+
+  private fun deleteAudioFiles(names: List<AudioDeletion>) {
+    names.forEach { candidate ->
+      // A substituted root/path after commit is not the path whose references were checked.
+      if (audioIdentity(candidate.name) == candidate.identity) runCatching { files.audioFile(candidate.name).delete() }
+    }
+  }
+
+  /** A stored row never authorizes deletion outside this installation's audio directory. */
+  private fun audioIdentity(name: String): java.nio.file.Path? = runCatching {
+    val root = files.audio.canonicalFile.toPath()
+    files.audioFile(name).canonicalFile.toPath().takeIf { it != root && it.startsWith(root) }
+  }.getOrNull()
 
   // ---------------------------------------------------------------------------------------------
   // La riparazione
@@ -393,6 +448,8 @@ class SessionRepository @Inject constructor(
     jobSessionId: String,
     partIds: List<String>,
     result: SessionTranscript,
+    /** Worker before-image, including ORIGINAL audio hashes even if rows moved/disappeared. */
+    originalParts: List<AudioPartEntity> = emptyList(),
   ): SavedTranscription? = db.withTransaction {
     val alive = partIds.mapNotNull { parts.get(it) }.associate { it.id to it.sessionId }
     val targets = TranscriptPlacement.plan(jobSessionId, partIds, alive)
@@ -413,7 +470,7 @@ class SessionRepository @Inject constructor(
       // insieme ne lasciavano due, e la schermata mostrava la piu' vecchia (vedi [RawTranscripts]).
       val previous = transcripts.bySession(target.sessionId).filter { it.kind == TranscriptKind.RAW }
 
-      val transcript = TranscriptEntity(
+      var transcript = TranscriptEntity(
         id = Ids.newId(),
         sessionId = target.sessionId,
         kind = TranscriptKind.RAW,
@@ -425,7 +482,12 @@ class SessionRepository @Inject constructor(
         wordCount = 0,
         createdAt = now,
       )
-      if (previous.size <= 1) inSession.forEach { segments.deleteByPart(it.id) }
+      val preserveSources = CloudSources.cloud(result.provider) || previous.any { it.cloudSourceJson != null }
+      if (CloudSources.cloud(result.provider)) {
+        val composed = CloudSavePlan.build(transcript, partIds, result, originalParts, inSession, written, selected, kept)
+        transcript = transcript.copy(text = composed.first, wordCount = composed.first.wordCount(), cloudSourceJson = CloudSources.encode(composed.second))
+      }
+      if (!preserveSources && previous.size <= 1) inSession.forEach { segments.deleteByPart(it.id) }
       transcripts.upsert(transcript)
       segments.insertAll(
         kept.map { it.copy(id = 0, transcriptId = transcript.id) } +
@@ -447,7 +509,7 @@ class SessionRepository @Inject constructor(
             )
           },
       )
-      if (previous.size <= 1) previous.forEach {
+      if (!preserveSources && previous.size <= 1) previous.forEach {
         transcripts.deleteChildren(it.id)
         transcripts.delete(it.id)
       }
@@ -458,7 +520,10 @@ class SessionRepository @Inject constructor(
         val kept = VoiceNames.forget(captured, written, now)
         if (kept != session.voiceNames) sessions.setVoiceNames(target.sessionId, kept, now)
       }
-      selectTranscript(target.sessionId, transcript.id, now)
+      // Keep a selected refinement when cloud histories survive. Selection changes still pass
+      // through the root's clock capture; a direct DAO update would retime legacy voice names.
+      val currentActive = sessions.get(target.sessionId)?.activeTranscriptId?.let { transcripts.get(it) }
+      if (!preserveSources || currentActive?.kind != TranscriptKind.REFINED) selectTranscript(target.sessionId, transcript.id, now)
       rebuildRawNow(target.sessionId)
     }
     // La nota non si tocca: una trascrizione finita non e' una modifica di chi l'ha scritta, e la
@@ -479,7 +544,10 @@ class SessionRepository @Inject constructor(
     val ordered = parts.bySession(sessionId)
     if (ordered.isEmpty()) return emptyList()
     val selected = RawTranscripts.forSelection(transcripts.bySession(sessionId), sessions.get(sessionId)?.activeTranscriptId)
-    val covered = selected?.let { segments.byTranscript(it.id).mapTo(mutableSetOf()) { row -> row.partId } }.orEmpty()
+    val covered = selected?.let {
+      (segments.byTranscript(it.id).map { row -> row.partId } + CloudSources.decode(it.cloudSourceJson)?.parts.orEmpty()
+        .filter { p -> p.text != null }.map { p -> p.id }).toSet()
+    }.orEmpty()
     return ordered.filterNot { it.id in covered }
   }
 
@@ -488,6 +556,8 @@ class SessionRepository @Inject constructor(
   /** Una sessione rimasta senza parti e senza parole non serve piu' a niente: se ne va da sola. */
   private suspend fun deleteIfEmpty(sessionId: String) {
     if (parts.countIn(sessionId) > 0) return
+    // Deleting the final audio part must not cascade away recoverable cloud originals.
+    if (transcripts.bySession(sessionId).any { it.cloudSourceJson != null }) return
     val session = sessions.get(sessionId) ?: return
     sessions.delete(sessionId)
     renumberSessions(session.noteId)

@@ -129,7 +129,9 @@ class SyncApplier @Inject constructor(
     revive: Set<String> = emptySet(),
   ): ApplyOutcome {
     if (changes.isEmpty()) return ApplyOutcome()
-    val latest = SyncPlan.latestPerRow(changes)
+    // Expand before graph checks/merge/Room. Unsupported or corrupt envelopes fail the page;
+    // neither local entities nor the pull cursor may adopt an opaque transport representation.
+    val latest = SyncPlan.latestPerRow(changes).map(SyncCloudSourceWire::toLocal)
     val upserts = SyncPlan.upserts(latest)
     val deletes = SyncPlan.deletes(latest)
     val big = latest.size > BIG_PAGE

@@ -20,6 +20,8 @@ internal class ChapterLines(private val labels: ExportLabels) {
 
   /** I capitoli da scrivere per [session]: vuota senza tempi o sotto [Chapters.MIN_SHOWN]. */
   fun of(session: ExportSession): List<Chapters.Chapter> {
+    // Sparse cloud overlays cannot certify chapter quotations reconstructed from coarse segments.
+    if (CloudTranscriptExport.applies(session)) return emptyList()
     if (!session.hasTimings) return emptyList()
     return Chapters.index(session.segments, session.durationMs.takeIf { it > 0 })
   }

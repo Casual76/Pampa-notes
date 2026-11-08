@@ -15,6 +15,8 @@ import kotlinx.serialization.Serializable
 data class TranscribeOverrides(
   /** Il codice della lingua, o [LANGUAGE_AUTO] per farla riconoscere al modello. Vince su quella della nota. */
   val provider: String? = null,
+  /** An explicit cloud STT model for this job only. Never a chat/refinement model. */
+  val model: String? = null,
   val language: String? = null,
   /** Il vocabolario di questa sola volta; vuoto = nessuno (non quello delle impostazioni). */
   val vocabulary: String? = null,
@@ -27,11 +29,11 @@ data class TranscribeOverrides(
 ) {
   /** Una scelta cloud esplicita vale soltanto per il lavoro e il provider indicati. */
   fun explicitlyChoosesCloud(providerId: String): Boolean =
-    provider == providerId && (providerId == "groq" || providerId == "openrouter")
+    provider == providerId && (providerId == "groq" || providerId == "openrouter" || providerId == "mistral")
 
   /** Niente da cambiare: il lavoro e' quello di sempre e `optionsJson` non ha bisogno di dirlo. */
   val isEmpty: Boolean
-    get() = provider == null && language == null && vocabulary == null && diarize == null && pieces == null && (computer == null || computer.isEmpty)
+    get() = provider == null && model == null && language == null && vocabulary == null && diarize == null && pieces == null && (computer == null || computer.isEmpty)
 
   /**
    * La richiesta che le impostazioni e la nota avrebbero deciso, con sopra quello che chi ha

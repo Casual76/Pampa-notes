@@ -17,6 +17,8 @@ sealed interface ExportScope {
   data class Note(val id: String) : ExportScope
   /** Alcune note scelte a mano; [label] e' il nome che prende il pacchetto. */
   data class Notes(val ids: List<String>, val label: String) : ExportScope
+  /** Exact recordings; associated body/tags/sources are retained, sibling sessions are excluded. */
+  data class Sessions(val sessionIds: List<String>, val label: String) : ExportScope
   /**
    * Alcune cartelle scelte a mano (piu' materie insieme dalla griglia), ognuna con le sue
    * sottocartelle; [label] e' il nome del pacchetto.
@@ -123,6 +125,8 @@ data class ExportOptions(
   val includeSkill: Boolean = true,
   /** La risposta a «Dove lo usi?». In fondo, perche' i JSON salvati prima non l'hanno. */
   val target: ExportTarget = ExportTarget.CHAT,
+  /** Real source date/time per part, independently of the relative session stopwatch. Opt-in. */
+  val speechClock: Boolean = false,
 ) {
   /** Vero se qualcosa e' stato cambiato rispetto a quello che [target] sceglie da solo. */
   val isCustomized: Boolean get() = !isPampa && this != target.defaults()
@@ -144,7 +148,7 @@ data class ExportOptions(
    * erano, perche' riguardano il testo e non dove va: chi vuole sempre la grezza la vuole anche in
    * un Progetto.
    */
-  fun withTarget(next: ExportTarget): ExportOptions = next.defaults().copy(transcript = transcript, timestamps = timestamps)
+  fun withTarget(next: ExportTarget): ExportOptions = next.defaults().copy(transcript = transcript, timestamps = timestamps, speechClock = speechClock)
 }
 
 /**
@@ -192,6 +196,8 @@ data class ExportSource(
   val id: String = "",
   /** Il computer di casa ha l'originale: se qui manca, si puo' scaricare prima di scrivere. */
   val archived: Boolean = false,
+  /** Exact-session export must not attach containers or unproven audio that can hold siblings. */
+  val attachmentAllowed: Boolean = true,
 )
 
 data class ExportPart(
@@ -204,6 +210,9 @@ data class ExportPart(
   val sizeBytes: Long,
   /** Il computer di casa ha la registrazione: se qui manca, si puo' scaricare prima di scrivere. */
   val archived: Boolean = false,
+  val origin: dev.pampa.pampanotes.core.importing.RecordingOrigin? = null,
+  /** Current graph identity, required before reusing public cloud timing evidence. */
+  val sha256: String = "",
 )
 
 data class ExportSession(
@@ -258,6 +267,9 @@ data class ExportNote(
   val native: dev.pampa.pampanotes.core.importing.PampaBundleNote? = null,
   /** All originals and derived sources, including unavailable ones. AI exports use [sources]. */
   val sourceFiles: List<ExportSource> = sources,
+  /** Only these sessions were requested. Null means the entire backing note was requested. */
+  val selectedSessionIds: Set<String>? = null,
+  val personal: Boolean = false,
 ) {
   val folderName: String get() = folderPath.lastOrNull().orEmpty()
   val audioDurationMs: Long get() = sessions.sumOf { it.durationMs }

@@ -391,8 +391,9 @@ Il client sta in `core/sync/`. Cinque cose che reggono tutto:
   mandano insieme non si danno lo stesso numero e non si sovrascrivono. Il `batchId` e' l'impronta
   del contenuto del lotto, cosi' un push interrotto a meta' si rimanda identico; il server registra
   il lotto per ultimo e riscrive una trascrizione arrivata senza i suoi segmenti. Pagine e lotti sono
-  limitati anche in byte (~4 MB); una riga oltre 1,9 MB viene rifiutata da sola (`too_large`) ed esce
-  dall'outbox. Il push manda prima i padri.
+  limitati anche in byte (~4 MB); una riga oltre 1,9 MB viene rifiutata da sola (`too_large`) e resta
+  nell'outbox con la base concordata. Un registro durevole evita invii identici finché il contenuto
+  non cambia e segnala il limite, mentre le altre righe proseguono. Il push manda prima i padri.
 - **Un altro account non si mescola.** Il dispositivo ricorda l'`ownerId` (`sync_owner_id`): se
   qualcuno entra con un altro account su un telefono che ha note sincronizzate col primo, il giro si
   ferma e lo dice; «Porta queste note in questo account» (`adoptAccount`) e' una scelta esplicita.

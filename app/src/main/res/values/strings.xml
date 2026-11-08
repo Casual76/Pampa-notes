@@ -1026,7 +1026,7 @@
   <string name="onboarding_import_picker">Dal tasto importa</string>
   <string name="onboarding_import_picker_detail">In Altro, dalla schermata di una materia, o da Registrazioni</string>
   <string name="onboarding_provider_title">Chi trascrive</string>
-  <string name="onboarding_provider_detail">Groq e OpenRouter trascrivono nel cloud con la tua chiave, senza companion. Il computer di casa trascrive sul tuo PC. Puoi configurare il servizio ora o più tardi.</string>
+  <string name="onboarding_provider_detail">Groq, Mistral e OpenRouter trascrivono nel cloud con la tua chiave, senza companion. Il computer di casa trascrive sul tuo PC. Puoi configurare il servizio ora o più tardi.</string>
   <string name="onboarding_server_detail">L\'indirizzo del computer di casa, con la porta.</string>
   <string name="onboarding_provider_later">Puoi continuare senza un servizio: importa e organizza subito, poi configura la trascrizione in Impostazioni → Servizi. Il servizio predefinito si sceglie in Trascrizione.</string>
   <string name="onboarding_backup_title">Una copia al sicuro</string>
@@ -1675,7 +1675,6 @@
   <string name="session_bundle_omitted_title">Audio non incluso nel pacchetto</string>
   <string name="session_bundle_omitted_detail">Chiedi a chi ha condiviso le note un pacchetto che includa le registrazioni, poi importalo scegliendo di aggiornare le note. Questi file non arriveranno automaticamente dal tuo computer.</string>
   <string name="provider_openrouter">OpenRouter</string>
-  <string name="error_credit_required">Il servizio richiede credito. Controlla il saldo del tuo account OpenRouter prima di riprovare.</string>
   <string name="openrouter_requirements">Trascrive nel cloud senza computer di casa. Servono una chiave OpenRouter e credito per il modello scelto; l’audio viene inviato a OpenRouter e al suo fornitore.</string>
   <string name="openrouter_key">Chiave API OpenRouter</string>
   <string name="openrouter_key_hint">Crea una chiave su openrouter.ai. Resta cifrata su questo dispositivo e non entra nel backup.</string>

@@ -53,6 +53,7 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 import warnings
@@ -516,6 +517,9 @@ class JobRegistry:
         with self._lock:
             self._prune(now)
             existing = self._items.get(job_id)
+            # An older transcription client must not replace an immutable alignment snapshot.
+            if existing is not None and hasattr(existing, "alignment_account"):
+                return None
             # Lo stesso id da un altro bearer non si prende il posto di quello che c'e': sarebbe il
             # modo di leggere, o cancellare, il lavoro di un altro.
             if existing is not None and not secrets.compare_digest(existing.bearer_hash, owner):
@@ -543,6 +547,8 @@ class JobRegistry:
 
     @staticmethod
     def visible_to(job: JobProgress, caller: "Caller") -> bool:
+        if hasattr(job, "alignment_account"):
+            return alignment_authorized(caller, job.alignment_account)
         if caller.kind == "owner":
             return True
         return secrets.compare_digest(job.bearer_hash, bearer_hash(caller.bearer))
@@ -611,12 +617,12 @@ class BoundedCache:
         return len(self._items)
 
 
-# Gli ospiti verificati di recente: token -> nome. Dieci minuti se e' buono, uno se no: un token
+# Gli ospiti verificati di recente: token -> (owner, indice, nome). Dieci minuti se e' buono, uno se no: un token
 # revocato smette di valere entro dieci minuti, e uno inventato non fa una richiesta al Worker a
 # ogni tentativo.
 GUEST_CACHE = BoundedCache(256)
 
-# I biglietti dell'account (`pt_…`, vedi [verify_ticket]): biglietto -> valido. Uno buono vale
+# I biglietti dell'account (`pt_…`, vedi [verify_ticket]): biglietto -> (owner, indice, valido). Uno buono vale
 # fino alla sua scadenza, che il Worker dice, e al massimo dodici ore; uno cattivo un minuto.
 TICKET_CACHE = BoundedCache(256)
 TICKET_MAX_S = 12 * 3600
@@ -1383,13 +1389,13 @@ async def idle_watch() -> None:
         # lezione finira' per ricordarsene, e allora se ne ricorda l'orologio.
         restart_when_idle()
         idle = STATE["idle_seconds"]
-        if not idle or STATE["model"] is None or STATE["busy"]:
+        if not idle or (STATE["model"] is None and not STATE["align"]) or STATE["busy"]:
             continue
         quiet = time.time() - STATE["last_used"]
         if quiet < idle:
             continue
         async with GATE.slot(0):
-            if STATE["model"] is not None and not STATE["busy"]:
+            if (STATE["model"] is not None or STATE["align"]) and not STATE["busy"]:
                 unload_model(f"{quiet / 60:.0f} minuti senza richieste")
 
 
@@ -1403,7 +1409,7 @@ async def unload_now(reason: str) -> bool:
     if STATE["busy"]:
         return False
     async with GATE.slot(0):
-        if STATE["busy"] or STATE["model"] is None:
+        if STATE["busy"] or (STATE["model"] is None and not STATE["align"]):
             return False
         unload_model(reason)
         return True
@@ -1614,7 +1620,7 @@ def _load_align_model(whisperx: Any, language: str, device: str):
 #   una trascrizione sola, senza toccare le impostazioni del computer ([JobOverrides]). Solo proprietario.
 FEATURES = (
     "by_ref", "archive_upload", "server_chunks", "file_meta", "prompt", "auto_chunks", "partial", "holes", "sdocx_index",
-    "job_options",
+    "job_options", "forced_alignment_v1",
 )
 
 
@@ -1623,7 +1629,7 @@ def health() -> dict[str, Any]:
     """Quello che l'app chiama per dire «raggiunto» invece di «non risponde». Risponde subito
     anche a modello scarico: e' il senso di non caricarlo all'avvio. E senza credenziali: e' la
     domanda «ci sei?», non «chi sei?»."""
-    loaded = STATE["model"] is not None
+    loaded = STATE["model"] is not None or bool(STATE["align"])
     quiet = time.time() - STATE["last_used"] if STATE["last_used"] else 0.0
     alignment = dict(STATE["alignment"])
     return {
@@ -1771,18 +1777,47 @@ class AuthError(Exception):
 
 
 @dataclass(frozen=True)
+class AuthAuthority:
+    """Verified account/index identity; an unbound PC also belongs to its local token hash.
+
+    Kept only in process, never returned in source/progress payloads. Bound owner tokens and
+    refreshed tickets share the same account identity, but every token caller is also checked
+    against the current local token before admission/access/work.
+    """
+
+    owner: str
+    index_url: str
+    unbound_token_hash: str = ""
+
+
+def authentication_authority() -> AuthAuthority:
+    owner, index_url = STATE["owner"], STATE["index_url"]
+    return AuthAuthority(owner, index_url, "" if owner else bearer_hash(STATE["token"] or ""))
+
+
+@dataclass(frozen=True)
 class Caller:
     """
     Chi ha fatto la richiesta, deciso una volta sola in [AuthGate] prima di leggere il corpo.
 
     `kind` e' "owner" o "guest"; `via` dice come ci si e' arrivati ("token", "ticket", "guest",
-    "anonymous"), e serve al registro e a nient'altro.
+    "anonymous"). `authority` is captured before verification, never reconstructed after an
+    async handoff. Missing authority is not sufficient to authorize alignment.
     """
 
     kind: str
     via: str
     name: str | None = None
     bearer: str = ""
+    authority: AuthAuthority | None = None
+
+
+def caller_authority_current(caller: Caller) -> bool:
+    if caller.authority is None or caller.authority != authentication_authority():
+        return False
+    if caller.via == "token":
+        return bool(caller.bearer and STATE["token"] and _same_secret(caller.bearer, STATE["token"]))
+    return True
 
 
 def _same_secret(given: str, expected: str) -> bool:
@@ -1810,18 +1845,19 @@ def identify(authorization: str) -> Caller:
         `owner` nel config.json.
     """
     bearer = authorization[7:].strip() if authorization[:7].lower() == "bearer " else ""
+    authority = authentication_authority()
     if bearer.startswith("pg_"):
-        name = verify_guest(bearer)
+        name = verify_guest(bearer, authority=authority)
         if not name:
             raise AuthError("ospite non riconosciuto")
-        return Caller("guest", "guest", name, bearer)
+        return Caller("guest", "guest", name, bearer, authority)
     expected = STATE["token"]
     if bearer and expected and _same_secret(bearer, expected):
-        return Caller("owner", "token", None, bearer)
-    if bearer.startswith("pt_") and verify_ticket(bearer):
-        return Caller("owner", "ticket", None, bearer)
+        return Caller("owner", "token", None, bearer, authority)
+    if bearer.startswith("pt_") and verify_ticket(bearer, authority=authority):
+        return Caller("owner", "ticket", None, bearer, authority)
     if STATE["accept_anonymous"]:
-        return Caller("owner", "anonymous")
+        return Caller("owner", "anonymous", authority=authority)
     if bearer.startswith("pt_"):
         raise AuthError("il computer non riconosce l'account: controlla owner e index_url nel config.json")
     if bearer:
@@ -1875,6 +1911,27 @@ class AuthGate:
                 response = JSONResponse({"detail": "restarting"}, status_code=503, headers={"Retry-After": "20"})
                 await response(scope, receive, send)
                 return
+            if scope.get("method") == "POST" and scope.get("path") == "/v1/audio/alignments":
+                # Reject before multipart parsing, including anonymous owner access.
+                if caller.kind != "owner" or caller.via == "anonymous":
+                    await JSONResponse({"detail": "owner_only"}, status_code=403)(scope, receive, send)
+                    return
+            # Identification ran on a thread. A binding may have changed while its result was
+            # handed back to this loop: do not read a body or register any job under new state.
+            if not caller_authority_current(caller):
+                await JSONResponse({"detail": "account_changed"}, status_code=409)(scope, receive, send)
+                return
+            if scope.get("method") == "POST" and scope.get("path") == "/v1/audio/alignments":
+                job_id = headers.get("x-pampa-job", "")
+                if not JOB_ID_PATTERN.fullmatch(job_id):
+                    await JSONResponse({"detail": "job_id_required"}, status_code=400)(scope, receive, send)
+                    return
+                if JOBS.get(job_id) is not None:
+                    await JSONResponse({"detail": "job_id_conflict"}, status_code=409)(scope, receive, send)
+                    return
+                alignment_job = JOBS.open(job_id, caller)
+                alignment_job.alignment_account = alignment_account(caller)
+                scope.setdefault("state", {})["job"] = alignment_job
             state = scope.setdefault("state", {})
             state["caller"] = caller
             # Il lavoro si registra qui, con i soli header, e non nell'endpoint: FastAPI chiama
@@ -1910,11 +1967,11 @@ def require_owner(request: Request) -> None:
 check_token = require_owner
 
 
-def _post_worker(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _post_worker(path: str, payload: dict[str, Any], *, index_url: str | None = None) -> dict[str, Any]:
     """Una POST al Worker dell'indice. Solleva `HTTPError` su un rifiuto, `OSError` sulla rete."""
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
-        STATE["index_url"].rstrip("/") + path,
+        (STATE["index_url"] if index_url is None else index_url).rstrip("/") + path,
         data=body,
         method="POST",
         headers={"Content-Type": "application/json", "User-Agent": WORKER_USER_AGENT},
@@ -1924,26 +1981,31 @@ def _post_worker(path: str, payload: dict[str, Any]) -> dict[str, Any]:
     return answer if isinstance(answer, dict) else {}
 
 
-def verify_guest(token: str) -> str | None:
+def verify_guest(token: str, *, authority: AuthAuthority | None = None) -> str | None:
     """Chiede al Worker se il token e' un ospite di questo proprietario. Il nome, o None."""
     now = time.time()
+    authority = authentication_authority() if authority is None else authority
+    if authority != authentication_authority():
+        return None
     hit, cached = GUEST_CACHE.get(token, now)
-    if hit:
-        return cached
+    if hit and isinstance(cached, tuple) and cached[:2] == (authority.owner, authority.index_url):
+        return cached[2]
     name: str | None = None
-    if STATE["index_url"] and STATE["owner"]:
+    if authority.index_url and authority.owner:
         try:
-            name = _post_worker("/v1/guests/verify", {"token": token, "owner": STATE["owner"]}).get("name") or None
+            name = _post_worker("/v1/guests/verify", {"token": token, "owner": authority.owner}, index_url=authority.index_url).get("name") or None
         except urllib.error.HTTPError:
             name = None
         except (OSError, ValueError) as error:
             log.warning("verifica dell'ospite non riuscita: %s", error)
             name = None
-    GUEST_CACHE.put(token, name, now + (600 if name else NEGATIVE_S))
+    if authority != authentication_authority():
+        return None
+    GUEST_CACHE.put(token, (authority.owner, authority.index_url, name), now + (600 if name else NEGATIVE_S))
     return name
 
 
-def verify_ticket(ticket: str) -> bool:
+def verify_ticket(ticket: str, *, authority: AuthAuthority | None = None) -> bool:
     """
     Chiede al Worker se il biglietto `pt_…` e' dell'account scritto in `owner`.
 
@@ -1954,14 +2016,18 @@ def verify_ticket(ticket: str) -> bool:
     Worker a ogni tentativo — e perche' chi corregge `owner` nel config.json non aspetti ore.
     """
     now = time.time()
+    authority = authentication_authority() if authority is None else authority
+    if authority != authentication_authority():
+        return False
+    account_config = (authority.owner, authority.index_url)
     hit, cached = TICKET_CACHE.get(ticket, now)
-    if hit:
-        return bool(cached)
+    if hit and isinstance(cached, tuple) and cached[:2] == account_config:
+        return bool(cached[2])
     until = now + NEGATIVE_S
     valid = False
-    if STATE["index_url"] and STATE["owner"]:
+    if account_config[0] and account_config[1]:
         try:
-            answer = _post_worker("/v1/computer/verify", {"ticket": ticket, "owner": STATE["owner"]})
+            answer = _post_worker("/v1/computer/verify", {"ticket": ticket, "owner": authority.owner}, index_url=authority.index_url)
             expires = float(answer.get("expiresAt") or 0) / 1000
             if answer.get("ok") is True and expires > now:
                 valid = True
@@ -1970,7 +2036,9 @@ def verify_ticket(ticket: str) -> bool:
             log.info("biglietto dell'account rifiutato dal Worker (%s): controlla owner nel config.json", error.code)
         except (OSError, ValueError, TypeError) as error:
             log.warning("verifica del biglietto non riuscita: %s", error)
-    TICKET_CACHE.put(ticket, valid, until)
+    if authority != authentication_authority():
+        return False
+    TICKET_CACHE.put(ticket, (*account_config, valid), until)
     return valid
 
 
@@ -2574,7 +2642,10 @@ async def job_status(job_id: str, request: Request) -> dict[str, Any]:
     if job is None or not JOBS.visible_to(job, caller):
         raise HTTPException(status_code=404, detail="lavoro sconosciuto")
     position = GATE.position(job.gate_key) if job.current_state() == "queued" else None
-    return job.snapshot(position=position)
+    answer = job.snapshot(position=position)
+    if hasattr(job, "alignment_source"):
+        answer.update(protocol_version=1, source=job.alignment_source, part_id=job.alignment_part_id)
+    return answer
 
 
 @app.get("/v1/jobs/{job_id}/partial")
@@ -2594,6 +2665,339 @@ async def job_partial(job_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="lavoro sconosciuto")
     first = _positive_int(request.query_params.get("from", "")) or 0
     return job.partial(first)
+
+
+# --- immutable cloud-text alignment (additive protocol, no ASR) ---------------------------------
+
+ALIGN_WINDOW_MS = 30_000
+ALIGN_WINDOW_UNITS = 400
+ALIGN_MAX_WINDOWS = 1000
+ALIGN_MAX_TEXT_UNITS = 200_000
+ALIGN_MIN_CHAR_SCORE = 0.5  # Conservative filter, not a calibrated accuracy guarantee.
+
+
+def alignment_account(caller: Caller) -> AuthAuthority | None:
+    """The authentication snapshot, never the configuration current after an await."""
+    return caller.authority
+
+
+def alignment_authorized(caller: Caller, account: AuthAuthority | None) -> bool:
+    return (caller.kind == "owner" and caller.via in ("token", "ticket")
+            and caller_authority_current(caller) and alignment_account(caller) == account)
+
+
+def alignment_fence(caller: Caller, account: AuthAuthority | None, progress: JobProgress) -> None:
+    progress.check_cancelled()
+    if not alignment_authorized(caller, account):
+        raise HTTPException(status_code=409, detail="account_changed")
+
+
+def utf16_offsets(text: str) -> list[int]:
+    """Python character boundaries -> Android String offsets, without normalizing Unicode."""
+    offsets = [0]
+    for char in text:
+        if 0xD800 <= ord(char) <= 0xDFFF:
+            raise ValueError("invalid_unicode")
+        offsets.append(offsets[-1] + (2 if ord(char) > 0xFFFF else 1))
+    return offsets
+
+
+def parse_alignment(value: str) -> dict[str, Any]:
+    """Validate the immutable snapshot and coarse windows before touching audio or models."""
+    try:
+        if len(value) > 1_000_000:
+            raise ValueError("request_too_large")
+        data = json.loads(value)
+        if not isinstance(data, dict) or type(data.get("protocol_version")) is not int or data["protocol_version"] != 1:
+            raise ValueError("unsupported_protocol")
+        source, text, language = data.get("source"), data.get("text"), data.get("language")
+        def identifier(item: Any) -> bool:
+            return isinstance(item, str) and 0 < len(item) <= 128 and not any(ord(c) < 32 for c in item)
+        def sha(item: Any) -> bool:
+            return isinstance(item, str) and archive.SHA256.fullmatch(item) is not None
+        if not isinstance(source, dict) or not identifier(source.get("raw_id")) or type(source.get("raw_version")) is not int or source["raw_version"] < 1 or not sha(source.get("raw_sha256")):
+            raise ValueError("invalid_source")
+        parts = source.get("parts")
+        if not isinstance(parts, list) or not 1 <= len(parts) <= 1000:
+            raise ValueError("invalid_parts")
+        if any(not isinstance(p, dict) or not identifier(p.get("id")) or not sha(p.get("sha256")) for p in parts):
+            raise ValueError("invalid_parts")
+        if len({p["id"] for p in parts}) != len(parts) or data.get("part_id") not in {p["id"] for p in parts}:
+            raise ValueError("invalid_part_id")
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("text_required")
+        offsets = utf16_offsets(text)
+        if offsets[-1] > ALIGN_MAX_TEXT_UNITS:
+            raise ValueError("text_too_large")
+        if not sha(data.get("text_sha256")) or hashlib.sha256(text.encode("utf-8")).hexdigest() != data["text_sha256"]:
+            raise ValueError("text_sha_mismatch")
+        if not isinstance(language, str) or not re.fullmatch(r"[a-z]{2,3}", language):
+            raise ValueError("language_required")
+        segments = data.get("segments", [])
+        if not isinstance(segments, list) or len(segments) > ALIGN_MAX_WINDOWS:
+            raise ValueError("too_many_windows")
+        boundaries = set(offsets)
+        previous_text = previous_time = 0
+        for seg in segments:
+            if not isinstance(seg, dict) or any(type(seg.get(k)) is not int for k in ("text_start", "text_end", "start_ms", "end_ms")):
+                raise ValueError("invalid_window")
+            a, b, start, end = (seg[k] for k in ("text_start", "text_end", "start_ms", "end_ms"))
+            if a not in boundaries or b not in boundaries or a < previous_text or b <= a or start < previous_time or end <= start:
+                raise ValueError("invalid_window_bounds")
+            previous_text, previous_time = b, end
+        # Keep only wire fields; model output can never become authoritative transcript text.
+        return {k: data[k] for k in ("protocol_version", "source", "part_id", "text", "text_sha256", "language")} | {"segments": segments}
+    except (ValueError, TypeError, KeyError, RecursionError) as error:
+        raise HTTPException(status_code=400, detail=str(error) or "invalid_request") from None
+
+
+def alignment_tokens(text: str) -> list[dict[str, Any]]:
+    offsets = utf16_offsets(text)
+    return [{"text_start": offsets[m.start()], "text_end": offsets[m.end()], "start_ms": None,
+             "end_ms": None, "status": "missing", "reason": "no_bounded_window"}
+            for m in re.finditer(r"\S+", text)]
+
+
+def alignment_overlay(text: str, result: dict, dictionary: dict, duration_ms: int) -> list[dict]:
+    """Consume RAW character evidence only, never WhisperX interpolated word/sentence times.
+
+    The exact non-whitespace character sequence must match, including punctuation. Unknown
+    lexical characters (including upstream wildcard alignments) invalidate that whole token.
+    """
+    tokens = alignment_tokens(text)
+    expected = [(i, c) for i, c in enumerate(text) if not c.isspace()]
+    chars = [c for seg in result.get("segments", []) for c in (seg.get("chars") or []) if not str(c.get("char", "")).isspace()]
+    if [c.get("char") for c in chars] != [c for _, c in expected]:
+        for token in tokens:
+            token["reason"] = "character_mapping_mismatch"
+        return tokens
+    by_index = {i: item for (i, _), item in zip(expected, chars)}
+    previous_end = 0
+    for token, match in zip(tokens, re.finditer(r"\S+", text)):
+        indices = [i for i in range(match.start(), match.end()) if text[i].isalnum() or unicodedata.category(text[i]).startswith("M")]
+        token["reason"] = "unknown_character"
+        if not indices or any(len(text[i].lower()) != 1 or text[i].lower() not in dictionary for i in indices):
+            continue
+        evidence = [by_index[i] for i in indices]
+        token["reason"] = "unreliable_character_timing"
+        prior = previous_end / 1000
+        valid = True
+        for char in evidence:
+            a, b, score = (char.get(k) for k in ("start", "end", "score"))
+            if any(type(v) not in (int, float) or not math.isfinite(v) for v in (a, b, score)) or not (prior <= a < b <= duration_ms / 1000) or not (ALIGN_MIN_CHAR_SCORE <= score <= 1):
+                valid = False
+                break
+            prior = b
+        if not valid:
+            continue
+        start, end = round(evidence[0]["start"] * 1000), round(evidence[-1]["end"] * 1000)
+        if not previous_end <= start < end <= duration_ms:
+            continue
+        token.update(start_ms=start, end_ms=end, status="measured", reason=None)
+        previous_end = end
+    return tokens
+
+
+def _alignment_sha(path: Path, check: Callable[[], None]) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            check()
+            digest.update(chunk)
+    check()
+    return digest.hexdigest()
+
+
+def _force_align(source: Path, data: dict, caller: Caller, account: AuthAuthority, progress: JobProgress) -> dict:
+    """Bounded decode + CTC alignment of supplied words. No Whisper ASR/language detection."""
+    check = functools.partial(alignment_fence, caller, account, progress)
+    def on_progress(percent: float) -> None:
+        check()
+        progress.advance(float(percent) / 100.0, "aligning")
+    check()
+    sha = next(p["sha256"] for p in data["source"]["parts"] if p["id"] == data["part_id"])
+    if _alignment_sha(source, check) != sha:
+        raise HTTPException(status_code=409, detail="sha_mismatch")
+    text = data["text"]
+    tokens = alignment_tokens(text)
+    offsets = utf16_offsets(text)
+    indices = {offset: i for i, offset in enumerate(offsets)}
+    progress.set("decoding")
+    seconds = probe_duration(source)
+    check()
+    duration_ms = round(seconds * 1000) if seconds is not None and math.isfinite(seconds) and seconds > 0 else None
+    progress.audio_s = seconds if duration_ms is not None else None
+    windows = list(data["segments"])
+    if not windows and duration_ms is not None and duration_ms <= ALIGN_WINDOW_MS and offsets[-1] <= ALIGN_WINDOW_UNITS:
+        windows = [{"text_start": 0, "text_end": offsets[-1], "start_ms": 0, "end_ms": duration_ms}]
+    if duration_ms is not None and any(w["end_ms"] > duration_ms for w in windows):
+        raise HTTPException(status_code=409, detail="audio_bounds_mismatch")
+    model = metadata = None
+    for number, window in enumerate(windows):
+        check()
+        a, b, start, end = (window[k] for k in ("text_start", "text_end", "start_ms", "end_ms"))
+        selected = [t for t in tokens if a <= t["text_start"] and t["text_end"] <= b]
+        # Large/coarse segments are never subdivided by evenly distributing text over time.
+        if b - a > ALIGN_WINDOW_UNITS or end - start > ALIGN_WINDOW_MS:
+            for token in selected:
+                token["reason"] = "window_limit"
+            continue
+        if not selected:
+            continue
+        if data["language"] not in ALIGN_LANGUAGES:
+            for token in selected:
+                token["reason"] = "language_unsupported"
+            continue
+        progress.piece(number + 1, len(windows))
+        try:
+            progress.set("loading_model")
+            if model is None:
+                model, metadata = align_model_for(data["language"])
+                if metadata.get("language") != data["language"]:
+                    raise AlignmentUnavailable("alignment language mismatch")
+            check()
+            progress.set("decoding")
+            audio = load_audio(source, 16000, start_s=start / 1000, duration_s=(end - start) / 1000, check=check)
+            actual_ms = min(end - start, math.floor(len(audio) * 1000 / 16000))
+            if len(audio) > (end - start) * 16 or actual_ms <= 0:
+                raise ValueError("decoded_audio_bounds")
+            check()
+            import whisperx
+            progress.set("aligning")
+            excerpt = text[indices[a]:indices[b]]
+            aligned = whisperx.align(
+                [{"start": 0.0, "end": actual_ms / 1000, "text": excerpt}], model, metadata,
+                audio, STATE["device"], interpolate_method="ignore", return_char_alignments=True,
+                progress_callback=on_progress,
+            )
+            check()
+            overlay = alignment_overlay(excerpt, aligned, metadata["dictionary"], actual_ms)
+            translated = {(t["text_start"] + a, t["text_end"] + a): t for t in overlay}
+            for token in selected:
+                found = translated.get((token["text_start"], token["text_end"]))
+                if found is None:
+                    token["reason"] = "token_mapping_mismatch"
+                    continue
+                token.update(status=found["status"], reason=found["reason"])
+                if found["status"] == "measured":
+                    token.update(start_ms=found["start_ms"] + start, end_ms=found["end_ms"] + start)
+        except Exception as error:
+            # A cancellation is BaseException; account changes must also escape fallback.
+            if isinstance(error, HTTPException):
+                raise
+            for token in selected:
+                token.update(start_ms=None, end_ms=None, status="missing", reason="aligner_unavailable" if isinstance(error, AlignmentUnavailable) else "alignment_failed")
+            log.info("forced alignment window unavailable: %s", type(error).__name__)
+        check()
+    check()
+    if _alignment_sha(source, check) != sha:
+        raise HTTPException(status_code=409, detail="sha_mismatch")
+    measured = sum(t["status"] == "measured" for t in tokens)
+    return {k: data[k] for k in ("protocol_version", "source", "part_id", "text", "text_sha256", "language")} | {
+        "offset_unit": "utf16", "time_unit": "ms", "timings": tokens,
+        "status": "aligned" if measured == len(tokens) else "partial" if measured else "deferred",
+        "instance": INSTANCE, "audio_sha256": sha,
+    }
+
+
+async def _run_alignment_work(work: SharedWork, source: Path, data: dict, caller: Caller, account: AuthAuthority) -> dict:
+    progress = work.progress
+    progress.set("queued")
+    try:
+        alignment_fence(caller, account, progress)
+        async with GATE.slot(0, key=progress.id):
+            alignment_fence(caller, account, progress)
+            work.admitted = True
+            progress.admitted()
+            STATE["busy"] = True
+            try:
+                answer = await asyncio.to_thread(_force_align, source, data, caller, account, progress)
+                alignment_fence(caller, account, progress)
+                progress.set("done", 1.0)
+                return answer
+            finally:
+                STATE["busy"] = False
+                STATE["last_used"] = time.time()
+                restart_when_idle()
+    except asyncio.CancelledError:
+        progress.set("failed", detail="annullata")
+        raise JobCancelled() from None
+    except BaseException as error:
+        progress.set("failed", detail="annullata" if isinstance(error, JobCancelled) else "alignment_failed")
+        raise
+
+
+@app.post("/v1/audio/alignments")
+async def alignments(request: Request, alignment: str = Form(...), file: UploadFile | None = File(default=None)) -> dict:
+    """Owner-only multipart or owned archive reference; response is an immutable-text overlay."""
+    caller = caller_of(request)
+    if caller.kind != "owner" or caller.via == "anonymous":
+        raise HTTPException(status_code=403, detail="owner_only")
+    progress = request.state.job
+    account = progress.alignment_account
+    target = None
+    work = None
+    try:
+        alignment_fence(caller, account, progress)
+        data = parse_alignment(alignment)
+        progress.alignment_source = data["source"]
+        progress.alignment_part_id = data["part_id"]
+        sha = next(p["sha256"] for p in data["source"]["parts"] if p["id"] == data["part_id"])
+        if file is not None:
+            # Incremental copy/hash; never persist audio/text in archive unless user did so separately.
+            with tempfile.NamedTemporaryFile(suffix=".audio", delete=False) as handle:
+                target = Path(handle.name)
+                digest = hashlib.sha256()
+                while True:
+                    alignment_fence(caller, account, progress)
+                    chunk = await file.read(1024 * 1024)
+                    alignment_fence(caller, account, progress)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                    handle.write(chunk)
+            if digest.hexdigest() != sha:
+                raise HTTPException(status_code=409, detail="sha_mismatch")
+            source = target
+        else:
+            store = archive.ARCHIVE
+            def owned_record() -> dict | None:
+                alignment_fence(caller, account, progress)
+                record = store.get(sha) if store is not None else None
+                alignment_fence(caller, account, progress)
+                return record
+            record = await asyncio.to_thread(owned_record)
+            if record is None:
+                raise HTTPException(status_code=404, detail="blob_missing")
+            source = record["path"]
+        alignment_fence(caller, account, progress)
+        work = SharedWork(key=None, progress=JobProgress("a" + secrets.token_hex(8)))
+        work.task = asyncio.create_task(_run_alignment_work(work, source, data, caller, account))
+        def settled(task: Any) -> None:
+            # A disconnected/cancelled POST may leave no waiter to retrieve the exception.
+            with contextlib.suppress(asyncio.CancelledError):
+                task.exception()
+        work.task.add_done_callback(settled)
+        progress.follow(work.progress)
+        answer = await _await_work(work, request, progress)
+        alignment_fence(caller, account, progress)
+        progress.set("done", 1.0)
+        return answer | {"job_id": progress.id}
+    except JobCancelled:
+        progress.set("failed", detail="annullata")
+        raise HTTPException(status_code=499, detail="annullata") from None
+    except BaseException:
+        progress.set("failed", detail="alignment_failed")
+        raise
+    finally:
+        if target is not None:
+            def cleanup(_task: Any = None, path: Path = target) -> None:
+                with contextlib.suppress(OSError):
+                    path.unlink(missing_ok=True)
+            if work is not None and not work.task.done():
+                work.task.add_done_callback(cleanup)
+            else:
+                cleanup()
 
 
 # --- il lavoro ---------------------------------------------------------------------------------

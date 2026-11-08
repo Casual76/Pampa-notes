@@ -579,6 +579,8 @@ interface SourceDao {
 
 @Dao
 interface JobDao {
+  @Query("UPDATE jobs SET model = :model, optionsJson = :options, updatedAt = :now WHERE id = :id AND state = 'QUEUED' AND provider = :expectedProvider AND model IS :expectedModel AND optionsJson IS :expectedOptions")
+  suspend fun pinTranscription(id: String, model: String?, options: String, now: Long, expectedProvider: String, expectedModel: String?, expectedOptions: String?): Int
   @Query("SELECT * FROM jobs ORDER BY createdAt DESC")
   fun observeAll(): Flow<List<JobEntity>>
 
@@ -655,7 +657,7 @@ interface JobDao {
   @Query("SELECT * FROM jobs WHERE provider = :provider AND type = 'TRANSCRIBE' AND state IN ('QUEUED','FAILED')")
   suspend fun movableTranscriptions(provider: String): List<JobEntity>
 
-  @Query("UPDATE jobs SET provider = :to, phase = NULL, updatedAt = :now WHERE id = :id AND provider = :from AND type = 'TRANSCRIBE' AND state IN ('QUEUED','FAILED') AND optionsJson IS :options")
+  @Query("UPDATE jobs SET provider = :to, model = NULL, phase = NULL, updatedAt = :now WHERE id = :id AND provider = :from AND type = 'TRANSCRIBE' AND state IN ('QUEUED','FAILED') AND optionsJson IS :options")
   suspend fun moveTranscription(id: String, from: String, to: String, options: String?, now: Long): Int
 
   /**
@@ -665,14 +667,23 @@ interface JobDao {
    */
   @Query(
     "UPDATE jobs SET state = :state, model = :model, attempts = attempts + 1, phase = NULL, errorCode = NULL, " +
-      "errorMessage = NULL, updatedAt = :now WHERE id = :id AND state = 'QUEUED'",
+      "errorMessage = NULL, updatedAt = :now WHERE id = :id AND state = 'QUEUED' AND provider = :expectedProvider",
   )
-  suspend fun start(id: String, state: JobState, model: String?, now: Long): Int
+  suspend fun start(id: String, state: JobState, model: String?, now: Long, expectedProvider: String): Int
+
+  /** Pre-start metadata can suspend. Acquire only the exact pinned dispatch identity. */
+  @Query(
+    "UPDATE jobs SET state = :state, model = :model, attempts = attempts + 1, phase = NULL, errorCode = NULL, " +
+      "errorMessage = NULL, updatedAt = :now WHERE id = :id AND state = 'QUEUED' AND provider = :expectedProvider " +
+      "AND model IS :expectedModel AND optionsJson IS :expectedOptions AND attempts = :expectedAttempts",
+  )
+  suspend fun startOwned(id: String, state: JobState, model: String?, now: Long, expectedProvider: String,
+    expectedModel: String?, expectedOptions: String?, expectedAttempts: Int): Int
 
   /** Finito bene: solo le colonne dell'esito, senza riscrivere la riga con una copia vecchia. */
   @Query(
     "UPDATE jobs SET state = 'DONE', progress = 1, phase = NULL, errorCode = NULL, errorMessage = NULL, " +
-      "finishedAt = :now, updatedAt = :now WHERE id = :id",
+      "finishedAt = :now, updatedAt = :now WHERE id = :id AND state IN ('QUEUED','PREPARING','UPLOADING','TRANSCRIBING','STITCHING')",
   )
   suspend fun markDone(id: String, now: Long): Int
 
@@ -683,9 +694,33 @@ interface JobDao {
    */
   @Query(
     "UPDATE jobs SET state = 'FAILED', errorCode = :code, errorMessage = :message, phase = NULL, " +
-      "finishedAt = :now, updatedAt = :now WHERE id = :id AND state NOT IN ('CANCEL_REQUESTED','CANCELLED','DONE')",
+      "finishedAt = :now, updatedAt = :now WHERE id = :id AND provider = :expectedProvider " +
+      "AND model IS :expectedModel AND optionsJson IS :expectedOptions AND attempts = :expectedAttempts " +
+      "AND ((:expectedQueued AND state = 'QUEUED') OR (NOT :expectedQueued AND state IN ('PREPARING','UPLOADING','TRANSCRIBING','STITCHING')))",
   )
-  suspend fun fail(id: String, code: String, message: String?, now: Long): Int
+  suspend fun fail(id: String, code: String, message: String?, now: Long, expectedProvider: String,
+    expectedModel: String?, expectedOptions: String?, expectedAttempts: Int, expectedQueued: Boolean): Int
+
+  /** Retry/privacy disposition has the same ownership fence as failure, including cancellation. */
+  @Query(
+    "UPDATE jobs SET state = CASE WHEN state = 'CANCEL_REQUESTED' THEN 'CANCELLED' ELSE 'QUEUED' END, " +
+      "phase = CASE WHEN state = 'CANCEL_REQUESTED' THEN NULL ELSE :phase END, progress = 0, errorCode = NULL, errorMessage = NULL, " +
+      "finishedAt = CASE WHEN state = 'CANCEL_REQUESTED' THEN :now ELSE NULL END, updatedAt = :now, optionsJson = :nextOptions " +
+      "WHERE id = :id AND provider = :expectedProvider AND model IS :expectedModel AND optionsJson IS :expectedOptions " +
+      "AND attempts = :expectedAttempts AND ((:expectedQueued AND state IN ('QUEUED','CANCEL_REQUESTED')) OR " +
+      "(NOT :expectedQueued AND state IN ('PREPARING','UPLOADING','TRANSCRIBING','STITCHING','CANCEL_REQUESTED')))",
+  )
+  suspend fun requeueOwned(id: String, phase: String?, now: Long, expectedProvider: String,
+    expectedModel: String?, expectedOptions: String?, expectedAttempts: Int, expectedQueued: Boolean, nextOptions: String?): Int
+
+  @Query(
+    "UPDATE jobs SET state = 'CANCELLED', phase = NULL, finishedAt = :now, updatedAt = :now WHERE id = :id " +
+      "AND provider = :expectedProvider AND model IS :expectedModel AND optionsJson IS :expectedOptions AND attempts = :expectedAttempts " +
+      "AND ((:expectedQueued AND state IN ('QUEUED','CANCEL_REQUESTED')) OR " +
+      "(NOT :expectedQueued AND state IN ('PREPARING','UPLOADING','TRANSCRIBING','STITCHING','CANCEL_REQUESTED')))",
+  )
+  suspend fun cancelOwned(id: String, now: Long, expectedProvider: String, expectedModel: String?,
+    expectedOptions: String?, expectedAttempts: Int, expectedQueued: Boolean): Int
 
   /** «Annulla» su un lavoro ancora in fila: si chiude subito. Il numero di righe dice se lo era. */
   @Query("UPDATE jobs SET state = 'CANCELLED', phase = NULL, finishedAt = :now, updatedAt = :now WHERE id = :id AND state = 'QUEUED'")
@@ -698,6 +733,19 @@ interface JobDao {
   )
   suspend fun requestCancelIfRunning(id: String, now: Long): Int
 
+  /** Atomic with running-to-queued transitions; terminal and missing jobs stay untouched. */
+  @Query(
+    "UPDATE jobs SET state = CASE WHEN state = 'QUEUED' THEN 'CANCELLED' ELSE 'CANCEL_REQUESTED' END, " +
+      "phase = CASE WHEN state = 'QUEUED' THEN NULL ELSE phase END, " +
+      "finishedAt = CASE WHEN state = 'QUEUED' THEN :now ELSE finishedAt END, updatedAt = :now " +
+      "WHERE id = :id AND state IN ('QUEUED','PREPARING','UPLOADING','TRANSCRIBING','STITCHING')",
+  )
+  suspend fun requestCancel(id: String, now: Long): Int
+
+  /** The watcher may already have exited while a result was being saved. */
+  @Query("UPDATE jobs SET state = 'CANCELLED', phase = NULL, finishedAt = :now, updatedAt = :now WHERE id = :id AND state = 'CANCEL_REQUESTED'")
+  suspend fun finishCancellation(id: String, now: Long): Int
+
   @Query("SELECT * FROM jobs WHERE state = 'FAILED'")
   suspend fun failed(): List<JobEntity>
 
@@ -706,7 +754,7 @@ interface JobDao {
    * segnata tale nelle statistiche); le opzioni le decide chi chiama.
    */
   @Query(
-    "UPDATE jobs SET state = 'QUEUED', provider = :provider, optionsJson = :optionsJson, errorCode = NULL, " +
+    "UPDATE jobs SET state = 'QUEUED', model = CASE WHEN provider = :provider THEN model ELSE NULL END, provider = :provider, optionsJson = :optionsJson, errorCode = NULL, " +
       "errorMessage = NULL, phase = NULL, progress = 0, finishedAt = NULL, updatedAt = :now WHERE id = :id",
   )
   suspend fun retry(id: String, provider: String, optionsJson: String?, now: Long): Int
@@ -755,7 +803,7 @@ interface JobDao {
    */
   @Query(
     "UPDATE jobs SET state = :state, progress = :progress, phase = :phase, chunkTotal = :chunkTotal, " +
-      "chunkDone = :chunkDone, updatedAt = :updatedAt WHERE id = :id AND state != 'CANCEL_REQUESTED'",
+      "chunkDone = :chunkDone, updatedAt = :updatedAt WHERE id = :id AND state IN ('QUEUED','PREPARING','UPLOADING','TRANSCRIBING','STITCHING')",
   )
   suspend fun publishProgress(
     id: String,
@@ -767,17 +815,21 @@ interface JobDao {
     updatedAt: Long,
   ): Int
 
-  /** Torna in fila un lavoro che il sistema ha fermato: la ripresa riparte dai pezzi gia' su disco. */
+  /** Requeue interrupted work, or atomically finish a cancellation after its watcher has exited. */
   @Query(
-    "UPDATE jobs SET state = 'QUEUED', phase = :phase, progress = 0, errorCode = NULL, errorMessage = NULL, " +
-      "finishedAt = NULL, updatedAt = :updatedAt WHERE id = :id AND state != 'CANCEL_REQUESTED'",
+    "UPDATE jobs SET state = CASE WHEN state = 'CANCEL_REQUESTED' THEN 'CANCELLED' ELSE 'QUEUED' END, " +
+      "phase = CASE WHEN state = 'CANCEL_REQUESTED' THEN NULL ELSE :phase END, progress = 0, errorCode = NULL, errorMessage = NULL, " +
+      "finishedAt = CASE WHEN state = 'CANCEL_REQUESTED' THEN :updatedAt ELSE NULL END, updatedAt = :updatedAt " +
+      "WHERE id = :id AND state IN ('QUEUED','PREPARING','UPLOADING','TRANSCRIBING','STITCHING','CANCEL_REQUESTED')",
   )
   suspend fun requeue(id: String, phase: String?, updatedAt: Long): Int
 
   /** Come [requeue], e intanto aggiorna le opzioni del lavoro (il conto delle volte che il computer e' sparito). */
   @Query(
-    "UPDATE jobs SET state = 'QUEUED', phase = :phase, optionsJson = :optionsJson, progress = 0, errorCode = NULL, " +
-      "errorMessage = NULL, finishedAt = NULL, updatedAt = :updatedAt WHERE id = :id AND state != 'CANCEL_REQUESTED'",
+    "UPDATE jobs SET state = CASE WHEN state = 'CANCEL_REQUESTED' THEN 'CANCELLED' ELSE 'QUEUED' END, " +
+      "phase = CASE WHEN state = 'CANCEL_REQUESTED' THEN NULL ELSE :phase END, optionsJson = :optionsJson, progress = 0, errorCode = NULL, " +
+      "errorMessage = NULL, finishedAt = CASE WHEN state = 'CANCEL_REQUESTED' THEN :updatedAt ELSE NULL END, updatedAt = :updatedAt " +
+      "WHERE id = :id AND state IN ('QUEUED','PREPARING','UPLOADING','TRANSCRIBING','STITCHING','CANCEL_REQUESTED')",
   )
   suspend fun requeueWithOptions(id: String, phase: String?, optionsJson: String?, updatedAt: Long): Int
 

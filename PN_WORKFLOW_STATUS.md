@@ -1297,3 +1297,29 @@ Ramo t3/cloud-recordings-parallel, delivery426cbb48442fc21ee0733f07814e9a77cccb6
 Nove review Sol/xhigh complete: C1=6,C2=6,C3=6,C4=6,C5=9,C6=6,C7=8,C8=9,C9=9;1/1verificato per criterio, NA esclusi. Non approvato per release. Registro obbligatorio aggiunto all'integrazione: B01P1 prenotazioni spesa dopo rifiuto certo; B02P2 errore pre-start dopo migrazione privacy→PC; B03P2 status429 noto perso durante lettura header fallita/cancellazione; B04P2 stringa provider assente/spazi certificata esatta dopo ricostruzione; B05P2 overlay riscrive e perde campi pubblici sconosciuti; B06P1 evizione con riferimenti DB divenuti obsoleti durante letture protezione sospendibili. TreP3 follow-up: onboardingMistral, labelsFluid(già fixroot da verificare combinato), filename numerico data senza estensione.
 
 Build separata1306pass/1skip/0fail,lint0/127 e compilazione AndroidTest soltanto;88testcompanion mock correnti+21prove reviewerC5 non acustiche. Non sono esiti della futura unione. User-waived runtime/Room/GPU/provider/livecloud invariati. Parent ora integra il range e corregge ledger senza altri giri autonomi dei singoli workflow.
+
+## Integrazione effettiva CLOUD avviata — merge in corso
+
+Range426cbb4 applicato a main(HEADpremerge9deb589); nove conflitti attesi, nessuna integrazione ancora dichiarata conclusa. Root ha risolto documentoCLOUD con la consegna completa, unito i due observer/dipendenze in SessionViewModel e mantenuto sourceFiles+selectedSessionIds+personal in ExportModel. Root ha corretto onboardingIT/EN includendoMistral e parsing data senza estensione numerica, con una regressione origine data-only preparata. LocalFluidLabels root già presente.
+
+Quattro unità sostanziali d'integrazione pianificate, massimo tre figli effettivi attivi: A esitiHTTP/prenotazioniSpesa/privacy queue(B01–B03), B fedeltàrisposte/overlay/sourceWire(B04–B05+gateWorkerRAW), C evizioneconcorrenza/protezioniFile(B06), D trasferimentonativoPN/ZIP/selectedSessions/contrattitext+JSON(fresh alla prima disponibilità slot). A/B/C partono ora; D è esplicitamente in attesa e non contato come eseguito. ConflittiAppFiles/SessionRepository affidatiC; ExportService/PNImporter/PNMerge/RekeyTest riservatiD. Nessun autore usaGradle/compilatori/runtime/provider/deploy; build solo dopo scrittori fermi e merge risolto. Rilievi restano aperti fino alle prove e review finale unificata; contatori standalonePN4 eCLOUD3 restano consumati, non azzerati.
+
+### Unità integrazioneC consegnata; avvioD alla disponibilità slot
+
+C/B06 P1 implementato nei sorgenti: StorageRepository richiede DatabaseTransactions reale(ottavo parametro), chiamanti diretti aggiornati; HEAD remoto prima della transazione, controlli DB/riferimenti e cancellazione sotto esclusione writer, FilesInUse e guardia owner/generazione PN. AppFiles unisce alias canonici e snapshot/owner. SessionRepository mantiene sourceCloud/RAW/selezione/refined e capture/carry voci, cleanup postcommit con identità percorso ricontrollata. Root ha marcato risolti i due conflitti di sorgente, senza ancora commit di merge.
+
+C ha preparato25metodi JVM/Room(compresi4interleaving finali audio/source×archived/computer-only); eseguiti solo checkstatici python-B e whitespace su13file, nessuna compilazione/prova comportamentale. Costruttori/DI e composizione effettiva da verificare nel batch parent. Nessuna chiusura runtime o approvazione indipendente presunta. Slot liberato assegnato aD nativo PN/ZIP/selectedSessions; A/B restano attivi. Nessuna build con scrittori attivi o merge incompleto.
+
+### Integrazione A/B consegnata e primi controlli parent
+
+A ha consegnato B01–B03 (prenotazioni per tentativo esatto, rifiuti noti prima degli header, proprietà delle disposizioni coda); B ha consegnato B04–B05 e il gate RAW/source sync (stringa provider esatta, scritture metadata supportate, merge overlay senza mutare originali, envelope Worker legato al RAW). Entrambe le unità hanno fermato le scritture. Le rispettive regressioni Kotlin sono preparate e non ancora compilate; D nativo rimane in corso.
+
+Parent ha eseguito 44 test Node/SQLite offline e 17 controlli SQL Python: tutti passati. Il primo TypeScript noEmit ha rilevato una proprietà ignoreBOM obbligatoria nel tipo Cloudflare di TextDecoder. Root l'ha resa esplicita mantenendo il default false; retry noEmit exit0 e 12 test Worker del gate sorgente ripassati. Log separati %TEMP%/pampa-combined-worker-initial.log, pampa-combined-worker-typecheck.log (fallito), pampa-combined-worker-typecheck-2.log (passato), pampa-combined-worker-b-types-fix.log. Non sono esiti Kotlin/Room/distribuiti.
+
+Release GitHub più recente verificata tramite gh: stable-pampa-notes-v1.3.1 (2026-11-07). Preparati versionName1.4.0/code21 e README per PN/Mistral/registrazioni/allineamento/origine oraria. Nessun manifest/store/release modificato o pubblicato; release subordinata a integrazione, verifiche e review finale autorizzate.
+
+### Ultima unità D consegnata; freeze per verifica combinata
+
+Tutte e quattro le unità A/B/C/D hanno fermato le scritture. D ha risolto i quattro conflitti nativi senza marker e collegato selezione sessioni prima della raccolta, autorizzazione allegati/fetch, proiezione text+JSON di ogni RAW, cronologie pubbliche indipendenti e origine temporale coerente. Cinque test JVM e uno Room nuovi sono preparati; gli adattamenti delle fixture conservano le asserzioni di preservazione. Nessuna compilazione Kotlin attribuita agli autori.
+
+Parent completa ora il merge dei due rami e riserva Gradle per un singolo batch integrato max2worker/no-parallel/no-watch-fs, build fuori dal checkout. AndroidTest compilati/package soltanto. Review finale combinata successiva al risultato verificato e immutabile, con copertura esplicita dei criteri già stabiliti PN1–PN8 e C1–C9, senza riaprire o azzerare i giri standalone consumati.

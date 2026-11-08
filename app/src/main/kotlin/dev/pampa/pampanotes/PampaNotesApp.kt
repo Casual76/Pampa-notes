@@ -36,6 +36,7 @@ class PampaNotesApp : Application(), Configuration.Provider {
   @Inject lateinit var settingsStore: PampaSettingsStore
   @Inject lateinit var relayScheduler: dev.pampa.pampanotes.work.CloudRelayScheduler
   @Inject lateinit var scheduler: WorkScheduler
+  @Inject lateinit var alignment: dev.pampa.pampanotes.work.AlignmentScheduler
   @Inject lateinit var transcription: TranscriptionRepository
   @Inject lateinit var handwriting: HandwritingPages
   @Inject lateinit var notes: NoteDao
@@ -75,6 +76,7 @@ class PampaNotesApp : Application(), Configuration.Provider {
         transcription.requeueInterruptedOnce()
         relayScheduler.kick() // Resume saved transfers; receiving still requires the opt-in.
       }
+      runCatching { alignment.onApplicationOrEndpointWake() }
       runCatching {
         val settings = settingsStore.current()
         scheduler.setPeriodicArchive(settings.archiveEnabled, settings.archiveOnlyUnmetered)

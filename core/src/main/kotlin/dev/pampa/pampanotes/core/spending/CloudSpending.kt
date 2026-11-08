@@ -9,6 +9,7 @@ import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.transcription.TranscribeRequest
 import dev.pampa.pampanotes.core.transcription.TranscriptionError
 import dev.pampa.pampanotes.core.transcription.TranscriptionHttp
+import dev.pampa.pampanotes.core.transcription.OpenRouterTranscriptionProvider
 import java.io.File
 import java.util.UUID
 import javax.inject.Inject
@@ -44,7 +45,8 @@ class CloudSpending @Inject constructor(
   private val db: PampaDatabase,
   private val settings: PampaSettingsStore,
   private val keys: AiKeyStore,
-  http: TranscriptionHttp,
+  private val credentials: dev.pampa.pampanotes.core.transcription.CloudCredentials,
+  private val http: TranscriptionHttp,
 ) {
   private val metadata = OpenRouterCostMetadata(http)
   private val inFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
@@ -75,11 +77,16 @@ class CloudSpending @Inject constructor(
     return FolderCloudPolicy.resolve(note?.folderId, db.folders().all().map { CloudFolder(it.id, it.parentId, it.name) }, data().folders, settings.current().customOnly && !allowExplicitCloud)
   }
 
-  suspend fun preflight(sessionId: String, provider: String? = null, allowExplicitCloud: Boolean = false): CloudPreflight {
+  suspend fun preflight(sessionId: String, provider: String? = null, allowExplicitCloud: Boolean = false, modelOverride: String? = null): CloudPreflight {
     val prefs = settings.current()
     val selected = provider ?: prefs.transcriptionProvider.id
     val policy = policyForSession(sessionId, allowExplicitCloud = allowExplicitCloud)
-    val model = if (selected == "openrouter") policy.model ?: prefs.openRouterTranscriptionModel else if (selected == "groq") "whisper-large-v3-turbo" else prefs.endpointModel
+    val model = modelOverride?.takeIf(String::isNotBlank) ?: when (selected) {
+      "openrouter" -> policy.model ?: prefs.openRouterTranscriptionModel
+      "groq" -> prefs.groqTranscriptionModel
+      "mistral" -> prefs.mistralTranscriptionModel
+      else -> prefs.endpointModel
+    }
     val audio = db.audioParts().bySession(sessionId)
     val duration = if (audio.isEmpty() || audio.any { it.durationMs <= 0 }) 0 else audio.sumOf { it.durationMs }
     val data = data()
@@ -89,28 +96,33 @@ class CloudSpending @Inject constructor(
   }
 
   @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-  fun observePreflight(sessionId: String, provider: String? = null, allowExplicitCloud: Boolean = false): Flow<CloudPreflight> =
+  fun observePreflight(sessionId: String, provider: String? = null, allowExplicitCloud: Boolean = false, modelOverride: String? = null): Flow<CloudPreflight> =
     db.sessions().observe(sessionId).flatMapLatest { session ->
       val note = session?.session?.noteId?.let { db.notes().observe(it) } ?: flowOf(null)
       combine(changes, settings.settings, db.folders().observeAll(), note, db.audioParts().observeBySession(sessionId)) { _, _, _, _, _ ->
-        preflight(sessionId, provider, allowExplicitCloud)
+        preflight(sessionId, provider, allowExplicitCloud, modelOverride)
       }
     }
 
   suspend fun refresh(model: String? = null) {
     val key = keys.key(ProviderId.OPENROUTER)?.takeIf { it.isNotBlank() } ?: throw TranscriptionError.Unauthorized("Missing OpenRouter key")
-    val now = System.currentTimeMillis()
-    var quotaError: Exception? = null
-    try {
-      val quota = metadata.quota(key, now)
-      withContext(Dispatchers.IO) { store.durable.update { it.copy(quotas = it.quotas + (quota.fingerprint to quota)) } }
-    } catch (cancel: CancellationException) { throw cancel } catch (error: Exception) { quotaError = error }
-    val selected = model?.takeIf { it.isNotBlank() } ?: settings.current().openRouterTranscriptionModel.takeIf { it.isNotBlank() }
-    if (selected != null) {
-      val price = metadata.prices(key, selected, now)
-      withContext(Dispatchers.IO) { store.durable.update { it.copy(prices = it.prices + (selected to price)) } }
+    http.cloudSession<Unit>(OpenRouterTranscriptionProvider.BASE_URL, mapOf("Authorization" to "Bearer $key")) {
+      val now = System.currentTimeMillis()
+      var quotaError: Exception? = null
+      try {
+        val quota = metadata.quota(key, now)
+        withContext(Dispatchers.IO) { store.durable.update { it.copy(quotas = it.quotas + (quota.fingerprint to quota)) } }
+      } catch (cancel: CancellationException) { throw cancel }
+      catch (limited: TranscriptionError.RateLimited) { throw limited }
+      catch (control: TranscriptionError.CloudControl) { throw control }
+      catch (error: Exception) { quotaError = error }
+      val selected = model?.takeIf { it.isNotBlank() } ?: settings.current().openRouterTranscriptionModel.takeIf { it.isNotBlank() }
+      if (selected != null) {
+        val price = metadata.prices(key, selected, now)
+        withContext(Dispatchers.IO) { store.durable.update { it.copy(prices = it.prices + (selected to price)) } }
+      }
+      quotaError?.let { throw it }
     }
-    quotaError?.let { throw it }
   }
 
   suspend fun currentQuota(): KeyQuota? {
@@ -123,23 +135,22 @@ class CloudSpending @Inject constructor(
     var policy = policyForSession(request.cloudSessionId, request.cloudPartId, allowExplicitCloud)
     if (!policy.allowed) throw TranscriptionError.CloudControl(policy.reason ?: "cloud_folder_blocked")
     checkBoundKey(provider, keyFingerprint)
-    var model = if (provider == "openrouter") policy.model ?: request.cloudDefaultModel ?: request.model else request.model
+    val model = request.model
     if (provider == "openrouter" && data().prices[model]?.fresh(System.currentTimeMillis()) != true) {
       try { refresh(model) } catch (cancel: CancellationException) { throw cancel }
+      catch (limited: TranscriptionError.RateLimited) { throw limited }
+      catch (control: TranscriptionError.CloudControl) { throw control }
       catch (unknown: TranscriptionError.UnknownModel) { throw unknown }
       catch (_: Exception) { /* stale stays unknown */ }
     }
     // Metadata requests may take time: re-resolve a moved note and privacy immediately before reserving.
     policy = policyForSession(request.cloudSessionId, request.cloudPartId, allowExplicitCloud)
     if (!policy.allowed) throw TranscriptionError.CloudControl(policy.reason ?: "cloud_folder_blocked")
-    model = if (provider == "openrouter") policy.model ?: request.cloudDefaultModel ?: request.model else request.model
-    // Do not combine a cached earlier chunk with a different model after a folder rule change.
-    // An explicit retry resolves the new model before the runner constructs its cache signature.
-    if (model != request.model) throw TranscriptionError.CloudControl("cloud_model_changed")
+    // Folder privacy remains live; model selection is the immutable job choice from enqueue.
     checkBoundKey(provider, keyFingerprint)
     val id = UUID.randomUUID().toString()
     val now = System.currentTimeMillis()
-    withContext(Dispatchers.IO) {
+    withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
       try {
         store.durable.update { data ->
           val estimate = CloudEstimates.estimate(provider, model, request.cloudDurationMs, data.prices[model], data.settings, now)
@@ -147,10 +158,14 @@ class CloudSpending @Inject constructor(
           data.copy(charges = data.charges + CloudCharge(id, request.cloudJobId ?: request.cloudSessionId.orEmpty(), provider,
             keyFingerprint, model, request.cloudDurationMs, now, estimate.maxUsd, priceVerified = estimate.reservable))
         }
+        inFlight.add(id)
+        kotlinx.coroutines.currentCoroutineContext()[dev.pampa.pampanotes.core.transcription.CloudAttemptAccounting]?.bind(onRefusal = {
+          try { store.durable.refuse(id, System.currentTimeMillis()) }
+          catch (_: Exception) { throw TranscriptionError.CloudControl("cloud_cost_storage") }
+        }, onFinished = { inFlight.remove(id) })
       } catch (error: TranscriptionError) { throw error }
       catch (_: Exception) { throw TranscriptionError.CloudControl("cloud_cost_storage") }
     }
-    inFlight.add(id)
     return request.copy(model = model, cloudAttemptFinished = { inFlight.remove(id) }, cloudResponse = { body ->
       OpenRouterCostMetadata.actualCost(body)?.let { cost -> settle(id, cost) }
     })
@@ -163,7 +178,7 @@ class CloudSpending @Inject constructor(
   }
 
   private suspend fun checkBoundKey(provider: String, fingerprint: String) {
-    val key = keys.key(if (provider == "openrouter") ProviderId.OPENROUTER else ProviderId.GROQ)
+    val key = credentials.key(provider)
     if (key.isNullOrBlank() || OpenRouterCostMetadata.fingerprint(key) != fingerprint) {
       throw TranscriptionError.CloudControl("cloud_key_changed")
     }

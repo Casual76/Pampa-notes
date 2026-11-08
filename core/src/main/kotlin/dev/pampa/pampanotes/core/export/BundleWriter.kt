@@ -81,9 +81,9 @@ class BundleWriter(
       set.notes.forEach { note ->
         val files = layout.of(note)
         ensureDirectories(files.notes)
-        zip.writeText(root + files.notes, markdown.noteFile(note, layout, options, set.generator))
+        zip.writeText(root + files.notes, markdown.noteFile(note.copy(personal = note.personal || set.personal), layout, options, set.generator))
         files.transcripts.values.flatten().forEach { piece ->
-          zip.writeText(root + piece.path, markdown.transcriptFile(note, piece, layout, set.generator))
+          zip.writeText(root + piece.path, markdown.transcriptFile(note.copy(personal = note.personal || set.personal), piece, layout, set.generator))
         }
         progress.step()
 
@@ -159,9 +159,9 @@ class BundleWriter(
     text("instructions.md", skillWriter.instructions(set, loose = true))
     set.notes.forEach { note ->
       val files = layout.of(note)
-      text(files.notes, markdown.noteFile(note, layout, options, set.generator))
+      text(files.notes, markdown.noteFile(note.copy(personal = note.personal || set.personal), layout, options, set.generator))
       files.transcripts.values.flatten().forEach { piece ->
-        text(piece.path, markdown.transcriptFile(note, piece, layout, set.generator))
+        text(piece.path, markdown.transcriptFile(note.copy(personal = note.personal || set.personal), piece, layout, set.generator))
       }
       progress.step()
       note.handwriting.forEachIndexed { index, image ->
@@ -191,7 +191,7 @@ class BundleWriter(
     append("---").append(nl).append(nl)
     set.notes.forEachIndexed { index, note ->
       if (index > 0) append(nl).append("---").append(nl).append(nl)
-      append(markdown.singleNote(note, options, set.generator))
+      append(markdown.singleNote(note.copy(personal = note.personal || set.personal), options, set.generator))
     }
   }
 
@@ -208,7 +208,7 @@ class BundleWriter(
       set.notes.size +
         set.notes.sumOf { it.handwriting.size } +
         (if (options.includeAudio) set.notes.sumOf { it.partCount } else 0) +
-        (if (options.includeSources) set.notes.sumOf { note -> note.sources.count { it.storedFileName != null } } else 0)
+        (if (options.includeSources) set.notes.sumOf { note -> note.sources.count { it.attachmentAllowed && it.storedFileName != null } } else 0)
       ).coerceAtLeast(1)
     private var done = 0
 

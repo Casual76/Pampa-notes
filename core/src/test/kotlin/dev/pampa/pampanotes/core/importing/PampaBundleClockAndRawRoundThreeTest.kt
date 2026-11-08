@@ -1,6 +1,8 @@
 package dev.pampa.pampanotes.core.importing
 
 import dev.pampa.pampanotes.core.db.*
+import dev.pampa.pampanotes.core.alignment.CloudSources
+import dev.pampa.pampanotes.core.alignment.CloudTextPart
 import dev.pampa.pampanotes.core.export.*
 import dev.pampa.pampanotes.core.sync.SyncCodec
 import dev.pampa.pampanotes.core.transcription.VoiceNames
@@ -33,9 +35,21 @@ class PampaBundleClockAndRawRoundThreeTest {
       folders = listOf(folder.copy(id = value.note.folderId)))
     val directory = temp.newFolder()
     val file = File(directory, "note.pn")
-    file.outputStream().use { PampaNoteWriter(directory, directory).write(set, it) }
+    // These pure merge fixtures deliberately carry opaque strings. Assert codec preservation;
+    // typed production transfer and unsupported-mutation refusal have separate integration tests.
+    file.outputStream().use { PampaNoteWriter(directory, directory).writeContainer(set, it) }
     return PampaBundleArchive.read(file).data
   }
+
+  /** Copy/mutation fixtures use supported source documents; opaque codec fixtures stay opaque. */
+  private fun typed(value: PampaBundleNote) = value.copy(transcripts = value.transcripts.map { row ->
+    if (row.kind != TranscriptKind.RAW) row.copy(cloudSourceJson = null) else {
+      val parts = value.parts.filter { it.sessionId == row.sessionId }.sortedBy { it.position }
+      val doc = CloudSources.create(row, row.text, parts.map { p -> CloudTextPart(p.id, p.sha256,
+        row.text.takeIf { parts.size == 1 }, row.language, row.provider, row.model) }, reportedText = row.cloudSourceJson)
+      row.copy(cloudSourceJson = CloudSources.encode(doc.copy(alignmentBinding = "portable_unbound")))
+    }
+  })
 
   private fun beforeMove(removed: Boolean): PampaBundleNote {
     val sourceNames = if (removed) emptyMap() else mapOf("A|SPEAKER_00" to "A at 100")
@@ -112,7 +126,7 @@ class PampaBundleClockAndRawRoundThreeTest {
   }
 
   @Test fun nativeCopyAndAliasRemappingRetainClockOnlyRecordingIdentities() {
-    val value = PampaBundleMerge.merge(beforeMove(removed = true), movedSnapshot(20))
+    val value = typed(PampaBundleMerge.merge(beforeMove(removed = true), movedSnapshot(20)))
     val copied = PampaBundleImporter.remap(nativeRoundtrip(value), "round-three-clock-copy").notes.single()
     val destination = copied.sessions.single { it.title == "Title 20" }
     val a = copied.parts.single { it.originalName == "A.m4a" }
@@ -154,8 +168,8 @@ class PampaBundleClockAndRawRoundThreeTest {
         sessionStartMs = 0, sessionEndMs = 100, text = "Second!", wordsJson = "0,100,Second!", speaker = "SPEAKER_01"),
       SegmentEntity(id = 2, transcriptId = t.id, partId = "part", indexInPart = 0, partStartMs = 0, partEndMs = 100,
         sessionStartMs = 0, sessionEndMs = 100, text = "First.", wordsJson = "0,100,First.", speaker = "SPEAKER_00")) }
-    val value = PampaBundleNote(note, sessions = listOf(session("session", 10, active = first.id)),
-      parts = listOf(part("part", "session")), transcripts = listOf(first, second, refined), segments = segments)
+    val value = typed(PampaBundleNote(note, sessions = listOf(session("session", 10, active = first.id)),
+      parts = listOf(part("part", "session")), transcripts = listOf(first, second, refined), segments = segments))
     val read = nativeRoundtrip(value)
     assertEquals(value.transcripts, read.notes.single().transcripts)
     val copied = PampaBundleImporter.remap(read, "round-three-raw-copy").notes.single()

@@ -1,32 +1,24 @@
 package dev.pampa.pampanotes.ui.recordings
 
-import dev.pampa.pampanotes.core.db.JobDao
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.pampa.pampanotes.core.db.AudioPartDao
 import dev.pampa.pampanotes.core.db.FolderEntity
 import dev.pampa.pampanotes.core.db.FolderRow
-import dev.pampa.pampanotes.core.db.JobEntity
-import dev.pampa.pampanotes.core.db.NoteDao
 import dev.pampa.pampanotes.core.db.NoteRow
 import dev.pampa.pampanotes.core.db.TranscriptDao
 import dev.pampa.pampanotes.core.repo.ComputerOnlyPreview
-import dev.pampa.pampanotes.core.repo.FailedJobs
 import dev.pampa.pampanotes.core.repo.FolderRepository
-import dev.pampa.pampanotes.core.repo.NoteRepository
 import dev.pampa.pampanotes.core.repo.PersonalScope
-import dev.pampa.pampanotes.core.repo.SessionRepository
 import dev.pampa.pampanotes.core.repo.StatsRepository
 import dev.pampa.pampanotes.core.repo.StorageRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
 import dev.pampa.pampanotes.core.stats.TranscriptionStats
-import dev.pampa.pampanotes.core.transcription.NoteTranscribingElsewhere
-import dev.pampa.pampanotes.core.transcription.TranscribingMarker
 import dev.pampa.pampanotes.work.WorkScheduler
-import dev.pampa.pampanotes.ui.common.NoteBulkActions
 import javax.inject.Inject
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
@@ -36,29 +28,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-/** Una registrazione dell'elenco: la nota, la cartella da cui viene, e a che punto e' la sua trascrizione. */
-data class RecordingItem(
-  val row: NoteRow,
-  val folder: FolderEntity?,
-  val job: JobEntity? = null,
-  val elsewhere: NoteTranscribingElsewhere? = null,
-  /** L'ultimo tentativo di trascrizione di una sua sessione, se e' fallito: il badge lo dice. */
-  val failed: JobEntity? = null,
-  /** Le sue sessioni il cui ultimo tentativo ha risposto «niente parole»: rifarle darebbe lo stesso. */
-  val silent: Int = 0,
-) {
-  /** Le sessioni senza trascrizione che nessuno sta trascrivendo, ne' qui ne' altrove. */
-  val toTranscribe: Int get() = row.untranscribedSessions - (elsewhere?.untranscribed ?: 0)
-
-  /** Quelle che «Trascrivi tutte» manderebbe davvero: non le mute. */
-  val worthTranscribing: Int get() = toTranscribe - silent
-}
 
 /**
  * I numeri della sezione, contati solo su di lei: le ore registrate, quelle trascritte, le parole, la
@@ -94,6 +67,10 @@ data class RecordingsUiState(
   val folders: List<FolderRow> = emptyList(),
   /** Le registrazioni di tutte le cartelle della sezione, dalla piu' recente. */
   val recordings: List<RecordingItem> = emptyList(),
+  val materials: List<NoteRow> = emptyList(),
+  val allFolders: List<FolderEntity> = emptyList(),
+  val folder: FolderEntity? = null,
+  val query: String = "",
   val stats: RecordingsStats = RecordingsStats(),
   /** Questo dispositivo tiene le Registrazioni anche qui, invece che solo sul computer. */
   val keepHere: Boolean = false,
@@ -104,7 +81,7 @@ data class RecordingsUiState(
   val archiveEnabled: Boolean = false,
   val loading: Boolean = true,
 ) {
-  val isEmpty: Boolean get() = !loading && folders.isEmpty()
+  val isEmpty: Boolean get() = !loading && recordings.isEmpty() && materials.isEmpty() && folders.isEmpty()
 
   /** C'e' qualcosa da trascrivere che non e' gia' in coda e non e' muto: «Trascrivi tutte» serve. */
   val canTranscribeAll: Boolean get() = recordings.any { it.worthTranscribing > 0 && it.job == null }
@@ -132,24 +109,22 @@ data class TranscribeAllAsk(
  * La scheda Registrazioni: l'audio che non e' una lezione, con i suoi numeri.
  *
  * Le cartelle sono quelle di primo livello con `kind = personal` (vedi `PersonalScope`); le
- * registrazioni sono le note di tutte, sottocartelle comprese, perche' qui si cerca «quella di
+ * registrazioni sono le sessioni di tutte, sottocartelle comprese, perche' qui si cerca «quella di
  * ieri» e non «quella nella cartella giusta».
  */
 @HiltViewModel
 class RecordingsViewModel @Inject constructor(
+  savedStateHandle: SavedStateHandle,
   private val folders: FolderRepository,
-  private val notes: NoteRepository,
-  private val sessions: SessionRepository,
+  private val library: RecordingLibrary,
+  private val actions: RecordingActions,
   private val transcription: TranscriptionRepository,
   private val storage: StorageRepository,
   private val settingsStore: PampaSettingsStore,
   private val scheduler: WorkScheduler,
-  noteDao: NoteDao,
   audioParts: AudioPartDao,
   transcripts: TranscriptDao,
   stats: StatsRepository,
-  jobDao: JobDao,
-  private val bulk: NoteBulkActions,
 ) : ViewModel() {
 
   private val sectionStats: Flow<RecordingsStats> = combine(
@@ -158,37 +133,22 @@ class RecordingsViewModel @Inject constructor(
     stats.observe(personal = true),
   ) { recorded, words, transcriptionStats -> RecordingsStats(recorded, words, transcriptionStats) }
 
-  /** L'ultimo tentativo fallito di ogni sessione, con la nota a cui appartiene. */
-  private val latestFailed: Flow<List<Pair<String, JobEntity>>> = jobDao.observeLatestFailed().map { failed ->
-    failed.mapNotNull { job -> sessions.get(job.sessionId)?.noteId?.let { it to job } }
-  }
-
-  /** Lavori di qui e segni degli altri dispositivi, per nota: il badge dice «in coda» o dove. */
-  private val work: Flow<Triple<Map<String, JobEntity>, Map<String, NoteTranscribingElsewhere>, List<Pair<String, JobEntity>>>> = combine(
-    transcription.observeActive().map { active ->
-      active.mapNotNull { job -> sessions.get(job.sessionId)?.noteId?.let { it to job } }.toMap()
-    },
-    transcription.observeElsewhere().map { TranscribingMarker.byNote(it.values) },
-    latestFailed,
-  ) { jobs, elsewhere, failed -> Triple(jobs, elsewhere, failed) }
-
-  private val content = combine(
-    folders.observeChildren(null).map { rows -> rows.filter { it.folder.isPersonal } },
-    noteDao.observePersonalRows(),
-    folders.observeAll(),
-    work,
-  ) { roots, rows, all, (jobs, elsewhere, failed) ->
-    val byId = all.associateBy { it.id }
-    val failedByNote = failed.toMap()
-    val silentByNote = failed.filter { it.second.errorCode == FailedJobs.NO_SPEECH }.groupingBy { it.first }.eachCount()
+  val folderId: String? = savedStateHandle.get<String>("folderId")
+  private val query = MutableStateFlow("")
+  private val content = combine(library.observe(folderId), query) { content, query ->
     RecordingsUiState(
-      folders = roots,
-      recordings = rows.map {
-        RecordingItem(it, byId[it.note.folderId], jobs[it.note.id], elsewhere[it.note.id], failedByNote[it.note.id], silentByNote[it.note.id] ?: 0)
-      },
+      folders = content.allFolders.filter { it.parentId == folderId && (folderId != null || it.isPersonal) }
+        .map { FolderRow(it, 0, content.allFolders.count { child -> child.parentId == it.id }) },
+      recordings = content.recordings,
+      materials = content.materials,
+      allFolders = content.allFolders,
+      folder = content.allFolders.firstOrNull { it.id == folderId },
+      query = query,
       loading = false,
     )
   }
+
+  fun setQuery(value: String) { query.value = value }
 
   val uiState: StateFlow<RecordingsUiState> = combine(
     content,
@@ -209,7 +169,7 @@ class RecordingsViewModel @Inject constructor(
 
   /** «Nuova cartella» qui e' una cartella di Registrazioni. */
   fun createFolder(name: String, tone: String?, icon: String?) {
-    viewModelScope.launch { folders.create(name = name, tone = tone, icon = icon, kind = FolderEntity.KIND_PERSONAL) }
+    viewModelScope.launch { folders.create(name = name, parentId = folderId, tone = tone, icon = icon, kind = FolderEntity.KIND_PERSONAL) }
   }
 
   fun updateFolder(id: String, name: String, tone: String?, icon: String?) {
@@ -225,71 +185,45 @@ class RecordingsViewModel @Inject constructor(
     viewModelScope.launch { folders.setKind(id, FolderEntity.KIND_SCHOOL) }
   }
 
-  fun deleteNote(id: String) {
-    viewModelScope.launch { notes.delete(id) }
-  }
-
-  /** La selezione: le registrazioni scelte se ne vanno, con audio e trascrizioni. */
-  fun deleteNotes(ids: Collection<String>) {
-    viewModelScope.launch { bulk.delete(ids) }
-  }
-
-  /**
-   * «Ascolta»: si riprende da dove ci si era fermati, se l'ultima cosa ascoltata qui e' una sessione
-   * di questa nota e non e' finita; altrimenti la sessione piu' recente, dall'inizio. In tutti e due
-   * i casi il lettore parte da solo: un tocco su «Ascolta» che apre una pagina ferma a 0:00 e' un
-   * tocco in piu'. Una nota senza audio (un testo finito qui) si apre come nota.
-   *
-   * @param onSession la sessione da aprire e far suonare (la strada di «Riprendi» della home).
-   */
-  fun listen(noteId: String, onSession: (String) -> Unit, onNote: (String) -> Unit) {
+  /** No folder creation step is required. The existing import contract receives a personal folder. */
+  fun prepareImport(defaultFolderName: String, onReady: (String) -> Unit) {
     viewModelScope.launch {
-      val withAudio = sessions.byNote(noteId).filter { it.parts.isNotEmpty() }.map { it.session }
-      if (withAudio.isEmpty()) {
-        onNote(noteId)
-        return@launch
-      }
-      val last = settingsStore.lastListened.first()
-      val resume = last?.takeIf { !it.finished && withAudio.any { s -> s.id == it.sessionId } }?.sessionId
-      val latest = withAudio.maxWith(compareBy({ it.date }, { it.createdAt })).id
-      onSession(resume ?: latest)
+      val all = folders.all()
+      val personal = PersonalScope.folderIds(all)
+      val destination = folderId?.takeIf { it in personal }
+        ?: all.filter { it.parentId == null && it.isPersonal }.minByOrNull { it.sortOrder }?.id
+        ?: folders.create(name = defaultFolderName, kind = FolderEntity.KIND_PERSONAL).id
+      onReady(destination)
     }
   }
 
-  /** Le sessioni senza trascrizione delle note date, in coda col servizio delle impostazioni. */
-  fun transcribe(noteIds: Collection<String>) {
-    viewModelScope.launch {
-      val provider = settingsStore.current().transcriptionProvider
-      enqueue(pendingSessions(noteIds).map { it.first }, provider)
-    }
+  private fun selected(ids: Collection<String>): Set<String> =
+    RecordingCatalog.selected(ids, uiState.value.recordings.map { it.id })
+
+  fun deleteRecordings(ids: Collection<String>) {
+    val selected = selected(ids)
+    viewModelScope.launch { actions.delete(selected, folderId) }
   }
 
-  /**
-   * «Trascrivi tutte»: prima si conta, poi si chiede. Una sezione che ha diciannove ore di audio non
-   * parte con un tocco solo — e con Groq quelle ore andrebbero nel cloud.
-   */
+  fun moveRecordings(ids: Collection<String>, targetFolderId: String) {
+    val selected = selected(ids)
+    viewModelScope.launch { withContext(NonCancellable) { actions.move(selected, targetFolderId, folderId) } }
+  }
+
   fun askTranscribeAll() = askTranscribe(null)
 
-  /**
-   * La stessa domanda per le registrazioni scelte a mano: diciannove ore scelte una per una sono
-   * sempre diciannove ore, e con Groq finirebbero nel cloud.
-   *
-   * @param only le note fra cui scegliere; `null` e' «tutte».
-   */
+  /** IDs are sessions, including when several selected recordings share one backing note. */
   fun askTranscribe(only: Set<String>?) {
+    val wanted = uiState.value.recordings.filter { only == null || it.id in only }
+    val pending = wanted.filter { it.toTranscribe > 0 && it.job == null }
+    val audible = pending.filter { it.worthTranscribing > 0 }
+    if (audible.isEmpty()) return
     viewModelScope.launch {
-      val ids = uiState.value.recordings
-        .filter { it.worthTranscribing > 0 && it.job == null && (only == null || it.row.note.id in only) }
-        .map { it.row.note.id }
-      val all = pendingSessions(ids)
-      val silent = silentSessionIds()
-      val wanted = all.filter { it.first !in silent }
-      if (wanted.isEmpty()) return@launch
       _transcribeAllAsk.value = TranscribeAllAsk(
-        sessionIds = wanted.map { it.first },
-        durationMs = wanted.sumOf { it.second },
+        sessionIds = audible.map { it.id },
+        durationMs = audible.sumOf { it.session.durationMs },
         provider = settingsStore.current().transcriptionProvider,
-        skippedSilent = all.size - wanted.size,
+        skippedSilent = pending.size - audible.size,
       )
     }
   }
@@ -303,18 +237,6 @@ class RecordingsViewModel @Inject constructor(
   fun dismissTranscribeAll() {
     _transcribeAllAsk.value = null
   }
-
-  /** Le sessioni con audio e senza trascrizione delle note date, con quanto durano. */
-  private suspend fun pendingSessions(noteIds: Collection<String>): List<Pair<String, Long>> =
-    noteIds.flatMap { noteId ->
-      sessions.byNote(noteId)
-        .filter { it.parts.isNotEmpty() && it.session.activeTranscriptId == null }
-        .map { it.session.id to it.parts.sumOf { part -> part.durationMs } }
-    }
-
-  /** Le sessioni il cui ultimo tentativo ha risposto «niente parole». */
-  private suspend fun silentSessionIds(): Set<String> =
-    latestFailed.first().filter { it.second.errorCode == FailedJobs.NO_SPEECH }.mapTo(HashSet()) { it.second.sessionId }
 
   private suspend fun enqueue(sessionIds: List<String>, provider: TranscriptionProviderId) {
     // Quelle che un altro dispositivo sta trascrivendo le salta `enqueue`.

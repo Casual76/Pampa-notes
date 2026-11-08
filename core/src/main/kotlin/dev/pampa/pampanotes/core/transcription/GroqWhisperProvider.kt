@@ -98,7 +98,9 @@ class GroqWhisperProvider(
       onProgress = onProgress,
       onResponse = request.cloudResponse,
     )
-    return VerboseJson.parse(body)
+    val parsed = VerboseJson.parse(body)
+    val original = ((body as? JsonObject)?.get("text") as? JsonPrimitive)?.takeIf { it.isString }?.content
+    return parsed.copy(text = original ?: parsed.text)
   }
 
   private fun headers(): Map<String, String> = mapOf("Authorization" to "Bearer $apiKey")

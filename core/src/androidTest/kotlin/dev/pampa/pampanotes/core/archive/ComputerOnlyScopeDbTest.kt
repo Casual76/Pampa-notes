@@ -11,6 +11,7 @@ import dev.pampa.pampanotes.core.db.SourceEntity
 import dev.pampa.pampanotes.core.db.SourceKind
 import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.repo.StorageRepository
+import dev.pampa.pampanotes.core.repo.DatabaseTransactions
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.files.FilesInUse
 import dev.pampa.pampanotes.core.transcription.ComputerAuth
@@ -81,7 +82,7 @@ class ComputerOnlyScopeDbTest {
     // Il computer qui non c'e': l'archivio serve solo al costruttore, e non chiama nessuno.
     val auth = ComputerAuth(account = { null }, manualCode = { null }, fetch = { _, _ -> error("nessun Worker nei test") }, clock = System::currentTimeMillis)
     val archive = ArchiveRepository(db.audioParts(), db.sources(), files, PampaSettingsStore(context), EndpointResolver(), ArchiveHttp(userAgent = "PampaNotes-test"), auth)
-    return StorageRepository(db.audioParts(), db.sources(), db.jobs(), files, scope, archive, FilesInUse())
+    return StorageRepository(db.audioParts(), db.sources(), db.jobs(), files, scope, archive, FilesInUse(), DatabaseTransactions(db))
   }
 
   private suspend fun folder(id: String, parent: String?) =

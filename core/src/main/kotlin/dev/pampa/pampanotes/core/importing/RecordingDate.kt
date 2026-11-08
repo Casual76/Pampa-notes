@@ -126,6 +126,10 @@ object RecordingDate {
    * come il primo gennaio sarebbe peggio del giorno dell'import.
    */
   fun parseMetadata(raw: String?, zone: ZoneId = ZoneId.systemDefault()): LocalDate? {
+    RecordingOrigin.fromMetadata(raw)?.let { origin ->
+      return origin.epochMs?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
+        ?: origin.local?.take(10)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+    }
     val value = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
     METADATA_DATE_TIME.matchEntire(value)?.let { match ->
       val (y, mo, d, h, mi, s) = match.destructured
@@ -150,6 +154,11 @@ object RecordingDate {
    * registrato.
    */
   fun parseMetadataInstant(raw: String?, zone: ZoneId = ZoneId.systemDefault()): Long? {
+    RecordingOrigin.fromMetadata(raw)?.let { origin ->
+      // This API is ONLY for legacy note sorting, which historically assumes the device zone.
+      // The actual recording origin above never makes that assumption.
+      return origin.epochMs ?: origin.local?.let { runCatching { LocalDateTime.parse(it).atZone(zone).toInstant().toEpochMilli() }.getOrNull() }
+    }
     val value = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
     val match = METADATA_DATE_TIME.matchEntire(value) ?: return null
     val (y, mo, d, h, mi, s) = match.destructured
@@ -212,7 +221,10 @@ object RecordingDate {
 
   /** La prima data valida nel nome, o null. L'estensione non conta. */
   fun fromFileName(name: String): LocalDate? {
-    val stem = name.substringBeforeLast('.')
+    val extension = name.substringAfterLast('.', "")
+    // Numeric date/time suffixes are source evidence, not file extensions (2025.09.22).
+    val realExtension = extension.length in 1..12 && extension.any { it.isLetter() } && extension.all { it.isLetterOrDigit() }
+    val stem = if (realExtension) name.substringBeforeLast('.') else name
     FILE_NAME_PATTERNS.forEach { (regex, build) ->
       regex.findAll(stem).forEach { match -> build(match)?.let { return it } }
     }

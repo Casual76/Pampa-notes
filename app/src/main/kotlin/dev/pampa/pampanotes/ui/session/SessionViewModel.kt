@@ -235,6 +235,7 @@ class SessionViewModel @Inject constructor(
   private val spending: CloudSpending,
   private val cloudTranscription: dev.pampa.pampanotes.ui.cloudcost.SessionCloudTranscription,
   private val fileAvailability: RelayFileAvailability,
+  private val alignment: dev.pampa.pampanotes.work.AlignmentScheduler,
 ) : ViewModel() {
 
   private val sessionId: String = savedStateHandle.get<String>("sessionId").orEmpty()
@@ -425,6 +426,9 @@ class SessionViewModel @Inject constructor(
       fileAvailability.changes.collect { refreshAvailability() }
     }
     viewModelScope.launch {
+      uiState.collect { state -> if (!state.loading && playback.value.durationMs > 0) seekIfAsked() }
+    }
+    viewModelScope.launch {
       settingsStore.settings.map { listOf(it.syncServerUrl, it.syncDeviceId, it.syncAccount, it.syncEnabled.toString()) }
         .distinctUntilChanged().collect { refreshAvailability() }
     }
@@ -534,9 +538,16 @@ class SessionViewModel @Inject constructor(
   private fun seekIfAsked() {
     val at = jumpAtMs ?: return
     if (!_seekPending.value) return
+    val current = uiState.value
+    if (current.loading) return
     savedState[JUMP_SEEK_USED] = true
     _seekPending.value = false
-    seekTo(at)
+    val raw = current.raw
+    val verified = if (raw != null && jumpQuery != null &&
+      dev.pampa.pampanotes.core.alignment.CloudTranscriptMoments.usesCloudEvidence(raw)) {
+      dev.pampa.pampanotes.core.alignment.CloudTranscriptMoments.moment(raw, current.parts, jumpQuery)?.timeMs
+    } else at
+    verified?.let(::seekTo)
   }
 
   /**
@@ -679,7 +690,12 @@ class SessionViewModel @Inject constructor(
     finally { checkingCloud.value = false }
   }
 
-  fun cancelJob(jobId: String) = viewModelScope.launch { transcription.requestCancel(jobId) }
+  fun cancelJob(jobId: String) = viewModelScope.launch {
+    runCatching { alignment.cancelSession(sessionId) }
+    transcription.requestCancel(jobId)
+  }
+
+  fun cancelAlignment() = viewModelScope.launch { runCatching { alignment.cancelSession(sessionId) } }
 
   /** Prepara il pannello: il preset di default e se la chiave c'e'. */
   fun prepareRefinement() = viewModelScope.launch {
@@ -719,6 +735,7 @@ class SessionViewModel @Inject constructor(
   }
 
   fun deletePart(partId: String, onEmpty: () -> Unit) = viewModelScope.launch {
+    runCatching { alignment.cancelSession(sessionId) }
     val remaining = uiState.value.parts.size - 1
     player.pause()
     repository.deletePart(partId)
@@ -726,6 +743,7 @@ class SessionViewModel @Inject constructor(
   }
 
   fun deleteSession(onDone: () -> Unit) = viewModelScope.launch {
+    runCatching { alignment.cancelSession(sessionId) }
     player.pause()
     repository.deleteSession(sessionId)
     onDone()

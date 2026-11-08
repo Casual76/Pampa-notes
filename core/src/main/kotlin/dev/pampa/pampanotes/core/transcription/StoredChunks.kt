@@ -40,6 +40,12 @@ object StoredChunks {
       endMs = chunk.spec.endMs,
       signature = signature,
       fallbackText = chunk.fallbackText,
+      sourceText = chunk.sourceText,
+      language = chunk.language,
+      audioSha256 = chunk.audioSha256,
+      reportedLanguageKnown = chunk.reportedLanguageKnown,
+      sourceProvider = chunk.sourceProvider,
+      sourceModel = chunk.sourceModel,
       segments = chunk.segments.map { segment ->
         StoredSegment(
           startMs = segment.startMs,
@@ -57,7 +63,7 @@ object StoredChunks {
   /**
    * Il pezzo salvato, se e' proprio quello che [spec] chiede: stesso posto, stesso inizio, stessa
    * fine, stesso piano. Un file senza piano viene da una versione di prima, che non lo scriveva: non
-   * si sa da dove venga, e si rifa'.
+   * si sa da dove venga: il runner lo conserva e rifiuta il riuso, senza pagare una nuova richiesta.
    */
   fun decode(text: String, spec: ChunkSpec, signature: String): ChunkTranscript? {
     val stored = runCatching { json.decodeFromString<StoredChunk>(text) }.getOrNull() ?: return null
@@ -66,6 +72,12 @@ object StoredChunks {
     return ChunkTranscript(
       spec = spec,
       fallbackText = stored.fallbackText,
+      sourceText = stored.sourceText,
+      language = stored.language,
+      audioSha256 = stored.audioSha256,
+      reportedLanguageKnown = stored.reportedLanguageKnown,
+      sourceProvider = stored.sourceProvider,
+      sourceModel = stored.sourceModel,
       segments = stored.segments.map { segment ->
         RawSegment(
           startMs = segment.startMs,
@@ -87,6 +99,9 @@ object StoredChunks {
   fun decodePlan(text: String): List<ChunkSpec>? =
     runCatching { json.decodeFromString<List<StoredChunk>>(text) }.getOrNull()
       ?.takeIf { it.isNotEmpty() }
+      ?.takeIf { chunks -> chunks.all { it.index >= 0 && it.startMs >= 0 && it.endMs > it.startMs } &&
+        chunks.map { it.index }.distinct().size == chunks.size &&
+        chunks.zipWithNext().all { (a, b) -> a.index < b.index && a.startMs < b.startMs && a.endMs < b.endMs } }
       ?.map { ChunkSpec(it.index, it.startMs, it.endMs) }
 
   @Serializable
@@ -98,6 +113,12 @@ object StoredChunks {
     /** Con quale piano e' nato il pezzo ([signature]). Null nei file delle versioni di prima. */
     val signature: String? = null,
     val fallbackText: String = "",
+    val sourceText: String? = null,
+    val language: String? = null,
+    val audioSha256: String? = null,
+    val reportedLanguageKnown: Boolean = false,
+    val sourceProvider: String? = null,
+    val sourceModel: String? = null,
   )
 
   @Serializable

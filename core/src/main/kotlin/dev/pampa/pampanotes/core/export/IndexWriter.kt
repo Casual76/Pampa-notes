@@ -15,15 +15,16 @@ import dev.pampa.pampanotes.core.model.wordCount
  * nota: di cosa parla — le prime parole degli appunti — e quale file copre quale giorno, quanto e'
  * lungo e che tratto di lezione contiene. Una riga per file, niente da aprire per saperlo.
  */
-class IndexWriter(private val labels: ExportLabels = ExportLabels()) {
+class IndexWriter(private val labels: ExportLabels = ExportLabels(), private val personalLabels: Boolean = false) {
 
   private val chapterLines = ChapterLines(labels)
 
-  fun index(layout: BundleLayout): String = buildString {
+  fun index(layout: BundleLayout): String = if (layout.set.personal && !personalLabels) IndexWriter(labels.forPersonal(), true).index(layout) else buildString {
     val set = layout.set
     append("# ").append(labels.index).append(": ").append(set.scopeLabel).append(NL).append(NL)
     append(summary(set)).append(NL).append(NL)
     append(if (set.personal) labels.indexHowToPersonal else labels.indexHowTo).append(NL).append(NL)
+    if (set.notes.any { it.selectedSessionIds != null }) append(labels.selectedSessionsNotice).append(NL).append(NL)
 
     // Raggruppate per cartella, nell'ordine in cui compaiono: l'albero dell'archivio e' informazione,
     // ed e' la stessa che l'utente usa per orientarsi nell'app.

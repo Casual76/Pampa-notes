@@ -158,12 +158,15 @@ private fun ColumnScope.ConfiguringBody(state: ExportUiState, viewModel: ExportV
     text = if (set == null) {
       stringResource(R.string.export_counting)
     } else {
-      summaryOf(set.notes.size, set.sessionCount, set.audioDurationMs)
+      summaryOf(set.notes.size, set.sessionCount, set.audioDurationMs, set.personal || set.notes.any { it.selectedSessionIds != null })
     },
     style = MaterialTheme.typography.bodyMedium,
     color = MaterialTheme.colorScheme.onSurfaceVariant,
   )
 
+  if (set?.notes?.any { it.selectedSessionIds != null } == true) {
+    FluidSectionFootnote(text = stringResource(R.string.ec_selection_notice))
+  }
   ExportChoices(
     options = state.options,
     onOptions = viewModel::setOptions,
@@ -371,7 +374,8 @@ private fun ColumnScope.DoneBody(state: ExportUiState) {
     color = MaterialTheme.colorScheme.onSurfaceVariant,
   )
   Text(
-    text = pluralStringResource(R.plurals.export_done_detail, result.noteCount, result.noteCount) +
+    text = pluralStringResource(if (state.set?.personal == true || state.set?.notes?.any { it.selectedSessionIds != null } == true)
+      R.plurals.ec_done else R.plurals.export_done_detail, result.noteCount, result.noteCount) +
       " · " + Formats.bytes(result.sizeBytes),
     style = MaterialTheme.typography.bodySmall,
     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -465,9 +469,9 @@ private fun ColumnScope.DoneActions(
 // -------------------------------------------------------------------------------------------------
 
 @Composable
-private fun summaryOf(notes: Int, sessions: Int, audioMs: Long): String {
+private fun summaryOf(notes: Int, sessions: Int, audioMs: Long, personal: Boolean = false): String {
   val pieces = buildList {
-    add(pluralStringResource(R.plurals.export_notes, notes, notes))
+    add(pluralStringResource(if (personal) R.plurals.ec_material_count else R.plurals.export_notes, notes, notes))
     if (sessions > 0) add(pluralStringResource(R.plurals.export_recordings, sessions, sessions))
     if (audioMs > 0) add(Formats.durationShort(audioMs))
   }

@@ -21,6 +21,7 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
 
   @Inject lateinit var scheduler: WorkScheduler
+  @Inject lateinit var alignment: dev.pampa.pampanotes.work.AlignmentScheduler
   @Inject lateinit var transcription: TranscriptionRepository
 
   /**
@@ -59,6 +60,7 @@ class MainActivity : ComponentActivity() {
     if (lastWake != 0L && now - lastWake < WAKE_EVERY_MS) return
     lastWake = now
     lifecycleScope.launch {
+      runCatching { alignment.onApplicationOrEndpointWake() }
       runCatching {
         for (provider in dev.pampa.pampanotes.core.settings.TranscriptionProviderId.entries) {
           if (transcription.readyToWake(provider.id)) scheduler.wake(provider.id)

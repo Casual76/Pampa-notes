@@ -26,13 +26,13 @@ class SelectedTranscriptConsumersTest {
   }
 
   private fun transcription() = TranscriptionRepository(mockk(), sessions, mockk(), parts, transcripts, segments,
-    mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk())
+    mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk(), mockk())
 
   @Test fun `search seeks inside the selected version's RAW parent`() = runTest {
     seed()
     coEvery { segments.byTranscriptWithoutWords(author.id) } returns listOf(timed)
     coEvery { segments.wordsOf(timed.id) } returns null
-    val search = SearchRepository(mockk(), mockk(), mockk(), sessions, transcripts, segments)
+    val search = SearchRepository(mockk(), mockk(), mockk(), sessions, transcripts, segments, parts)
     assertEquals(250L, search.momentOf("s", "author")?.timeMs)
     coVerify(exactly = 0) { segments.byTranscriptWithoutWords(local.id) }
   }

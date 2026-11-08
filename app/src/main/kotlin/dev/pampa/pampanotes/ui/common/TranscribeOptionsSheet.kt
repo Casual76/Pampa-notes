@@ -63,6 +63,7 @@ fun TranscribeOptionsSheet(
   val ready = effectiveState.ready
 
   // Le scelte: null e' «come nelle impostazioni».
+  var cloudModel by remember(effectiveProvider) { mutableStateOf<String?>(null) }
   var language by remember { mutableStateOf<String?>(null) }
   var vocabulary by remember(settings?.vocabulary) { mutableStateOf(settings?.vocabulary.orEmpty()) }
   var diarize by remember { mutableStateOf<Boolean?>(null) }
@@ -79,6 +80,7 @@ fun TranscribeOptionsSheet(
     val tune = effectiveState.canTuneComputer
     return TranscribeOverrides(
       provider = provider?.id,
+      model = cloudModel.takeUnless { effectiveState.onComputer },
       language = language,
       // Il vocabolario e' una scelta solo se e' diverso da quello delle impostazioni.
       vocabulary = vocabulary.takeIf { settings != null && it.trim() != settings.vocabulary.trim() },
@@ -125,7 +127,7 @@ fun TranscribeOptionsSheet(
       val ids = if (sessionIds.isNotEmpty()) sessionIds else listOfNotNull(sessionId)
       if (settings != null && ids.isNotEmpty()) {
         val preflight: dev.pampa.pampanotes.ui.cloudcost.CloudPreflightViewModel = hiltViewModel(key = "transcribe-options-preflight")
-        dev.pampa.pampanotes.ui.cloudcost.CloudPreflightSummary(ids, provider = effectiveProvider?.id, allowExplicitCloud = provider != null && provider != dev.pampa.pampanotes.core.settings.TranscriptionProviderId.CUSTOM, viewModel = preflight)
+        dev.pampa.pampanotes.ui.cloudcost.CloudPreflightSummary(ids, provider = effectiveProvider?.id, allowExplicitCloud = provider != null && provider != dev.pampa.pampanotes.core.settings.TranscriptionProviderId.CUSTOM, viewModel = preflight, modelOverride = cloudModel)
       }
 
       FluidSectionHeader(title = stringResource(R.string.settings_provider_header))
@@ -133,12 +135,28 @@ fun TranscribeOptionsSheet(
       val computerLabel = stringResource(R.string.provider_custom)
       val groqLabel = stringResource(R.string.provider_groq)
       val routerLabel = stringResource(R.string.provider_openrouter)
+      val mistralLabel = stringResource(R.string.provider_mistral)
       Choices(
-        options = listOf(null, dev.pampa.pampanotes.core.settings.TranscriptionProviderId.CUSTOM, dev.pampa.pampanotes.core.settings.TranscriptionProviderId.GROQ, dev.pampa.pampanotes.core.settings.TranscriptionProviderId.OPENROUTER),
+        options = listOf(null, dev.pampa.pampanotes.core.settings.TranscriptionProviderId.CUSTOM, dev.pampa.pampanotes.core.settings.TranscriptionProviderId.GROQ, dev.pampa.pampanotes.core.settings.TranscriptionProviderId.OPENROUTER, dev.pampa.pampanotes.core.settings.TranscriptionProviderId.MISTRAL),
         selected = provider,
         onSelect = { provider = it },
-        label = { when (it) { null -> providerDefault; dev.pampa.pampanotes.core.settings.TranscriptionProviderId.CUSTOM -> computerLabel; dev.pampa.pampanotes.core.settings.TranscriptionProviderId.GROQ -> groqLabel; dev.pampa.pampanotes.core.settings.TranscriptionProviderId.OPENROUTER -> routerLabel } },
+        label = { when (it) { null -> providerDefault; dev.pampa.pampanotes.core.settings.TranscriptionProviderId.CUSTOM -> computerLabel; dev.pampa.pampanotes.core.settings.TranscriptionProviderId.GROQ -> groqLabel; dev.pampa.pampanotes.core.settings.TranscriptionProviderId.OPENROUTER -> routerLabel; dev.pampa.pampanotes.core.settings.TranscriptionProviderId.MISTRAL -> mistralLabel } },
       )
+
+      if (effectiveProvider != null && !effectiveState.onComputer) {
+        val configuredModel = when (effectiveProvider) {
+          dev.pampa.pampanotes.core.settings.TranscriptionProviderId.MISTRAL -> settings?.mistralTranscriptionModel.orEmpty()
+          dev.pampa.pampanotes.core.settings.TranscriptionProviderId.OPENROUTER -> settings?.openRouterTranscriptionModel.orEmpty()
+          else -> settings?.groqTranscriptionModel ?: "whisper-large-v3-turbo"
+        }
+        FluidTextField(value = cloudModel ?: configuredModel, onValueChange = { cloudModel = it },
+          label = stringResource(R.string.cloud_job_model), modifier = Modifier.fillMaxWidth())
+        if (effectiveProvider == dev.pampa.pampanotes.core.settings.TranscriptionProviderId.MISTRAL) {
+          Choices(options = dev.pampa.pampanotes.core.transcription.MistralTranscriptionProvider.MODELS, selected = cloudModel ?: configuredModel, onSelect = { cloudModel = it }, label = { it })
+          FluidSectionFootnote(text = stringResource(R.string.mistral_timing))
+        }
+        FluidSectionFootnote(text = stringResource(R.string.cloud_pinned_detail))
+      }
 
       // --- Cosa si sente ---------------------------------------------------------------------
       FluidSectionHeader(title = stringResource(R.string.settings_language_header))

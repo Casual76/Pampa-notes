@@ -4,6 +4,7 @@ import android.content.ContextWrapper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.pampa.pampanotes.core.db.*
+import dev.pampa.pampanotes.core.alignment.*
 import dev.pampa.pampanotes.core.export.*
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.transcription.VoiceNames
@@ -89,10 +90,12 @@ class PampaBundleLegacyGrowthRoundThreeRoomTest {
       originalName = "My $name.txt", importedAt = 8, archivedAt = 81, detail = "Personal $name")
     val page = SourceEntity("$noteId-personal-page-$name", noteId, SourceKind.IMAGE, "Personal $name.png", "image/png",
       pageBytes.size.toLong(), sha(pageBytes), "$noteId-personal-page-$name.png", importedAt = 9, derivedFromId = source.id)
-    val raw = TranscriptEntity("$noteId-personal-raw-$name", session.id, TranscriptKind.RAW, "custom", "test",
-      text = "WordsFrom$name", wordCount = 1, createdAt = 50, cloudSourceJson = "{\"text\":\"  immutable original $name  \"}")
+    val rawRow = TranscriptEntity("$noteId-personal-raw-$name", session.id, TranscriptKind.RAW, "custom", "test",
+      text = "WordsFrom$name", wordCount = 1, createdAt = 50)
+    val doc = CloudSources.create(rawRow, rawRow.text, listOf(CloudTextPart(part.id, part.sha256, rawRow.text, null, rawRow.provider, rawRow.model)))
+    val raw = rawRow.copy(cloudSourceJson = CloudSources.encode(doc.copy(alignmentBinding = "portable_unbound")))
     val refined = raw.copy(id = "$noteId-personal-refined-$name", kind = TranscriptKind.REFINED, parentId = raw.id,
-      text = "Personal refinement $name", wordCount = 3)
+      text = "Personal refinement $name", wordCount = 3, cloudSourceJson = null)
     val offset = db.audioParts().bySession(session.id).filter { it.position < part.position }.sumOf { it.durationMs }
     val segment = SegmentEntity(transcriptId = raw.id, partId = part.id, indexInPart = 0, partStartMs = 100, partEndMs = 800,
       sessionStartMs = offset + 100, sessionEndMs = offset + 800, text = raw.text, wordsJson = "0,700,WordsFrom$name",

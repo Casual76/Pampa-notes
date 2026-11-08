@@ -7,13 +7,19 @@ import dev.pampa.pampanotes.core.db.AudioPartDao
 import dev.pampa.pampanotes.core.db.JobDao
 import dev.pampa.pampanotes.core.db.SizeTotal
 import dev.pampa.pampanotes.core.db.SourceDao
+import dev.pampa.pampanotes.core.db.SourceEntity
 import dev.pampa.pampanotes.core.files.AppFiles
+import dev.pampa.pampanotes.core.files.AppFileWriteProtection
 import dev.pampa.pampanotes.core.files.FileFact
 import dev.pampa.pampanotes.core.files.FileLocations
 import dev.pampa.pampanotes.core.files.FilesInUse
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 
@@ -60,15 +66,24 @@ data class ComputerOnlyPreview(
  * pulizia dentro una qualsiasi delle tre l'avrebbe fatta dipendere dalle altre due.
  */
 @Singleton
-class StorageRepository @Inject constructor(
+class StorageRepository internal constructor(
   private val audioParts: AudioPartDao,
   private val sources: SourceDao,
   private val jobs: JobDao,
   private val files: AppFiles,
   private val computerOnly: ComputerOnlyScope,
-  private val archive: ArchiveRepository,
+  private val archivePresence: suspend (Collection<String>) -> Map<String, Boolean>,
   private val inUse: FilesInUse,
+  private val transactions: DatabaseTransactions,
 ) {
+  /** Production always confirms against the configured archive. The internal confirmation port
+   * lets the Room regressions supply an offline answer without replacing the transaction runner. */
+  @Inject constructor(
+    audioParts: AudioPartDao, sources: SourceDao, jobs: JobDao, files: AppFiles,
+    computerOnly: ComputerOnlyScope, archive: ArchiveRepository, inUse: FilesInUse,
+    transactions: DatabaseTransactions,
+  ) : this(audioParts, sources, jobs, files, computerOnly, archive::presence, inUse, transactions)
+
   /**
    * Le sessioni che [evictComputerOnly] non tocca anche se la regola le copre: quella che si stava
    * ascoltando, che chi la riapre si aspetta di ritrovare li' dov'era. Vuoto finche' qualcuno non
@@ -134,23 +149,7 @@ class StorageRepository @Inject constructor(
    * Torna quanti file e quanti byte se ne sono andati.
    */
   suspend fun evictArchived(sources: Boolean, audio: Boolean): SizeTotal = withContext(Dispatchers.IO) {
-    val held = inUse.current()
-    val candidates = buildList {
-      if (sources) {
-        this@StorageRepository.sources.all().filter { it.archivedAt > 0 && it.storedFileName != null && it.derivedFromId == null }.forEach { source ->
-          val stored = source.storedFileName!!
-          dev.pampa.pampanotes.core.importing.SdocxSourceIdentity.rememberLocal(source, files.sourceFile(stored), this@StorageRepository.sources)
-          add(Evictable(source.sha256, files.sourceFile(stored), FilesInUse.source(stored), sessionId = null) { this@StorageRepository.sources.markArchived(source.id, 0L) })
-        }
-      }
-      if (audio) {
-        val busySessions = busySessions()
-        audioParts.all().filter { it.archivedAt > 0 && it.sessionId !in busySessions }.forEach { part ->
-          add(Evictable(part.sha256, files.audioFile(part.fileName), FilesInUse.audio(part.fileName), part.sessionId) { audioParts.markArchived(part.id, 0L) })
-        }
-      }
-    }
-    drop(candidates.filter { it.key !in held }) { busySessions() }
+    evict(EvictionRequest(sources = sources, audio = audio))
   }
 
   /**
@@ -163,28 +162,89 @@ class StorageRepository @Inject constructor(
    * riuscita e quando si accende una regola.
    */
   suspend fun evictComputerOnly(): SizeTotal = withContext(Dispatchers.IO) {
-    val scope = computerOnly.current()
-    if (scope.isEmpty) return@withContext SizeTotal(0, 0)
-    val guarded = busySessions() + runCatching { protectedSessionIds() }.getOrDefault(emptySet())
-    val held = inUse.current()
-    val candidates = buildList {
-      scope.parts.filter { it.archivedAt > 0 && it.sessionId !in guarded }.forEach { part ->
-        add(Evictable(part.sha256, files.audioFile(part.fileName), FilesInUse.audio(part.fileName), part.sessionId) { audioParts.markArchived(part.id, 0L) })
-      }
-      scope.sources.filter { it.archivedAt > 0 }.forEach { source ->
-        val stored = source.storedFileName ?: return@forEach
-        dev.pampa.pampanotes.core.importing.SdocxSourceIdentity.rememberLocal(source, files.sourceFile(stored), sources)
-        add(Evictable(source.sha256, files.sourceFile(stored), FilesInUse.source(stored), sessionId = null) { sources.markArchived(source.id, 0L) })
-      }
-    }
-    drop(candidates.filter { it.key !in held }) { busySessions() + runCatching { protectedSessionIds() }.getOrDefault(emptySet()) }
+    evict(EvictionRequest(sources = true, audio = true, computerOnly = true))
   }
 
+  private class EvictionRequest(val sources: Boolean, val audio: Boolean, val computerOnly: Boolean = false)
+
   /**
-   * Un file che si potrebbe togliere da qui, con l'impronta con cui lo si chiede al computer e, per
-   * una registrazione, la sessione: [drop] la riguarda subito prima di cancellare.
+   * Every reference participates, including unselected, unarchived and derived siblings. A
+   * physical file may leave only when ALL its references allow this particular operation.
    */
-  private class Evictable(val sha256: String, val file: java.io.File, val key: String, val sessionId: String?, val lost: suspend () -> Unit)
+  private class Evictable(
+    val id: String, val sha256: String, val file: File, val key: String, val eligible: Boolean,
+    val source: SourceEntity? = null,
+  ) {
+    fun sameRecord(other: Evictable): Boolean = id == other.id && (source == null) == (other.source == null)
+  }
+
+  /** A key must resolve strictly inside its own unredirected audio/source root. */
+  private fun physicalFile(key: String): File? {
+    return try {
+      val directory = key.substringBefore('/')
+      val root = when (directory) {
+        "audio" -> files.audio
+        "sources" -> files.sources
+        else -> return null
+      }
+      val canonicalRoot = root.canonicalFile
+      if (canonicalRoot != File(files.root.canonicalFile, directory)) return null
+      val file = File(root, key.substringAfter('/')).canonicalFile
+      file.takeIf { it != canonicalRoot && it.toPath().startsWith(canonicalRoot.toPath()) }
+    } catch (_: Exception) { null }
+  }
+
+  /** Read failures are unknown protection, never permission to delete. Cancellation still wins. */
+  private suspend fun evictionSnapshot(request: EvictionRequest, protected: Set<String>): List<Evictable>? = try {
+    val scope = if (request.computerOnly) computerOnly.current() else null
+    val parts = audioParts.all()
+    val docs = sources.all()
+    val guarded = busySessions() + protected
+    buildList {
+      parts.forEach { part ->
+        val key = FilesInUse.audio(part.fileName)
+        add(Evictable(part.id, part.sha256, requireNotNull(physicalFile(key)), key,
+          request.audio && part.archivedAt > 0 && part.sessionId !in guarded && (scope == null || scope.covers(part))))
+      }
+      docs.forEach { source ->
+        val stored = source.storedFileName ?: return@forEach
+        val key = FilesInUse.source(stored)
+        add(Evictable(source.id, source.sha256, requireNotNull(physicalFile(key)), key,
+          request.sources && source.archivedAt > 0 && source.derivedFromId == null && (scope == null || scope.covers(source)), source))
+      }
+    }
+  } catch (error: Exception) {
+    if (error is CancellationException) throw error
+    null
+  }
+
+  private suspend fun readProtectedSessions(): Set<String>? = try {
+    protectedSessionIds()
+  } catch (error: Exception) {
+    if (error is CancellationException) throw error
+    null
+  }
+
+  private fun evictableReferences(snapshot: List<Evictable>, held: Set<String>): List<Evictable> {
+    // Re-resolve paths at the destructive boundary too: a redirected path is not the snapshot.
+    if (snapshot.any { physicalFile(it.key) != it.file }) return emptyList()
+    val heldFiles = held.map { physicalFile(it) ?: return emptyList() }.toSet()
+    return snapshot.groupBy { it.file }.filter { (file, references) ->
+      file !in heldFiles && references.all { it.eligible && it.sha256 == references.first().sha256 }
+    }.values.flatten()
+  }
+
+  private suspend fun evict(request: EvictionRequest): SizeTotal {
+    val protected = readProtectedSessions() ?: return SizeTotal(0, 0)
+    val snapshot = evictionSnapshot(request, protected) ?: return SizeTotal(0, 0)
+    val candidates = inUse.withCurrent { held -> evictableReferences(snapshot, held).filter { it.file.isFile } }
+    // Preserve intrinsic Samsung identity before removing the last local original. Only bounded,
+    // eligible files reach this helper; it may suspend, so drop rechecks everything afterwards.
+    candidates.forEach { item -> item.source?.let { source ->
+      dev.pampa.pampanotes.core.importing.SdocxSourceIdentity.rememberLocal(source, item.file, sources)
+    } }
+    return drop(candidates, request)
+  }
 
   /**
    * Toglie i file che il computer di casa conferma di avere adesso (un `HEAD` per file).
@@ -195,23 +255,57 @@ class StorageRepository @Inject constructor(
    *
    * Le guardie si riguardano **subito prima di ogni cancellazione**, non solo all'inizio: un `HEAD`
    * per file su cento registrazioni puo' durare minuti, e nel frattempo si puo' aprire la lezione
-   * (il lettore la tiene in [FilesInUse]), partire un export o una trascrizione ([guardedSessions]).
+   * (il lettore la tiene in [FilesInUse]), partire un export o una trascrizione. Anche i riferimenti
+   * e l'ambito si rileggono: una sorella spostata a scuola deve tenere gli stessi byte senza prese.
    */
-  private suspend fun drop(candidates: List<Evictable>, guardedSessions: suspend () -> Set<String>): SizeTotal {
-    val here = candidates.filter { it.file.exists() }
+  private suspend fun drop(candidates: List<Evictable>, request: EvictionRequest): SizeTotal {
+    val here = candidates.filter { it.file.isFile }
     if (here.isEmpty()) return SizeTotal(0, 0)
-    val confirmed = archive.presence(here.map { it.sha256 })
+    val confirmed = archivePresence(here.map { it.sha256 }.distinct())
     var count = 0
     var bytes = 0L
-    here.forEach { item ->
+    here.groupBy { it.file }.values.forEach { references ->
+      val item = references.first()
       when (confirmed[item.sha256]) {
         true -> {
-          if (item.key in inUse.current()) return@forEach
-          if (item.sessionId != null && item.sessionId in guardedSessions()) return@forEach
-          val size = item.file.length()
-          if (item.file.delete()) { count++; bytes += size }
+          // Capture the PN generation before ANY final lookup: adoption/copy may commit and
+          // release while playback protection suspends. Released owners still veto this pass.
+          files.beginOrphanSweep().use { writeSnapshot ->
+            // DataStore playback protection is not a DB reference read. Let writers finish here,
+            // then read ALL DB policy/references under Room's real writer-exclusion boundary.
+            val protected = readProtectedSessions() ?: return@use
+            transactions.run {
+              val current = evictionSnapshot(request, protected) ?: return@run
+              currentCoroutineContext().ensureActive()
+              // Lock order: Room -> FilesInUse -> write registry. Neither monitor encloses a
+              // suspend/DAO call. Normal Room/file writers never wait for Room under a monitor.
+              inUse.withCurrent { held ->
+                val permitted = evictableReferences(current, held).any {
+                  it.sameRecord(item) && it.file == item.file && it.sha256 == item.sha256
+                }
+                if (permitted) {
+                  val size = item.file.length()
+                  if (AppFileWriteProtection.deleteIfUnprotected(item.file, writeSnapshot) {
+                      it.isFile && physicalFile(item.key) == item.file
+                    }) { count++; bytes += size }
+                }
+              }
+            }
+          }
         }
-        false -> item.lost()
+        false -> {
+          val protected = readProtectedSessions() ?: return@forEach
+          transactions.run {
+            val current = evictionSnapshot(request, protected) ?: return@run
+            references.forEach { original ->
+              // Comparing and updating also share writer exclusion: a replacement row must not
+              // lose its archive metadata after this snapshot or after the HEAD yielded.
+              if (current.any { it.sameRecord(original) && it.sha256 == original.sha256 && it.file == original.file }) {
+                if (original.source == null) audioParts.markArchived(original.id, 0L) else sources.markArchived(original.id, 0L)
+              }
+            }
+          }
+        }
         null -> Unit
       }
     }

@@ -121,10 +121,16 @@ fun jobErrorRes(code: String, provider: String? = null): Int = when (code) {
   "cloud_charge_inflight" -> R.string.cloud_error_inflight
   "cloud_model_changed" -> R.string.cloud_error_model_changed
   "cloud_key_changed" -> R.string.cloud_error_key_changed
+  "cloud_account_changed" -> R.string.cloud_account_changed
   "cloud_cost_storage" -> R.string.cloud_cost_storage_error
   "unauthorized" -> if (provider == TranscriptionProviderId.CUSTOM.id) R.string.error_unauthorized_computer else R.string.error_unauthorized
   "rate_limited" -> R.string.error_rate_limited
-  "credit_required" -> R.string.error_credit_required
+  "credit_required" -> when (provider) {
+    "mistral" -> R.string.cr2_credit_mistral
+    "groq" -> R.string.cr2_credit_groq
+    "openrouter" -> R.string.cr2_credit_openrouter
+    else -> R.string.cr2_credit_unknown
+  }
   "file_too_large" -> R.string.error_file_too_large
   "server" -> R.string.error_server
   "network" -> R.string.error_network

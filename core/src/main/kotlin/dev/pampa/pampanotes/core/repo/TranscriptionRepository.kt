@@ -4,6 +4,7 @@ import androidx.room.withTransaction
 import dev.antigravity.fluidengine.ai.keys.AiKeyStore
 import dev.antigravity.fluidengine.ai.provider.ProviderId
 import dev.pampa.pampanotes.core.db.AudioPartDao
+import dev.pampa.pampanotes.core.db.AudioPartEntity
 import dev.pampa.pampanotes.core.db.JobDao
 import dev.pampa.pampanotes.core.db.JobEntity
 import dev.pampa.pampanotes.core.db.JobState
@@ -28,6 +29,10 @@ import dev.pampa.pampanotes.core.transcription.ComputerAuth
 import dev.pampa.pampanotes.core.transcription.CloudTranscriptionGuard
 import dev.pampa.pampanotes.core.transcription.OpenRouterTranscriptionProvider
 import dev.pampa.pampanotes.core.transcription.GroqWhisperProvider
+import dev.pampa.pampanotes.core.transcription.CloudCredentials
+import dev.pampa.pampanotes.core.transcription.CloudCooldownStore
+import dev.pampa.pampanotes.core.transcription.CloudRetry
+import dev.pampa.pampanotes.core.transcription.MistralTranscriptionProvider
 import dev.pampa.pampanotes.core.transcription.EndpointResolver
 import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
 import dev.pampa.pampanotes.core.transcription.Pieces
@@ -54,6 +59,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.ensureActive
 
 /**
  * La coda delle trascrizioni, vista da chi la usa.
@@ -80,6 +86,8 @@ class TranscriptionRepository @Inject constructor(
   private val sessionRepository: SessionRepository,
   private val files: AppFiles,
   private val spending: dev.pampa.pampanotes.core.spending.CloudSpending,
+  private val credentials: CloudCredentials,
+  private val cooldowns: CloudCooldownStore,
 ) {
 
   fun observeAll(): Flow<List<JobEntity>> = jobs.observeAll()
@@ -113,10 +121,16 @@ class TranscriptionRepository @Inject constructor(
     jobs.activeForSession(sessionId)?.let { return it }
     if (busyElsewhere(sessionId) != null) return null
 
-    val explicitCloud = overrides?.explicitlyChoosesCloud(providerId.id) == true
-    val selectedProvider = if (explicitCloud) providerId.id else settingsStore.current().providerForJob(providerId.id, transcription = true)
+    val settings = settingsStore.current()
+    val requested = overrides?.provider?.let { id -> TranscriptionProviderId.entries.firstOrNull { it.id == id }
+      ?: throw TranscriptionError.UnknownModel(id, "Unknown transcription provider") } ?: providerId
+    val explicitCloud = overrides?.explicitlyChoosesCloud(requested.id) == true
+    val selectedProvider = if (explicitCloud) requested.id else settings.providerForJob(requested.id, transcription = true)
+    var folderModel: String? = null
     val blocked = if (selectedProvider == OpenAiCompatProvider.ID) null else try {
-      spending.policyForSession(sessionId, allowExplicitCloud = explicitCloud).takeUnless { it.allowed }?.reason
+      val policy = spending.policyForSession(sessionId, allowExplicitCloud = explicitCloud)
+      folderModel = policy.model
+      policy.takeUnless { it.allowed }?.reason
     } catch (error: TranscriptionError.CloudControl) {
       error.reason
     }
@@ -126,16 +140,22 @@ class TranscriptionRepository @Inject constructor(
       sessionId = sessionId,
       type = JobType.TRANSCRIBE,
       provider = selectedProvider,
-      model = null,
+      model = modelAtEnqueue(selectedProvider, settings, overrides, folderModel),
       state = if (blocked != null) JobState.FAILED else JobState.QUEUED,
       errorCode = blocked,
       chunkTotal = 0,
       chunkDone = 0,
-      optionsJson = overrides?.takeUnless { it.isEmpty }
-        ?.let { json.encodeToString(TranscribeOptions.serializer(), TranscribeOptions(overrides = it)) },
+      optionsJson = json.encodeToString(TranscribeOptions.serializer(), TranscribeOptions(
+        overrides = overrides?.takeUnless { it.isEmpty },
+        cloudChunkMinutes = settings.chunkMinutes,
+        groqMaxUploadMb = settings.groqMaxUploadMb,
+      )),
       createdAt = now,
       updatedAt = now,
     )
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+      cooldowns.contexts.bind(job.id, CloudRetry.fingerprint(settings.syncAccount))
+    }
     jobs.upsert(job)
     return job
   }
@@ -183,7 +203,64 @@ class TranscriptionRepository @Inject constructor(
     val queued = jobs.queued(providerId)
     if (queued.isEmpty()) return false
     val now = System.currentTimeMillis()
-    return queued.none { (JobPhase.parse(it.phase) as? JobPhase.Until)?.let { until -> until.atMillis > now } == true }
+    return queued.any { job -> waitUntil(job)?.let { it <= now } != false }
+  }
+
+  /** Shared key/account quota plus the job's own saved wait. Called before foreground/probes. */
+  suspend fun waitUntil(job: JobEntity): Long? {
+    var own = (JobPhase.parse(job.phase) as? JobPhase.Until)?.atMillis
+    if (job.provider == OpenAiCompatProvider.ID) return own
+    val settings = settingsStore.current()
+    val context = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { cooldowns.contexts.get(job.id) }
+    val account = CloudRetry.fingerprint(settings.syncAccount)
+    // Let the worker surface the account fence now instead of blocking a new account behind it.
+    if (context != null && context.accountFingerprint != account) return null
+    val key = credentials.key(job.provider) ?: return null
+    val fingerprint = CloudRetry.fingerprint(key)
+    if (context?.cooldownScope != null && context.cooldownScope != CloudRetry.scope(job.provider, fingerprint, account)) own = null
+    val shared = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+      cooldowns.durable.deadline(job.provider, fingerprint, account)
+    }
+    return listOfNotNull(own, shared).maxOrNull()
+  }
+
+  private fun modelAtEnqueue(provider: String, settings: PampaSettings, overrides: TranscribeOverrides?, folderModel: String? = null): String? = when (provider) {
+    GroqWhisperProvider.ID -> overrides?.model?.takeIf(String::isNotBlank) ?: settings.groqTranscriptionModel
+    OpenRouterTranscriptionProvider.ID -> overrides?.model?.takeIf(String::isNotBlank) ?: folderModel ?: settings.openRouterTranscriptionModel
+    MistralTranscriptionProvider.ID -> overrides?.model?.takeIf(String::isNotBlank) ?: settings.mistralTranscriptionModel
+    else -> settings.endpointModel.takeIf(String::isNotBlank)
+  }
+
+  /** Legacy rows are pinned once locally; new cloud jobs already carry a model at enqueue. */
+  suspend fun pinForRun(job: JobEntity): JobEntity? {
+    // Privacy migration can replace a queued cloud identity while this caller is suspended.
+    // Never derive or persist a model for a stale provider, including already-pinned rows.
+    val current = jobs.get(job.id) ?: return null
+    if (current.provider != job.provider || current.state != JobState.QUEUED) return current
+    val job = current
+    val settings = settingsStore.current()
+    val options = transcribeOptions(job)
+    val context = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+      cooldowns.contexts.bind(job.id, CloudRetry.fingerprint(settings.syncAccount))
+    }
+    if (job.provider != OpenAiCompatProvider.ID && context.accountFingerprint != CloudRetry.fingerprint(settings.syncAccount)) throw TranscriptionError.CloudControl("cloud_account_changed")
+    if (job.model != null && options.cloudChunkMinutes != null && options.groqMaxUploadMb != null) return job
+    val legacyPlan = if ((job.provider == GroqWhisperProvider.ID || job.provider == OpenRouterTranscriptionProvider.ID) && job.attempts > 0)
+      kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        runCatching { java.io.File(files.jobs, "${job.id}/${dev.pampa.pampanotes.core.transcription.StoredChunks.WORK_FILE}").readText().split('|') }
+          .getOrNull()?.takeIf { it.size in 3..4 && it.first() == job.provider }
+      } else null
+    val pinned = options.copy(cloudChunkMinutes = options.cloudChunkMinutes ?: legacyPlan?.get(1)?.toIntOrNull()?.takeIf { it in 3..20 } ?: settings.chunkMinutes,
+      groqMaxUploadMb = options.groqMaxUploadMb ?: legacyPlan?.get(2)?.toLongOrNull()?.div(1024 * 1024)?.toInt()?.takeIf { it in 5..100 } ?: settings.groqMaxUploadMb)
+    val legacyModel = legacyPlan?.getOrNull(3)?.takeIf { job.provider == OpenRouterTranscriptionProvider.ID && it.isNotBlank() }
+    // Pre-upgrade queued rows did not save a model. Recover the same folder preference that
+    // governed their first dispatch, without catalog/probe requests. Established choices win.
+    val folderModel = if (job.model == null && legacyModel == null && options.overrides?.model.isNullOrBlank() && job.provider == OpenRouterTranscriptionProvider.ID)
+      spending.policyForSession(job.sessionId, allowExplicitCloud = options.overrides?.explicitlyChoosesCloud(job.provider) == true).model
+    else null
+    jobs.pinTranscription(job.id, job.model ?: legacyModel ?: modelAtEnqueue(job.provider, settings, options.overrides, folderModel),
+      json.encodeToString(TranscribeOptions.serializer(), pinned), System.currentTimeMillis(), job.provider, job.model, job.optionsJson)
+    return jobs.get(job.id)
   }
 
   suspend fun queuedCount(providerId: String): Int = jobs.queuedCount(providerId)
@@ -296,7 +373,7 @@ class TranscriptionRepository @Inject constructor(
    *
    * @return falso se il lavoro ha perso il computer troppe volte: va chiuso fallito.
    */
-  suspend fun requeueForEndpoint(jobId: String): Boolean = requeueCountingLoss(jobId, PHASE_WAITING_ENDPOINT)
+  suspend fun requeueForEndpoint(job: JobEntity): Boolean = requeueCountingLoss(job, PHASE_WAITING_ENDPOINT)
 
   /**
    * Il computer c'e', ma a un altro indirizzo da quello con cui il lavoro era partito (da casa a
@@ -304,16 +381,18 @@ class TranscriptionRepository @Inject constructor(
    * fallire dopo i tentativi su una strada che non porta piu' da nessuna parte. Contato come
    * [requeueForEndpoint], perche' un indirizzo che cambia a ogni tentativo e' un giro senza fine.
    */
-  suspend fun requeueForNewAddress(jobId: String): Boolean = requeueCountingLoss(jobId, null)
+  suspend fun requeueForNewAddress(job: JobEntity): Boolean = requeueCountingLoss(job, null)
 
-  private suspend fun requeueCountingLoss(jobId: String, phase: String?): Boolean {
+  private suspend fun requeueCountingLoss(job: JobEntity, phase: String?): Boolean {
     // Una riga che non c'e' piu' non ha niente da chiudere: chi chiama non deve segnarla fallita.
-    val job = jobs.get(jobId) ?: return true
+    val current = jobs.get(job.id) ?: return true
+    if (!ownsDispatch(job, current)) return true
     val options = transcribeOptions(job)
     val losses = options.endpointLosses + 1
     if (losses >= MAX_ENDPOINT_LOSSES) return false
     val encoded = json.encodeToString(TranscribeOptions.serializer(), options.copy(endpointLosses = losses))
-    jobs.requeueWithOptions(jobId, phase, encoded, System.currentTimeMillis())
+    jobs.requeueOwned(job.id, phase, System.currentTimeMillis(), job.provider, job.model, job.optionsJson,
+      job.attempts, job.state == JobState.QUEUED, encoded)
     return true
   }
 
@@ -326,21 +405,55 @@ class TranscriptionRepository @Inject constructor(
   /**
    * Il sistema ha fermato il worker a meta' lavoro (vincoli, quota, un aggiornamento): il lavoro non
    * e' fallito, torna in fila e riparte dai pezzi gia' su disco. Un «Annulla» arrivato nel frattempo
-   * vince: la condizione della query lo lascia com'e'.
+   * vince: la query chiude atomicamente la richiesta di annullamento.
    */
   suspend fun requeueStopped(jobId: String) {
     jobs.requeue(jobId, null, System.currentTimeMillis())
   }
 
+  suspend fun requeueStopped(job: JobEntity): Boolean = requeueOwned(job, null)
+
+  private suspend fun requeueOwned(job: JobEntity, phase: String?): Boolean = jobs.requeueOwned(
+    job.id, phase, System.currentTimeMillis(), job.provider, job.model, job.optionsJson, job.attempts,
+    job.state == JobState.QUEUED,
+    job.optionsJson,
+  ) > 0
+
   /**
    * Il limite di Groq chiede di aspettare ore: il lavoro torna in fila e dice fino a quando
    * ([PHASE_RETRY_AT]), invece di fallire o di tenere una notifica accesa per tutto quel tempo.
    */
-  suspend fun requeueUntil(jobId: String, atMillis: Long) {
-    jobs.requeue(jobId, "$PHASE_RETRY_AT:$atMillis", System.currentTimeMillis())
+  suspend fun requeueUntil(jobId: String, atMillis: Long, scope: String? = null): Boolean {
+    if (scope != null) {
+      val account = CloudRetry.fingerprint(settingsStore.current().syncAccount)
+      kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { cooldowns.contexts.setCooldown(jobId, scope, account) }
+    }
+    val phase = if (scope != null) JobPhase.ProviderCooldown.encode() else "$PHASE_RETRY_AT:$atMillis"
+    jobs.requeue(jobId, phase, System.currentTimeMillis())
+    return jobs.get(jobId)?.state == JobState.QUEUED
   }
 
+  suspend fun requeueUntil(job: JobEntity, atMillis: Long, scope: String? = null): Boolean {
+    val phase = if (scope != null) JobPhase.ProviderCooldown.encode() else "$PHASE_RETRY_AT:$atMillis"
+    if (!requeueOwned(job, phase)) return false
+    if (scope != null) {
+      val account = CloudRetry.fingerprint(settingsStore.current().syncAccount)
+      kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { cooldowns.contexts.setCooldown(job.id, scope, account) }
+    }
+    return jobs.get(job.id)?.let { ownsDispatch(job, it, queuedAfterRun = true) } == true
+  }
+
+  /** Progress may change state; provider/model/options and the attempt counter cannot change owner. */
+  fun ownsDispatch(expected: JobEntity, current: JobEntity, queuedAfterRun: Boolean = false): Boolean =
+    expected.provider == current.provider && expected.model == current.model && expected.optionsJson == current.optionsJson &&
+      expected.attempts == current.attempts && (if (queuedAfterRun) current.state == JobState.QUEUED
+      else if (expected.state == JobState.QUEUED) current.state == JobState.QUEUED
+      else current.state in setOf(JobState.PREPARING, JobState.UPLOADING, JobState.TRANSCRIBING, JobState.STITCHING))
+
   suspend fun markCancelled(jobId: String) = jobs.markCancelled(jobId, System.currentTimeMillis())
+
+  suspend fun markCancelled(job: JobEntity): Boolean = jobs.cancelOwned(job.id, System.currentTimeMillis(),
+    job.provider, job.model, job.optionsJson, job.attempts, job.state == JobState.QUEUED) > 0
 
   /**
    * Scrive il progresso senza toccare il resto della riga.
@@ -364,10 +477,18 @@ class TranscriptionRepository @Inject constructor(
    * Il lavoro parte: da in fila a [state]. Falso se nel frattempo non era piu' in fila — annullato
    * un attimo prima, o preso da qualcun altro — e allora non e' piu' di chi chiama.
    */
-  suspend fun start(jobId: String, state: JobState, model: String?): Boolean =
-    jobs.start(jobId, state, model, System.currentTimeMillis()) > 0
+  suspend fun start(jobId: String, state: JobState, model: String?, expectedProvider: String): Boolean =
+    jobs.start(jobId, state, model, System.currentTimeMillis(), expectedProvider) > 0
 
-  suspend fun markDone(jobId: String): Boolean = jobs.markDone(jobId, System.currentTimeMillis()) > 0
+  suspend fun start(job: JobEntity, state: JobState, model: String?): Boolean =
+    jobs.startOwned(job.id, state, model, System.currentTimeMillis(), job.provider, job.model, job.optionsJson, job.attempts) > 0
+
+  suspend fun markDone(jobId: String): Boolean {
+    val now = System.currentTimeMillis()
+    if (jobs.markDone(jobId, now) > 0) return true
+    jobs.finishCancellation(jobId, now)
+    return false
+  }
 
   /** Com'e' finito un lavoro che si voleva segnare fallito. */
   enum class FailOutcome {
@@ -379,17 +500,25 @@ class TranscriptionRepository @Inject constructor(
 
     /** Il lavoro non c'e' piu', o era gia' chiuso: niente da scrivere e niente da dire. */
     GONE,
+
+    /** Another queued/running dispatch owns this row. Keep its work and wake its queue. */
+    SUPERSEDED,
   }
 
   /** Segna fallito un lavoro, toccando solo le colonne dell'esito (vedi `JobDao.fail`). */
-  suspend fun fail(jobId: String, error: TranscriptionError): FailOutcome {
+  suspend fun fail(job: JobEntity, error: TranscriptionError): FailOutcome {
+    val jobId = job.id
     val now = System.currentTimeMillis()
-    if (jobs.fail(jobId, error.code, error.message, now) > 0) return FailOutcome.FAILED
+    if (jobs.fail(jobId, error.code, error.message, now, job.provider, job.model, job.optionsJson, job.attempts,
+        job.state == JobState.QUEUED) > 0) return FailOutcome.FAILED
     val current = jobs.get(jobId) ?: return FailOutcome.GONE
+    if (current.provider != job.provider || current.model != job.model || current.optionsJson != job.optionsJson ||
+        current.attempts != job.attempts) return FailOutcome.SUPERSEDED
     if (current.state == JobState.CANCEL_REQUESTED) {
-      jobs.markCancelled(jobId, now)
-      return FailOutcome.CANCELLED
+      return if (requeueOwned(job, null)) FailOutcome.CANCELLED else FailOutcome.SUPERSEDED
     }
+    if (current.state == JobState.QUEUED || current.state in setOf(JobState.PREPARING, JobState.UPLOADING,
+        JobState.TRANSCRIBING, JobState.STITCHING)) return FailOutcome.SUPERSEDED
     return FailOutcome.GONE
   }
 
@@ -398,15 +527,11 @@ class TranscriptionRepository @Inject constructor(
   /**
    * Un lavoro che l'utente vuole fermare: il worker se ne accorge subito (guarda la riga).
    *
-   * Due `UPDATE` condizionati e non una lettura seguita da una scrittura: fra le due il worker poteva
-   * far partire il lavoro, e la scrittura della copia letta lo riportava a «annullato» mentre lui
-   * lavorava. Se e' ancora in fila si chiude adesso; se nel frattempo e' partito, la seconda lo trova
-   * in corso e chiede di fermarlo.
+   * Un solo UPDATE: anche se il worker lo rimette in fila per quota dopo l'uscita del watcher,
+   * l'annullamento trova o la riga in corso o quella in fila, senza perdere la richiesta.
    */
   suspend fun requestCancel(jobId: String) {
-    val now = System.currentTimeMillis()
-    if (jobs.cancelIfQueued(jobId, now) > 0) return
-    jobs.requestCancelIfRunning(jobId, now)
+    jobs.requestCancel(jobId, System.currentTimeMillis())
   }
 
   /**
@@ -424,7 +549,7 @@ class TranscriptionRepository @Inject constructor(
     // posto il computer. Le opzioni di un raffinamento (il preset) invece restano, e le impostazioni
     // che chi ha ritrascritto aveva scelto per questo lavoro: «Riprova» e' la stessa richiesta.
     val options = if (job.type == JobType.TRANSCRIBE) {
-      transcribeOptions(job).overrides?.let { json.encodeToString(TranscribeOptions.serializer(), TranscribeOptions(overrides = it)) }
+      json.encodeToString(TranscribeOptions.serializer(), transcribeOptions(job).copy(endpointLosses = 0, emptyParts = emptyList()))
     } else {
       job.optionsJson
     }
@@ -512,7 +637,9 @@ class TranscriptionRepository @Inject constructor(
    * se a meta' lavoro il computer si raggiunge da un'altra strada (vedi [endpointMovedFrom]), il
    * lavoro si rimette in fila invece di fallire.
    */
-  suspend fun bind(providerId: String, pieces: Pieces? = null, explicitCloud: Boolean = false): BoundProvider? {
+  suspend fun accountForJob(jobId: String): String? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { cooldowns.contexts.get(jobId)?.accountFingerprint }
+
+  suspend fun bind(providerId: String, pieces: Pieces? = null, explicitCloud: Boolean = false, groqMaxUploadMb: Int? = null, accountFingerprint: String? = null): BoundProvider? {
     val settings = settingsStore.current()
     // I pezzi scelti per questo lavoro vincono su quelli delle impostazioni.
     val chunkAuto = pieces?.auto ?: settings.customChunkAuto
@@ -523,24 +650,19 @@ class TranscriptionRepository @Inject constructor(
         val provider = GroqWhisperProvider(
           http = http,
           apiKey = key,
-          maxUploadBytes = settings.groqMaxUploadMb * 1024L * 1024L,
+          maxUploadBytes = (groqMaxUploadMb ?: settings.groqMaxUploadMb) * 1024L * 1024L,
         )
-        BoundProvider(CloudTranscriptionGuard(provider, beforeUpload = { request ->
-          spending.beforeUpload(providerId, dev.pampa.pampanotes.core.spending.OpenRouterCostMetadata.fingerprint(key), request, explicitCloud)
-        }) { !explicitCloud && settingsStore.current().customOnly }, baseUrl = null)
+        BoundProvider(guardCloud(provider, key, settings, explicitCloud, accountFingerprint), baseUrl = null)
       }
 
       OpenRouterTranscriptionProvider.ID -> {
         val key = keys.key(ProviderId.OPENROUTER)?.takeIf { it.isNotBlank() } ?: return null
-        BoundProvider(CloudTranscriptionGuard(OpenRouterTranscriptionProvider(http, key), prepare = { request ->
-          val policy = spending.policyForSession(request.cloudSessionId, request.cloudPartId, explicitCloud)
-          if (!policy.allowed) throw TranscriptionError.CloudControl(policy.reason ?: "cloud_folder_blocked")
-          request.copy(model = policy.model ?: request.model, cloudDefaultModel = request.model)
-        }, beforeUpload = { request ->
-          spending.beforeUpload(providerId, dev.pampa.pampanotes.core.spending.OpenRouterCostMetadata.fingerprint(key), request, explicitCloud)
-        }) {
-          !explicitCloud && settingsStore.current().customOnly
-        }, baseUrl = null)
+        BoundProvider(guardCloud(OpenRouterTranscriptionProvider(http, key), key, settings, explicitCloud, accountFingerprint), baseUrl = null)
+      }
+
+      MistralTranscriptionProvider.ID -> {
+        val key = credentials.key(providerId) ?: return null
+        BoundProvider(guardCloud(MistralTranscriptionProvider(http, key), key, settings, explicitCloud, accountFingerprint), baseUrl = null)
       }
 
       OpenAiCompatProvider.ID -> {
@@ -573,6 +695,27 @@ class TranscriptionRepository @Inject constructor(
 
       else -> null
     }
+  }
+
+  private fun guardCloud(provider: TranscriptionProvider, key: String, settings: PampaSettings, explicitCloud: Boolean, accountFingerprint: String?): TranscriptionProvider {
+    val fingerprint = CloudRetry.fingerprint(key)
+    val account = accountFingerprint ?: CloudRetry.fingerprint(settings.syncAccount)
+    return CloudTranscriptionGuard(provider, beforeUpload = { request ->
+      spending.beforeUpload(provider.id, fingerprint, request, explicitCloud)
+    }, beforeRequest = {
+      kotlinx.coroutines.currentCoroutineContext().ensureActive()
+      if (CloudRetry.fingerprint(settingsStore.current().syncAccount) != account) throw TranscriptionError.CloudControl("cloud_account_changed")
+      if (credentials.key(provider.id)?.let(CloudRetry::fingerprint) != fingerprint) throw TranscriptionError.CloudControl("cloud_key_changed")
+      val until = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { cooldowns.durable.deadline(provider.id, fingerprint, account) }
+      val now = System.currentTimeMillis()
+      if (until != null && until > now) throw TranscriptionError.RateLimited((until - now) / 1000.0, "Provider cooldown", until, CloudRetry.scope(provider.id, fingerprint, account))
+    }, limited = { error ->
+      val now = System.currentTimeMillis()
+      val until = kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable + kotlinx.coroutines.Dispatchers.IO) {
+        cooldowns.durable.extend(provider.id, fingerprint, account, CloudRetry.deadline(error, now))
+      }
+      TranscriptionError.RateLimited((until - now) / 1000.0, "Provider cooldown", until, CloudRetry.scope(provider.id, fingerprint, account))
+    }) { !explicitCloud && settingsStore.current().customOnly }
   }
 
   /**
@@ -618,6 +761,17 @@ class TranscriptionRepository @Inject constructor(
     }
   }
 
+  /** Validate capability without changing the queued choice or making an inference probe. */
+  suspend fun validatePinnedModel(provider: TranscriptionProvider, model: String) {
+    val supported = when (provider.id) {
+      MistralTranscriptionProvider.ID -> model in MistralTranscriptionProvider.MODELS
+      GroqWhisperProvider.ID -> model in setOf("whisper-large-v3-turbo", "whisper-large-v3")
+      OpenRouterTranscriptionProvider.ID -> model in provider.listModels()
+      else -> true
+    }
+    if (!supported) throw TranscriptionError.UnknownModel(model, "Selected transcription model unavailable")
+  }
+
   /**
    * Salva il risultato e lo rende quello mostrato.
    *
@@ -631,8 +785,12 @@ class TranscriptionRepository @Inject constructor(
    *
    * @return null se nessuna di quelle parti esiste piu': non c'e' niente da salvare.
    */
-  suspend fun saveTranscript(sessionId: String, partIds: List<String>, result: SessionTranscript): SavedTranscription? =
-    sessionRepository.saveTranscription(sessionId, partIds, result)
+  suspend fun saveTranscript(
+    sessionId: String,
+    partIds: List<String>,
+    result: SessionTranscript,
+    originalParts: List<AudioPartEntity> = emptyList(),
+  ): SavedTranscription? = sessionRepository.saveTranscription(sessionId, partIds, result, originalParts)
 
   /**
    * La sessione del lavoro non c'e' piu', ma qualcuna delle sue parti si': e' stata unita a
@@ -836,6 +994,8 @@ data class TranscribeOptions(
   val emptyParts: List<String> = emptyList(),
   /** Le impostazioni scelte da chi ha ritrascritto, per questo lavoro soltanto (vedi [TranscribeOverrides]). */
   val overrides: TranscribeOverrides? = null,
+  val cloudChunkMinutes: Int? = null,
+  val groqMaxUploadMb: Int? = null,
 ) {
   companion object {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }

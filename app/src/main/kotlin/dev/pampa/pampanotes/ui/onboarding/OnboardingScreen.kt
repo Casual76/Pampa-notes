@@ -50,6 +50,7 @@ import dev.pampa.pampanotes.R
 import dev.pampa.pampanotes.core.settings.TranscriptionProviderId
 import dev.pampa.pampanotes.ui.settings.CheckState
 import dev.pampa.pampanotes.ui.settings.openRouterSettings
+import dev.pampa.pampanotes.ui.settings.mistralSettings
 import dev.pampa.pampanotes.ui.settings.ServicesUiState
 import dev.pampa.pampanotes.ui.settings.SettingsViewModel
 import dev.pampa.pampanotes.ui.settings.installCompanionContent
@@ -94,6 +95,7 @@ fun OnboardingRoute(
 
   var groqKey by remember { mutableStateOf("") }
   var openRouterKey by remember { mutableStateOf("") }
+  var mistralKey by remember { mutableStateOf("") }
   // Gli indirizzi sopravvivono a una rotazione: riscriverli a meta' primo avvio e' il modo di farli
   // saltare. Il codice e la chiave di Groq invece no — lo stato salvato finisce su disco, in chiaro,
   // e un segreto non ci va: al massimo si riscrive.
@@ -111,6 +113,10 @@ fun OnboardingRoute(
     ) {
       viewModel.saveEndpoint(endpointUrl, endpointRemoteUrl, endpointToken)
       endpointToken = ""
+    }
+    if (step == OnboardingStep.PROVIDER && mistralKey.isNotBlank()) {
+      viewModel.saveMistralKey(mistralKey)
+      mistralKey = ""
     }
     if (step == OnboardingStep.PROVIDER && openRouterKey.isNotBlank()) {
       viewModel.saveOpenRouterKey(openRouterKey)
@@ -216,6 +222,12 @@ fun OnboardingRoute(
           },
         )
 
+        if (settings.preferredProvider == TranscriptionProviderId.MISTRAL) {
+          mistralSettings(settings, services, mistralKey, { mistralKey = it }, {
+            viewModel.saveMistralKey(mistralKey)
+            mistralKey = ""
+          }, viewModel)
+        }
         if (settings.preferredProvider == TranscriptionProviderId.OPENROUTER) {
           openRouterSettings(settings, services, openRouterKey, { openRouterKey = it }, {
             viewModel.saveOpenRouterKey(openRouterKey)
@@ -416,6 +428,7 @@ private fun LazyListScope.providerStep(
     val labels = mapOf(
       TranscriptionProviderId.GROQ to stringResource(R.string.provider_groq),
       TranscriptionProviderId.OPENROUTER to stringResource(R.string.provider_openrouter),
+            TranscriptionProviderId.MISTRAL to stringResource(R.string.provider_mistral),
       TranscriptionProviderId.CUSTOM to stringResource(R.string.provider_custom),
     )
     FluidSegmentedControl(
@@ -467,7 +480,7 @@ private fun LazyListScope.providerStep(
         )
       }
     }
-  } else if (provider == TranscriptionProviderId.OPENROUTER) {
+  } else if (provider == TranscriptionProviderId.OPENROUTER || provider == TranscriptionProviderId.MISTRAL) {
     // Shared setup in the provider step.
   } else if (accountComputer != null) {
     // Arrivato con l'accesso: indirizzi e token ci sono gia', e chiederli di nuovo sarebbe chiedere

@@ -18,6 +18,7 @@ import dev.pampa.pampanotes.core.repo.NoteRepository
 import dev.pampa.pampanotes.core.relay.*
 import dev.pampa.pampanotes.core.transcription.ComputerAuth
 import dev.pampa.pampanotes.core.repo.StorageRepository
+import dev.pampa.pampanotes.core.repo.DatabaseTransactions
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.transcription.EndpointResolver
 import java.io.File
@@ -67,7 +68,7 @@ class ImportCoordinatorTest {
     // Senza account e senza codice: il companion qui non viene mai chiamato.
     val auth = ComputerAuth(account = { null }, manualCode = { null }, fetch = { _, _ -> error("nessun Worker nei test") }, clock = System::currentTimeMillis)
     val archive = ArchiveRepository(db.audioParts(), db.sources(), files, settings, resolver, http, auth)
-    val storage = StorageRepository(db.audioParts(), db.sources(), db.jobs(), files, computerOnly, archive, FilesInUse())
+    val storage = StorageRepository(db.audioParts(), db.sources(), db.jobs(), files, computerOnly, archive, FilesInUse(), DatabaseTransactions(db))
     val notes = NoteRepository(db.notes(), db.tags(), storage)
     // Explicitly no relay account: the target app's saved settings must never reach a real API.
     val relay = RelayRepository(object : RelayAccounts {

@@ -20,7 +20,8 @@ sealed class TranscriptionError(message: String, cause: Throwable? = null) : Exc
   class CreditRequired(message: String) : TranscriptionError(message)
 
   /** Il limite di richieste. [retryAfterSec] e' quanto il server chiede di aspettare, quando lo dice. */
-  class RateLimited(val retryAfterSec: Double?, message: String) : TranscriptionError(message)
+  class RateLimited(val retryAfterSec: Double?, message: String, val retryAtMillis: Long? = null,
+    val scopeFingerprint: String? = null) : TranscriptionError(message)
 
   /** Il file supera il tetto del servizio. Con il taglio in pezzi non dovrebbe succedere: se succede, il tetto e' sbagliato. */
   class FileTooLarge(val limitBytes: Long?, message: String) : TranscriptionError(message)

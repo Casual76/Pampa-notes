@@ -21,7 +21,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** L'esito dell'ultimo giro finito, come l'ha lasciato il worker. */
-data class SyncLast(val pushed: Int, val pulled: Int, val deleted: Int, val forked: Int, val rejected: Int, val error: String?)
+data class SyncLast(val pushed: Int, val pulled: Int, val deleted: Int, val forked: Int, val rejected: Int, val error: String?, val tooLarge: Int = 0)
 
 data class SyncUiState(
   val enabled: Boolean = false,
@@ -62,6 +62,7 @@ data class SyncUiState(
 class SyncViewModel @Inject constructor(
   private val settingsStore: PampaSettingsStore,
   private val scheduler: WorkScheduler,
+  private val alignment: dev.pampa.pampanotes.work.AlignmentScheduler,
   private val api: SyncApi,
   private val accountSignIn: AccountSignIn,
   private val repository: SyncRepository,
@@ -95,6 +96,7 @@ class SyncViewModel @Inject constructor(
               pushed = it.getInt(SyncWorker.KEY_PUSHED, 0), pulled = it.getInt(SyncWorker.KEY_PULLED, 0),
               deleted = it.getInt(SyncWorker.KEY_DELETED, 0), forked = it.getInt(SyncWorker.KEY_FORKED, 0),
               rejected = it.getInt(SyncWorker.KEY_REJECTED, 0), error = it.getString(SyncWorker.KEY_ERROR),
+              tooLarge = it.getInt(SyncWorker.KEY_TOO_LARGE, 0),
             )
           }
         _uiState.update { it.copy(running = running, last = last) }
@@ -158,6 +160,7 @@ class SyncViewModel @Inject constructor(
   /** Chiude la sessione sul server (se ci arriva) e dimentica il token: da qui la sincronizzazione si ferma. */
   fun signOut() {
     viewModelScope.launch {
+      runCatching { alignment.stopAll() }
       val url = settingsStore.current().syncServerUrl
       val token = settingsStore.syncToken()
       if (url.isNotBlank() && token != null) runCatching { api.logout(url, token) }

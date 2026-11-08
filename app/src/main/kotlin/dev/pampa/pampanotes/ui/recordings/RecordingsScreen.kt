@@ -7,6 +7,7 @@ import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.IosShare
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -24,7 +25,6 @@ import dev.antigravity.fluidengine.ui.fluid.FluidAmbient
 import dev.antigravity.fluidengine.ui.fluid.FluidBarAction
 import dev.antigravity.fluidengine.ui.fluid.FluidButton
 import dev.antigravity.fluidengine.ui.fluid.FluidButtonStyle
-import dev.antigravity.fluidengine.ui.fluid.FluidChip
 import dev.antigravity.fluidengine.ui.fluid.FluidContextAction
 import dev.antigravity.fluidengine.ui.fluid.FluidHero
 import dev.antigravity.fluidengine.ui.fluid.FluidHeroMetric
@@ -34,8 +34,6 @@ import dev.antigravity.fluidengine.ui.fluid.FluidScreen
 import dev.antigravity.fluidengine.ui.fluid.FluidSectionFootnote
 import dev.antigravity.fluidengine.ui.fluid.FluidSectionHeader
 import dev.antigravity.fluidengine.ui.theme.FluidEmptyState
-import dev.antigravity.fluidengine.ui.theme.FluidListDivider
-import dev.antigravity.fluidengine.ui.theme.FluidListGroup
 import dev.antigravity.fluidengine.ui.theme.FluidListRow
 import dev.antigravity.fluidengine.ui.theme.FluidStatusBadge
 import dev.antigravity.fluidengine.ui.theme.FluidTone
@@ -53,32 +51,27 @@ import dev.pampa.pampanotes.ui.common.jobBadgeLabel
 import dev.pampa.pampanotes.ui.common.rememberPullToSync
 import dev.pampa.pampanotes.ui.common.toneFromName
 import dev.pampa.pampanotes.ui.export.ExportSheet
-import dev.pampa.pampanotes.ui.common.ConfirmDeleteNotes
 import dev.pampa.pampanotes.ui.common.SelectionMark
 import dev.pampa.pampanotes.ui.common.rememberSelection
 import dev.pampa.pampanotes.ui.common.selectionTitle
 import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.Upload
 import dev.pampa.pampanotes.ui.folder.SectionMoveAlert
 
-/**
- * Registrazioni: l'audio che non e' una lezione — una registrazione di diciannove ore, un'intervista,
- * un viaggio — accanto alle materie, senza mescolarsi con loro.
- *
- * Il contrario della home: li' la cosa importante e' il testo che si da' all'assistente, qui e'
- * l'audio. Un tocco su una registrazione la **ascolta** (la sessione con l'audio piu' recente),
- * tenendo premuto c'e' tutto il resto; in cima i numeri di questa sezione soltanto. Nessuna materia:
- * la schermata non si iscrive a `ReportSubject`, e resta dell'accento dell'app.
- */
+import androidx.compose.material.icons.rounded.DriveFileMove
+import dev.antigravity.fluidengine.ui.fluid.FluidTextField
+import dev.antigravity.fluidengine.ui.fluid.fluidGlassGroups
+import dev.pampa.pampanotes.core.repo.PersonalScope
+import dev.pampa.pampanotes.ui.common.FolderPickerSheet
+import dev.pampa.pampanotes.ui.common.rememberComputerOnly
+
+/** The same session-first library at the root and inside an optional personal folder. */
 @Composable
 fun RecordingsRoute(
   onOpenFolder: (String) -> Unit,
   onOpenNote: (String) -> Unit,
-  /** Apre la sessione e la fa suonare: la strada di «Riprendi» della home, al posto di quello che era aperto. */
   onListenSession: (String) -> Unit,
   onImportInto: (String) -> Unit,
-  /** Il wizard con una cartella di Registrazioni gia' scelta (la prima), invece di una materia. */
-  onImportPersonal: () -> Unit,
+  onBack: (() -> Unit)? = null,
   viewModel: RecordingsViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -86,342 +79,261 @@ fun RecordingsRoute(
   val computerOnlyAsk by viewModel.computerOnlyAsk.collectAsStateWithLifecycle()
   var editing by remember { mutableStateOf<RecordingsFolderEdit?>(null) }
   var pendingFolderDelete by remember { mutableStateOf<FolderRow?>(null) }
-  var pendingNoteDelete by remember { mutableStateOf<RecordingItem?>(null) }
   var movingOut by remember { mutableStateOf<FolderRow?>(null) }
   var exporting by remember { mutableStateOf<ExportScope?>(null) }
-  // Tirando giu' si sincronizza, come nelle altre schede (vedi PullToSync).
+  var deleting by remember { mutableStateOf<Set<String>?>(null) }
+  var moving by remember { mutableStateOf(false) }
+  var moveTarget by remember { mutableStateOf<String?>(null) }
+  val selection = rememberSelection()
+  val selecting = selection.active
+  val selected = RecordingCatalog.selected(selection.ids, state.recordings.map { it.id })
   val pull = rememberPullToSync()
-
-  val newFolderLabel = stringResource(R.string.home_new_folder)
-  val importLabel = stringResource(R.string.action_import)
+  val computerOnly = rememberComputerOnly()
+  val newFolderLabel = stringResource(R.string.rv2_new_folder)
+  val importLabel = stringResource(R.string.rv2_import)
+  val defaultFolderName = stringResource(R.string.recordings_title)
   val editLabel = stringResource(R.string.action_edit)
   val exportLabel = stringResource(R.string.action_export)
   val deleteLabel = stringResource(R.string.action_delete)
-  val openNoteLabel = stringResource(R.string.recordings_open_note)
+  val materialLabel = stringResource(R.string.rv2_associated_material)
   val transcribeLabel = stringResource(R.string.selection_transcribe)
-  val importHereLabel = stringResource(R.string.recordings_import_here)
+  val moveLabel = stringResource(R.string.selection_move)
   val toSchoolLabel = stringResource(R.string.recordings_move_out)
   val keepHereLabel = stringResource(R.string.recordings_keep_here)
   val computerOnlyLabel = stringResource(R.string.recordings_computer_only)
   val selectLabel = stringResource(R.string.action_select)
-
-  // La selezione, come nella cartella: registrazioni di cartelle diverse, da esportare, trascrivere
-  // o eliminare insieme. Aperta, la scheda mostra solo l'elenco delle registrazioni; indietro la chiude.
-  val selection = rememberSelection()
-  val selecting = selection.active
-  var exportingSelection by remember { mutableStateOf(false) }
-  var confirmingDeleteSelection by remember { mutableStateOf(false) }
-  // Quelle che «Trascrivi» manderebbe davvero: non gia' in coda, non mute, non trascritte altrove.
-  val anyPending = state.recordings.any { it.row.note.id in selection && it.worthTranscribing > 0 && it.job == null }
-
-  // «Importa» della barra: dentro l'unica cartella, se ce n'e' una sola; se no il wizard, che le
-  // mostra tutte con Registrazioni a parte e ne sceglie gia' una — da qui non si importa una lezione.
-  val importAction: () -> Unit = {
-    state.folders.singleOrNull()?.let { onImportInto(it.folder.id) } ?: onImportPersonal()
+  val anyPending = state.recordings.any { it.id in selected && it.worthTranscribing > 0 && it.job == null }
+  val importAction = { viewModel.prepareImport(defaultFolderName, onImportInto) }
+  val visible = state.recordings.filter {
+    state.query.isBlank() || it.session.session.title.contains(state.query, true) ||
+      it.note.title.contains(state.query, true) || it.session.session.date.contains(state.query, true)
   }
+  val materials = state.materials.filter { state.query.isBlank() || it.note.title.contains(state.query, true) || it.note.body.contains(state.query, true) }
 
   FluidScreen(
-    title = if (selecting) selectionTitle(selection) else stringResource(R.string.recordings_title),
-    subtitle = if (selecting) null else stringResource(R.string.recordings_subtitle),
-    onBack = if (selecting) selection::exit else null,
-    // Onde e non le righe del quaderno: qui si ascolta, non si prendono appunti.
+    title = if (selecting) selectionTitle(selection) else state.folder?.name ?: stringResource(R.string.recordings_title),
+    subtitle = if (selecting) null else stringResource(R.string.rv2_subtitle),
+    onBack = if (selecting) selection::exit else onBack,
     ambient = FluidAmbient(tone = FluidHeroTone.Secondary, motif = FluidHeroMotif.Ripples),
     isRefreshing = pull.isRefreshing,
     onRefresh = pull.onRefresh.takeUnless { selecting },
     actions = {
       if (selecting) {
-        if (anyPending) {
-          // Passa dalla stessa domanda di «Trascrivi tutte»: quante, quanto audio, con chi.
-          FluidBarAction(
-            icon = Icons.Rounded.Mic,
-            contentDescription = transcribeLabel,
-            onClick = {
-              viewModel.askTranscribe(selection.ids)
-              selection.exit()
-            },
-          )
-        }
-        FluidBarAction(icon = Icons.Rounded.Upload, contentDescription = exportLabel, enabled = selection.count > 0, onClick = { exportingSelection = true })
-        FluidBarAction(icon = Icons.Rounded.Delete, contentDescription = deleteLabel, enabled = selection.count > 0, onClick = { confirmingDeleteSelection = true })
+        FluidBarAction(icon = Icons.Rounded.IosShare, contentDescription = exportLabel, enabled = selected.isNotEmpty(), onClick = {
+          exporting = ExportScope.Sessions(selected.toList(), defaultFolderName)
+          selection.exit()
+        })
+        if (anyPending) FluidBarAction(icon = Icons.Rounded.Mic, contentDescription = transcribeLabel, onClick = {
+          viewModel.askTranscribe(selected)
+          selection.exit()
+        })
+        FluidBarAction(icon = Icons.Rounded.DriveFileMove, contentDescription = moveLabel, enabled = selected.isNotEmpty(), onClick = { moving = true })
+        FluidBarAction(icon = Icons.Rounded.Delete, contentDescription = deleteLabel, enabled = selected.isNotEmpty(), onClick = { deleting = selected })
       } else {
-        FluidBarAction(icon = Icons.Rounded.Add, contentDescription = newFolderLabel, onClick = { editing = RecordingsFolderEdit.New })
-        if (!state.isEmpty) {
-          OverflowMenuButton(
-            actions = {
-              buildList {
-                add(FluidContextAction(label = importLabel) { importAction() })
-                if (state.recordings.isNotEmpty()) add(FluidContextAction(label = selectLabel) { selection.start() })
-                // Di serie le Registrazioni stanno solo sul computer; il tablet a casa puo' tenerle.
-                // Con «tieni tutto anche qui» acceso la scelta non cambierebbe niente: la voce non c'e',
-                // e la nota in fondo dice perche'.
-                if (!state.mirror) {
-                  if (state.keepHere) {
-                    add(FluidContextAction(label = computerOnlyLabel, enabled = state.hasComputer) { viewModel.askComputerOnly() })
-                  } else {
-                    add(FluidContextAction(label = keepHereLabel) { viewModel.keepHere() })
-                  }
-                }
-              }
-            },
-          )
-        }
+        FluidBarAction(icon = Icons.Rounded.Add, contentDescription = importLabel, onClick = importAction)
+        OverflowMenuButton(actions = {
+          buildList {
+            add(FluidContextAction(label = newFolderLabel) { editing = RecordingsFolderEdit.New })
+            if (state.recordings.isNotEmpty()) add(FluidContextAction(label = selectLabel) { selection.start() })
+            state.folder?.let { folder ->
+              add(FluidContextAction(label = editLabel) { editing = RecordingsFolderEdit.Existing(FolderRow(folder, 0, 0)) })
+              add(FluidContextAction(label = exportLabel) { exporting = ExportScope.Folder(folder.id) })
+              add(computerOnly.folderAction(folder.id, folder.name))
+              if (folder.parentId == null) add(FluidContextAction(label = toSchoolLabel) { movingOut = FolderRow(folder, 0, 0) })
+              add(FluidContextAction(label = deleteLabel, destructive = true) { pendingFolderDelete = FolderRow(folder, 0, 0) })
+            }
+            if (state.folder == null && !state.mirror) {
+              if (state.keepHere) add(FluidContextAction(label = computerOnlyLabel, enabled = state.hasComputer) { viewModel.askComputerOnly() })
+              else add(FluidContextAction(label = keepHereLabel) { viewModel.keepHere() })
+            }
+          }
+        })
       }
     },
   ) {
-    if (state.isEmpty) {
-      item {
-        FluidEmptyState(
-          title = stringResource(R.string.recordings_empty_title),
-          detail = stringResource(R.string.recordings_empty_detail),
-        )
-      }
-      item {
-        FluidChip(label = newFolderLabel, selected = false, onClick = { editing = RecordingsFolderEdit.New }, modifier = Modifier.fillMaxWidth())
-      }
-      return@FluidScreen
+    if (!selecting && viewModel.folderId == null && state.stats.recordedMs > 0) item(key = "hero") { RecordingsHero(state.stats) }
+    if (!selecting && (state.recordings.isNotEmpty() || state.materials.isNotEmpty() || state.query.isNotBlank())) item(key = "search") {
+      FluidTextField(value = state.query, onValueChange = viewModel::setQuery, placeholder = stringResource(R.string.rv2_search), modifier = Modifier.fillMaxWidth())
     }
-
-    // Senza audio la tessera direbbe «< 1 min»: niente di vero da dire, niente tessera.
-    if (!selecting && state.stats.recordedMs > 0) item(key = "hero") { RecordingsHero(state.stats) }
-
-    if (!selecting) item(key = "folders-header") { FluidSectionHeader(title = stringResource(R.string.home_section_folders)) }
-    if (!selecting) item(key = "folders") {
-      FluidListGroup {
-        state.folders.forEachIndexed { index, row ->
-          if (index > 0) FluidListDivider()
-          FluidListRow(
-            title = row.folder.name,
-            subtitle = folderSubtitle(row),
-            tone = toneFromName(row.folder.tone),
-            leading = { Icon(imageVector = folderIconOf(row.folder.icon), contentDescription = null) },
-            onClick = { onOpenFolder(row.folder.id) },
-            contextActions = {
-              listOf(
-                FluidContextAction(label = importHereLabel) { onImportInto(row.folder.id) },
-                FluidContextAction(label = editLabel) { editing = RecordingsFolderEdit.Existing(row) },
-                FluidContextAction(label = exportLabel) { exporting = ExportScope.Folder(row.folder.id) },
-                FluidContextAction(label = toSchoolLabel) { movingOut = row },
-                FluidContextAction(label = deleteLabel, destructive = true) { pendingFolderDelete = row },
-              )
-            },
-          )
-        }
-      }
-    }
-
-    if (state.recordings.isEmpty()) {
-      item(key = "no-recordings") {
-        FluidEmptyState(
-          title = stringResource(R.string.recordings_none_title),
-          detail = stringResource(R.string.recordings_none_detail),
-        )
-      }
-      item(key = "no-recordings-import") {
-        FluidChip(label = importLabel, selected = false, onClick = importAction, modifier = Modifier.fillMaxWidth())
-      }
-    } else {
+    if (visible.isNotEmpty()) {
       item(key = "recordings-header") { FluidSectionHeader(title = stringResource(R.string.recordings_section_list)) }
-      item(key = "recordings") {
-        FluidListGroup {
-          state.recordings.forEachIndexed { index, item ->
-            if (index > 0) FluidListDivider()
-            val note = item.row.note
-            val checked = note.id in selection
-            FluidListRow(
-              title = note.title,
-              subtitle = recordingSubtitle(item),
-              meta = Formats.relativeDate(note.updatedAt),
-              badge = recordingBadge(item),
-              tone = if (checked) FluidTone.Primary else FluidTone.Neutral,
-              // Il tocco ascolta: e' la cosa che si viene a fare qui. Una nota senza audio si apre e
-              // basta, e l'icona non promette un play che non c'e'.
-              leading = {
-                if (selecting) {
-                  SelectionMark(checked)
-                } else if (item.row.audioCount > 0) {
-                  Icon(imageVector = Icons.Rounded.PlayArrow, contentDescription = stringResource(R.string.recordings_listen))
-                } else {
-                  Icon(imageVector = Icons.Rounded.Description, contentDescription = openNoteLabel)
-                }
-              },
-              onClick = {
-                if (selecting) selection.toggle(note.id) else viewModel.listen(note.id, onSession = onListenSession, onNote = onOpenNote)
-              },
-              contextActions = if (selecting) null else ({
-                buildList {
-                  add(FluidContextAction(label = openNoteLabel) { onOpenNote(note.id) })
-                  add(FluidContextAction(label = selectLabel) { selection.start(note.id) })
-                  if (item.toTranscribe > 0 && item.job == null) {
-                    add(FluidContextAction(label = transcribeLabel) { viewModel.transcribe(listOf(note.id)) })
-                  }
-                  add(FluidContextAction(label = exportLabel) { exporting = ExportScope.Note(note.id) })
-                  add(FluidContextAction(label = deleteLabel, destructive = true) { pendingNoteDelete = item })
-                }
-              }),
-            )
-          }
-        }
-      }
-      if (state.canTranscribeAll && !selecting) {
-        item(key = "transcribe-all") {
-          FluidButton(
-            text = stringResource(R.string.home_todo_transcribe_all),
-            onClick = viewModel::askTranscribeAll,
-            style = FluidButtonStyle.Tinted,
-            fillWidth = true,
-            leading = { Icon(Icons.Rounded.Mic, contentDescription = null) },
-          )
-        }
+      fluidGlassGroups(items = visible, key = "recordings") { item ->
+        val checked = item.id in selected
+        FluidListRow(
+          title = item.session.session.title.ifBlank { item.note.title },
+          subtitle = computerOnly.noteSubtitle(item.note.id, item.note.folderId, recordingSubtitle(item)),
+          badge = recordingBadge(item),
+          tone = if (checked) FluidTone.Primary else FluidTone.Neutral,
+          leading = {
+            if (selecting) SelectionMark(checked)
+            else Icon(imageVector = if (item.session.parts.isEmpty()) Icons.Rounded.Description else Icons.Rounded.PlayArrow, contentDescription = stringResource(R.string.rv2_open_recording))
+          },
+          onClick = { if (selecting) selection.toggle(item.id) else onListenSession(item.id) },
+          contextActions = if (selecting) null else ({
+            buildList {
+              add(FluidContextAction(label = materialLabel) { onOpenNote(item.note.id) })
+              add(FluidContextAction(label = selectLabel) { selection.start(item.id) })
+              add(FluidContextAction(label = moveLabel) { selection.start(item.id); moving = true })
+              if (item.toTranscribe > 0 && item.job == null) add(FluidContextAction(label = transcribeLabel) { viewModel.askTranscribe(setOf(item.id)) })
+              add(FluidContextAction(label = exportLabel) {
+                exporting = ExportScope.Sessions(listOf(item.id), item.session.session.title.ifBlank { item.note.title })
+              })
+              add(FluidContextAction(label = deleteLabel, destructive = true) { deleting = setOf(item.id) })
+            }
+          }),
+        )
       }
     }
-
-    if (!selecting) item(key = "where") {
-      FluidSectionFootnote(
-        text = stringResource(
-          when (state.where) {
-            RecordingsWhere.MIRROR -> R.string.recordings_footnote_mirror
-            RecordingsWhere.HERE -> R.string.recordings_footnote_here
-            RecordingsWhere.COMPUTER -> R.string.recordings_footnote_computer
-            RecordingsWhere.NO_ARCHIVE -> R.string.recordings_footnote_no_archive
-            RecordingsWhere.NO_COMPUTER -> R.string.recordings_footnote_no_computer
+    if (!selecting && state.canTranscribeAll) item(key = "transcribe-all") {
+      FluidButton(text = stringResource(R.string.home_todo_transcribe_all), onClick = viewModel::askTranscribeAll,
+        style = FluidButtonStyle.Tinted, fillWidth = true, leading = { Icon(Icons.Rounded.Mic, contentDescription = null) })
+    }
+    if (!selecting && materials.isNotEmpty()) {
+      item(key = "material-header") { FluidSectionHeader(title = stringResource(R.string.rv2_materials)) }
+      fluidGlassGroups(items = materials, key = "materials") { row ->
+        FluidListRow(
+          title = row.note.title,
+          subtitle = stringResource(R.string.rv2_material_detail),
+          leading = { Icon(Icons.Rounded.Description, contentDescription = null) },
+          onClick = { onOpenNote(row.note.id) },
+        )
+      }
+    }
+    if (!selecting && state.folders.isNotEmpty()) {
+      item(key = "folders-header") { FluidSectionHeader(title = stringResource(R.string.rv2_optional_folders)) }
+      fluidGlassGroups(items = state.folders, key = "folders") { row ->
+        FluidListRow(
+          title = row.folder.name,
+          subtitle = stringResource(R.string.rv2_folder_detail),
+          tone = toneFromName(row.folder.tone),
+          leading = { Icon(folderIconOf(row.folder.icon), contentDescription = null) },
+          onClick = { onOpenFolder(row.folder.id) },
+          contextActions = {
+            buildList {
+              add(FluidContextAction(label = importLabel) { onImportInto(row.folder.id) })
+              add(FluidContextAction(label = editLabel) { editing = RecordingsFolderEdit.Existing(row) })
+              add(FluidContextAction(label = exportLabel) { exporting = ExportScope.Folder(row.folder.id) })
+              add(computerOnly.folderAction(row.folder.id, row.folder.name))
+              if (row.folder.parentId == null) add(FluidContextAction(label = toSchoolLabel) { movingOut = row })
+              add(FluidContextAction(label = deleteLabel, destructive = true) { pendingFolderDelete = row })
+            }
           },
-        ),
-      )
+        )
+      }
+    }
+    if (!selecting && !state.loading && visible.isEmpty() && materials.isEmpty()) {
+      item(key = "empty") {
+        FluidEmptyState(
+          title = if (state.query.isBlank()) stringResource(R.string.recordings_none_title) else stringResource(R.string.search_no_results, state.query),
+          detail = stringResource(R.string.rv2_empty_detail),
+        )
+      }
+      item(key = "import") { FluidButton(text = importLabel, onClick = importAction, fillWidth = true) }
+    }
+    if (!selecting) item(key = "where") {
+      FluidSectionFootnote(text = stringResource(when (state.where) {
+        RecordingsWhere.MIRROR -> R.string.recordings_footnote_mirror
+        RecordingsWhere.HERE -> R.string.recordings_footnote_here
+        RecordingsWhere.COMPUTER -> R.string.recordings_footnote_computer
+        RecordingsWhere.NO_ARCHIVE -> R.string.recordings_footnote_no_archive
+        RecordingsWhere.NO_COMPUTER -> R.string.recordings_footnote_no_computer
+      }))
     }
   }
 
   transcribeAllAsk?.let { ask ->
-    val duration = Formats.durationShort(ask.durationMs)
     val custom = ask.provider == TranscriptionProviderId.CUSTOM
+    val provider = stringResource(when (ask.provider.id) {
+      "custom" -> R.string.provider_custom
+      "openrouter" -> R.string.provider_openrouter
+      "mistral" -> R.string.provider_mistral
+      else -> R.string.provider_groq
+    })
     FluidAlert(
       onDismissRequest = viewModel::dismissTranscribeAll,
       title = pluralStringResource(R.plurals.recordings_transcribe_all_title, ask.sessionIds.size, ask.sessionIds.size),
       message = listOfNotNull(
-        stringResource(when (ask.provider) {
-          TranscriptionProviderId.CUSTOM -> R.string.recordings_transcribe_all_message_computer
-          TranscriptionProviderId.OPENROUTER -> R.string.recordings_transcribe_all_message_openrouter
-          else -> R.string.recordings_transcribe_all_message_groq
-        }, duration),
+        stringResource(R.string.rv2_transcribe_message, Formats.durationShort(ask.durationMs), provider),
         if (custom) null else stringResource(R.string.recordings_transcribe_all_cloud),
         if (ask.skippedSilent > 0) stringResource(R.string.recordings_transcribe_all_skipped) else null,
       ).joinToString(" "),
       actions = listOf(
-        FluidAlertAction(
-          label = stringResource(R.string.home_todo_transcribe_all),
-          emphasis = FluidAlertAction.Emphasis.Preferred,
-          onClick = viewModel::confirmTranscribeAll,
-        ),
+        FluidAlertAction(label = transcribeLabel, emphasis = FluidAlertAction.Emphasis.Preferred, onClick = viewModel::confirmTranscribeAll),
         FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = viewModel::dismissTranscribeAll),
       ),
     )
   }
-
   computerOnlyAsk?.let { preview ->
-    ComputerOnlyConfirmAlert(
-      title = stringResource(R.string.computer_only_confirm_title, stringResource(R.string.recordings_title)),
-      preview = preview,
-      onConfirm = viewModel::confirmComputerOnly,
-      onDismiss = viewModel::dismissComputerOnly,
-      confirmLabel = computerOnlyLabel,
-    )
+    ComputerOnlyConfirmAlert(title = stringResource(R.string.computer_only_confirm_title, stringResource(R.string.recordings_title)),
+      preview = preview, onConfirm = viewModel::confirmComputerOnly, onDismiss = viewModel::dismissComputerOnly, confirmLabel = computerOnlyLabel)
   }
-
   editing?.let { request ->
     val existing = (request as? RecordingsFolderEdit.Existing)?.row?.folder
-    FolderEditorSheet(
-      title = if (existing == null) newFolderLabel else editLabel,
-      initialName = existing?.name.orEmpty(),
-      initialTone = existing?.tone,
-      initialIcon = existing?.icon,
-      placeholder = stringResource(R.string.recordings_folder_placeholder),
-      onDismiss = { editing = null },
+    FolderEditorSheet(title = if (existing == null) newFolderLabel else editLabel,
+      initialName = existing?.name.orEmpty(), initialTone = existing?.tone, initialIcon = existing?.icon,
+      placeholder = stringResource(R.string.recordings_folder_placeholder), onDismiss = { editing = null },
       onConfirm = { name, tone, icon ->
         if (existing == null) viewModel.createFolder(name, tone, icon) else viewModel.updateFolder(existing.id, name, tone, icon)
         editing = null
-      },
-    )
+      })
   }
-
-  exporting?.let { scope -> ExportSheet(scope = scope, onDismiss = { exporting = null }) }
-
-  if (exportingSelection) {
-    ExportSheet(
-      scope = ExportScope.Notes(
-        selection.ids.toList(),
-        pluralStringResource(R.plurals.selection_export_recordings, selection.count, selection.count),
-      ),
-      onDismiss = {
-        exportingSelection = false
-        selection.exit()
-      },
-    )
+  exporting?.let { ExportSheet(scope = it, onDismiss = { exporting = null }) }
+  deleting?.let { ids ->
+    FluidAlert(onDismissRequest = { deleting = null }, title = stringResource(R.string.rv2_delete_title),
+      message = pluralStringResource(R.plurals.rv2_delete_message, ids.size, ids.size),
+      actions = listOf(
+        FluidAlertAction(label = deleteLabel, emphasis = FluidAlertAction.Emphasis.Destructive, onClick = {
+          viewModel.deleteRecordings(ids); deleting = null; selection.exit()
+        }),
+        FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = { deleting = null }),
+      ))
   }
-
-  if (confirmingDeleteSelection) {
-    ConfirmDeleteNotes(
-      count = selection.count,
-      onConfirm = {
-        viewModel.deleteNotes(selection.ids)
-        selection.exit()
-      },
-      onDismiss = { confirmingDeleteSelection = false },
-    )
+  if (moving) FolderPickerSheet(title = moveLabel, folders = state.allFolders, excludeId = state.folder?.id,
+    personalFolderIds = PersonalScope.folderIds(state.allFolders), onDismiss = { moving = false },
+    onPick = { target -> moving = false; moveTarget = target })
+  moveTarget?.let { target ->
+    RecordingMoveAlert(name = state.allFolders.firstOrNull { it.id == target }?.name.orEmpty(),
+      toPersonal = PersonalScope.isPersonal(target, state.allFolders), count = selected.size,
+      onDismiss = { moveTarget = null }, onConfirm = {
+        viewModel.moveRecordings(selected, target); moveTarget = null; selection.exit()
+      })
   }
-
   movingOut?.let { row ->
-    SectionMoveAlert(
-      name = row.folder.name,
-      toPersonal = false,
-      onConfirm = {
-        viewModel.moveToSchool(row.folder.id)
-        movingOut = null
-      },
-      onDismiss = { movingOut = null },
-    )
+    SectionMoveAlert(name = row.folder.name, toPersonal = false, onDismiss = { movingOut = null }, onConfirm = {
+      viewModel.moveToSchool(row.folder.id); movingOut = null
+      if (row.folder.id == viewModel.folderId) onBack?.invoke()
+    })
   }
-
   pendingFolderDelete?.let { row ->
-    FluidAlert(
-      onDismissRequest = { pendingFolderDelete = null },
-      title = stringResource(R.string.folder_delete_title, row.folder.name),
-      message = stringResource(R.string.folder_delete_message),
-      actions = listOf(
-        FluidAlertAction(
-          label = deleteLabel,
-          emphasis = FluidAlertAction.Emphasis.Destructive,
-          onClick = {
-            viewModel.deleteFolder(row.folder.id)
-            pendingFolderDelete = null
-          },
-        ),
+    FluidAlert(onDismissRequest = { pendingFolderDelete = null }, title = stringResource(R.string.folder_delete_title, row.folder.name),
+      message = stringResource(R.string.rv2_delete_folder_message), actions = listOf(
+        FluidAlertAction(label = deleteLabel, emphasis = FluidAlertAction.Emphasis.Destructive, onClick = {
+          viewModel.deleteFolder(row.folder.id); pendingFolderDelete = null
+          if (row.folder.id == viewModel.folderId) onBack?.invoke()
+        }),
         FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = { pendingFolderDelete = null }),
-      ),
-    )
-  }
-
-  pendingNoteDelete?.let { item ->
-    FluidAlert(
-      onDismissRequest = { pendingNoteDelete = null },
-      title = stringResource(R.string.note_delete_title, item.row.note.title),
-      message = stringResource(R.string.note_delete_message),
-      actions = listOf(
-        FluidAlertAction(
-          label = deleteLabel,
-          emphasis = FluidAlertAction.Emphasis.Destructive,
-          onClick = {
-            viewModel.deleteNote(item.row.note.id)
-            pendingNoteDelete = null
-          },
-        ),
-        FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = { pendingNoteDelete = null }),
-      ),
-    )
+      ))
   }
 }
 
 private sealed interface RecordingsFolderEdit {
   data object New : RecordingsFolderEdit
   data class Existing(val row: FolderRow) : RecordingsFolderEdit
+}
+
+@Composable
+private fun RecordingMoveAlert(name: String, toPersonal: Boolean, count: Int, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+  val where by hiltViewModel<dev.pampa.pampanotes.ui.common.ComputerOnlyViewModel>().state.collectAsStateWithLifecycle()
+  FluidAlert(onDismissRequest = onDismiss, title = stringResource(R.string.selection_move),
+    message = listOfNotNull(
+      pluralStringResource(R.plurals.rv2_move_message, count, count, name),
+      if (toPersonal) null else stringResource(R.string.rv2_move_school),
+      if (!toPersonal && where.personalOnComputer) stringResource(R.string.recordings_move_out_files) else null,
+    ).joinToString(" "),
+    actions = listOf(
+      FluidAlertAction(label = stringResource(R.string.selection_move), emphasis = FluidAlertAction.Emphasis.Preferred, onClick = onConfirm),
+      FluidAlertAction(label = stringResource(R.string.action_cancel), onClick = onDismiss),
+    ))
 }
 
 /**
@@ -464,38 +376,21 @@ private fun RecordingsHero(stats: RecordingsStats) {
 }
 
 @Composable
-private fun folderSubtitle(row: FolderRow): String {
-  val parts = buildList {
-    if (row.noteCount > 0) add(pluralStringResource(R.plurals.folder_note_count, row.noteCount, row.noteCount))
-    if (row.childCount > 0) add(pluralStringResource(R.plurals.folder_child_count, row.childCount, row.childCount))
-  }
-  return if (parts.isEmpty()) stringResource(R.string.folder_empty_meta) else parts.joinToString(" · ")
-}
+private fun recordingSubtitle(item: RecordingItem): String = buildList {
+  add(item.session.session.date)
+  item.folder?.name?.let(::add)
+  if (item.session.parts.isNotEmpty()) add(Formats.durationShort(item.session.durationMs))
+}.joinToString(" · ")
 
-/** La cartella e quanto dura: di una registrazione si vuole sapere prima di tutto quanto e' lunga. */
-@Composable
-private fun recordingSubtitle(item: RecordingItem): String {
-  val parts = buildList {
-    item.folder?.name?.let(::add)
-    if (item.row.audioCount > 0) add(Formats.durationShort(item.row.audioDurationMs))
-    // «3 sessioni», non «3 lezioni»: qui non c'e' scuola.
-    if (item.row.sessionCount > 1) add(pluralStringResource(R.plurals.recordings_session_count, item.row.sessionCount, item.row.sessionCount))
-  }
-  return parts.ifEmpty { listOf(stringResource(R.string.note_text_only)) }.joinToString(" · ")
-}
-
-/** Lo stato della trascrizione: un lavoro in corso, «Da trascrivere», dove, o «Trascritta». */
 @Composable
 private fun recordingBadge(item: RecordingItem): (@Composable () -> Unit)? {
   val (label, tone) = when {
     item.job != null -> jobBadgeLabel(item.job) to FluidTone.Primary
-    // Tentata e senza parole: non e' «da trascrivere», e' muta. Fallita per altro, lo si dice.
+    item.elsewhere != null -> stringResource(R.string.transcribing_elsewhere, item.elsewhere.device) to FluidTone.Primary
     item.toTranscribe > 0 && item.failed?.errorCode == "no_speech" -> stringResource(R.string.recordings_silent) to FluidTone.Neutral
     item.toTranscribe > 0 && item.failed != null -> stringResource(R.string.recordings_failed) to FluidTone.Danger
     item.toTranscribe > 0 -> stringResource(R.string.note_to_transcribe) to FluidTone.Warning
-    item.elsewhere != null && item.elsewhere.untranscribed > 0 ->
-      stringResource(R.string.transcribing_elsewhere, item.elsewhere.device) to FluidTone.Primary
-    item.row.audioCount > 0 -> stringResource(R.string.recordings_transcribed) to FluidTone.Success
+    item.session.session.activeTranscriptId != null -> stringResource(R.string.recordings_transcribed) to FluidTone.Success
     else -> return null
   }
   return { FluidStatusBadge(label = label, tone = tone) }

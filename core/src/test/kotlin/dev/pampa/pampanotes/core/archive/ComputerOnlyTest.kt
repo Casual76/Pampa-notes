@@ -17,6 +17,7 @@ import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.files.FilesInUse
 import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.repo.StorageRepository
+import dev.pampa.pampanotes.core.testing.StorageWriterTransactionsB06
 import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import dev.pampa.pampanotes.core.transcription.EndpointResolver
@@ -267,7 +268,8 @@ class ComputerOnlyTest {
     coEvery { archive.presence(any()) } answers {
       if (computerSilent) emptyMap() else firstArg<Collection<String>>().associateWith { it !in lostOnComputer }
     }
-    return StorageRepository(audioParts, sources, jobDao, files, scope, archive, inUse)
+    return StorageRepository(audioParts, sources, jobDao, files, scope, archive, inUse,
+      StorageWriterTransactionsB06().transactions)
   }
 
   private fun allHere() {

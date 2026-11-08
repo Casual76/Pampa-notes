@@ -41,7 +41,7 @@
  */
 
 import type { Env } from "./auth";
-import { RECORDING_ORIGIN_FIELDS, retainPublicEvidence } from "./sync-public-evidence";
+import { RECORDING_ORIGIN_FIELDS, retainWirePublicEvidence } from "./sync-public-evidence";
 import { retainSessionVoiceClocks, voiceRecordingIds } from "./sync-voice-clocks";
 
 /**
@@ -193,7 +193,11 @@ export async function push(env: Env, ownerId: string, body: PushRequest): Promis
     const kept = change.tbl === "folders" ? keepMissing(change, "folders", "kind", kinds)
       : change.tbl === "sessions" ? retainSessionVoiceClocks(change.payload, current?.op === "U" ? current.voiceSnapshot : undefined, change.updatedAt, relocatedVoices.get(change.id), voiceOwners)
       : change.payload;
-    const evidence = retainPublicEvidence(change.tbl, kept, current?.op === "U" ? current.publicEvidence : undefined);
+    const evidence = await retainWirePublicEvidence(change.tbl, kept, current?.op === "U" ? current.publicEvidence : undefined);
+    if (change.op === "U" && evidence.tooLarge) {
+      rejected.push({ tbl: change.tbl, id: change.id, reason: "too_large" });
+      continue;
+    }
     const payload = change.op === "U" ? JSON.stringify(evidence.payload) : null;
     const chunks = change.tbl === "transcripts" && change.op === "U" && Array.isArray(change.segments) ? chunkSegments(keepSpeakers(change, speakers)) : [];
     if ((payload !== null && bytesOf(payload) > MAX_ROW_BYTES) || chunks === null) {
@@ -296,7 +300,7 @@ async function currentVersions(env: Env, ownerId: string, changes: Change[]): Pr
     // Read public evidence and voice clocks/ownership in the SAME snapshot as each row's seq.
     // No arbitrary keys are retained. A tombstone never contributes old evidence. Keep
     // the incoming hash opaque, just as keepMissing/keepSpeakers do for older protocol-1 clients.
-    const fields = tbl === "audio_parts" ? ["id", "sha256", "sizeBytes", ...RECORDING_ORIGIN_FIELDS] : tbl === "transcripts" ? ["cloudSourceJson"] : [];
+    const fields = tbl === "audio_parts" ? ["id", "sha256", "sizeBytes", ...RECORDING_ORIGIN_FIELDS] : tbl === "transcripts" ? ["id", "text", "createdAt", "cloudSourceJson"] : [];
     const projection = fields.map((field) => `, json_extract(payload, '$.${field}') AS ${field}`).join("") +
       (tbl === "sessions" ? ", json_extract(payload, '$.voiceNames') AS voiceNames, COALESCE(json_extract(payload, '$.updatedAt'), updatedAt) AS voiceUpdatedAt" : "") +
       (tbl === "audio_parts" ? ", json_extract(payload, '$.sessionId') AS audioSessionId" : "");

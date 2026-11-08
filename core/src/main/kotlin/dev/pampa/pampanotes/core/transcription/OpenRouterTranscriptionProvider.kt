@@ -6,6 +6,8 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
+import kotlin.math.roundToLong
 
 /** OpenRouter's dedicated STT API. Never routes audio through chat completions. */
 class OpenRouterTranscriptionProvider(
@@ -82,16 +84,26 @@ class OpenRouterTranscriptionProvider(
 
     fun parseResponse(body: JsonElement?): TranscriptResult {
       val root = body as? JsonObject ?: throw TranscriptionError.Parse("Invalid transcription response")
-      if ("error" in root || ("text" !in root && "segments" !in root && "words" !in root)) {
+      val original = root["text"] as? JsonPrimitive
+      // Segment/word text is a presentation, not an attested top-level original. Reject an
+      // unsupported shape before the runner can cache it as exact source evidence.
+      if ("error" in root || original?.isString != true) {
         throw TranscriptionError.Parse("Invalid transcription response")
       }
-      val parsed = VerboseJson.parse(root)
-      val text = (root["text"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+      val text = original.content
+      val reportedLanguage = (root["language"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+      val parsed = (try { VerboseJson.parse(root) } catch (silent: TranscriptionError.NoSpeech) {
+        if (text.isNotBlank()) throw silent
+        // A present whitespace-only original is still known exact text. It may be one silent
+        // part of a non-silent recording; keep it in the runner/cache rather than inventing "".
+        TranscriptResult(text, emptyList(), reportedLanguage,
+          (root["duration"] as? JsonPrimitive)?.doubleOrNull?.takeIf { it.isFinite() && it >= 0 }?.let { (it * 1000).roundToLong() })
+      }).copy(language = reportedLanguage)
       // Some providers supply only partially timed text. Never throw away the untimed remainder.
       fun normalize(value: String) = value.replace(Regex("\\s+"), " ").trim()
-      return if (text.isNotBlank() && normalize(text) != normalize(parsed.text)) {
+      return if (normalize(text) != normalize(parsed.text)) {
         parsed.copy(text = text, segments = emptyList())
-      } else parsed.copy(segments = parsed.segments.map { segment ->
+      } else parsed.copy(text = text, segments = parsed.segments.map { segment ->
         // Partial word lists would make the UI interpolate the missing words while claiming
         // exact alignment. Keep the real segment interval and label interpolation as estimated.
         if (segment.words.isNotEmpty() &&

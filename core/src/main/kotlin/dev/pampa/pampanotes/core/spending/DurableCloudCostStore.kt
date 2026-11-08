@@ -34,8 +34,20 @@ class DurableCloudCostStore(private val file: File) {
   fun settle(id: String, actualUsd: String, now: Long, reconciled: Boolean = false) {
     require(Usd.amount(actualUsd) != null)
     update { data -> data.copy(charges = data.charges.map {
-      if (it.id == id && it.settledAt == null) it.copy(actualUsd = actualUsd, settledAt = now, reconciled = reconciled) else it
+      if (it.id == id && (it.settledAt == null || (it.refusedAt != null && !it.reconciled)))
+        it.copy(actualUsd = actualUsd, settledAt = now, reconciled = reconciled, refusedAt = null) else it
     }) }
+  }
+
+  /** Exact id only. A response/reconciled charge always takes precedence over refusal evidence. */
+  fun refuse(id: String, now: Long) {
+    update { data ->
+      require(data.charges.any { it.id == id }) { "Missing cloud attempt" }
+      data.copy(charges = data.charges.map {
+        if (it.id == id && it.settledAt == null)
+          it.copy(actualUsd = "0", settledAt = now, refusedAt = now) else it
+      })
+    }
   }
 
   fun read(): CloudCostData = locked { load() }

@@ -28,7 +28,7 @@ internal object PampaBundleMerge {
     val previousParts = local?.parts.orEmpty().associateBy { it.id }
     val resolvedParts = incoming.parts.map { part ->
       val previous = previousParts[part.id]?.takeIf { it.sha256.isNotBlank() && it.sha256.equals(part.sha256, true) }
-      PampaBundleMetadataMerge.audio(previous, part)
+      PampaBundleRecordingOrigin.retain(previous, part)
     }
     val incomingParts = resolvedParts.associateBy { it.id }
     val allParts = (local?.parts.orEmpty().associateBy { it.id } + incomingParts).values

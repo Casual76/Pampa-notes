@@ -4,9 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.antigravity.fluidengine.ai.keys.AiKeyStore
-import dev.antigravity.fluidengine.ai.keys.AiKeyVerifier
 import dev.antigravity.fluidengine.ai.keys.AiSettingsStore
-import dev.antigravity.fluidengine.ai.keys.VerifyResult
 import dev.antigravity.fluidengine.ai.provider.ProviderId
 import dev.antigravity.fluidengine.foundation.EngineSettings
 import dev.antigravity.fluidengine.foundation.ThemeMode
@@ -14,7 +12,6 @@ import dev.antigravity.fluidengine.storage.EngineSettingsStore
 import dev.pampa.pampanotes.core.export.ExportOptions
 import dev.pampa.pampanotes.core.export.ExportOptionsCodec
 import dev.pampa.pampanotes.core.refinement.RefinementService
-import dev.pampa.pampanotes.core.repo.RefinementRepository
 import dev.pampa.pampanotes.core.repo.TranscriptionRepository
 import dev.pampa.pampanotes.core.settings.PampaSettings
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
@@ -27,7 +24,6 @@ import dev.pampa.pampanotes.core.transcription.EndpointHealth
 import dev.pampa.pampanotes.core.transcription.VramEstimate
 import dev.pampa.pampanotes.core.transcription.EndpointResolver
 import dev.pampa.pampanotes.core.transcription.GroqWhisperProvider
-import dev.pampa.pampanotes.core.transcription.OpenRouterTranscriptionProvider
 import dev.pampa.pampanotes.core.transcription.OpenAiCompatProvider
 import dev.pampa.pampanotes.core.transcription.TranscriptionError
 import dev.pampa.pampanotes.core.transcription.TranscriptionHttp
@@ -67,6 +63,8 @@ data class ServicesUiState(
   val openRouterKeyPresent: Boolean = false,
   val openRouterModels: List<String> = emptyList(),
   val openRouterCheck: CheckState = CheckState.Idle,
+  val mistralKeyPresent: Boolean = false,
+  val mistralCheck: CheckState = CheckState.Idle,
   val endpointCheck: CheckState = CheckState.Idle,
   val endpointModels: List<String> = emptyList(),
   /** I modelli di chat che Groq dichiara, fra cui scegliere quello del raffinamento. */
@@ -103,16 +101,17 @@ class SettingsViewModel @Inject constructor(
   private val engineSettingsStore: EngineSettingsStore,
   private val settingsStore: PampaSettingsStore,
   private val keys: AiKeyStore,
-  private val verifier: AiKeyVerifier,
   private val aiSettings: AiSettingsStore,
   private val http: TranscriptionHttp,
   private val resolver: EndpointResolver,
-  private val refinement: RefinementRepository,
   private val scheduler: dev.pampa.pampanotes.work.WorkScheduler,
   private val computerAuth: dev.pampa.pampanotes.core.transcription.ComputerAuth,
   private val companionApi: CompanionSettingsApi,
   private val transcription: TranscriptionRepository,
+  private val cloudCredentials: dev.pampa.pampanotes.core.transcription.CloudCredentials,
+  private val alignment: dev.pampa.pampanotes.work.AlignmentScheduler,
 ) : ViewModel() {
+  private val cloudSetup = dev.pampa.pampanotes.core.transcription.CloudSetupMetadata(http)
 
   companion object {
     /** In [CheckState.Ok.detail] per un endpoint: da quale strada e' arrivata la risposta. */
@@ -141,6 +140,11 @@ class SettingsViewModel @Inject constructor(
 
   init {
     viewModelScope.launch {
+      cloudCredentials.changes.collect {
+        _services.update { it.copy(mistralKeyPresent = cloudCredentials.key("mistral") != null) }
+      }
+    }
+    viewModelScope.launch {
       keys.states.collect { states ->
         val groq = states[ProviderId.GROQ]
         _services.update { it.copy(groqKeyPresent = groq?.present == true, groqVerified = groq?.verified == true,
@@ -164,33 +168,40 @@ class SettingsViewModel @Inject constructor(
    * Provarla adesso e non alla prima trascrizione: scoprire che la chiave e' sbagliata dopo aver
    * aspettato la decodifica di un'ora di audio e' il momento peggiore in cui scoprirlo.
    */
+  private var groqLoad: Job? = null
   fun saveGroqKey(key: String) {
-    viewModelScope.launch {
+    groqLoad?.cancel()
+    groqLoad = viewModelScope.launch {
       _services.update { it.copy(groqCheck = CheckState.Running) }
+      val previousKey = keys.key(ProviderId.GROQ)
       keys.set(ProviderId.GROQ, key)
-      when (val result = verifier.verify(ProviderId.GROQ)) {
-        is VerifyResult.Ok -> {
-          val whisper = result.catalogue.stt.map { it.id }.filter { it.contains("whisper", true) }
+      if (previousKey != key.trim() && transcription.queuedCount("groq") > 0) scheduler.wake("groq")
+      try {
+          val stored = keys.key(ProviderId.GROQ) ?: throw TranscriptionError.Unauthorized("Missing Groq key")
+          val whisper = cloudSetup.groq(stored)
           // Il default dell'engine e' whisper-large-v3; qui vogliamo il turbo, che costa meno
           // secondi di quota a parita' di risultato su una lezione.
-          val picked = GroqWhisperProvider.pickModel(whisper)
-          picked?.let { aiSettings.setSttModel(ProviderId.GROQ, it) }
+          val picked = settingsStore.current().groqTranscriptionModel
+          keys.markVerified(ProviderId.GROQ, System.currentTimeMillis())
+          if (picked !in whisper) {
+            _services.update { it.copy(groqModels = whisper, groqCheck = CheckState.Failed("unknown_model")) }
+            return@launch
+          }
+          aiSettings.setSttModel(ProviderId.GROQ, picked)
           _services.update {
             // Il modello *scelto*, non il primo dell'elenco: e' quello che verra' usato davvero, e
             // mostrarne un altro fa credere che la preferenza non sia stata applicata.
             it.copy(groqModels = whisper, groqCheck = CheckState.Ok(picked.orEmpty()))
           }
-        }
-
-        VerifyResult.Invalid -> _services.update { it.copy(groqCheck = CheckState.Failed("unauthorized")) }
-        is VerifyResult.Failed -> _services.update {
-          it.copy(groqCheck = CheckState.Failed(result.error?.let { e -> TranscriptionError.from(e).code } ?: "network"))
-        }
+      } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+      catch (error: Exception) {
+        _services.update { it.copy(groqCheck = CheckState.Failed(TranscriptionError.from(error).code)) }
       }
     }
   }
 
   fun clearGroqKey() {
+    groqLoad?.cancel()
     viewModelScope.launch {
       keys.set(ProviderId.GROQ, null)
       _services.update { it.copy(groqModels = emptyList(), groqCheck = CheckState.Idle) }
@@ -205,7 +216,9 @@ class SettingsViewModel @Inject constructor(
     openRouterLoad = viewModelScope.launch {
       _services.update { it.copy(openRouterModels = emptyList(), openRouterCheck = CheckState.Running) }
       try {
+        val previousKey = keys.key(ProviderId.OPENROUTER)
         keys.set(ProviderId.OPENROUTER, key)
+        if (previousKey != key.trim() && transcription.queuedCount("openrouter") > 0) scheduler.wake("openrouter")
         fetchOpenRouterModels()
       } catch (error: Exception) {
         if (error is kotlinx.coroutines.CancellationException) throw error
@@ -229,9 +242,7 @@ class SettingsViewModel @Inject constructor(
 
   private suspend fun fetchOpenRouterModels() {
     val key = keys.key(ProviderId.OPENROUTER) ?: throw TranscriptionError.Unauthorized("Missing OpenRouter key")
-    // /models is public: it cannot verify a key. /key is authenticated and incurs no inference cost.
-    http.getJson("${OpenRouterTranscriptionProvider.BASE_URL}/key", mapOf("Authorization" to "Bearer $key"))
-    val models = OpenRouterTranscriptionProvider(http, key).listModels()
+    val models = cloudSetup.openRouter(key)
     if (models.isEmpty()) throw TranscriptionError.UnknownModel("", "No transcription models")
     keys.markVerified(ProviderId.OPENROUTER, System.currentTimeMillis())
     val saved = settingsStore.current().openRouterTranscriptionModel
@@ -254,6 +265,32 @@ class SettingsViewModel @Inject constructor(
       _services.update { it.copy(openRouterModels = emptyList(), openRouterCheck = CheckState.Idle) }
     }
   }
+
+  private var mistralCheck: Job? = null
+  fun saveMistralKey(key: String) {
+    mistralCheck?.cancel()
+    mistralCheck = viewModelScope.launch {
+      _services.update { it.copy(mistralCheck = CheckState.Running) }
+      try {
+        val previousKey = cloudCredentials.key("mistral")
+        cloudCredentials.saveMistral(key)
+        if (previousKey != key.trim() && transcription.queuedCount("mistral") > 0) scheduler.wake("mistral")
+        val stored = cloudCredentials.key("mistral") ?: throw TranscriptionError.Unauthorized("Missing Mistral key")
+        val health = cloudSetup.mistral(stored)
+        _services.update { it.copy(mistralCheck = CheckState.Ok(modelCount = health.models.size)) }
+      } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+      catch (error: Exception) { _services.update { it.copy(mistralCheck = CheckState.Failed(TranscriptionError.from(error).code)) } }
+    }
+  }
+  fun clearMistralKey() {
+    mistralCheck?.cancel()
+    viewModelScope.launch {
+      cloudCredentials.saveMistral("")
+      _services.update { it.copy(mistralCheck = CheckState.Idle) }
+    }
+  }
+  fun setMistralModel(model: String) = viewModelScope.launch { settingsStore.setMistralTranscriptionModel(model) }
+  fun setGroqModel(model: String) = viewModelScope.launch { settingsStore.setGroqTranscriptionModel(model) }
 
   // --- Server personale ---
   fun setEndpoint(url: String, model: String) = viewModelScope.launch {
@@ -329,6 +366,7 @@ class SettingsViewModel @Inject constructor(
       // tentativo. Era il «Prova dice che funziona, ma le lezioni restano ferme» dopo un riavvio del
       // PC. `wake` non tocca un worker che sta gia' trascrivendo.
       if (health.reachable) {
+        runCatching { alignment.onApplicationOrEndpointWake() }
         runCatching {
           if (transcription.queuedCount(OpenAiCompatProvider.ID) > 0) scheduler.wake(OpenAiCompatProvider.ID)
         }
@@ -373,10 +411,14 @@ class SettingsViewModel @Inject constructor(
    */
   fun loadRefinementModels() {
     viewModelScope.launch {
-      val provider = refinement.provider() ?: return@launch
-      val chat = runCatching { provider.listModels().chat.map { it.id } }.getOrDefault(emptyList())
-        .filterNot { it.contains("whisper", ignoreCase = true) || it.contains("tts", ignoreCase = true) }
-      _services.update { it.copy(refinementModels = chat, refinementAuto = RefinementService.pickModel(chat)) }
+      val key = keys.key(ProviderId.GROQ) ?: return@launch
+      try {
+        val body = http.getJson("${GroqWhisperProvider.BASE_URL}/models", mapOf("Authorization" to "Bearer $key"))
+        val chat = dev.pampa.pampanotes.core.transcription.VerboseJson.parseModels(body)
+          .filterNot { it.contains("whisper", ignoreCase = true) || it.contains("tts", ignoreCase = true) }
+        _services.update { it.copy(refinementModels = chat, refinementAuto = RefinementService.pickModel(chat)) }
+      } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+      catch (error: Exception) { _services.update { it.copy(groqCheck = CheckState.Failed(TranscriptionError.from(error).code)) } }
     }
   }
   fun setChunkMinutes(minutes: Int) = viewModelScope.launch { settingsStore.setChunkMinutes(minutes) }

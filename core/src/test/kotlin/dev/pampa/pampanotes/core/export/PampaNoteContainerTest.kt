@@ -67,8 +67,11 @@ class PampaNoteContainerTest {
         }, n.sources.filter { it.derivedFromId != null }.mapIndexed { index, s -> ExportImage(s.storedFileName!!, index + 1, s.sizeBytes, s.id) }, n)
     }, "Pampa Notes test", 123456789, folders = listOf(root, folder) + extraFolders)
 
-  private fun write(values: List<PampaBundleNote>, checkpoint: () -> Unit = {}, progress: (Float) -> Unit = {}): File = temp.newFile().also { file ->
-    file.outputStream().use { PampaNoteWriter(audio, sources, checkpoint).write(set(values), it, progress) }
+  private fun write(values: List<PampaBundleNote>, checkpoint: () -> Unit = {}, codecOnly: Boolean = false, progress: (Float) -> Unit = {}): File = temp.newFile().also { file ->
+    file.outputStream().use { out ->
+      val writer = PampaNoteWriter(audio, sources, checkpoint)
+      if (codecOnly) writer.writeContainer(set(values), out, progress) else writer.write(set(values), out, progress)
+    }
   }
   private fun entries(file: File): Map<String, ByteArray> = ZipFile(file).use { zip ->
     zip.entries().asSequence().associate { it.name to zip.getInputStream(it).use { input -> input.readBytes() } }
@@ -127,7 +130,8 @@ class PampaNoteContainerTest {
     )
     val sources = listOf(null, "", exact, "{\"schema\":1,\"text\":\"  source\\nunchanged  \"}")
     val transcripts = base.transcripts.mapIndexed { index, transcript -> transcript.copy(cloudSourceJson = sources[index]) }
-    val file = write(listOf(base.copy(parts = parts, transcripts = transcripts)))
+    // Deliberately opaque/future metadata exercises lossless blobs, not typed authorization.
+    val file = write(listOf(base.copy(parts = parts, transcripts = transcripts)), codecOnly = true)
     val result = PampaBundleArchive.read(file, verifyAttachments = false).data.notes.single()
     assertEquals(parts.map { it.copy(fileName = "", archivedAt = 0) }, result.parts)
     assertEquals(transcripts, result.transcripts)
@@ -147,7 +151,7 @@ class PampaNoteContainerTest {
       recordedAtLocal = "2026-11-09T00:00:00.123", recordedAtZoneId = "Europe/Rome",
       recordedAtSource = "media_metadata", recordedAtPrecision = "millisecond") },
       transcripts = unknown.transcripts.map { it.copy(cloudSourceJson = if (it.id == "raw1") "{\"text\":\"  Exact cloud source  \"}" else "") })
-    val local = PampaBundleArchive.read(write(listOf(rich))).data.notes.single()
+    val local = PampaBundleArchive.read(write(listOf(rich), codecOnly = true)).data.notes.single()
     val oldZip = temp.newFile().also { f -> f.outputStream().use { BundleWriter(audio, sources).write(set(listOf(unknown)), ExportOptions(), it) } }
     val newKeys = setOf("recordedAtEpochMs", "recordedAtLocal", "recordedAtZoneId", "recordedAtSource", "recordedAtPrecision", "cloudSourceJson")
     fun strip(value: JsonElement): JsonElement = when (value) {
@@ -164,7 +168,7 @@ class PampaNoteContainerTest {
       // Restore the local storage references that staging/persistence supply in the app.
       val stored = merged.copy(parts = merged.parts.map { part -> part.copy(fileName = unknown.parts.single { it.id == part.id }.fileName) },
         sources = merged.sources.map { source -> source.copy(storedFileName = unknown.sources.single { it.id == source.id }.storedFileName) })
-      val reexported = PampaBundleArchive.read(write(listOf(stored))).data.notes.single()
+      val reexported = PampaBundleArchive.read(write(listOf(stored), codecOnly = true)).data.notes.single()
       assertEquals(rich.parts.map { it.recordedAtEpochMs }, reexported.parts.map { it.recordedAtEpochMs })
       assertEquals(rich.parts.map { it.recordedAtLocal }, reexported.parts.map { it.recordedAtLocal })
       assertEquals(rich.parts.map { it.recordedAtZoneId }, reexported.parts.map { it.recordedAtZoneId })
@@ -389,7 +393,7 @@ class PampaNoteContainerTest {
       var progress = 0f
       val steps = mutableListOf<Float>()
       val failure = assertThrows(CancellationException::class.java) {
-        write(listOf(g), { if (progress > threshold) throw CancellationException("cancel") }, { progress = it; steps += it })
+        write(listOf(g), { if (progress > threshold) throw CancellationException("cancel") }, progress = { progress = it; steps += it })
       }
       assertEquals("cancel", failure.message)
       assertTrue(steps.zipWithNext().all { it.first <= it.second })

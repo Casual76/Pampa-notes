@@ -4,6 +4,7 @@ import android.database.Cursor
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import dev.pampa.pampanotes.core.db.*
+import dev.pampa.pampanotes.core.alignment.*
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.files.Hashing
 import io.mockk.*
@@ -20,8 +21,10 @@ class PampaBundleRekeyPersistenceTest {
 
   @Test fun `simultaneous session and audio swaps retain live destinations and update references once by row ID`() = assertSwap(false)
   @Test fun `recovering verified evicted audio retains archive identity during the same swap`() = assertSwap(true)
+  @Test fun `native alias persistence keeps cloud word evidence with remapped identities and no rebind`() = assertSwap(false, cloud = true)
+  @Test fun `verified recovered alias also keeps portable cloud evidence`() = assertSwap(true, cloud = true)
 
-  private fun assertSwap(recover: Boolean) = runTest {
+  private fun assertSwap(recover: Boolean, cloud: Boolean = false) = runTest {
     val db = mockk<PampaDatabase>()
     val folders = mockk<FolderDao>(relaxed = true); val notes = mockk<NoteDao>(relaxed = true)
     val sessions = mockk<SessionDao>(relaxed = true); val parts = mockk<AudioPartDao>(relaxed = true)
@@ -44,7 +47,14 @@ class PampaBundleRekeyPersistenceTest {
     val oldParts = oldSessions.mapIndexed { i, s -> AudioPartEntity(PampaBundleLegacyReconcile.id("part", "${s.id}:part:0"), s.id, 0,
       "$i.wav", "$i.wav", "audio/wav", 1, 1000,
       Hashing.sha256((if (i == 0) "A" else "B").byteInputStream()), 1, archivedAt = 10L + i) }
-    val oldTranscripts = oldSessions.mapIndexed { i, s -> TranscriptEntity("raw-$i", s.id, TranscriptKind.RAW, "custom", "personal", text = "WordsFrom$i", wordCount = 1, createdAt = 2) }
+    val oldTranscripts = oldSessions.mapIndexed { i, s ->
+      val row = TranscriptEntity("raw-$i", s.id, TranscriptKind.RAW, if (cloud) "groq" else "custom", "personal", language = "it", text = "WordsFrom$i", wordCount = 1, createdAt = 2)
+      if (!cloud) row else {
+        val doc = CloudSources.create(row, row.text, listOf(CloudTextPart(oldParts[i].id, oldParts[i].sha256, row.text, "it", "groq", "personal")))
+        row.copy(cloudSourceJson = CloudSources.encode(doc.copy(overlays = listOf(CloudOverlay(oldParts[i].id, AlignmentProtocol.sha256(row.text), "it",
+          listOf(AlignmentTiming(0, row.text.length, 100, 800, "measured")))))))
+      }
+    }
     val oldSegments = oldParts.mapIndexed { i, part -> SegmentEntity(transcriptId = "raw-$i", partId = part.id, indexInPart = 0,
       partStartMs = 100, partEndMs = 800, sessionStartMs = 100, sessionEndMs = 800, text = "WordsFrom$i", wordsJson = "0,700,WordsFrom$i") }
     oldParts.forEachIndexed { i, part ->
@@ -85,6 +95,12 @@ class PampaBundleRekeyPersistenceTest {
       coVerify { jobs.upsert(oldJobs[i].copy(sessionId = destination)) }
       verify(exactly = 1) { sql.execSQL("UPDATE transcription_runs SET sessionId = ? WHERE id = ?", arrayOf(destination, "run-$i")) }
       coVerify { transcripts.upsert(match { it.id == "raw-$i" && it.sessionId == destination && it.text == "WordsFrom$i" }) }
+      if (cloud) {
+        val finalPart = oldParts[i].copy(id = oldParts[1-i].id, sessionId = destination)
+        coVerify { transcripts.upsert(match { row -> row.id == "raw-$i" && CloudSources.validatePortable(row, listOf(finalPart)) &&
+          CloudSources.decode(row.cloudSourceJson)?.overlays?.single()?.partId == finalPart.id &&
+          CloudSources.bindSource(CloudSources.decode(row.cloudSourceJson)!!, listOf(finalPart)) == null }) }
+      }
       coVerify { parts.upsert(match { it.id == oldParts[1-i].id && it.fileName == (if (i == 0) restoredName else oldParts[i].fileName) && it.sha256 == oldParts[i].sha256 && it.archivedAt == oldParts[i].archivedAt }) }
       coVerify { segments.insertAll(match { rows -> rows.any { it.transcriptId == "raw-$i" && it.partId == oldParts[1-i].id && it.wordsJson == "0,700,WordsFrom$i" } }) }
     }

@@ -52,8 +52,12 @@ fun CloudCostsSheet(onDismiss: () -> Unit, viewModel: CloudCostsViewModel = hilt
   var advanced by remember { mutableStateOf(false) }
   var reset by remember { mutableStateOf(false) }
   val provider = state.settings.transcriptionProvider.id
-  val model = state.settings.openRouterTranscriptionModel
-  val rateKey = "$provider/${if (provider == "openrouter") model else "whisper-large-v3-turbo"}"
+  val model = when (provider) {
+    "mistral" -> state.settings.mistralTranscriptionModel
+    "groq" -> state.settings.groqTranscriptionModel
+    else -> state.settings.openRouterTranscriptionModel
+  }
+  val rateKey = "$provider/$model"
   var rate by remember(saved, rateKey) { mutableStateOf(saved.userRatesPerMinute[rateKey].orEmpty()) }
   val budgetValid = !budgetOn || Usd.parseInput(budget) != null
   val jobValid = !jobOn || Usd.parseInput(jobLimit) != null
@@ -106,10 +110,17 @@ fun CloudCostsSheet(onDismiss: () -> Unit, viewModel: CloudCostsViewModel = hilt
           }
           FluidSectionFootnote(text = stringResource(R.string.cloud_cost_zone, saved.zoneId))
         }
+        if (provider == "mistral" || provider == "groq") {
+          FluidSectionHeader(title = stringResource(R.string.cr2_selected_price))
+          Text(model, style = MaterialTheme.typography.titleMedium)
+          FluidSectionFootnote(text = stringResource(R.string.cr2_price_unavailable))
+        }
         FluidSectionHeader(title = stringResource(R.string.cloud_cost_price))
-        Text(model.ifBlank { stringResource(R.string.cloud_cost_model_unselected) }, style = MaterialTheme.typography.titleMedium)
-        PriceSummary(data.prices[model])
-        FluidButton(text = stringResource(R.string.cloud_cost_refresh), onClick = { viewModel.refresh() },
+        val openRouterModel = state.settings.openRouterTranscriptionModel
+        Text(openRouterModel.ifBlank { stringResource(R.string.cloud_cost_model_unselected) }, style = MaterialTheme.typography.titleMedium)
+        PriceSummary(data.prices[openRouterModel])
+        FluidSectionFootnote(text = stringResource(R.string.cr2_refresh_openrouter))
+        FluidButton(text = stringResource(R.string.cloud_cost_refresh), onClick = { viewModel.refresh(openRouterModel) },
           loading = state.refreshing, enabled = !state.refreshing, style = FluidButtonStyle.Tinted, fillWidth = true)
         FluidSectionHeader(title = stringResource(R.string.cloud_cost_key))
         val quota = state.quota
@@ -161,7 +172,7 @@ fun CloudCostsSheet(onDismiss: () -> Unit, viewModel: CloudCostsViewModel = hilt
           }
           FluidSectionFootnote(text = stringResource(R.string.cloud_cost_unknown_detail))
           if (unknown == UnknownCostAction.USER_RATE) {
-            Text(if (provider == "openrouter") model else stringResource(R.string.provider_groq), style = MaterialTheme.typography.titleSmall)
+            Text(model, style = MaterialTheme.typography.titleSmall)
             UsdField(rate, { rate = it }, R.string.cloud_cost_rate_amount, rateValid)
           }
           FluidSectionHeader(title = stringResource(R.string.cloud_cost_reconcile))

@@ -33,6 +33,7 @@ class ArchiveWorker @AssistedInject constructor(
   private val settingsStore: PampaSettingsStore,
   private val transcription: TranscriptionRepository,
   private val scheduler: WorkScheduler,
+  private val alignment: AlignmentScheduler,
   private val storage: StorageRepository,
 ) : CoroutineWorker(context, params) {
 
@@ -74,6 +75,7 @@ class ArchiveWorker @AssistedInject constructor(
     )
     // Il computer ha risposto: se c'e' una trascrizione in fila che lo aspettava, e' il momento.
     val answered = outcome.uploaded + outcome.alreadyThere > 0
+    if (answered) runCatching { alignment.onApplicationOrEndpointWake() }
     if (answered && transcription.queuedCount(OpenAiCompatProvider.ID) > 0) scheduler.wake(OpenAiCompatProvider.ID)
     // «Solo sul computer»: quello che il giro ha appena portato sul PC, e che una regola tiene
     // lontano da qui, se ne va adesso. Solo se il computer ha risposto: senza, il giro non ha
