@@ -80,3 +80,112 @@ Nessuna build Gradle o operazione su dispositivi in parallelo agli agenti: risor
 - PampaNoteRelayTest PASSATO: ArchiveFetcher, RelayRepository/RelayHttp, orchestration export, PN writer/reader e staging reali contro due fixture HTTP loopback; recuperati audio e fonte senza configurare il companion, confrontati byte estratti. Non è una chiamata al cloud distribuito né una prova account reale/UI/Room.
 - Artefatti: %LOCALAPPDATA%\PampaNotes\build-pn-workflow\{core,app}\test-results\testDebugUnitTest; app\reports\lint-results-debug.{txt,xml,html}. Schema e test già nel worktree d'integrazione. Versione visibile ancora1.3.1/code20, nessuna release nuova.
 - Avvio review iniziale su snapshot congelato successivo a questo aggiornamento, tre reviewer nuovi e indipendenti Sol/xhigh, criteri PN1–PN8/rubrica sopra con gate Android escluso esplicitamente dall'utente. Giri di correzione consumati0/3. Nessuna approvazione globale attribuita; integrazione finale cloud/Registrazioni resta successiva alla sua consegna consolidata.
+
+## Review iniziale: report parziale R2 (1/3)
+
+Snapshot congelato1702efdd7ca8ac36a752c98789a33df3a146be36, integrazione PN, review INITIAL, correzioni0/3. R1/R2/R3 tutti Sol/xhigh; ricevuto R2, altri report ancora in attesa. Nessuna modifica al worktree congelato durante le review. Lettura sorgenti dell'orchestratore conferma i due percorsi segnalati; correzione consolidata dopo raccolta del giro.
+
+### Voti individuali R2
+
+| Criterio | Voto | Stato della verifica | Motivazione ed evidenze | Problemi e gravità |
+|---|---:|---|---|---|
+| PN1 | 6 | Codice e artefatti parent | Collector/grafo/cronologie/timing e blob cloud completi, ma aggiornamenti vecchi possono cancellare nuova provenienza. | R2-1 P2 |
+| PN2 | NA | Fuori assegnazione completa | Compressione e misure non rivalutate integralmente. | Nessun voto |
+| PN3 | 7 provvisorio | Codice/artefatti; runtime NV | Picker/MIME/ClipData/caption/PN/errori/cancellazione e fixture sintetiche presenti; manca archivio effettivo1.2.0. | Escluso dagli aggregati |
+| PN4 | 5 | Codice e artefatti parent | Remap/merge/storie/alias/selezione presenti, ma gerarchia locale e nuova provenienza possono perdersi. | R2-1/R2-2 P2 |
+| PN5 | NA | Fuori assegnazione completa | Ispezione incidentale del test relay, senza review completa account/TTL/interoperabilità. | Nessun voto |
+| PN6 | 8 | Sorgenti UI e risorse | Destinazione PN e contenuto chiari, opzioni IA separate, avvisi e destinazioni compatibili, IT/EN. | Resa visiva NV |
+| PN7 | NA | Fuori assegnazione completa | Dipendenze staging/transazioni lette, nessuna valutazione completa. | Nessun voto |
+| PN8 | 8 | Artefatti parent verificati dal reviewer | Conteggi1031pass/1skip/0error, log build, lint0error123warning, schema/migrazione generata e test loopback verificati. | Android/cloud distribuito non eseguiti; raccolta review del coordinatore |
+
+### Rilievi confermati da affrontare
+
+- R2-1 P2: vecchio schema3/PN con nullable sconosciuti azzera recordedAt* nel ramo sameAudio di PampaBundleImporter e cloudSourceJson nel merge local+incoming delle trascrizioni. Conservare evidenza conosciuta quando assente nell'input; non sovrascrivere silenziosamente sorgenti immutabili non null discordanti. Regressioni null/empty/string, clock e vecchio input richieste.
+- R2-2 P2: aggiornamento nativo riscrive nome/stile/padre della cartella anche con old.updatedAt maggiore e riprende folderId/titolo della nota dall'input; reimportare snapshot identico annulla rinomine/spostamenti locali. Applicare politica coerente di conservazione metadati locali più recenti e verificare la gerarchia finale contro cicli. Aggiungere regressioni di rinomina, spostamento cartella e nota.
+
+### Riepilogo parziale iniziale
+
+Media/minimo solo voti verificati comparabili; n è il numero ricevuto valido rispetto ai reviewer assegnati al criterio, non rispetto ai tre totali. PN3 provvisorio escluso; NA/NV/in attesa non valgono zero.
+
+| Criterio | R1 | R2 | R3 | Media | Minimo | Esito e problemi aperti |
+|---|---|---|---|---|---|---|
+| PN1 | In attesa | 6 | In attesa | 6 (1/3) | 6 | R2-1 P2 |
+| PN2 | In attesa | NA | In attesa | — (0/1) | — | Report assegnato R1 mancante |
+| PN3 | In attesa | 7 provvisorio | In attesa | — (0/1) | — | Limite fixture1.2.0, voto provvisorio |
+| PN4 | In attesa | 5 | In attesa | 5 (1/2) | 5 | R2-1/R2-2 P2 |
+| PN5 | In attesa | NA | In attesa | — (0/1) | — | Report assegnato R3 mancante |
+| PN6 | In attesa | 8 | In attesa | 8 (1/1) | 8 | Nessun rilievo R2, visuale NV |
+| PN7 | In attesa | NA | In attesa | — (0/2) | — | Report assegnati R1/R3 mancanti |
+| PN8 | In attesa | 8 | In attesa | 8 (1/3) | 8 | Mancano due report del giro |
+
+Decisione: nessuna approvazione o avanzamento di fase; raccogliere tutti i report indipendenti, consolidare i difetti e correggere. Non avviare altre review né alterare lo snapshot in esame.
+
+## Review iniziale: report R1 ricevuto (2/3)
+
+Stesso snapshot1702efdd7ca8ac36a752c98789a33df3a146be36, stesso giro INITIAL, correzioni0/3. R1 effettivo Sol/xhigh. Sorgenti/index invariati; nessun nuovo difetto distinto: F1 di R1 coincide con R2-1 e ne rafforza l'evidenza con un probe JVM su writer/reader/reconcile/merge compilati di produzione. Propagazione all'upsert dedotta, Room non eseguito.
+
+| Criterio | Voto R1 | Stato della verifica | Motivazione ed evidenze | Problemi e gravità |
+|---|---:|---|---|---|
+| PN1 | 6 | Codice/artefatti parent e probe JVM eseguito | Codec completo e campi privati esclusi; il merge perde provenienza locale quando lo snapshot entrante la omette. | F1=R2-1 P2 |
+| PN2 | 8 | Codice e artefatti verificati | DEFLATE, dedup byte/identità separate, buffer64KiB, fixture e chunk/grande grafo verificati. | Nessun ulteriore rilievo; memoria proporzionale al grafo |
+| PN3 | NA | Fuori assegnazione completa | Lettore legacy osservato incidentalmente, niente review completa dei flussi. | Fixture reale1.2.0 assente |
+| PN4 | NA | Fuori assegnazione completa | Merge/reconcile letti perPN1, non tutti i casi update/copy. | F1 pertinente incidentalmente |
+| PN5 | NA | Fuori assegnazione completa | Test relay letto perPN8, nessuna valutazione completa del cloud/account. | Cloud distribuito non verificato |
+| PN6 | NA | Fuori assegnazione | UX non revisionata completamente. | Nessun voto |
+| PN7 | 8 | Codice e artefatti verificati | Percorsi/duplicati/conteggi/riferimenti/UTF8/CRC/hash/limiti/checkpoint e staging prima della transazione verificati. | Room rollback/no-space non eseguiti |
+| PN8 | 7 | Artefatti parent e probe indipendente | Build/lint/JVM/schema verificati, manca regressione F1. | Android escluso dall'utente, cloud reale non dimostrato |
+
+Probe e output in %TEMP%\pn-r1-review-32cde7b4729343049e1e56eb11a9a602\PnR1Probe.java e probe-output.txt. Output verificato dal coordinatore in sola lettura; nessuna nuova esecuzione propria. La codifica mantiene la sorgente, il merge restituisce cloudSourceJson=null e recordedAtEpochMs=null dopo un incoming sconosciuto.
+
+| Criterio | R1 | R2 | R3 | Media | Minimo | Esito e problemi aperti |
+|---|---|---|---|---|---|---|
+| PN1 | 6 | 6 | In attesa | 6 (2/3) | 6 | F1/R2-1 P2 confermato |
+| PN2 | 8 | NA | In attesa | 8 (1/1) | 8 | Nessun rilievo R1 |
+| PN3 | NA | 7 provvisorio | In attesa | — (0/1) | — | Provvisorio escluso |
+| PN4 | NA | 5 | In attesa | 5 (1/2) | 5 | R2-1/R2-2 P2 |
+| PN5 | NA | NA | In attesa | — (0/1) | — | Report R3 atteso |
+| PN6 | NA | 8 | In attesa | 8 (1/1) | 8 | Nessun rilievo R2 |
+| PN7 | 8 | NA | In attesa | 8 (1/2) | 8 | Nessun rilievo R1 |
+| PN8 | 7 | 8 | In attesa | 7,5 (2/3) | 7 | Giro incompleto |
+
+Nessun avanzamento/approvazione; atteso soltanto il report già in corso R3, senza polling né nuove deleghe. Nessuna scrittura nello snapshot congelato.
+
+## Review iniziale completa (3/3), decisione di correzione
+
+R3 ricevuto su1702efdd7ca8ac36a752c98789a33df3a146be36, effettivo Sol/xhigh, sorgenti/index invariati. Sonde JVM di produzione e sorgenti individuano1P1+3P2; F2 coincide con R1-F1/R2-1. Consolidati5 problemi distinti: P1 percorsi locali dopo sync; P2 provenienza nulla, gerarchia più recente, alias fonti non iniettivi, recupero tardivo allegati omessi. Nessuna prova Android eseguita.
+
+| Criterio | Voto R3 | Stato della verifica | Motivazione ed evidenze | Problemi e gravità |
+|---|---:|---|---|---|
+| PN1 | 6 | Sorgenti/artefatti/sonda JVM | Codec fedele ma aggiornamenti perdono metadati; identità fonti a rischio. | F2/F3 P2 |
+| PN2 | NA | Fuori assegnazione completa | Streaming/dedup solo incidentali. | — |
+| PN3 | NA | Fuori assegnazione completa | Picker/intent/documenti non valutati integralmente. | — |
+| PN4 | 5 | Sorgenti e sonde JVM | Remap e conservazione presenti, ma file sync/alias fonti/provenienza ancora violati. | F1 P1, F2/F3 P2 |
+| PN5 | 5 | Sorgenti e artefatti parent | Relay pronto indipendente dal PC; omessi non recuperabili/utilizzabili correttamente. | F1 P1, F4 P2 |
+| PN6 | NA | Fuori assegnazione completa | Consumer letti soltanto per disponibilità file. | — |
+| PN7 | 8 | Sorgenti e artefatti | Validazione/staging/transazione/checkpoint presenti. | Runtime Android escluso |
+| PN8 | 8 | Artefatti verificati |1031pass/1skip, build/lint e6 colonne nullable confermati. | Runtime/account distribuito non eseguiti |
+
+### Tabella generale finale del giro iniziale
+
+Legenda: R1/R2/R3 tutti GPT-6.1 Sol/xhigh. Numeri validi verificati; NA esclusi; PN3 di R2 provvisorio escluso. n indica contributi validi/reviewer assegnati al criterio. Nessuna soglia numerica di approvazione aggiunta.
+
+| Criterio | R1 | R2 | R3 | Media | Minimo | Esito e problemi aperti |
+|---|---|---|---|---|---|---|
+| PN1 | 6 | 6 | 6 | 6 (3/3) | 6 | Provenienza/identità P2 |
+| PN2 | 8 | NA | NA | 8 (1/1) | 8 | Nessun difetto confermato |
+| PN3 | NA | 7 provvisorio | NA | — (0/1) | — | Fixture reale1.2.0 assente, evidenza limitata |
+| PN4 | NA | 5 | 5 | 5 (2/2) | 5 | Sync P1 e conservazione P2 |
+| PN5 | NA | NA | 5 | 5 (1/1) | 5 | Allegati omessi/percorsi P1/P2 |
+| PN6 | NA | 8 | NA | 8 (1/1) | 8 | Nessun difetto confermato |
+| PN7 | 8 | NA | 8 | 8 (2/2) | 8 | Nessun altro difetto confermato |
+| PN8 | 7 | 8 | 8 | 7,67 (3/3) | 7 | Regressioni dei difetti da aggiungere |
+
+Decisione: fase NON approvata; avvio correzione1/3. Due unità sostanziali con contesti freschi: sync/percorso locale e recupero omessi/adattatore-consumer. Coordinatore corregge direttamente provenienza/gerarchia/alias fonti e integra. Ambiti di scrittura separati nello stesso checkout d'integrazione, nessun commit dei figli. Snapshot iniziale non più congelato dopo conclusione di tutti e3 i reviewer. Al termine build/JVM mirati con risorse moderate e nuovo giro di3 reviewer freschi; nessun emulatore/dispositivo.
+
+### Correzioni del coordinatore pronte
+
+- Commit4d22edbf8dc94576b104bead39a2bd4d799baa9c: provenienza pubblica conservata contro input sconosciuti, null/empty cloud distinti e conflitti immutabili espliciti; origine audio coerente e non declassata da semplice data; cartelle/note più recenti conservate con controllo cicli finali; riconciliazione fonti iniettiva con prenotazione identità esatte e nomi prima del solo hash.
+-70 test JVM mirati passati,0 failure/error/skip, log %TEMP%\pampa-pn-correction1-parent-2.log, BUILD SUCCESSFUL41s. Questo non è un nuovo totale della suite completa. I nuovi test Room di conservazione sono preparati ma non eseguiti; dopo il batch sono stati aggiunti i riferimenti sicuri per allegati attesi, ancora da compilare nell'integrazione successiva.
+- API riservata al recupero omessi: PampaBundleOmissions.expectedFileName(id) ed expectedSourceName(source). L'importer usa già questi riferimenti quando mancano byte con identità/hash disponibili; sorgenti CLIPBOARD/SHARE senza originale non ricevono file inventati. Il nuovo agente del recupero completa adattatore/consumer senza riscrivere l'importer.
+- Un terzo contesto fresco affronta il limite di evidenza PN3: fixture sintetica generata con sorgenti effettivi del tag stable-pampa-notes-v1.2.0 e relativo test/provenienza, se ottenibile con compilazione leggera. Non etichettare un archivio corrente come1.2.0 cambiando soltanto generator; nessuna ricostruzione dimostra il caso dell'amico.
+- Nessun Gradle/dispositivo/GPU dei figli; coordinatore rilascia il breve lease dopo i70 test. Le successive scritture riguardano solo file assegnati e senza commit dei figli. Integrazione e compilazione finali dopo tutte le consegne.
