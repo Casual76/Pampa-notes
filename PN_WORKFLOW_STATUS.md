@@ -1245,3 +1245,11 @@ Esito: criteri con rilievi ancora aperti; seiP2 e dueP3 distinti, nessunP1. Non 
 R8=9/10: nessun finding PN8; sette test fixture e sei casi Worker selezionati passati,529input/163artefatti verificati due volte. Le evidenze restano1192pass/1skip,lint0/123,28Worker offline,TypeScript0; Android/Room/UI/cloud reale dispensati e non eseguiti.
 
 Risorsa Gradle: riservata espressamente a CLOUD/RECORDINGS per un solo batch correction3, max2workers/no-parallel/no-watch-fs e compilazione AndroidTest solo. Nessun processo PN in esecuzione; PN non userà Gradle fino al rilascio effettivo.
+
+## Integrazione autorizzata — preparazione su main
+
+PN integrato localmente in main con merge128597e2c8d9fa9d6d73355d99b0746b9edcc7dc; documento master autorevole conservato nel solo conflitto di merge. La cancellazione preesistente companion/tools/__pycache__/holes.cpython-311.pyc è rimasta unstaged e non modificata. Nessun push o release.
+
+Root ha preparato i fix per hold prima della verifica dei riferimenti sync riusati, mantenimento del riferimento atteso per originali omessi anche con remoto null senza donatore, compatibilità originale/derivato nei candidati/concorrenti legacy, classificazione UTF-8 CORRUPT e messaggi recupero PC IT/EN con diagnostica nei log. Quattro nuove regressioni JVM per file/ruoli e nuove asserzioni di classificazione, non compilate/eseguite; risorse XML e diff checks passati. Non si attribuisce chiusura prima dei controlli integrati.
+
+Restano da implementare nel candidato d'integrazione le autorità vocali pendenti fra pagine e la conservazione del marcatore dopo import PN. Il workflow separato è alla validazione correction3; la sua consegna consolidata resta una dipendenza esplicita. Lease Gradle corrente a CLOUD/RECORDINGS, nessuna build main eseguita.

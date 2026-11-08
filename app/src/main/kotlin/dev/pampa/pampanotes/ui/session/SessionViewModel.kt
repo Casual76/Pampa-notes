@@ -15,6 +15,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import dev.pampa.pampanotes.core.settings.LastListened
 import dev.pampa.pampanotes.core.archive.ArchiveFetcher
+import dev.pampa.pampanotes.ui.common.archiveRecoveryMessage
 import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -621,7 +622,8 @@ class SessionViewModel @Inject constructor(
         R.string.relay_send_from_original else relayMessage(error.result)
       _fetch.value = FetchState(0, wanted.size, "", 0f, error = context.getString(message))
     } catch (error: Exception) {
-      _fetch.value = FetchState(0, wanted.size, "", 0f, error = error.message ?: error::class.java.simpleName)
+      android.util.Log.w("PampaArchive", "Recording recovery failed", error)
+      _fetch.value = FetchState(0, wanted.size, "", 0f, error = context.getString(archiveRecoveryMessage(error)))
     }
     refreshMissing(uiState.value.parts, refreshRelay = true)
   }

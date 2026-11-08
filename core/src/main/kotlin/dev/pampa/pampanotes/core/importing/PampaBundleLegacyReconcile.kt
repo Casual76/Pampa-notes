@@ -129,11 +129,13 @@ internal object PampaBundleLegacyReconcile {
     // Resolve named content matches globally before hash-only fallback. Reserving destinations
     // keeps an omitted B distinct from A, even when B is visited first and their bytes are equal.
     for (named in listOf(true, false)) legacySources.filterNot { it.id in sourceAliases }.forEach { source ->
-      val matches = target.sources.filter { it.id !in reservedSources && it.kind == source.kind && hash(it.sha256, source.sha256) &&
+      val matches = target.sources.filter { it.id !in reservedSources && it.kind == source.kind &&
+        (it.derivedFromId == null) == (source.derivedFromId == null) && hash(it.sha256, source.sha256) &&
         (!named || text(it.originalName) == text(source.originalName)) }
       require(matches.size <= 1) { "Ambiguous legacy source identity" }
       matches.singleOrNull()?.let { match ->
-        val competitors = legacySources.filter { it.id !in sourceAliases && it.kind == match.kind && hash(it.sha256, match.sha256) &&
+        val competitors = legacySources.filter { it.id !in sourceAliases && it.kind == match.kind &&
+          (it.derivedFromId == null) == (match.derivedFromId == null) && hash(it.sha256, match.sha256) &&
           (!named || text(it.originalName) == text(match.originalName)) }
         require(competitors.size == 1) { "Ambiguous legacy source identity" }
         sourceAliases[source.id] = match.id

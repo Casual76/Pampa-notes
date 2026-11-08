@@ -30,7 +30,7 @@ enum class ImportFailure {
         "metadata conflict" in message -> CORRUPT
         "conflict" in message || "belongs to another note" in message -> CONFLICT
         causes.any { it is FileNotFoundException } -> UNAVAILABLE
-        causes.any { it is ZipException || it is IllegalArgumentException || it is IllegalStateException } -> CORRUPT
+        causes.any { it is ZipException || it is java.nio.charset.CharacterCodingException || it is IllegalArgumentException || it is IllegalStateException } -> CORRUPT
         causes.any { it is IOException } -> UNAVAILABLE
         else -> FAILED
       }

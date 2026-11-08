@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import dev.pampa.pampanotes.core.archive.ArchiveFetcher
+import dev.pampa.pampanotes.ui.common.archiveRecoveryMessage
 import dev.pampa.pampanotes.core.importing.HandwritingPages
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -368,7 +369,8 @@ class NoteViewModel @Inject constructor(
           R.string.relay_send_from_original else relayMessage(error.result)
         onError(context.getString(message))
       } catch (error: Exception) {
-        onError(error.message ?: error::class.java.simpleName)
+        android.util.Log.w("PampaArchive", "Source recovery failed", error)
+        onError(context.getString(archiveRecoveryMessage(error)))
       }
     }
   }

@@ -32,6 +32,37 @@ class PampaSyncWriteOwnershipRoundFourTest {
     checkpoint: () -> Unit = {}): File = File(root, SyncLocalFiles.selectName(root, donor.name, bytes.size.toLong(), sha,
       null, setOf(donor.name), sequenceOf(donor.name), created, owner, checkpoint = checkpoint)!!)
 
+  @Test fun directlyAdoptedBytesAreHeldBeforeHashingAndThroughStaleSweepsAfterRelease() {
+    for (audio in listOf(true, false)) for (local in listOf(true, false)) {
+      val files = files()
+      val directory = if (audio) files.audio else files.sources
+      val existing = File(directory, "adopt.bin").also { it.writeBytes(bytes) }
+      val created = mutableListOf<File>()
+      files.beginOrphanSweep().use { stale ->
+        val owner = SyncLocalFiles.beginWrites()
+        var duringHash = 0
+        try {
+          val selected = SyncLocalFiles.selectName(directory, existing.name, bytes.size.toLong(), sha,
+            if (local) existing.name else null, emptySet(), emptySequence(), created, owner) {
+            assertEquals(0, files.sweepOrphans(emptySet(), emptySet(), emptySet(), stale, future))
+            duringHash++
+          }
+          assertTrue(duringHash > 0)
+          assertEquals(existing.name, selected)
+          assertTrue(created.isEmpty())
+          assertEquals(0, files.sweepOrphans(emptySet(), emptySet(), emptySet(), stale, future))
+          // A rollback must leave pre-existing adopted bytes alone.
+          SyncLocalFiles.cleanupCreated(created, emptySet())
+        } finally { owner.close() }
+        assertEquals(0, files.sweepOrphans(emptySet(), emptySet(), emptySet(), stale, future))
+        assertArrayEquals(bytes, existing.readBytes())
+      }
+      // Released adoption does not pin a genuinely abandoned file permanently.
+      assertEquals(1, files.sweepOrphans(emptySet(), emptySet(), emptySet(), future))
+      assertFalse(existing.exists())
+    }
+  }
+
   @Test fun stalePrecreationReferencesCannotDeleteAudioOrSourcesAfterCommitAndRelease() {
     for (audio in listOf(true, false)) {
       val files = files()

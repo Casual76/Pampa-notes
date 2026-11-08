@@ -123,4 +123,29 @@ class PampaSyncFilelessRoundFourTest {
     assertFalse(SyncLocalFiles.preserveFilelessSource(incoming.copy(archivedAt = 7), incoming))
     assertFalse(SyncLocalFiles.preserveFilelessSource(incoming, incoming.copy(storedFileName = "remote.txt")))
   }
+
+  @Test fun omittedTextOriginalSurvivesNullRemoteWithoutAnyDonor() {
+    for (kind in listOf(SourceKind.SHARE, SourceKind.CLIPBOARD)) for (collision in listOf(false, true)) {
+      val root = temp.newFolder()
+      val incoming = text(kind)
+      val local = incoming.copy(storedFileName = PampaBundleOmissions.expectedFileName(incoming.id))
+      val before = declaration(local, root)
+      assertFalse(before.fileless)
+      val created = mutableListOf<File>()
+      SyncLocalFiles.beginWrites().use { owner ->
+        val name = SyncLocalFiles.selectName(root, null, incoming.sizeBytes, incoming.sha256,
+          local.storedFileName, if (collision) setOf(local.storedFileName!!) else emptySet(),
+          emptySequence(), created, owner, preserveFileless = SyncLocalFiles.preserveFilelessSource(local, incoming))
+        assertNotNull(name)
+        if (collision) assertNotEquals(local.storedFileName, name) else assertEquals(local.storedFileName, name)
+        assertFalse(File(root, name!!).exists())
+        assertTrue(created.isEmpty())
+        val after = declaration(local.copy(storedFileName = name), root)
+        assertFalse(after.fileless)
+        assertNull(after.path)
+        assertEquals(before.sha256, after.sha256)
+        assertEquals(before.bytes, after.bytes)
+      }
+    }
+  }
 }

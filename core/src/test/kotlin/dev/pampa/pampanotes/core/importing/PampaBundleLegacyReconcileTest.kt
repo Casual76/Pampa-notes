@@ -34,6 +34,43 @@ class PampaBundleLegacyReconcileTest {
     assertEquals(setOf(source.id, extra.id), PampaBundleMerge.merge(plan.local, plan.incoming).sources.map { it.id }.toSet())
   }
 
+  @Test fun `legacy independent image cannot alias an equal native derived page in either order`() {
+    val target = native()
+    val old = legacy(target)
+    val original = SourceEntity(PampaBundleLegacyReconcile.id("source", "standalone-image"), old.note.id,
+      SourceKind.IMAGE, "A.png", "image/png", 3, "c".repeat(64), "local-original.png", importedAt = 1)
+    val parent = original.copy(id = "native-parent", kind = SourceKind.SDOCX, originalName = "Note.sdocx",
+      mime = "application/zip", sha256 = "d".repeat(64), storedFileName = null)
+    val page = original.copy(id = "native-page", storedFileName = "page.png", derivedFromId = parent.id)
+    for (incoming in listOf(listOf(parent, page), listOf(page, parent))) {
+      val plan = PampaBundleLegacyReconcile.plan(old.copy(sources = listOf(original)), target.copy(sources = incoming))
+      assertFalse(original.id in plan.sources)
+      val merged = PampaBundleMerge.merge(plan.local, plan.incoming)
+      assertEquals(setOf(original.id, parent.id, page.id), merged.sources.map { it.id }.toSet())
+      assertEquals(original, merged.sources.single { it.id == original.id })
+      assertEquals(parent.id, merged.sources.single { it.id == page.id }.derivedFromId)
+    }
+  }
+
+  @Test fun `derived legacy image cannot compete with an equal independent source`() {
+    val target = native()
+    val old = legacy(target)
+    val original = SourceEntity(PampaBundleLegacyReconcile.id("source", "standalone"), old.note.id,
+      SourceKind.IMAGE, "A.png", "image/png", 3, "c".repeat(64), "original.png", importedAt = 1)
+    val parent = original.copy(id = PampaBundleLegacyReconcile.id("source", "parent"), kind = SourceKind.SDOCX,
+      originalName = "Note.sdocx", mime = "application/zip", sha256 = "d".repeat(64))
+    val page = original.copy(id = PampaBundleLegacyReconcile.id("page", "page"), derivedFromId = parent.id)
+    val nativeOriginal = original.copy(id = "native-original")
+    for (order in listOf(listOf(page, parent, original), listOf(original, parent, page))) {
+      val plan = PampaBundleLegacyReconcile.plan(old.copy(sources = order), target.copy(sources = listOf(nativeOriginal)))
+      assertEquals(nativeOriginal.id, plan.sources[original.id])
+      assertFalse(page.id in plan.sources)
+      val merged = PampaBundleMerge.merge(plan.local, plan.incoming)
+      assertEquals(setOf(nativeOriginal.id, page.id, parent.id), merged.sources.map { it.id }.toSet())
+      assertEquals(parent.id, merged.sources.single { it.id == page.id }.derivedFromId)
+    }
+  }
+
   private fun native(): PampaBundleNote {
     val session = SessionEntity("native-session", "note", "Lecture", "2026-11-05", 0, activeTranscriptId = "native-raw", createdAt = 1, updatedAt = 2)
     val parts = listOf("A", "B").mapIndexed { index, id -> AudioPartEntity(id, session.id, index, "$id.wav", "$id.wav", "audio/wav", 100, 1000, id.repeat(64), 1) }

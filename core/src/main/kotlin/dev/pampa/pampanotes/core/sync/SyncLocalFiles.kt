@@ -95,8 +95,8 @@ internal object SyncLocalFiles {
       return file in occupied
     }
     val direct = sequenceOf(ownName, remoteName).filterNotNull().filterNot(::reserved)
-    verifiedName(root, size, sha, direct, checkpoint)?.let { return it }
-    val donor = verifiedName(root, size, sha, sequenceOf(ownName, remoteName) + candidates, checkpoint)
+    verifiedName(root, size, sha, direct, checkpoint, owner)?.let { return it }
+    val donor = verifiedName(root, size, sha, sequenceOf(ownName, remoteName) + candidates, checkpoint, owner)
     if (donor != null) {
       val target = freshFile(root, ::reserved, create = true, owner = owner)
       created += target // Record ownership before a cancellation checkpoint or any write.
@@ -107,7 +107,13 @@ internal object SyncLocalFiles {
       }
       return target.name
     }
-    if (remoteName == null) return null
+    if (remoteName == null) {
+      if (ownName == null) return null
+      // An older snapshot cannot erase an expected original merely because it lacks our local
+      // reference. Preserve an exclusive missing path; otherwise reserve a fresh independent one.
+      safeFile(root, ownName)?.let { if (!reserved(ownName) && !it.exists()) return ownName }
+      return freshFile(root, ::reserved, create = false).name
+    }
     safeFile(root, remoteName)?.let { if (!reserved(remoteName) && !it.exists()) return remoteName }
     // Do not overwrite or expose an unrelated existing file, including through a traversal or
     // symlink. This is deliberately a missing reference; sync never downloads or moves bytes.
@@ -127,8 +133,15 @@ internal object SyncLocalFiles {
     }
   }
 
-  private fun verifiedName(root: File, size: Long, sha: String, names: Sequence<String?>, checkpoint: () -> Unit = {}): String? =
-    names.filterNotNull().distinct().firstOrNull { verified(root, it, size, sha, checkpoint) }
+  private fun verifiedName(root: File, size: Long, sha: String, names: Sequence<String?>,
+    checkpoint: () -> Unit, owner: WriteOwner): String? =
+    names.filterNotNull().distinct().firstOrNull { name ->
+      // Adoption needs the same pre-verification hold as creation: a stale reference snapshot
+      // can otherwise delete an existing orphan during hashing or after the page commits.
+      // Pre-existing paths never enter `created`, so rollback cannot delete their bytes.
+      safeFile(root, name)?.let { owner.hold(it) }
+      verified(root, name, size, sha, checkpoint)
+    }
 
   private fun safeFile(root: File, name: String): File? {
     if (name.isBlank() || name == "." || name == ".." || name.any { it == '/' || it == '\\' || it == ':' || it.code < 32 }) return null

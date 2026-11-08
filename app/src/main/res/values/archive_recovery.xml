@@ -1,0 +1,7 @@
+<resources>
+  <string name="archive_recovery_missing">Il file non è disponibile sul computer. Invialo di nuovo dal dispositivo che lo conserva.</string>
+  <string name="archive_recovery_mismatch">Il file ricevuto non corrisponde all’originale. Riprova il trasferimento.</string>
+  <string name="archive_recovery_auth">Collega di nuovo questo dispositivo al server personale e riprova.</string>
+  <string name="archive_recovery_unavailable">Impossibile raggiungere il computer di casa. Verifica che sia acceso e collegato.</string>
+  <string name="archive_recovery_failed">Non è stato possibile recuperare il file. Riprova.</string>
+</resources>
