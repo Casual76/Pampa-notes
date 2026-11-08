@@ -132,7 +132,7 @@ internal class AndroidRelayLocalFiles(
 
   private suspend fun SourceEntity.relay(): RelayLocalFile? {
     // Older omitted originals had no local reference. Reserve one before relay snapshots/holds,
-    // under the same row guard as placement. Never invent originals for clipboard/share content.
+    // under the same row guard as placement. Only positively fileless text has no original.
     val row = if (storedFileName != null) this else {
       val name = PampaBundleOmissions.expectedSourceName(this) ?: return null
       db.withTransaction {

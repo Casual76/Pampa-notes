@@ -18,10 +18,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.antigravity.fluidengine.ui.fluid.FluidButton
+import dev.antigravity.fluidengine.ui.fluid.FluidAlert
+import dev.antigravity.fluidengine.ui.fluid.FluidAlertAction
 import dev.antigravity.fluidengine.ui.fluid.FluidButtonStyle
 import dev.antigravity.fluidengine.ui.fluid.FluidGlassModalPortal
 import dev.antigravity.fluidengine.ui.fluid.FluidGlassModalPresentation
@@ -50,8 +55,8 @@ import java.util.Locale
  * Il pannello che prepara un pacchetto.
  *
  * L'ambito non si sceglie qui: e' gia' deciso da dove si e' aperto il pannello — da una nota, da una
- * cartella, o da Altro per l'archivio intero. Un selettore di ambito dentro un pannello aperto da
- * una nota sarebbe un modo per uscire dalla nota senza accorgersene.
+ * cartella, o da Altro per l'archivio intero. Un PN limitato alle registrazioni puo' richiedere
+ * un consenso separato per le note intere, quando non si puo' conservarne tutta la cronologia.
  */
 @Composable
 fun ExportSheet(
@@ -141,6 +146,19 @@ fun ExportSheet(
       }
     }
   }
+  if (state.confirmingWholeNotes) {
+    val wholeNotesLabel = stringResource(R.string.pn_history_whole_scope)
+    FluidAlert(
+      onDismissRequest = viewModel::declineWholeNotes,
+      title = stringResource(R.string.pn_history_confirm_title),
+      message = stringResource(R.string.pn_history_confirm_message, state.historyScope?.noteIds?.distinct()?.size ?: 0),
+      actions = listOf(
+        FluidAlertAction(stringResource(R.string.action_cancel), viewModel::declineWholeNotes,
+          emphasis = FluidAlertAction.Emphasis.Preferred),
+        FluidAlertAction(stringResource(R.string.pn_history_confirm_action), { viewModel.confirmWholeNotes(wholeNotesLabel) }),
+      ),
+    )
+  }
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -153,9 +171,12 @@ private fun ColumnScope.ConfiguringBody(state: ExportUiState, viewModel: ExportV
 
   // Cosa si sta per esportare, in due righe. E' il momento in cui ci si accorge di aver aperto il
   // pannello dalla nota sbagliata.
-  Text(text = set?.scopeLabel.orEmpty(), style = MaterialTheme.typography.titleLarge)
+  Text(text = set?.scopeLabel ?: if (state.historyScope != null) stringResource(R.string.pn_history_scope_title) else "",
+    style = MaterialTheme.typography.titleLarge)
   Text(
-    text = if (set == null) {
+    text = if (state.historyScope != null) {
+      stringResource(R.string.pn_history_blocked_summary)
+    } else if (set == null) {
       stringResource(R.string.export_counting)
     } else {
       summaryOf(set.notes.size, set.sessionCount, set.audioDurationMs, set.personal || set.notes.any { it.selectedSessionIds != null })
@@ -166,6 +187,20 @@ private fun ColumnScope.ConfiguringBody(state: ExportUiState, viewModel: ExportV
 
   if (set?.notes?.any { it.selectedSessionIds != null } == true) {
     FluidSectionFootnote(text = stringResource(R.string.ec_selection_notice))
+  }
+  if (state.wholeNotesAuthorized) {
+    FluidInlineMessage(title = stringResource(R.string.pn_history_whole_scope),
+      message = stringResource(R.string.pn_history_whole_notice), tone = FluidTone.Info,
+      modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+    FluidButton(text = stringResource(R.string.pn_history_restore_selection), onClick = viewModel::restoreRequestedScope,
+      style = FluidButtonStyle.Plain, fillWidth = true, modifier = Modifier.fillMaxWidth())
+  }
+  if (state.historyScope != null) {
+    FluidInlineMessage(title = stringResource(R.string.pn_history_scope_title),
+      message = stringResource(R.string.pn_history_scope_message), tone = FluidTone.Danger,
+      modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+    FluidButton(text = stringResource(R.string.pn_history_review_whole), onClick = viewModel::requestWholeNotes,
+      style = FluidButtonStyle.Plain, fillWidth = true, modifier = Modifier.fillMaxWidth())
   }
   ExportChoices(
     options = state.options,
@@ -184,7 +219,7 @@ private fun ColumnScope.ConfiguringBody(state: ExportUiState, viewModel: ExportV
   }
   state.warnings.forEach { warning -> WarningMessage(warning, state.estimate) }
 
-  if (state.stage == ExportStage.FAILED) {
+  if (state.historyScope == null && state.stage == ExportStage.FAILED) {
     val fallback = stringResource(R.string.export_failure_write)
     FluidInlineMessage(
       title = stringResource(R.string.export_failed),

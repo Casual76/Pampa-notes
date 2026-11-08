@@ -13,11 +13,14 @@ import dev.pampa.pampanotes.core.db.SourceDao
 import dev.pampa.pampanotes.core.db.TranscriptDao
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.importing.HandwritingPages
+import dev.pampa.pampanotes.core.repo.DatabaseTransactions
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 data class BackupResult(
@@ -51,6 +54,7 @@ class BackupService @Inject constructor(
   private val sources: SourceDao,
   private val files: AppFiles,
   private val settings: PampaSettingsStore,
+  private val transactions: DatabaseTransactions,
 ) {
 
   private val io = Dispatchers.IO
@@ -83,12 +87,16 @@ class BackupService @Inject constructor(
       ?: throw BackupFailure(BackupFailure.Reason.FOLDER_GONE)
     if (!folder.canWrite()) throw BackupFailure(BackupFailure.Reason.NOT_WRITABLE)
 
-    val snapshot = snapshotDatabase()
+    val operation = currentCoroutineContext()
+    val report: (Float) -> Unit = { progress -> operation.ensureActive(); onProgress(progress) }
+    val snapshot = files.tempFile("backup-db", ".sqlite")
     try {
+      val snapshotInfo = BackupDatabaseSnapshot(database, transactions).capture(snapshot)
+      operation.ensureActive()
       val audio = if (includeAudio) filesIn(files.audio) else emptyList()
       val sourceFiles = if (includeSources) filesIn(files.sources) else emptyList()
       // I pesi dal file che si scriveranno, non dalla cartella: e' quello che si confronta dopo.
-      val card = manifest(app, includeAudio, includeSources, snapshot.length(), audio.sumOf { it.length() }, sourceFiles.sumOf { it.length() })
+      val card = manifest(app, includeAudio, includeSources, snapshot.length(), audio.sumOf { it.length() }, sourceFiles.sumOf { it.length() }, snapshotInfo)
       val name = backupFileName(card.createdAt)
 
       // Si scrive con un nome provvisorio e si rinomina alla fine: un file col nome di un backup e'
@@ -103,7 +111,7 @@ class BackupService @Inject constructor(
       val trailer = try {
         val stream = context.contentResolver.openOutputStream(document.uri)
           ?: throw BackupFailure(BackupFailure.Reason.NOT_WRITABLE)
-        stream.use { out -> BackupArchive.write(out, card, snapshot, audio, sourceFiles, onProgress) }
+        stream.use { out -> BackupArchive.write(out, card, snapshot, audio, sourceFiles, report) }
       } catch (e: Throwable) {
         // Un archivio a meta' e' peggio di nessun archivio: chi prova a ripristinarlo lo scopre nel
         // momento in cui ha gia' perso il resto.
@@ -120,7 +128,7 @@ class BackupService @Inject constructor(
       } else {
         // Un provider che non sa rinominare: si copia nel nome buono. Costa una seconda scrittura,
         // ma e' l'unico modo di non lasciare il backup con un nome che dice «a meta'».
-        copyToFinal(folder, document, name)
+        copyToFinal(folder, document, name) { operation.ensureActive() }
       }
 
       settings.setLastBackupAt(card.createdAt)
@@ -128,20 +136,31 @@ class BackupService @Inject constructor(
       // conta.
       BackupResult(finished.uri, name, finished.length(), card.copy(audioBytes = trailer.audioBytes, sourceBytes = trailer.sourceBytes, sealed = true))
     } finally {
-      snapshot.delete()
+      BackupDatabaseSnapshot.delete(snapshot)
     }
   }
 
-  private fun copyToFinal(folder: DocumentFile, partial: DocumentFile, name: String): DocumentFile {
+  private fun copyToFinal(folder: DocumentFile, partial: DocumentFile, name: String, checkCancelled: () -> Unit): DocumentFile {
     val target = folder.createFile(MIME, name) ?: throw BackupFailure(BackupFailure.Reason.CREATE)
     try {
       val input = context.contentResolver.openInputStream(partial.uri) ?: throw BackupFailure(BackupFailure.Reason.OPEN)
-      val output = context.contentResolver.openOutputStream(target.uri) ?: throw BackupFailure(BackupFailure.Reason.NOT_WRITABLE)
-      input.use { source -> output.use { sink -> source.copyTo(sink, 64 * 1024) } }
+      input.use { source ->
+        val output = context.contentResolver.openOutputStream(target.uri) ?: throw BackupFailure(BackupFailure.Reason.NOT_WRITABLE)
+        output.use { sink ->
+          val buffer = ByteArray(64 * 1024)
+          while (true) {
+            checkCancelled()
+            val read = source.read(buffer)
+            if (read < 0) break
+            sink.write(buffer, 0, read)
+          }
+        }
+      }
+      checkCancelled()
     } catch (e: Throwable) {
       runCatching { target.delete() }
       runCatching { partial.delete() }
-      if (e is BackupFailure) throw e
+      if (e is kotlin.coroutines.cancellation.CancellationException || e is BackupFailure) throw e
       throw BackupFailure(BackupFailure.Reason.INTERRUPTED, e)
     }
     runCatching { partial.delete() }
@@ -165,19 +184,26 @@ class BackupService @Inject constructor(
    */
   suspend fun restore(uri: Uri, onProgress: (Float) -> Unit = {}): BackupManifest = withContext(io) {
     val staging = File(files.root, "restore")
+    val operation = currentCoroutineContext()
+    val report: (Float) -> Unit = { progress -> operation.ensureActive(); onProgress(progress) }
     // La versione si controlla sul manifesto, prima di estrarre: un backup piu' nuovo si rifiuta
     // senza aver scritto un byte.
     val current = database.openHelper.readableDatabase.version
     val staged = try {
       val stream = context.contentResolver.openInputStream(uri)
         ?: throw BackupFailure(BackupFailure.Reason.OPEN)
-      stream.use { BackupArchive.extract(it, staging, onProgress, maxDatabaseVersion = current) }
+      stream.use { BackupArchive.extract(it, staging, report, maxDatabaseVersion = current) }
     } catch (failure: Throwable) {
       staging.deleteRecursively()
       throw failure
     }
 
     try {
+      // Legacy backups included queued jobs and device/account journals. Rebuild every restore
+      // in staging too, after the archive's exact byte/trailer checks and before touching live DB.
+      val contentDatabase = File(staging, "content-only.sqlite")
+      BackupDatabaseSnapshot(database, transactions).prepareRestore(staged.database, contentDatabase)
+      operation.ensureActive()
       database.close()
       val live = liveDatabase()
       // Il giornale di scrittura appartiene al database di prima: lasciarlo accanto a quello nuovo
@@ -189,7 +215,7 @@ class BackupService @Inject constructor(
       aside.forEach { it.delete() }
       current.zip(aside).forEach { (from, to) -> if (from.exists() && !from.renameTo(to)) throw BackupFailure(BackupFailure.Reason.INTERRUPTED) }
       try {
-        move(staged.database, live)
+        move(contentDatabase, live)
       } catch (e: Throwable) {
         live.delete()
         aside.zip(current).forEach { (from, to) -> if (from.exists()) from.renameTo(to) }
@@ -209,9 +235,8 @@ class BackupService @Inject constructor(
       // date vere e delle pagine a mano, e i segni di «fatto» parlavano di quello di prima.
       settings.resetBackfills()
       File(files.root, HandwritingPages.TRIED_DIR).deleteRecursively()
-      // Lo stesso di SyncRepository.afterRestore, qui per non far dipendere il backup dal sync: con
-      // l'id di prima il database ripristinato non si riprenderebbe mai le righe che questo telefono
-      // ha scritto dopo il backup, e il server gli lascerebbe sovrascriverle.
+      // Il database ha journal vuoti e nessun cursore/owner importato. Il primo sync crea uno
+      // stato nuovo e semina il contenuto attraverso ensureIdentity, mai la vecchia coda.
       settings.forgetSyncDevice()
       settings.setSyncOrphanAttempts(emptyMap())
       settings.clearSyncReviveRoots(settings.syncReviveRoots())
@@ -230,16 +255,17 @@ class BackupService @Inject constructor(
     databaseBytes: Long,
     audioBytes: Long,
     sourceBytes: Long,
+    snapshot: BackupDatabaseInfo? = null,
   ): BackupManifest = BackupManifest(
     createdAt = System.currentTimeMillis(),
     app = app,
-    databaseVersion = database.openHelper.readableDatabase.version,
+    databaseVersion = snapshot?.version ?: database.openHelper.readableDatabase.version,
     includesAudio = includeAudio,
     includesSources = includeSources,
     audioBytes = audioBytes,
     sourceBytes = sourceBytes,
     databaseBytes = databaseBytes,
-    counts = BackupCounts(
+    counts = snapshot?.counts ?: BackupCounts(
       folders = folders.count(),
       notes = notes.count(),
       sessions = sessions.count(),
@@ -249,23 +275,6 @@ class BackupService @Inject constructor(
     ),
     settings = settings.current().toBackup(),
   )
-
-  /**
-   * Una copia ferma del database.
-   *
-   * Room scrive in modalita' WAL: il file principale da solo puo' essere indietro di minuti. Il
-   * checkpoint riversa il giornale dentro e lo svuota, cosi' quello che si copia e' tutto quello
-   * che c'e'. Si copia, e non si zippa il file vivo, perche' una scrittura a meta' compressione
-   * darebbe un archivio incoerente e nessun errore.
-   */
-  private fun snapshotDatabase(): File {
-    runCatching {
-      database.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(TRUNCATE)").use { it.moveToFirst() }
-    }
-    val copy = files.tempFile("backup-db", ".sqlite")
-    liveDatabase().copyTo(copy, overwrite = true)
-    return copy
-  }
 
   private fun liveDatabase(): File = context.getDatabasePath(PampaDatabase.NAME)
 

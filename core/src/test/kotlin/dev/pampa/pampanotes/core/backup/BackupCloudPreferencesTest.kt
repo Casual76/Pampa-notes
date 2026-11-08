@@ -31,4 +31,27 @@ class BackupCloudPreferencesTest {
     assertEquals("voxtral-mini-transcribe-3", restored.mistralTranscriptionModel)
     assertFalse(restored.autoTranscribeOnImport)
   }
+
+  @Test fun `public model preferences travel without installation account or device state`() {
+    val settings = PampaSettings(
+      preferredProvider = TranscriptionProviderId.MISTRAL,
+      mistralTranscriptionModel = "public-transcription-model",
+      refinementModel = "public-refinement-model",
+      syncDeviceId = "SYNTHETIC_PRIVATE_DEVICE_418",
+      syncDeviceName = "SYNTHETIC_PRIVATE_LABEL_419",
+      syncAccount = "SYNTHETIC_PRIVATE_ACCOUNT_420",
+      syncServerUrl = "SYNTHETIC_PRIVATE_SYNC_ENDPOINT_421",
+      lastSyncError = "SYNTHETIC_PRIVATE_PENDING_ERROR_422",
+      syncHasToken = true,
+      endpointHasToken = true,
+    )
+    val encoded = json.encodeToString(BackupSettings.serializer(), settings.toBackup())
+    assertFalse(encoded.contains("SYNTHETIC_PRIVATE_"))
+    assertFalse(encoded.contains("syncHasToken"))
+    assertFalse(encoded.contains("endpointHasToken"))
+    val restored = json.decodeFromString(BackupSettings.serializer(), encoded)
+    assertEquals("public-transcription-model", restored.mistralTranscriptionModel)
+    assertEquals("public-refinement-model", restored.refinementModel)
+    assertEquals(TranscriptionProviderId.MISTRAL, restored.providerId())
+  }
 }

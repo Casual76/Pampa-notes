@@ -144,6 +144,28 @@ test("push and pull retain one coherent partial clock representation", async (t)
   assert.deepEqual((await f.read("p")).payload, utc);
 });
 
+test("minute origin survives partial metadata push and legacy replay before a real second upgrade", async (t) => {
+  const minute = { ...omitClock(audio), recordedAtEpochMs: null, recordedAtLocal: "2025-09-22T10:15",
+    recordedAtZoneId: null, recordedAtSource: "filename", recordedAtPrecision: "minute" };
+  const partial = { ...minute, recordedAtLocal: null, recordedAtSource: "media_metadata", recordedAtPrecision: "second" };
+  for (const [previous, incoming] of [[minute, partial], [partial, minute]]) {
+    const f = fixture(t);
+    assertApplied(await f.send("A", [update("audio_parts", previous, "first")]), 1);
+    const edit = { ...incoming, position: 2, sessionId: "moved" };
+    assertApplied(await f.send("B", [update("audio_parts", edit, "legacy-edit", "first")]), 1);
+    const retained = await f.read("p");
+    assert.deepEqual(retained.payload, { ...edit, ...originOf(minute) });
+    assert.equal(retained.hash, "legacy-edit");
+    assertApplied(await f.send("B", [update("audio_parts", edit, "legacy-edit", "first")]), 0);
+    assertApplied(await f.send("C", [update("audio_parts", omitClock(edit), "omitted", "legacy-edit")]), 1);
+    assert.deepEqual(originOf((await f.read("p")).payload), originOf(minute));
+    const better = { ...edit, recordedAtLocal: "2025-09-22T10:15:07",
+      recordedAtSource: "media_metadata", recordedAtPrecision: "second" };
+    assertApplied(await f.send("C", [update("audio_parts", better, "measured-second", "omitted")]), 1);
+    assert.deepEqual((await f.read("p")).payload, better);
+  }
+});
+
 test("pure helper requires matching valid audio identity and never retains unrelated fields", () => {
   for (const changed of [
     { id: "other" }, { sha256: "b".repeat(64) }, { sizeBytes: 1025 }, { sha256: "" }, { sha256: "opaque" },

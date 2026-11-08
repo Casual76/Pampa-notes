@@ -245,7 +245,7 @@ class TranscriptionHttp(
   }
 
   /** Known status is durable before fallible header IO. Missing/unreadable timing uses an
-   * explicitly unverified local wait; a readable Retry-After extends it without truncation.
+   * explicitly unverified local wait; a readable Retry-After replaces only this fallback.
    * Only after all required writes succeed may the exact intent become retryable.
    */
   private suspend fun observed(connection: HttpURLConnection, code: Int, permit: CloudRequestGate.Permit?, upload: CloudUploadContext?, accounting: CloudAttemptAccounting?): TranscriptionError.RateLimited? {
@@ -253,7 +253,7 @@ class TranscriptionHttp(
     return withContext(NonCancellable + io) {
       upload?.observedRefusal(code)
       var quota = if (code == 429) TranscriptionError.RateLimited(null, "Retry-After unavailable; local retry wait") else null
-      if (quota != null && permit != null) quota = permit.observed(quota)
+      val observation = if (code == 429) permit?.beginQuotaObservation() else null
       accounting?.rejected()
       // No header accessor runs until the known refusal and its accounting are saved.
       var headerCancellation: kotlinx.coroutines.CancellationException? = null
@@ -262,8 +262,11 @@ class TranscriptionHttp(
       else emptyMap()
       if (code == 429) {
         val readable = httpFailure(code, headers, "") as TranscriptionError.RateLimited
-        if (readable.retryAtMillis != null || readable.retryAfterSec != null)
-          quota = permit?.observed(readable) ?: readable
+        // Only our validated numeric/date header can replace a fallback. The generic mapper
+        // may clamp an invalid negative value to zero or accept non-finite seconds.
+        val timing = readable.takeIf { it.retryAtMillis != null }
+        quota = if (observation != null) permit!!.finishQuotaObservation(observation, timing)
+          else timing ?: quota
       }
       if (upload != null) upload.rejected()
       else {

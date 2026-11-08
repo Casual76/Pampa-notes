@@ -26,6 +26,7 @@ import dev.pampa.pampanotes.core.export.ExportSet
 import dev.pampa.pampanotes.core.export.ExportWarning
 import dev.pampa.pampanotes.core.export.MissingGroup
 import dev.pampa.pampanotes.core.export.MissingReason
+import dev.pampa.pampanotes.core.export.PampaHistoryScopeException
 import dev.pampa.pampanotes.core.settings.PampaSettingsStore
 import javax.inject.Inject
 import kotlinx.coroutines.Job
@@ -69,9 +70,13 @@ data class ExportUiState(
   val fetched: Int = 0,
   /** Quello che e' stato chiesto e non entrera', per tipo e motivo. */
   val missing: List<MissingGroup> = emptyList(),
+  /** No reduced PN exists: the user must choose a different, explicit scope or format. */
+  val historyScope: PampaHistoryScopeException? = null,
+  val confirmingWholeNotes: Boolean = false,
+  val wholeNotesAuthorized: Boolean = false,
 ) {
   val noteCount: Int get() = set?.notes?.size ?: 0
-  val ready: Boolean get() = set != null
+  val ready: Boolean get() = set != null && historyScope == null && !confirmingWholeNotes
   val missingCount: Int get() = missing.sumOf { it.count }
 
   /** Almeno uno dei mancanti sta sul computer di casa, che adesso non risponde: riprovare puo' servire. */
@@ -99,6 +104,7 @@ class ExportViewModel @Inject constructor(
   val uiState: StateFlow<ExportUiState> = _uiState.asStateFlow()
 
   private var scope: ExportScope = ExportScope.Everything
+  private var requestedScope: ExportScope = ExportScope.Everything
   private var labels: ExportLabels = ExportLabels()
   private var everythingLabel: String = ""
   private var running: Job? = null
@@ -110,9 +116,13 @@ class ExportViewModel @Inject constructor(
   /** Chiamata dalla schermata quando il pannello si apre, con le parole della lingua dell'app. */
   fun start(scope: ExportScope, labels: ExportLabels, everythingLabel: String) {
     this.scope = scope
+    this.requestedScope = scope
     this.labels = labels
     this.everythingLabel = everythingLabel
+    running?.cancel()
+    pending = null
     gathering?.cancel()
+    _uiState.value = ExportUiState()
     gathering = viewModelScope.launch {
       val current = settings.current()
       _uiState.update {
@@ -134,13 +144,14 @@ class ExportViewModel @Inject constructor(
           fetch = null,
           fetched = 0,
           missing = emptyList(),
+          historyScope = null,
+          confirmingWholeNotes = false,
+          wholeNotesAuthorized = false,
           folderUri = current.backupFolderUri,
           folderName = folderNameOf(current.backupFolderUri),
         )
       }
-      val gathered = service.gather(scope, _uiState.value.options, generator(), everythingLabel)
-      _uiState.update { it.copy(set = gathered) }
-      estimate()
+      gather(_uiState.value.options)
     }
   }
 
@@ -151,16 +162,60 @@ class ExportViewModel @Inject constructor(
   fun setOptions(options: ExportOptions) {
     val previous = _uiState.value.options
     _uiState.update { it.copy(options = options) }
-    if (options.transcript != previous.transcript) {
-      gathering?.cancel()
-      gathering = viewModelScope.launch {
-        _uiState.update { it.copy(set = null, estimate = null, warnings = emptyList()) }
-        val gathered = service.gather(scope, options, generator(), everythingLabel)
-        _uiState.update { it.copy(set = gathered) }
-        estimate()
-      }
+    if (options.transcript != previous.transcript || options.isPampa != previous.isPampa) {
+      // A previously gathered AI graph may already have reduced histories. PN must reread them.
+      regather()
     } else {
       estimate()
+    }
+  }
+
+  fun requestWholeNotes() {
+    if (scope !is ExportScope.Sessions || _uiState.value.historyScope?.noteIds.isNullOrEmpty()) return
+    _uiState.update { it.copy(confirmingWholeNotes = true) }
+  }
+
+  fun declineWholeNotes() {
+    _uiState.update { it.copy(confirmingWholeNotes = false) }
+  }
+
+  /** Confirmation changes only scope; it never resumes sharing, fetching or writing. */
+  fun confirmWholeNotes(label: String) {
+    val state = _uiState.value
+    if (!state.confirmingWholeNotes || scope !is ExportScope.Sessions) return
+    val ids = state.historyScope?.noteIds?.distinct()?.takeIf { it.isNotEmpty() } ?: return
+    scope = if (ids.size == 1) ExportScope.Note(ids.single()) else ExportScope.Notes(ids, label)
+    pending = null
+    _uiState.update { it.copy(confirmingWholeNotes = false, wholeNotesAuthorized = true) }
+    regather()
+  }
+
+  fun restoreRequestedScope() {
+    if (!_uiState.value.wholeNotesAuthorized) return
+    scope = requestedScope
+    _uiState.update { it.copy(wholeNotesAuthorized = false, confirmingWholeNotes = false) }
+    regather()
+  }
+
+  private fun regather() {
+    gathering?.cancel()
+    // Invalidate synchronously: no click can export the previous scope/format snapshot.
+    _uiState.update { it.copy(stage = ExportStage.CONFIGURING, set = null, estimate = null,
+      warnings = emptyList(), historyScope = null, error = null, failure = null, confirmingWholeNotes = false) }
+    gathering = viewModelScope.launch { gather(_uiState.value.options) }
+  }
+
+  private suspend fun gather(options: ExportOptions) {
+    try {
+      val gathered = service.gather(scope, options, generator(), everythingLabel)
+      _uiState.update { it.copy(stage = ExportStage.CONFIGURING, set = gathered) }
+      estimate()
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+      throw cancelled
+    } catch (failure: Throwable) {
+      _uiState.update { it.copy(stage = ExportStage.FAILED, set = null, estimate = null,
+        historyScope = failure as? PampaHistoryScopeException,
+        error = if (failure is PampaHistoryScopeException) null else failure.message.orEmpty()) }
     }
   }
 
@@ -184,7 +239,8 @@ class ExportViewModel @Inject constructor(
     running?.cancel()
     running = null
     pending = null
-    _uiState.update { it.copy(stage = ExportStage.CONFIGURING, progress = 0f, fetch = null, missing = emptyList(), fetched = 0) }
+    _uiState.update { it.copy(stage = ExportStage.CONFIGURING, progress = 0f, fetch = null, missing = emptyList(), fetched = 0,
+      confirmingWholeNotes = false) }
   }
 
   fun dismissResult() {
@@ -247,6 +303,7 @@ class ExportViewModel @Inject constructor(
   }
 
   private fun run(destination: ExportDestination) {
+    if (!_uiState.value.ready) return
     val set = _uiState.value.set ?: return
     val options = _uiState.value.options
     running?.cancel()
@@ -272,7 +329,9 @@ class ExportViewModel @Inject constructor(
       } catch (cancelled: kotlinx.coroutines.CancellationException) {
         throw cancelled
       } catch (failure: Throwable) {
-        _uiState.update { it.copy(stage = ExportStage.FAILED, error = failure.message.orEmpty(), fetch = null) }
+        _uiState.update { it.copy(stage = ExportStage.FAILED,
+          historyScope = failure as? PampaHistoryScopeException,
+          error = if (failure is PampaHistoryScopeException) null else failure.message.orEmpty(), fetch = null) }
         return@launch
       }
       write(destination)
@@ -296,7 +355,8 @@ class ExportViewModel @Inject constructor(
       throw cancelled
     } catch (failure: Throwable) {
       val reason = (failure as? ExportFailure)?.reason
-      _uiState.update { it.copy(stage = ExportStage.FAILED, error = if (reason == null) failure.message.orEmpty() else null, failure = reason) }
+      _uiState.update { it.copy(stage = ExportStage.FAILED, historyScope = failure as? PampaHistoryScopeException,
+        error = if (reason == null && failure !is PampaHistoryScopeException) failure.message.orEmpty() else null, failure = reason) }
     }
   }
 

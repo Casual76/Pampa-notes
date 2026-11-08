@@ -184,11 +184,15 @@ class ExportService @Inject constructor(
       }
     }
 
-    val gathered = selected
-      .sortedWith(compareBy({ pathOf(it.folderId).joinToString("/") }, { -it.updatedAt }))
-      .map { note -> gatherNote(note, pathOf(note.folderId), options,
-        (scope as? ExportScope.Sessions)?.sessionIds?.toSet(),
-        PersonalScope.isPersonal(note.folderId, all.values.toList())) }
+    val gathered = try {
+      selected.sortedWith(compareBy({ pathOf(it.folderId).joinToString("/") }, { -it.updatedAt }))
+        .map { note -> gatherNote(note, pathOf(note.folderId), options,
+          (scope as? ExportScope.Sessions)?.sessionIds?.toSet(),
+          PersonalScope.isPersonal(note.folderId, all.values.toList())) }
+    } catch (failure: PampaHistoryScopeException) {
+      // The alternative is all backing notes for this request, never all notes in the archive.
+      throw PampaHistoryScopeException(selected.map { it.id }.distinct()).also { it.initCause(failure) }
+    }
 
     val personalFolders = PersonalScope.folderIds(all.values.toList())
     ExportSet(
@@ -226,6 +230,7 @@ class ExportService @Inject constructor(
    * appena scaricato. La presa scade da sola se il pannello si chiude senza esportare.
    */
   suspend fun plan(set: ExportSet, options: ExportOptions): ExportFetchPlan = withContext(io) {
+    if (options.isPampa) PampaHistoryScope.validate(set)
     inUse.hold(ExportFiles.wanted(set, options).filter { it.fileName.isNotBlank() }.map(::heldName), PLAN_HOLD_MS)
     var prepared = if (options.isPampa) refreshSourceReferences(set) else set
     // AndroidRelayLocalFiles.get reserves a guarded, deterministic reference for old genuine
@@ -293,6 +298,7 @@ class ExportService @Inject constructor(
     labels: ExportLabels = ExportLabels(),
     onProgress: (Float) -> Unit = {},
   ): ExportResult = withContext(io) {
+    if (options.isPampa) PampaHistoryScope.validate(set)
     val coroutine = currentCoroutineContext()
     var lastProgress = 0f
     val report: (Float) -> Unit = { value ->
@@ -521,8 +527,15 @@ class ExportService @Inject constructor(
     selectedSessionIds: Set<String>? = null, personal: Boolean = false): ExportNote {
     val sessionRows = ExportSessionSelection.rows(sessions.byNote(note.id), selectedSessionIds)
     val authorizedParts = sessionRows.flatMap { it.partsSorted }
+    val originalVersions = sessionRows.associate { row -> row.session.id to transcripts.bySession(row.session.id) }
+    if (options.isPampa && selectedSessionIds != null) {
+      // Stop before segment/source collection or relay discovery can observe a reduced snapshot.
+      PampaHistoryScope.restrict(dev.pampa.pampanotes.core.importing.PampaBundleNote(
+        note = note, sessions = sessionRows.map { it.session }, parts = authorizedParts,
+        transcripts = originalVersions.values.flatten()), selectedSessionIds)
+    }
     val selections = sessionRows.associate { row -> row.session.id to ExportSessionSelection.transcripts(
-      transcripts.bySession(row.session.id), row.session.activeTranscriptId, authorizedParts, retainOriginals = selectedSessionIds == null) }
+      originalVersions.getValue(row.session.id), row.session.activeTranscriptId, authorizedParts, retainOriginals = selectedSessionIds == null) }
     val versionsBySession = selections.mapValues { it.value.versions }
     val segmentsByTranscript = versionsBySession.values.flatten().associate { it.id to segments.byTranscript(it.id) }
     val gatheredSessions = sessionRows.mapIndexed { index, row ->

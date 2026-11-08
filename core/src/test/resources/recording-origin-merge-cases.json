@@ -1,0 +1,197 @@
+[
+  {
+    "name": "filename minute versus metadata provenance without a time",
+    "previous": { "recordedAtLocal": "2025-09-22T10:15", "recordedAtSource": "filename", "recordedAtPrecision": "minute" },
+    "incoming": { "recordedAtSource": "media_metadata", "recordedAtPrecision": "second" },
+    "expected": "previous"
+  },
+  {
+    "name": "precision alone cannot attest seconds",
+    "previous": { "recordedAtLocal": "2025-09-22T10:15", "recordedAtSource": "filename", "recordedAtPrecision": "minute" },
+    "incoming": { "recordedAtPrecision": "millisecond" },
+    "expected": "previous"
+  },
+  {
+    "name": "source alone cannot replace filename provenance",
+    "previous": { "recordedAtLocal": "2025-09-22T10:15", "recordedAtSource": "filename", "recordedAtPrecision": "minute" },
+    "incoming": { "recordedAtSource": "media_metadata" },
+    "expected": "previous"
+  },
+  {
+    "name": "an unproven epoch cannot outrank an attested minute",
+    "previous": { "recordedAtLocal": "2025-09-22T10:15", "recordedAtSource": "filename", "recordedAtPrecision": "minute" },
+    "incoming": { "recordedAtEpochMs": 1758536100000 },
+    "expected": "previous"
+  },
+  {
+    "name": "missing provenance makes even a matching high precision wall clock incomplete",
+    "previous": { "recordedAtLocal": "2025-09-22T10:15", "recordedAtSource": "filename", "recordedAtPrecision": "minute" },
+    "incoming": { "recordedAtLocal": "2025-09-22T10:15", "recordedAtPrecision": "millisecond" },
+    "expected": "previous"
+  },
+  {
+    "name": "complementary partial observations stay separate",
+    "previous": { "recordedAtLocal": "2025-09-22T10:15" },
+    "incoming": { "recordedAtSource": "media_metadata", "recordedAtPrecision": "second" },
+    "expected": "incoming",
+    "reverseExpected": "previous"
+  },
+  {
+    "name": "a real second observation can attest a zero second canonical local string",
+    "previous": { "recordedAtLocal": "2025-09-22T10:15", "recordedAtSource": "filename", "recordedAtPrecision": "minute" },
+    "incoming": { "recordedAtLocal": "2025-09-22T10:15", "recordedAtSource": "media_metadata", "recordedAtPrecision": "second" },
+    "expected": "incoming"
+  },
+  {
+    "name": "a real millisecond observation upgrades a minute intact",
+    "previous": { "recordedAtLocal": "2025-09-22T10:15", "recordedAtSource": "filename", "recordedAtPrecision": "minute" },
+    "incoming": { "recordedAtLocal": "2025-09-22T10:15:02.125", "recordedAtSource": "media_metadata", "recordedAtPrecision": "millisecond" },
+    "expected": "incoming"
+  },
+  {
+    "name": "a day does not downgrade a filename minute",
+    "previous": { "recordedAtLocal": "2025-09-22T10:15", "recordedAtSource": "filename", "recordedAtPrecision": "minute" },
+    "incoming": { "recordedAtLocal": "2025-09-22", "recordedAtSource": "filename", "recordedAtPrecision": "day" },
+    "expected": "previous"
+  },
+  {
+    "name": "unknown fields do not erase an attested minute",
+    "previous": { "recordedAtLocal": "2025-09-22T10:15", "recordedAtSource": "filename", "recordedAtPrecision": "minute" },
+    "incoming": {},
+    "expected": "previous"
+  },
+  {
+    "name": "two unknown clocks remain unknown",
+    "previous": {},
+    "incoming": {},
+    "expected": "incoming"
+  },
+  {
+    "name": "legacy partial provenance survives an entirely unknown snapshot without enrichment",
+    "previous": { "recordedAtSource": "media_metadata", "recordedAtPrecision": "second" },
+    "incoming": {},
+    "expected": "previous"
+  },
+  {
+    "name": "a complete observation outranks the same instant without a wall clock",
+    "previous": { "recordedAtEpochMs": 1794178800123, "recordedAtLocal": "2026-11-09T00:00:00.123", "recordedAtZoneId": "Europe/Rome", "recordedAtSource": "media_metadata", "recordedAtPrecision": "millisecond" },
+    "incoming": { "recordedAtEpochMs": 1794178800123, "recordedAtZoneId": "Europe/Rome", "recordedAtSource": "media_metadata", "recordedAtPrecision": "millisecond" },
+    "expected": "previous"
+  },
+  {
+    "name": "a finer UTC instant cannot borrow the minute wall clock across midnight",
+    "previous": { "recordedAtEpochMs": 1794180600000, "recordedAtLocal": "2026-11-09T00:30", "recordedAtZoneId": "Europe/Rome", "recordedAtSource": "media_metadata", "recordedAtPrecision": "minute" },
+    "incoming": { "recordedAtEpochMs": 1794180600000, "recordedAtZoneId": "UTC", "recordedAtSource": "media_metadata", "recordedAtPrecision": "millisecond" },
+    "expected": "incoming"
+  },
+  {
+    "name": "Samsung epoch seconds cannot borrow a filename wall clock",
+    "previous": { "recordedAtLocal": "2025-09-22T10:15", "recordedAtSource": "filename", "recordedAtPrecision": "minute" },
+    "incoming": { "recordedAtEpochMs": 1758536100000, "recordedAtSource": "samsung_recording", "recordedAtPrecision": "second" },
+    "expected": "incoming"
+  },
+  {
+    "name": "finer independently attested local evidence wins without inheriting an epoch or zone",
+    "previous": { "recordedAtEpochMs": 1794178800000, "recordedAtLocal": "2026-11-09T00:00", "recordedAtZoneId": "Europe/Rome", "recordedAtSource": "media_metadata", "recordedAtPrecision": "second" },
+    "incoming": { "recordedAtLocal": "2026-11-09T00:00:00.123", "recordedAtSource": "filename", "recordedAtPrecision": "millisecond" },
+    "expected": "incoming"
+  },
+  {
+    "name": "same instant in Rome and UTC retains the complete incoming representation",
+    "previous": { "recordedAtEpochMs": 1794178800123, "recordedAtLocal": "2026-11-09T00:00:00.123", "recordedAtZoneId": "Europe/Rome", "recordedAtSource": "media_metadata", "recordedAtPrecision": "millisecond" },
+    "incoming": { "recordedAtEpochMs": 1794178800123, "recordedAtLocal": "2026-11-08T23:00:00.123", "recordedAtZoneId": "UTC", "recordedAtSource": "media_metadata", "recordedAtPrecision": "millisecond" },
+    "expected": "incoming",
+    "reverseExpected": "previous"
+  },
+  {
+    "name": "an equally complete correction chooses one provenance on ties",
+    "previous": { "recordedAtLocal": "2025-09-22T10:15", "recordedAtSource": "filename", "recordedAtPrecision": "second" },
+    "incoming": { "recordedAtLocal": "2025-09-22T10:15", "recordedAtSource": "corrected_metadata", "recordedAtPrecision": "second" },
+    "expected": "incoming",
+    "reverseExpected": "previous"
+  },
+  {
+    "name": "a zoned ambiguous DST observation does not invent an instant",
+    "previous": { "recordedAtLocal": "2025-10-26T02:30", "recordedAtSource": "filename", "recordedAtPrecision": "minute" },
+    "incoming": { "recordedAtLocal": "2025-10-26T02:30", "recordedAtZoneId": "Europe/Rome", "recordedAtSource": "media_metadata", "recordedAtPrecision": "minute" },
+    "expected": "incoming"
+  },
+  {
+    "name": "a DST gap without an epoch remains a wall observation",
+    "previous": { "recordedAtLocal": "2025-03-30", "recordedAtSource": "filename", "recordedAtPrecision": "day" },
+    "incoming": { "recordedAtLocal": "2025-03-30T02:30", "recordedAtZoneId": "Europe/Rome", "recordedAtSource": "media_metadata", "recordedAtPrecision": "minute" },
+    "expected": "incoming"
+  },
+  {
+    "name": "contradictory epochs remain a real conflict",
+    "previous": { "recordedAtEpochMs": 1758536100000, "recordedAtSource": "samsung_recording", "recordedAtPrecision": "second" },
+    "incoming": { "recordedAtEpochMs": 1758536101000, "recordedAtSource": "media_metadata", "recordedAtPrecision": "second" },
+    "conflict": true
+  },
+  {
+    "name": "contradictory days remain a real conflict",
+    "previous": { "recordedAtLocal": "2025-09-22", "recordedAtSource": "filename", "recordedAtPrecision": "day" },
+    "incoming": { "recordedAtLocal": "2025-09-23", "recordedAtSource": "media_metadata", "recordedAtPrecision": "day" },
+    "conflict": true
+  },
+  {
+    "name": "different known zones without a shared instant remain a conflict",
+    "previous": { "recordedAtLocal": "2025-09-22T10:15", "recordedAtZoneId": "Europe/Rome", "recordedAtSource": "filename", "recordedAtPrecision": "minute" },
+    "incoming": { "recordedAtLocal": "2025-09-22T10:15", "recordedAtZoneId": "UTC", "recordedAtSource": "media_metadata", "recordedAtPrecision": "second" },
+    "conflict": true
+  },
+  {
+    "name": "an internally contradictory observation does not outrank a coherent minute",
+    "previous": { "recordedAtEpochMs": 1794178800000, "recordedAtLocal": "2026-11-09T00:00", "recordedAtZoneId": "Europe/Rome", "recordedAtSource": "media_metadata", "recordedAtPrecision": "minute" },
+    "incoming": { "recordedAtEpochMs": 1794178800000, "recordedAtLocal": "2026-11-09T03:00", "recordedAtZoneId": "Europe/Rome", "recordedAtSource": "media_metadata", "recordedAtPrecision": "millisecond" },
+    "expected": "previous"
+  },
+  {
+    "name": "an impossible calendar day does not outrank a coherent minute",
+    "previous": { "recordedAtEpochMs": 1794178800000, "recordedAtLocal": "2026-11-09T00:00", "recordedAtZoneId": "Europe/Rome", "recordedAtSource": "media_metadata", "recordedAtPrecision": "minute" },
+    "incoming": { "recordedAtEpochMs": 1794178800000, "recordedAtLocal": "2026-02-30T00:00", "recordedAtZoneId": "Europe/Rome", "recordedAtSource": "media_metadata", "recordedAtPrecision": "millisecond" },
+    "expected": "previous"
+  },
+  {
+    "name": "an invalid zone does not outrank a coherent minute",
+    "previous": { "recordedAtEpochMs": 1794178800000, "recordedAtLocal": "2026-11-09T00:00", "recordedAtZoneId": "Europe/Rome", "recordedAtSource": "media_metadata", "recordedAtPrecision": "minute" },
+    "incoming": { "recordedAtEpochMs": 1794178800000, "recordedAtLocal": "2026-11-09T00:00", "recordedAtZoneId": "Unknown/Zone", "recordedAtSource": "media_metadata", "recordedAtPrecision": "millisecond" },
+    "expected": "previous"
+  },
+  {
+    "name": "blank provenance cannot attest finer precision",
+    "previous": { "recordedAtLocal": "2025-09-22T10:15", "recordedAtSource": "filename", "recordedAtPrecision": "minute" },
+    "incoming": { "recordedAtLocal": "2025-09-22T10:15", "recordedAtSource": "  ", "recordedAtPrecision": "millisecond" },
+    "expected": "previous"
+  },
+  {
+    "name": "file modification time is not an attested second start",
+    "previous": { "recordedAtLocal": "2025-09-22T10:15", "recordedAtSource": "filename", "recordedAtPrecision": "minute" },
+    "incoming": { "recordedAtLocal": "2025-09-22T10:15", "recordedAtSource": "file_modified", "recordedAtPrecision": "second" },
+    "expected": "previous"
+  },
+  {
+    "name": "Unix zero is a real timestamp with unknown recorder zone",
+    "previous": { "recordedAtEpochMs": 0, "recordedAtSource": "samsung_recording", "recordedAtPrecision": "second" },
+    "incoming": { "recordedAtSource": "media_metadata", "recordedAtPrecision": "millisecond" },
+    "expected": "previous"
+  },
+  {
+    "name": "fixed offset metadata remains coherent across a local day boundary",
+    "previous": { "recordedAtLocal": "2026-11-09T01:00", "recordedAtSource": "filename", "recordedAtPrecision": "minute" },
+    "incoming": { "recordedAtEpochMs": 1794178800123, "recordedAtLocal": "2026-11-09T01:00:00.123", "recordedAtZoneId": "+02:00", "recordedAtSource": "media_metadata", "recordedAtPrecision": "millisecond" },
+    "expected": "incoming"
+  },
+  {
+    "name": "UTC prefixed offset metadata has the same quality as native ZoneId",
+    "previous": { "recordedAtLocal": "2026-11-09T01:00", "recordedAtSource": "filename", "recordedAtPrecision": "minute" },
+    "incoming": { "recordedAtEpochMs": 1794178800123, "recordedAtLocal": "2026-11-09T01:00:00.123", "recordedAtZoneId": "UTC+02:00", "recordedAtSource": "media_metadata", "recordedAtPrecision": "millisecond" },
+    "expected": "incoming"
+  },
+  {
+    "name": "sub millisecond source fractions compare at epoch millisecond storage precision",
+    "previous": { "recordedAtLocal": "2026-11-09T00:00", "recordedAtSource": "filename", "recordedAtPrecision": "minute" },
+    "incoming": { "recordedAtEpochMs": 1794178800123, "recordedAtLocal": "2026-11-09T00:00:00.123456789", "recordedAtZoneId": "Europe/Rome", "recordedAtSource": "media_metadata", "recordedAtPrecision": "millisecond" },
+    "expected": "incoming"
+  }
+]

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pn_history_scope_title">Complete history cannot be verified</string>
+    <string name="pn_history_blocked_summary">No PN file was created. The scope still contains only your selected recordings.</string>
+    <string name="pn_history_scope_message">We cannot verify that every historical version contains only your selected recordings. To protect other content, PN export stopped without removing versions or changing the selection. You can review a whole-note export or choose another format.</string>
+    <string name="pn_history_review_whole">Review whole-note export</string>
+    <string name="pn_history_confirm_title">Include the whole notes?</string>
+    <string name="pn_history_confirm_message">The scope will include all recordings, histories and material in the notes containing your selected recordings (%1$d notes). This may include other recordings, private audio and attachments you did not select. Continue only if you want to include all this content. You can review the new scope before saving or sharing.</string>
+    <string name="pn_history_confirm_action">Include whole notes</string>
+    <string name="pn_history_whole_scope">Whole notes</string>
+    <string name="pn_history_whole_notice">You chose whole notes: the export also includes other recordings, every history and the material associated with these notes.</string>
+    <string name="pn_history_restore_selection">Return to selected recordings only</string>
+</resources>

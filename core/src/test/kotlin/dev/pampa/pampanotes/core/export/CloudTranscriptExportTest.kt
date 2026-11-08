@@ -27,6 +27,17 @@ class CloudTranscriptExportTest {
     return ExportSession("s", 1, "Interview", "2026-11-08", listOf(part), raw, raw, listOf(segment))
   }
 
+  @Test fun `clock notice uses measured cloud evidence even without coarse segments`() {
+    for (measured in listOf(false, true)) for (relativeTimes in listOf(false, true)) {
+      val row = session("", measured = measured).copy(segments = emptyList())
+      val note = ExportNote(NoteEntity("n", "f", "Recording", createdAt = 1, updatedAt = 1),
+        emptyList(), emptyList(), emptyList(), listOf(row))
+      val markdown = MarkdownWriter().singleNote(note, ExportOptions(timestamps = relativeTimes, speechClock = true))
+      assertEquals(!measured, markdown.contains(ExportLabels().clockNoTimings))
+      assertEquals(measured, TranscriptPieces.blocks(row, ExportOptions(speechClock = true)).any { it.partOffsetMs != null })
+    }
+  }
+
   @Test fun `timed human export retains cloud words instead of different coarse segment text`() {
     val session = session("DIFFERENT SEGMENT WORDS")
     val blocks = TranscriptPieces.blocks(session, ExportOptions(timestamps = true))

@@ -1445,7 +1445,7 @@
   </plurals>
   <string name="recordings_transcribe_all_message_computer">%1$s di audio, trascritte dal computer di casa.</string>
   <string name="recordings_transcribe_all_message_groq">%1$s di audio, trascritte da Groq.</string>
-  <string name="recordings_transcribe_all_cloud">Con Groq l\'audio va nel cloud: per le registrazioni lunghe o private conviene il computer di casa.</string>
+  <string name="recordings_transcribe_all_cloud">L\'audio sarà inviato al servizio cloud selezionato: per le registrazioni lunghe o private puoi usare il computer di casa.</string>
   <string name="recordings_transcribe_all_skipped">Quelle senza parole restano fuori.</string>
 
   <!-- installer -->

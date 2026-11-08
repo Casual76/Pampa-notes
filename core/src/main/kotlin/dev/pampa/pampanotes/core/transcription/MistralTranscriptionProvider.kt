@@ -44,12 +44,15 @@ class MistralTranscriptionProvider(
     }
     fun parseResponse(body: JsonElement?): TranscriptResult {
       val root = body as? JsonObject ?: throw TranscriptionError.Parse("Invalid Mistral transcription response")
-      if ("error" in root || "text" !in root) throw TranscriptionError.Parse("Invalid Mistral transcription response")
-      val parsed = VerboseJson.parse(root)
       val text = (root["text"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
         ?: throw TranscriptionError.Parse("Missing Mistral transcript text")
+      if ("error" in root) throw TranscriptionError.Parse("Invalid Mistral transcription response")
+      // Validate the original before silence classification. A present empty/whitespace string
+      // is exact paid evidence; a missing/null/nonstring field is an uncertain malformed 2xx.
+      val parsed = VerboseJson.parseExactText(root, text)
+      val language = (root["language"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
       // Segment intervals are not precise words, even if an unexpected response includes words.
-      return parsed.copy(text = text, segments = parsed.segments.map { it.copy(words = emptyList()) })
+      return parsed.copy(language = language, segments = parsed.segments.map { it.copy(words = emptyList()) })
     }
   }
 }

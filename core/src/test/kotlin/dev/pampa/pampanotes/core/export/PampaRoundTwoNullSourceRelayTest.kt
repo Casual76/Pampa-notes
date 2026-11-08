@@ -34,6 +34,43 @@ class PampaRoundTwoNullSourceRelayTest {
   }
   @After fun resetAndroidUri() { unmockkStatic(Uri::class) }
 
+  @Test fun sharedAndClipboardNullOriginalsAreRecoveredWithoutLocalDonors() = runBlocking {
+    val bytes = "original".toByteArray()
+    for (kind in listOf(SourceKind.SHARE, SourceKind.CLIPBOARD)) {
+      for ((mime, archived) in listOf("application/octet-stream" to 0L, "text/plain" to 3L)) {
+        val original = source("original", bytes).copy(kind = kind, mime = mime, archivedAt = archived)
+        val fixture = Fixture(listOf(original))
+        fixture.ready(original.id, bytes)
+        val snapshot = set(listOf(original))
+        val plan = fixture.service.plan(snapshot, options)
+        assertEquals(listOf(original.id), plan.toFetch.map { it.id })
+        assertTrue(plan.unobtainable.isEmpty())
+        assertEquals(1, fixture.service.fetchMissing(plan).fetched)
+        val exported = fixture.service.export(snapshot, options, ExportDestination.Share)
+        assertEquals(1, exported.includedSources)
+        assertEquals(0, exported.skippedSources)
+        val read = PampaBundleArchive.read(exported.file!!)
+        val attachment = read.data.notes.single().attachments.single()
+        assertFalse(attachment.fileless)
+        assertNotNull(attachment.path)
+        java.util.zip.ZipFile(exported.file).use { zip ->
+          assertArrayEquals(bytes, zip.getInputStream(zip.getEntry(attachment.path!!)).use { it.readBytes() })
+        }
+      }
+    }
+  }
+
+  @Test fun genuinelyFilelessSharedTextDoesNotProbeTheRelay() = runBlocking {
+    for (kind in listOf(SourceKind.SHARE, SourceKind.CLIPBOARD)) {
+      val original = source("text", "Text provenance".toByteArray()).copy(kind = kind, mime = "text/plain")
+      val fixture = Fixture(listOf(original))
+      val plan = fixture.service.plan(set(listOf(original)), options)
+      assertTrue(plan.isEmpty)
+      coVerify(exactly = 0) { fixture.fetcher.relayAvailable(any(), any()) }
+      assertNull(fixture.rows.getValue(original.id).storedFileName)
+    }
+  }
+
   @Test fun directPlanFetchAndExportRefreshNullOriginalWithoutSeparateReceive() = runBlocking {
     val bytes = "Original PDF bytes\n".toByteArray()
     val original = source("original", bytes)

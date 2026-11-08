@@ -712,7 +712,12 @@ class TranscriptionRepository @Inject constructor(
     }, limited = { error ->
       val now = System.currentTimeMillis()
       val until = kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable + kotlinx.coroutines.Dispatchers.IO) {
-        cooldowns.durable.extend(provider.id, fingerprint, account, CloudRetry.deadline(error, now))
+        if (error.scopeFingerprint == CloudRetry.scope(provider.id, fingerprint, account)) {
+          cooldowns.durable.deadline(provider.id, fingerprint, account)
+            ?: throw TranscriptionError.CloudControl("cloud_cost_storage")
+        } else {
+          cooldowns.durable.extend(provider.id, fingerprint, account, CloudRetry.deadline(error, now))
+        }
       }
       TranscriptionError.RateLimited((until - now) / 1000.0, "Provider cooldown", until, CloudRetry.scope(provider.id, fingerprint, account))
     }) { !explicitCloud && settingsStore.current().customOnly }

@@ -187,8 +187,10 @@ aver scelto il backup di marzo costa un tocco invece di un mese di appunti.
 
 Cinque cose non ovvie, tutte in `core/backup/`:
 
-- **Il database si copia, non si zippa vivo.** Room scrive in WAL: il file principale da solo puo'
-  essere indietro di minuti. `snapshotDatabase` fa `PRAGMA wal_checkpoint(TRUNCATE)` e poi copia.
+- **Il database si ricostruisce dai contenuti.** `BackupDatabaseSnapshot` legge dentro la vera
+  transazione Room e crea uno SQLite separato: conserva grafo, cronologie e provenienza pubblica,
+  lascia vuoti lavori e journal di sincronizzazione, poi compatta il file. Anche i vecchi backup
+  vengono sanitizzati nello staging prima del ripristino, senza modificare il database vivo.
 - **Niente segreti dentro.** La chiave di Groq e il token del server sono cifrati col Keystore del
   telefono, che non esce dal telefono: in un file su Drive sarebbero in chiaro e su un altro
   dispositivo non si aprirebbero comunque. `BackupSettings` porta solo le preferenze.

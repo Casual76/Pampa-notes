@@ -286,11 +286,77 @@ function extendsLocal(short: unknown, long: unknown): boolean {
     long.length > short.length && "T:.".includes(long[short.length]);
 }
 
-function strength(value: Payload): number {
+/** Strict ISO local components, with fractions compared at epoch storage's millisecond boundary.
+ * Date.parse alone normalizes invalid days and can silently supply the host's default zone. */
+function localParts(value: unknown, dayOnly = false): number[] | undefined {
+  if (typeof value !== "string") return undefined;
+  const match = (dayOnly ? /^([+-]?\d{4,9})-(\d{2})-(\d{2})$/ :
+    /^([+-]?\d{4,9})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?$/).exec(value);
+  if (!match || !/^(?:\d{4}|-\d{4,9}|\+\d{5,9})$/.test(match[1]) || match[1] === "-0000") return undefined;
+  const [year, month, day, hour, minute, second] = Array.from({ length: 6 }, (_, index) => Number(match[index + 1] ?? 0));
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (Math.abs(year) > 999999999 || month < 1 || month > 12 || day < 1 || day > days[month - 1] ||
+      hour > 23 || minute > 59 || second > 59) return undefined;
+  return [year, month, day, hour, minute, second, Number((match[7] ?? "").padEnd(3, "0").slice(0, 3))];
+}
+
+type OriginZone = { offsetSeconds: number } | { formatter: Intl.DateTimeFormat };
+function originZone(id: unknown): OriginZone | undefined {
+  if (typeof id !== "string") return undefined;
+  if (id === "Z" || id === "UTC" || id === "UT" || id === "GMT") return { offsetSeconds: 0 };
+  const offset = id.replace(/^(?:UTC|GMT|UT)(?=[+-])/, "");
+  if (/^[+-]/.test(offset)) {
+    const match = /^([+-])(\d{1,2})(?:(\d{2})(\d{2})?|:(\d{2})(?::(\d{2}))?)?$/.exec(offset);
+    if (!match || match[2].length === 1 && offset.length !== 2) return undefined;
+    const hour = Number(match[2]), minute = Number(match[3] ?? match[5] ?? 0), second = Number(match[4] ?? match[6] ?? 0);
+    if (hour > 18 || minute > 59 || second > 59 || hour === 18 && (minute !== 0 || second !== 0)) return undefined;
+    return { offsetSeconds: (hour * 3600 + minute * 60 + second) * (match[1] === "-" ? -1 : 1) };
+  }
+  try {
+    return { formatter: new Intl.DateTimeFormat("en-GB-u-ca-iso8601-nu-latn", {
+      timeZone: id, era: "short", year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+    }) };
+  } catch { return undefined; }
+}
+
+function epochParts(epoch: number, zone: OriginZone): number[] {
+  const millis = ((epoch % 1000) + 1000) % 1000;
+  if ("offsetSeconds" in zone) {
+    const date = new Date(epoch + zone.offsetSeconds * 1000);
+    return [date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate(), date.getUTCHours(), date.getUTCMinutes(), date.getUTCSeconds(), millis];
+  }
+  const parts = zone.formatter.formatToParts(epoch);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value;
+  const year = Number(part("year"));
+  return [part("era") === "BC" ? 1 - year : year, Number(part("month")), Number(part("day")),
+    Number(part("hour")), Number(part("minute")), Number(part("second")), millis];
+}
+
+/** Mirrors RecordingOrigin.evidenceQuality(): incomplete/self-contradictory tuples rank zero.
+ * Precision is evidence only when that SAME observation independently supplies a usable time. */
+function originQuality(value: Payload): number {
+  const epoch = value.recordedAtEpochMs;
+  const local = value.recordedAtLocal;
+  const zoneId = value.recordedAtZoneId;
+  const source = value.recordedAtSource;
   const precision = value.recordedAtPrecision;
-  return (value.recordedAtEpochMs != null ? 100 : 0) +
-    (precision === "millisecond" ? 40 : precision === "second" ? 30 : precision === "minute" ? 20 : precision === "day" ? 10 : 0) +
-    (value.recordedAtZoneId != null ? 2 : 0) + (value.recordedAtLocal != null ? 1 : 0);
+  if (typeof source !== "string" || !source.trim()) return 0;
+  if (precision === "day") return epoch == null && zoneId == null && localParts(local, true) ? 10 : 0;
+  const rank = precision === "millisecond" ? 40 : precision === "second" ? 30 : precision === "minute" ? 20 : 0;
+  if (!rank || source === "file_modified" || epoch != null && !Number.isSafeInteger(epoch)) return 0;
+  const wall = local == null ? undefined : localParts(local);
+  if (local != null && !wall || !wall && epoch == null) return 0;
+  const zone = zoneId == null ? undefined : originZone(zoneId);
+  if (zoneId != null && !zone) return 0;
+  if (wall && zone && epoch != null) {
+    try {
+      const actual = epochParts(epoch as number, zone);
+      if (!wall.every((part, index) => part === actual[index])) return 0;
+    } catch { return 0; }
+  }
+  return rank + (epoch != null ? 4 : 0) + (wall ? 2 : 0) + (zone ? 1 : 0);
 }
 
 function copyOrigin(target: Payload, origin: Payload): Payload {
@@ -308,7 +374,7 @@ function sameAudio(previous: Payload, incoming: Payload): boolean {
 
 /**
  * Mirrors PampaBundleMetadataMerge / SyncMetadataMerge: missing and null mean unknown; an empty
- * source is known exact text, never parsed/trimmed. Clock strength and compatibility keep one
+ * source is known exact text, never parsed/trimmed. Clock quality and compatibility keep one
  * coherent observation. Audio identity requires the same valid SHA-256 and exact safe byte count;
  * the sync index has metadata only and does not verify the audio bytes itself.
  *
@@ -348,14 +414,8 @@ export function retainPublicEvidence(table: string, payload: unknown, stored: un
       (!sameInstant && previous.recordedAtZoneId != null && incoming.recordedAtZoneId != null &&
         previous.recordedAtZoneId !== incoming.recordedAtZoneId)) return { payload, conflict: true };
 
-  const primary = strength(previous) > strength(incoming) ? previous : incoming;
-  const secondary = primary === previous ? incoming : previous;
-  // The same instant in different zones keeps the stronger complete representation, without
-  // filling its missing fields from the other zone's incompatible local date/time.
-  const differentZone = previous.recordedAtZoneId !== incoming.recordedAtZoneId;
-  if (!compatibleText || (differentZone && (oldText != null || newText != null)))
-    return { payload: copyOrigin(incoming, primary), conflict: false };
-  const merged = { ...incoming };
-  for (const field of RECORDING_ORIGIN_FIELDS) merged[field] = primary[field] ?? secondary[field] ?? null;
-  return { payload: merged, conflict: false };
+  // Native import and Android sync choose one intact tuple; incoming wins equal-quality ties.
+  // Missing fields remain unknown even when another observation could fill them individually.
+  const primary = originQuality(previous) > originQuality(incoming) ? previous : incoming;
+  return { payload: primary === incoming ? payload : copyOrigin(incoming, primary), conflict: false };
 }

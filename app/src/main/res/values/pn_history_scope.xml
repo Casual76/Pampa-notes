@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pn_history_scope_title">Cronologia completa non verificabile</string>
+    <string name="pn_history_blocked_summary">Nessun file PN creato. L’ambito resta limitato alle registrazioni scelte.</string>
+    <string name="pn_history_scope_message">Non è possibile verificare che tutte le versioni storiche contengano soltanto le registrazioni scelte. Per proteggere gli altri contenuti, l’export PN si è fermato senza eliminare versioni o cambiare la selezione. Puoi valutare l’export delle note intere oppure scegliere un altro formato.</string>
+    <string name="pn_history_review_whole">Valuta l’export delle note intere</string>
+    <string name="pn_history_confirm_title">Includere le note intere?</string>
+    <string name="pn_history_confirm_message">L’ambito comprenderà tutte le registrazioni, le cronologie e il materiale delle note che contengono le registrazioni scelte (%1$d note). Possono essere inclusi altre registrazioni, audio privato e allegati che non avevi selezionato. Continua solo se vuoi includere tutti questi contenuti. Potrai controllare il nuovo ambito prima di salvare o condividere.</string>
+    <string name="pn_history_confirm_action">Includi le note intere</string>
+    <string name="pn_history_whole_scope">Note intere</string>
+    <string name="pn_history_whole_notice">Hai scelto le note intere: l’export comprende anche le altre registrazioni, tutte le cronologie e il materiale associato a queste note.</string>
+    <string name="pn_history_restore_selection">Torna alle sole registrazioni scelte</string>
+</resources>

@@ -2853,8 +2853,8 @@ def _force_align(source: Path, data: dict, caller: Caller, account: AuthAuthorit
             progress.set("loading_model")
             if model is None:
                 model, metadata = align_model_for(data["language"])
-                if metadata.get("language") != data["language"]:
-                    raise AlignmentUnavailable("alignment language mismatch")
+            if metadata.get("language") != data["language"]:
+                raise AlignmentUnavailable("alignment language mismatch")
             check()
             progress.set("decoding")
             audio = load_audio(source, 16000, start_s=start / 1000, duration_s=(end - start) / 1000, check=check)

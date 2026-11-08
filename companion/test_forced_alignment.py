@@ -299,6 +299,19 @@ class AlignmentPureTest(fixtures.StateMixin, unittest.TestCase):
         self.assertTrue(all(t["reason"] == "language_unsupported" for t in answer["timings"]))
         self.align.assert_not_called()
 
+    def test_rejected_model_language_stays_rejected_for_every_window(self):
+        data = request_data("hello world", [
+            {"text_start": 0, "text_end": 5, "start_ms": 1000, "end_ms": 21000},
+            {"text_start": 6, "text_end": 11, "start_ms": 60000, "end_ms": 80000}])
+        server.probe_duration.return_value = 3600
+        server.align_model_for.return_value = (object(), {"language": "it", "dictionary": DICTIONARY})
+        answer = self.run_alignment(data)
+        self.assertEqual(answer["text"], data["text"])
+        self.assertEqual(answer["status"], "deferred")
+        self.assertTrue(all(t["status"] == "missing" for t in answer["timings"]))
+        self.align.assert_not_called()
+        server.load_audio.assert_not_called()
+
     def test_alignment_only_model_can_be_unloaded_and_expires_when_idle(self):
         async def exercise():
             with mock.patch.dict(server.STATE, {"model": None, "align": {"en": object()}, "busy": False,

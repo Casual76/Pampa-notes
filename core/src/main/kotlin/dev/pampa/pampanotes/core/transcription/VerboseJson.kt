@@ -21,14 +21,18 @@ import kotlin.math.roundToLong
  */
 object VerboseJson {
 
-  /**
-   * @param fallbackText usato quando la risposta non porta segmenti: certi server rispondono con il
-   *   solo `text`, e mezzo risultato vale piu' di un errore.
+  fun parse(body: JsonElement?): TranscriptResult = parse(body, exactText = null)
+
+  /** A validated cloud original, including "", is never reconstructed or classified as absent.
+   * This path accepts segment intervals only; unexpected word arrays cannot invent intervals.
+   * The public compatible-server parser retains its historical filtering and silence behavior.
    */
-  fun parse(body: JsonElement?): TranscriptResult {
+  internal fun parseExactText(body: JsonObject, text: String): TranscriptResult = parse(body, text)
+
+  private fun parse(body: JsonElement?, exactText: String?): TranscriptResult {
     val root = body as? JsonObject ?: throw TranscriptionError.Parse("risposta non riconosciuta")
 
-    val text = root["text"].asString()?.trim().orEmpty()
+    val text = exactText ?: root["text"].asString()?.trim().orEmpty()
     val language = root["language"].asString()?.takeIf { it.isNotBlank() }
     val durationMs = root["duration"].asDouble()?.takeIf { it.isFinite() && it >= 0 }
       ?.let { (it * 1000).roundToLong() }
@@ -37,7 +41,7 @@ object VerboseJson {
       ?.mapNotNull { element -> parseSegment(element) }
       .orEmpty()
 
-    val words = parseWords(root["words"])
+    val words = if (exactText == null) parseWords(root["words"]) else emptyList()
     if (words.isNotEmpty()) {
       segments = if (segments.isEmpty()) {
         listOf(RawSegment(words.minOf { it.startMs }, words.maxOf { it.endMs },
@@ -49,7 +53,7 @@ object VerboseJson {
       }
     }
 
-    if (text.isEmpty() && segments.isEmpty()) {
+    if (exactText == null && text.isEmpty() && segments.isEmpty()) {
       // Il JSON e' a posto, e' l'audio che non aveva niente da dire: lo si dice cosi'.
       throw TranscriptionError.NoSpeech("il servizio non ha riconosciuto parole")
     }
@@ -61,7 +65,7 @@ object VerboseJson {
     return TranscriptResult(
       // Quando i segmenti ci sono, il testo si ricompone da loro: e' l'unico modo di essere sicuri
       // che testo e tempi raccontino la stessa cosa dopo che i segmenti sono stati filtrati.
-      text = if (segments.isNotEmpty()) segments.joinToString(" ") { it.text.trim() }.trim() else text,
+      text = exactText ?: if (segments.isNotEmpty()) segments.joinToString(" ") { it.text.trim() }.trim() else text,
       segments = segments,
       language = language,
       durationMs = durationMs ?: segments.maxOfOrNull { it.endMs },

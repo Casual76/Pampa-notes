@@ -55,7 +55,9 @@ class DurableAlignmentQueue(private val directory: File) {
     write(rows + AlignmentQueueEntry(snapshot)); true
   }
   fun update(key: String, transform: (AlignmentQueueEntry) -> AlignmentQueueEntry) = synchronized(lock) {
-    write(read().entries.map { if (it.snapshot.key == key) transform(it) else it })
+    // Completion and error handlers can arrive after cancellation. Decide under the same lock
+    // as cancelSession/cancelAll, so a late result cannot resurrect the durable tombstone.
+    write(read().entries.map { if (it.snapshot.key == key && it.state != "cancelled") transform(it) else it })
   }
   fun cancelSession(sessionId: String) = synchronized(lock) {
     // Tombstones prevent auto-discovery from undoing a user's cancellation.

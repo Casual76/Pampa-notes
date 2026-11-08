@@ -352,7 +352,9 @@ class MarkdownWriter(private val labels: ExportLabels = ExportLabels(), private 
   private fun clockSection(session: ExportSession): String = buildString {
     append("### ").append(labels.clockTitle).append(NL).append(NL)
     append(labels.clockHelp).append(NL).append(NL)
-    if (!session.hasTimings) append("> ").append(labels.clockNoTimings).append(NL).append(NL)
+    val hasTimingEvidence = CloudTranscriptExport.blocks(session, ExportOptions(timestamps = true))
+      ?.any { it.partOffsetMs != null } ?: session.hasTimings
+    if (!hasTimingEvidence) append("> ").append(labels.clockNoTimings).append(NL).append(NL)
     session.parts.forEachIndexed { index, part ->
       append("- ").append(labels.part).append(' ').append(index + 1).append(" (`")
       append(escapeInline(part.originalName)).append("`): ").append(SpeechClock.label(part.origin, 0L, labels))

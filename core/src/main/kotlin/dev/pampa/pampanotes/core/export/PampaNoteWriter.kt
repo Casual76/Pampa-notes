@@ -34,8 +34,9 @@ class PampaNoteWriter(
     val native = set.notes.map { item ->
       val graph = requireNotNull(item.native) { "Pampa note export requires the complete native graph" }
       require(typed || item.selectedSessionIds == null) { "Restricted exports require typed scope validation" }
-      if (typed) ExportSessionSelection.native(graph, item.selectedSessionIds ?: graph.sessions.mapTo(HashSet()) { it.id },
-        retainOriginals = item.selectedSessionIds == null) else graph
+      if (!typed) graph
+      else if (item.selectedSessionIds != null) PampaHistoryScope.restrict(graph, item.selectedSessionIds)
+      else ExportSessionSelection.native(graph, graph.sessions.mapTo(HashSet()) { it.id }, retainOriginals = true)
     }
     var estimated = 0L
     fun weigh(bytes: Long) {

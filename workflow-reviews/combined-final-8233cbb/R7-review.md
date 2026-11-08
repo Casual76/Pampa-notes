@@ -1,0 +1,57 @@
+**R7 — independent combined final integration review, assigned C7 only.** Reviewer runtime: GPT-6.1 Sol, xhigh. Frozen source: `main`, `8233cbbd71be08ecc8659fb2a1372ed203a73197`. This is the authorized combined review; no new standalone round or counters, no delegation, no memory/history/other reviewer conclusions consulted.
+
+| Criterion | Score | Verification status | Reason/evidence | Findings/severity |
+|---|---:|---|---|---|
+| C7 — intrinsic per-part speech wall-clock; honest precision/unknowns; selected-session and personal export privacy | **6/10** | Source and bounded offline production behavior verified. Hardware/runtime gates USER-WAIVED, NOT EXECUTED. | 102 current compiled JUnit cases passed; 23 independent Java control checks passed. Collector, planner, fetch, Markdown/ZIP/PN writers traced. Independent probes reproduce origin fabrication in Android/Worker sync and an incorrect cloud timing notice. | **R7-C7-1 P2:** sync splices partial provenance into false second precision. **R7-C7-2 P3:** measured cloud overlay contradicts the no-timings notice. |
+
+Every other criterion ID is **NA: outside R7 assignment**. No averages, numerical approval threshold, or overall approval is inferred. No P1 identified within C7.
+
+**R7-C7-1 — P2: sync fabricates precision and replaces provenance.**
+
+Sources: `core/src/main/kotlin/dev/pampa/pampanotes/core/sync/SyncMetadataMerge.kt:14-17` selects `PampaBundleMetadataMerge.audio`; `core/src/main/kotlin/dev/pampa/pampanotes/core/importing/PampaBundleMetadataMerge.kt:28-39` ranks incomplete tuples and fills their null fields from another observation; its `strength` at lines 48-50 ignores `RecordingOrigin.evidenceQuality()`. The undeployed Worker repeats that policy at `worker/src/sync-public-evidence.ts:351-360` (ranking at 289-293).
+
+Minimal input: two `AudioPartEntity` rows with identical `id=p`, `sessionId=s`, valid SHA-256 `a` repeated 64 times and `sizeBytes=7`. Local origin is `(epoch=null, local=2025-09-22T10:15, zone=null, source=filename, precision=minute)`. Incoming origin is `(null, null, null, media_metadata, second)`. No real audio is needed; the input concerns metadata for the same declared identity.
+
+Executed against the current production JVM helper: the incoming tuple has evidence quality zero. Sync nevertheless produces `(null, 2025-09-22T10:15, null, media_metadata, second)`. `SpeechClock.label(..., 0)` changes from `≈ 2025-09-22 10:15 · fuso della fonte sconosciuto · precisione al minuto` to `2025-09-22 10:15:00 · fuso della fonte sconosciuto`. Neither input supplies an attested second-resolution start; the original filename provenance is replaced. The current native import policy `PampaBundleRecordingOrigin.retain` correctly keeps the intact minute tuple for this exact input.
+
+A separate Node probe imported the frozen Worker TypeScript directly, without a server, listener, D1/R2, network, compilation or deployment. `retainPublicEvidence('audio_parts', incoming, previous)` produces the same invented tuple with `conflict=false`.
+
+Reachability is source-traced, not live-sync proof: `SyncApplier.kt:548-557` decodes the nullable fields, calls this merge and upserts the result; lines 502-503 also call it on the local-wins provenance-adoption path. Its decoder at 693-694 adds no origin coherence validation. The Worker push path calls the retention wrapper and serializes its payload at `worker/src/sync.ts:196-201`; conflict rejection at 234-236 does not fire for this reproduction. Once stored, the collector at `ExportService.kt:543-544` feeds the invented tuple to exports. I did not execute Room, the actual sync applier transaction, a cloud push or export on a device.
+
+Consequence: a supported nullable/partial public-metadata update can turn uncertain source time into apparently exact speech time and misattribute its source. This breaks the C7 precision/provenance invariant even though the zone remains correctly qualified as unknown.
+
+Proportionate fix: choose one complete, coherent origin tuple, using the same quality-based policy as the native import merge; never fill missing provenance/precision from another tuple. Mirror that policy in the Worker. Add this partial-tuple input in both merge directions and verify the subsequent export label; retain the existing conservative treatment of incompatible complete observations.
+
+Reproduction files: `R7SyncOriginProbe.java`, `sync-origin-repro.txt`, `sync-origin-probe-corrected.log`, `worker-origin-probe.mjs`, `worker-origin-repro.json`, `worker-origin-probe.log`.
+
+**R7-C7-2 — P3: cloud overlay clocks contradict the no-timings notice.**
+
+Sources: `ExportModel.kt:239` defines `ExportSession.hasTimings` solely through RAW/coarse segments. `MarkdownWriter.kt:355` uses that predicate to print `clockNoTimings`, while `CloudTranscriptExport.kt:30-52` independently uses measured cloud overlays to supply valid per-block times. The common clock section is called by single Markdown and bundle/loose transcript files (`MarkdownWriter.kt:135`, `:184`).
+
+Minimal input: one selected cloud RAW with a valid matching audio hash, a measured first-word overlay at 250 ms, a per-part origin `2025-09-22T10:00:00.000Z`, and no coarse segments. The probe constructs this by using the current source fixture's valid measured document, independently removing its unrelated coarse segments and supplying the origin. It relies on no fixture assertions or reviewer conclusions.
+
+Executed: `TranscriptPieces.blocks` returns `partOffsetMs=250`, `clockEstimated=false`; `MarkdownWriter.singleNote` prints `[2025-09-22 10:00:00.250 UTC]` and simultaneously says `Il testo scelto non ha tempi associati: le origini delle parti non sono orari attribuiti alle sue frasi.` The exact input/output is saved in `R7CloudNoticeProbe.java`, `cloud-notice-probe.log` and `cloud-notice-repro.md`.
+
+Consequence: exported text wrongly denies the timing evidence it actually displays, confusing consumers about whether timestamps are usable. The measured clock itself is correct. Fix the notice predicate to inspect the effective exported timing evidence, including validated cloud overlays, and describe partial coverage accurately. Add an overlay-only/no-coarse-segments regression. Shared use in ZIP/FILES is source inference; the executed failing example is SINGLE Markdown.
+
+**My executed checks, separate from parent artifacts.**
+
+- Initial and final HEAD/branch/status/index checks: frozen SHA and `main` unchanged; index byte hash unchanged; the only status entry remains ` D companion/tools/__pycache__/holes.cpython-311.pyc`. The protected file remains absent and unstaged.
+- All 701 manifest-bound source inputs independently rehashed at start and end: zero mismatches. Supplied `verification-manifest.json` matches `d79655f19823b76f451950732e7dfada1ce0390b087704fe1552437276a32a48`; its source manifest matches `a9edc911b1627a15f12e929c80303b40ad9ede75236bc413b02e4e1cd7ecc362`. Sixteen relevant JUnit XML hashes independently match the manifest.
+- Four sequential JVM invocations, **102 tests passed, zero failures**: pure origin/clock/cloud/serialization/voice cases 66; mocked collector/refinement/attachment planning and fetch 19; mocked importer persistence and combined scope cases 11; existing sync metadata merge cases 6. Logs are `junit-pure-current.log`, `junit-mocked-current.log`, `junit-import-and-scope-current.log`, `junit-sync-policy-current.log`. Mocked DAOs and transaction wrappers do not establish Room behavior.
+- The independent `R7Probe.java` control runner passed 23 assertions using production classes and synthetic inputs: reordered parts; relative offsets independent of origins and session date; midnight/hour gaps; explicit offsets/DST and ambiguous DST; unknown-zone device-default independence; date-only and missing provenance; numeric dotted extensionless filenames; overflow; clock opt-in and toggle independence; associated personal body/tags; SINGLE/FILES/ZIP presentation; opaque selected-session container filtering in planner, ZIP and PN; per-part PN roundtrip. A real synthetic excluded-byte sentinel was present locally but absent from ZIP/PN. Artifacts are under `reproductions/`; these are metadata/byte fixtures, not acoustic evidence.
+- Two defect families independently reproduced above: JVM plus Node for R7-C7-1, JVM for R7-C7-2. Passing existing suites did not override these failures.
+- Inspected all nine test-only followups `c858061..HEAD`; saved `test-followup-diff.patch`. No assertion removals or added skip/ignore/assumption suppressions. Relevant changes supply new constructor arguments, stateful DAO/transaction/file-directory stubs, and audio fixture hashes derived from the actual synthetic staged bytes. They do not weaken the origin assertions. Other followups likewise adapt fixtures; no production paths changed in that range.
+- Every JVM/Java compiler invocation used `ActiveProcessorCount=1`, heap at most 192 MiB (tiny runner compilation 128 MiB), one foreground process at a time. Node used a 128 MiB old-space cap and pool size one. No production Gradle/Kotlin build, dependency download/install, device, provider, listener, inference, real audio or GPU was used. One initial personal runner attempt used an incorrect reflection argument name (`mimeType` instead of required `mime`); its retained failure log is a harness error, corrected before the successful defect reproduction. It is not a product finding.
+
+**Parent artifacts only inspected.**
+
+The supplied verification manifest, source manifest, 16 matching relevant JUnit XMLs, and BOM-aware build-log tail were inspected. Their full-suite totals (1497 core passes plus one optional skip; 73 app passes) and lint totals (0 errors, 136 warnings) are archived parent evidence, not my execution totals. I do not assert that all lint warnings are baseline. The build log records `BUILD SUCCESSFUL in 2m 14s`, **5 tasks executed and 460 up-to-date**; it does not establish a completely fresh last attempt. Artifact counts or packaged AndroidTest APKs do not prove function. Unrelated archived Worker/SQL/companion suite claims and earlier attempts were not used as functional evidence for C7.
+
+**Waived, not executed.**
+
+Room/instrumentation and WorkManager runtime; Android devices/emulators/adb; UI rendering; live providers/accounts/cloud/servers/D1/R2; real audio/WhisperX/torch/models/GPU. These are USER-WAIVED, not additional required gates. The Worker finding assesses only frozen offline source, with no claim about deployment or live readiness. No attribution is made to the unknown 1.2.0 incident; no original incident file/error exists. Released120 is a synthetic release-source fixture, not incident proof. The declared 64 MiB legacy `native.json` limit remains a limitation, not a new C7 failure.
+
+**Artifacts and reproduction.**
+
+All personal outputs are in `C:\Users\casua\AppData\Local\Temp\PN-R7-8233cbb-1d2e1d74`. `reproduce.ps1` recompiles only the tiny personal Java runners and replays the probes against the provided classes/current Worker source; optional `-JUnit` replays the 102 scoped tests. Dependencies are existing cached jars; small cached AAR class jars were copied only into this TEMP directory. `artifact-hashes.json` inventories report/probes/logs/reproductions; `review-evidence-bindings.json` binds the source/class/dependency inputs used. The final repository verification is `final-state.json`.

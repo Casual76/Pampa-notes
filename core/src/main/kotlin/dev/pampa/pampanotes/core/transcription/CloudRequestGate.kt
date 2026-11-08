@@ -65,6 +65,19 @@ class CloudRequestGate(
         catch (_: Exception) { throw TranscriptionError.CloudControl("cloud_cost_storage") }
       }
 
+    internal suspend fun beginQuotaObservation(): DurableCloudCooldowns.Observation =
+      withContext(NonCancellable + Dispatchers.IO) {
+        try { cooldowns.beginObservation(provider, fingerprint, accountFingerprint, CloudRetry.after(now(), CloudRetry.DEFAULT_WAIT_MS)) }
+        catch (_: Exception) { throw TranscriptionError.CloudControl("cloud_cost_storage") }
+      }
+
+    internal suspend fun finishQuotaObservation(observation: DurableCloudCooldowns.Observation,
+      readable: TranscriptionError.RateLimited?): TranscriptionError.RateLimited =
+      withContext(NonCancellable + Dispatchers.IO) {
+        try { limited(cooldowns.finishObservation(observation, readable?.let { CloudRetry.deadline(it, now()) })) }
+        catch (_: Exception) { throw TranscriptionError.CloudControl("cloud_cost_storage") }
+      }
+
     private fun limited(until: Long) = TranscriptionError.RateLimited(
       (until - now()).coerceAtLeast(0) / 1000.0, "Provider cooldown", until,
       CloudRetry.scope(provider, fingerprint, accountFingerprint),
