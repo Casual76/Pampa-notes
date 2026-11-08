@@ -62,6 +62,7 @@ data class SyncUiState(
 class SyncViewModel @Inject constructor(
   private val settingsStore: PampaSettingsStore,
   private val scheduler: WorkScheduler,
+  private val alignment: dev.pampa.pampanotes.work.AlignmentScheduler,
   private val api: SyncApi,
   private val accountSignIn: AccountSignIn,
   private val repository: SyncRepository,
@@ -158,6 +159,7 @@ class SyncViewModel @Inject constructor(
   /** Chiude la sessione sul server (se ci arriva) e dimentica il token: da qui la sincronizzazione si ferma. */
   fun signOut() {
     viewModelScope.launch {
+      runCatching { alignment.stopAll() }
       val url = settingsStore.current().syncServerUrl
       val token = settingsStore.syncToken()
       if (url.isNotBlank() && token != null) runCatching { api.logout(url, token) }

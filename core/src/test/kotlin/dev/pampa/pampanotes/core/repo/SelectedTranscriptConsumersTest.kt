@@ -32,7 +32,7 @@ class SelectedTranscriptConsumersTest {
     seed()
     coEvery { segments.byTranscriptWithoutWords(author.id) } returns listOf(timed)
     coEvery { segments.wordsOf(timed.id) } returns null
-    val search = SearchRepository(mockk(), mockk(), mockk(), sessions, transcripts, segments)
+    val search = SearchRepository(mockk(), mockk(), mockk(), sessions, transcripts, segments, parts)
     assertEquals(250L, search.momentOf("s", "author")?.timeMs)
     coVerify(exactly = 0) { segments.byTranscriptWithoutWords(local.id) }
   }

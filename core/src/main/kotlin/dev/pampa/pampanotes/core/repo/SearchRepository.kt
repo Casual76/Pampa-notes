@@ -40,6 +40,7 @@ class SearchRepository @Inject constructor(
   private val sessions: SessionDao,
   private val transcripts: TranscriptDao,
   private val segments: SegmentDao,
+  private val parts: dev.pampa.pampanotes.core.db.AudioPartDao,
 ) {
 
   /**
@@ -97,6 +98,9 @@ class SearchRepository @Inject constructor(
   suspend fun momentOf(sessionId: String, query: String): TranscriptSearch.Moment? = withContext(Dispatchers.IO) {
     val raw = RawTranscripts.forSelection(transcripts.bySession(sessionId), sessions.get(sessionId)?.activeTranscriptId)
       ?: return@withContext null
+    if (dev.pampa.pampanotes.core.alignment.CloudTranscriptMoments.usesCloudEvidence(raw)) {
+      return@withContext dev.pampa.pampanotes.core.alignment.CloudTranscriptMoments.moment(raw, parts.bySession(sessionId), query)
+    }
     val light = segments.byTranscriptWithoutWords(raw.id)
     val paragraphs = TranscriptParagraphs.split(light, TranscriptParagraphs.MAX_SEGMENTS_ON_SCREEN)
     val hit = withContext(Dispatchers.Default) { TranscriptSearch.firstHit(paragraphs, query) } ?: return@withContext null

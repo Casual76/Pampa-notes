@@ -69,6 +69,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
   private val refinement: RefinementRepository,
   private val settingsStore: PampaSettingsStore,
   private val scheduler: WorkScheduler,
+  private val alignment: AlignmentScheduler,
   private val computerOnly: dev.pampa.pampanotes.core.archive.ComputerOnlyScope,
   /** «Il testo che arriva a pezzi»: il provvisorio che la sessione mostra mentre il computer lavora. */
   private val partials: dev.pampa.pampanotes.core.transcription.PartialTranscripts,
@@ -444,6 +445,10 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       val transcript = saved.transcript
       val run = transcript?.let { repository.recordRun(job.copy(sessionId = saved.sessionId, model = model), startedAt, it) }
       AppNotifications.notifyDone(applicationContext, job.id, transcript?.wordCount ?: 0, run)
+      // A failed/deferred home alignment must never fail or repeat the completed paid request.
+      if (dev.pampa.pampanotes.core.alignment.CloudSources.cloud(result.provider)) {
+        saved.sessionIds.forEach { id -> runCatching { alignment.onCloudSaved(id) } }
+      }
       archiveIfComputerOnly(saved.sessionId)
     } catch (privacy: TranscriptionError.CompanionOnly) {
       repository.requeueStopped(job.id)

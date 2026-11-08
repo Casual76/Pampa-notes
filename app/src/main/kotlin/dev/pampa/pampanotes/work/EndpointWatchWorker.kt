@@ -23,6 +23,7 @@ class EndpointWatchWorker @AssistedInject constructor(
   @Assisted params: WorkerParameters,
   private val repository: TranscriptionRepository,
   private val scheduler: WorkScheduler,
+  private val alignment: AlignmentScheduler,
 ) : CoroutineWorker(context, params) {
 
   override suspend fun doWork(): Result {
@@ -31,6 +32,7 @@ class EndpointWatchWorker @AssistedInject constructor(
       return Result.success()
     }
     if (repository.endpointState() == TranscriptionRepository.EndpointState.REACHABLE) {
+      runCatching { alignment.onApplicationOrEndpointWake() }
       scheduler.wake(OpenAiCompatProvider.ID)
     }
     return Result.success()

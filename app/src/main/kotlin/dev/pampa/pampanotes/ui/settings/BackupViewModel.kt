@@ -65,6 +65,7 @@ class BackupViewModel @Inject constructor(
   private val service: BackupService,
   private val settings: PampaSettingsStore,
   private val work: WorkScheduler,
+  private val alignment: dev.pampa.pampanotes.work.AlignmentScheduler,
 ) : ViewModel() {
 
   private val _uiState = MutableStateFlow(BackupUiState())
@@ -159,6 +160,7 @@ class BackupViewModel @Inject constructor(
     running = viewModelScope.launch {
       _uiState.update { it.copy(stage = BackupStage.RESTORING, progress = 0f, error = null) }
       // La coda scrive sul database che sta per essere sostituito: si ferma prima, non dopo.
+      runCatching { alignment.stopAll() }
       work.stopAll()
       try {
         val manifest = service.restore(uri) { progress -> _uiState.update { it.copy(progress = progress) } }

@@ -36,7 +36,10 @@ class AlignmentScheduler @Inject constructor(
         .setConstraints(constraints()).addTag(TAG).build())
   }
   /** Wire alongside existing restore/logout stop hooks. Cancellation survives rediscovery. */
-  suspend fun stopAll() { repository.cancelAll(); WorkManager.getInstance(context).cancelAllWorkByTag(TAG) }
+  suspend fun stopAll() {
+    try { repository.cancelAll() }
+    finally { WorkManager.getInstance(context).cancelAllWorkByTag(TAG) }
+  }
   suspend fun cancelSession(sessionId: String) { repository.cancelSession(sessionId) }
   // Conservative home-audio transport policy; never uploads over metered mobile data.
   private fun constraints() = Constraints.Builder().setRequiredNetworkType(NetworkType.UNMETERED).build()

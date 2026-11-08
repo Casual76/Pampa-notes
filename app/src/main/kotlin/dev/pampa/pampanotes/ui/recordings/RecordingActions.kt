@@ -30,6 +30,7 @@ class RecordingActions @Inject constructor(
   private val folders: FolderRepository,
   private val repository: SessionRepository,
   private val transcription: TranscriptionRepository,
+  private val alignment: dev.pampa.pampanotes.work.AlignmentScheduler,
   private val files: AppFiles,
   private val inUse: FilesInUse,
 ) {
@@ -39,6 +40,7 @@ class RecordingActions @Inject constructor(
       notes.get(session.noteId)?.let { it.folderId in personal && (folderId == null || it.folderId == folderId) } == true
     }
     val selected = valid.mapTo(HashSet()) { it.id }
+    selected.forEach { runCatching { alignment.cancelSession(it) } }
     transcription.observeActive().first().filter { it.sessionId in selected }.forEach { transcription.requestCancel(it.id) }
     valid.forEach { repository.deleteSession(it.id) }
     // Keep the backing material, including body, tags, language and sources, even after the last session.

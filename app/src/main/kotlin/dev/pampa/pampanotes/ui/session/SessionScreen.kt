@@ -165,6 +165,7 @@ fun SessionRoute(
     transcribeChecking = transcribeChecking,
     transcribeError = transcribeError,
     onCancelJob = viewModel::cancelJob,
+    onCancelAlignment = viewModel::cancelAlignment,
     onDismissJob = { viewModel.dismissJob(it) },
     onFetchMissing = viewModel::fetchMissing,
     onRename = viewModel::rename,
@@ -206,6 +207,7 @@ private fun SessionScreen(
   transcribeChecking: Boolean,
   transcribeError: String?,
   onCancelJob: (String) -> Unit,
+  onCancelAlignment: () -> Unit,
   onDismissJob: (String) -> Unit,
   onFetchMissing: () -> Unit,
   onRename: (String, String) -> Unit,
@@ -454,6 +456,7 @@ private fun SessionScreen(
   // La lezione e' della sua materia: l'app prende quel colore.
   ReportSubject(state.folder?.asSubject())
   val materialLabel = stringResource(R.string.rv2_associated_material)
+  val cancelAlignmentLabel = stringResource(R.string.alignment_ui_cancel)
 
   FluidScreen(
     title = state.session?.let { sessionHeading(it.title, it.date) } ?: stringResource(R.string.session_loading),
@@ -483,6 +486,9 @@ private fun SessionScreen(
         modifier = Modifier.fluidExpandOrigin(open = { renaming || refining }, onMeasured = { moreOrigin = it }),
         actions = {
           buildList {
+            if (state.raw?.let(dev.pampa.pampanotes.core.alignment.CloudTranscriptMoments::usesCloudEvidence) == true) {
+              add(FluidContextAction(label = cancelAlignmentLabel) { onCancelAlignment() })
+            }
             // SessionViewModel deliberately suppresses the subject for personal material. Keep
             // its legacy body, tags, language, sources and existing note-level actions reachable.
             if (!state.loading && state.folder == null) state.note?.let { note ->

@@ -116,6 +116,7 @@ class SettingsViewModel @Inject constructor(
   private val transcription: TranscriptionRepository,
   private val cloudCredentials: dev.pampa.pampanotes.core.transcription.CloudCredentials,
   private val cooldowns: dev.pampa.pampanotes.core.transcription.CloudCooldownStore,
+  private val alignment: dev.pampa.pampanotes.work.AlignmentScheduler,
 ) : ViewModel() {
 
   companion object {
@@ -385,6 +386,7 @@ class SettingsViewModel @Inject constructor(
       // tentativo. Era il «Prova dice che funziona, ma le lezioni restano ferme» dopo un riavvio del
       // PC. `wake` non tocca un worker che sta gia' trascrivendo.
       if (health.reachable) {
+        runCatching { alignment.onApplicationOrEndpointWake() }
         runCatching {
           if (transcription.queuedCount(OpenAiCompatProvider.ID) > 0) scheduler.wake(OpenAiCompatProvider.ID)
         }
