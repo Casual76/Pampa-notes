@@ -179,7 +179,7 @@ internal fun ImportScreen(
     FluidAlert(
       onDismissRequest = { confirmingLeave = false },
       title = stringResource(R.string.import_leave_title),
-      message = stringResource(R.string.import_leave_message),
+      message = stringResource(if (state.bundleCandidate != null) R.string.import_bundle_leave_message else R.string.import_leave_message),
       actions = listOf(
         FluidAlertAction(label = stringResource(R.string.import_leave_stay), onClick = { confirmingLeave = false }, emphasis = FluidAlertAction.Emphasis.Preferred),
         FluidAlertAction(

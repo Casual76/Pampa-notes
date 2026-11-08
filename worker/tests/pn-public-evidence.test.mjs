@@ -122,6 +122,28 @@ test("pure helper matches Android clock strength, enrichment, conflicts and cohe
   ]) assert.equal(merge("audio_parts", { ...audio, recordedAtEpochMs: incoming.recordedAtEpochMs === null ? null : clock.recordedAtEpochMs }, incoming).conflict, true);
 });
 
+test("partial clocks never borrow local time across different or unknown zones", () => {
+  const rome = { ...audio, recordedAtEpochMs: Date.parse("2026-11-08T23:30:00Z"), recordedAtLocal: "2026-11-09T00:30", recordedAtPrecision: "minute" };
+  const utc = { ...rome, recordedAtLocal: null, recordedAtZoneId: "UTC", recordedAtPrecision: "millisecond" };
+  for (const other of [rome, { ...rome, recordedAtZoneId: null }]) {
+    for (const [previous, incoming] of [[other, utc], [utc, other]]) {
+      const result = merge("audio_parts", previous, incoming);
+      assert.equal(result.conflict, false);
+      assert.deepEqual(result.payload, utc);
+    }
+  }
+  assert.deepEqual(merge("audio_parts", audio, { ...audio, recordedAtLocal: null }).payload, audio);
+});
+
+test("push and pull retain one coherent partial clock representation", async (t) => {
+  const f = fixture(t);
+  const rome = { ...audio, recordedAtEpochMs: Date.parse("2026-11-08T23:30:00Z"), recordedAtLocal: "2026-11-09T00:30", recordedAtPrecision: "minute" };
+  const utc = { ...rome, recordedAtLocal: null, recordedAtZoneId: "UTC", recordedAtPrecision: "millisecond" };
+  assertApplied(await f.send("A", [update("audio_parts", rome, "rome")]), 1);
+  assertApplied(await f.send("B", [update("audio_parts", utc, "utc", "rome")]), 1);
+  assert.deepEqual((await f.read("p")).payload, utc);
+});
+
 test("pure helper requires matching valid audio identity and never retains unrelated fields", () => {
   for (const changed of [
     { id: "other" }, { sha256: "b".repeat(64) }, { sizeBytes: 1025 }, { sha256: "" }, { sha256: "opaque" },

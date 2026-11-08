@@ -163,8 +163,11 @@ All legacy streams now also enforce declared lengths/CRCs; full reads do not has
 
 A reproducible writer/reader mismatch remains in the **legacy schema 3 format**: `BundleWriter`
 has no size ceiling on its single `native.json`, while the legacy reader limits each text entry to
-64 MiB. The regression creates 65 notes with 1 MiB bodies, writes the old AI ZIP successfully, then
-observes `Text entry too large` on read. The equivalent PN roundtrips, shares the repeated body
+64 MiB. The regression creates 65 notes with 1 MiB bodies. It uses the old writer for a one-note
+seed ZIP, then assembles the oversized legacy payload incrementally to avoid materializing the
+writer's intermediate strings in the test heap, and observes `Text entry too large` on read.
+The writer's lack of a size ceiling is established by source inspection, not a full 65-note writer
+execution in this test. The equivalent PN roundtrips, shares the repeated body
 bytes once, and uses bounded metadata entries. The legacy limit is retained rather than disabling
 the reader's size protection. This is evidence of a format limitation, not proof of the friend's
 failure or a claim that an unprovided released-1.2.0 fixture was tested.

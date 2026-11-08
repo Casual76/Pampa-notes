@@ -34,6 +34,26 @@ class PampaBundleMetadataMergeTest {
     assertEquals(utc, PampaBundleMetadataMerge.audio(rich, utc))
   }
 
+  @Test fun partialLocalTextCannotBeBorrowedFromADifferentOrUnknownZone() {
+    val rome = rich.copy(recordedAtEpochMs = java.time.Instant.parse("2026-11-08T23:30:00Z").toEpochMilli(),
+      recordedAtLocal = "2026-11-09T00:30", recordedAtPrecision = "minute")
+    val utc = rome.copy(recordedAtLocal = null, recordedAtZoneId = "UTC", recordedAtPrecision = "millisecond")
+    for (other in listOf(rome, rome.copy(recordedAtZoneId = null))) {
+      for ((local, incoming) in listOf(other to utc, utc to other)) {
+        val merged = PampaBundleMetadataMerge.audio(local, incoming)
+        assertEquals(utc, merged)
+        assertNull(merged.recordedAtLocal)
+        assertEquals(merged, dev.pampa.pampanotes.core.sync.SyncMetadataMerge.audio(local, incoming))
+      }
+    }
+  }
+
+  @Test fun partialObservationsInTheSameExplicitZoneCanStillEnrichTheClock() {
+    val partial = rich.copy(recordedAtLocal = null)
+    assertEquals(rich, PampaBundleMetadataMerge.audio(rich, partial))
+    assertEquals(rich, PampaBundleMetadataMerge.audio(partial, rich))
+  }
+
   @Test fun cloudSourceDistinguishesUnknownEmptyAndExactAndRejectsConflictingKnownEvidence() {
     for (source in listOf("", "{\"text\":\"  Caffè,  due spazi!  \"}")) {
       val local = raw.copy(cloudSourceJson = source)

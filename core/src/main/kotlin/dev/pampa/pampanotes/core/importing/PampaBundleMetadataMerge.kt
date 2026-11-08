@@ -27,7 +27,10 @@ internal object PampaBundleMetadataMerge {
     // Prefer the stronger complete observation. A date-only snapshot cannot downgrade an instant.
     val primary = if (strength(local) > strength(incoming)) local else incoming
     val secondary = if (primary === local) incoming else local
-    if (!compatibleText) return copyOrigin(incoming, primary) // same instant, different zone representation
+    // A missing local text does not make it transferable to another zone. Keep one coherent
+    // observation whenever a zoned/unknown-zone local representation differs between sources.
+    val differentZone = local.recordedAtZoneId != incoming.recordedAtZoneId
+    if (!compatibleText || differentZone && (localText != null || incomingText != null)) return copyOrigin(incoming, primary)
     return incoming.copy(
       recordedAtEpochMs = primary.recordedAtEpochMs ?: secondary.recordedAtEpochMs,
       recordedAtLocal = primary.recordedAtLocal ?: secondary.recordedAtLocal,

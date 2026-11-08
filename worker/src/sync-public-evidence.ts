@@ -84,7 +84,9 @@ export function retainPublicEvidence(table: string, payload: unknown, stored: un
   const secondary = primary === previous ? incoming : previous;
   // The same instant in different zones keeps the stronger complete representation, without
   // filling its missing fields from the other zone's incompatible local date/time.
-  if (!compatibleText) return { payload: copyOrigin(incoming, primary), conflict: false };
+  const differentZone = previous.recordedAtZoneId !== incoming.recordedAtZoneId;
+  if (!compatibleText || (differentZone && (oldText != null || newText != null)))
+    return { payload: copyOrigin(incoming, primary), conflict: false };
   const merged = { ...incoming };
   for (const field of RECORDING_ORIGIN_FIELDS) merged[field] = primary[field] ?? secondary[field] ?? null;
   return { payload: merged, conflict: false };

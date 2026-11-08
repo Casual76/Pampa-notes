@@ -1091,6 +1091,7 @@
   <string name="import_pasted_text">Testo incollato</string>
   <string name="import_leave_title">Import in corso</string>
   <string name="import_leave_message">Se esci adesso l\'import si ferma a metà: quello già scritto resta, il resto no.</string>
+  <string name="import_bundle_leave_message">Il pacchetto viene salvato tutto insieme: se annulli, non rimangono note importate a metà. Un pacchetto già salvato resta completo.</string>
   <string name="import_leave_stay">Aspetta</string>
   <string name="import_leave_anyway">Esci lo stesso</string>
   <string name="import_summary_unavailable">File non disponibile</string>
@@ -1260,8 +1261,8 @@
   <string name="export_done_inside">Dentro anche: %1$s</string>
   <string name="export_done_missing">Non ci sono:</string>
   <plurals name="export_fetched">
-    <item quantity="one">Un file scaricato dal computer di casa.</item>
-    <item quantity="other">%d file scaricati dal computer di casa.</item>
+    <item quantity="one">Un file recuperato.</item>
+    <item quantity="other">%d file recuperati.</item>
   </plurals>
   <plurals name="export_originals">
     <item quantity="one">%d originale</item>
