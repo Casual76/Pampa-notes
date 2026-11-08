@@ -18,6 +18,7 @@ data class RecordingOrigin(
   /** Independently usable evidence only; never combine contradictory source representations.
    * Epoch storage has millisecond precision, so finer source fractions compare at that boundary. */
   fun evidenceQuality(): Int {
+    val epoch = epochMs
     if (source.isNullOrBlank()) return 0
     if (precision == "day") return if (epochMs == null && zoneId == null &&
       runCatching { LocalDate.parse(local) }.isSuccess) 10 else 0
@@ -26,8 +27,8 @@ data class RecordingOrigin(
     val wall = local?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() ?: return 0 }
     if (wall == null && epochMs == null) return 0
     val zone = zoneId?.let { runCatching { ZoneId.of(it) }.getOrNull() ?: return 0 }
-    if (wall != null && zone != null && epochMs != null &&
-      runCatching { Instant.ofEpochMilli(epochMs).atZone(zone).toLocalDateTime().truncatedTo(ChronoUnit.MILLIS) }
+    if (wall != null && zone != null && epoch != null &&
+      runCatching { Instant.ofEpochMilli(epoch).atZone(zone).toLocalDateTime().truncatedTo(ChronoUnit.MILLIS) }
         .getOrNull() != wall.truncatedTo(ChronoUnit.MILLIS)) return 0
     return rank + (if (epochMs != null) 4 else 0) + (if (wall != null) 2 else 0) + (if (zone != null) 1 else 0)
   }
