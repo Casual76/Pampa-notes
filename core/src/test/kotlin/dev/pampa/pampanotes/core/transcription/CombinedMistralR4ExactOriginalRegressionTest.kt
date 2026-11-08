@@ -77,14 +77,22 @@ class CombinedMistralR4ExactOriginalRegressionTest {
         val reportedLanguage = (language as? JsonPrimitive)?.takeIf { it.isString }?.content
         assertEquals(reportedLanguage, source.responses!!.single().language)
         assertEquals(exact, source.responses!!.single().text)
-        // Preserve the actual coarse interval without using it to replace the full original.
-        if (exact.isBlank()) assertTrue(replay.segments.isEmpty()) else {
-          val segment = replay.segments.single()
+        // A is an untimed text container. B's actual coarse interval must not replace its full original.
+        val untimed = replay.segments.single { it.partId == "a" }
+        assertEquals(CombinedMistralR4ClosureFixture.A_TEXT, untimed.text)
+        assertEquals(0L, untimed.partStartMs)
+        assertEquals(0L, untimed.partEndMs)
+        assertNull(untimed.wordsEncoded)
+        assertFalse(untimed.wordsEstimated)
+        val bSegments = replay.segments.filter { it.partId == "b" }
+        if (exact.isBlank()) assertTrue(bSegments.isEmpty()) else {
+          val segment = bSegments.single()
           assertEquals("b", segment.partId)
           assertEquals("Timed words.", segment.text)
           assertEquals(100L, segment.partStartMs)
           assertEquals(1200L, segment.partEndMs)
-          assertNull(segment.wordsEncoded)
+          assertNotNull(segment.wordsEncoded)
+          assertTrue(segment.wordsEstimated)
         }
         val draft = TranscriptEntity("raw", "session", TranscriptKind.RAW, "mistral", f.model,
           replay.language, replay.text, wordCount = 2, createdAt = 42)
