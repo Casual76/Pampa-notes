@@ -125,3 +125,8 @@ Do not replace PN's newer files wholesale with these versions.
   `ui/recordings/RecordingsScreen.kt`; the two new `export_clock.xml` resource files.
 - Tests: the four new test files named above.
 - Documentation: this file. Total owned files: 29. No shared workflow status edits or commits.
+## Correction2 integration notes
+
+Preserve canonical file-identity checks both in session deletion and `AppFiles.sweepOrphans`: stored names such as `shared.wav` and `./shared.wav` must retain the same bytes. Combine these checks with PN's storage sweep tokens/guards during final integration; neither protection replaces the other. Cleanup remains confined to the audio root for session deletion, follows committed row deletion, and preserves independently referenced files.
+
+Origin consistency/ranking is shared through `RecordingOrigin.evidenceQuality()`. Fractional local metadata compares at stored millisecond precision; contradictory tuples remain public evidence but cannot print precise clocks. Dotted numeric timestamp suffixes are not stripped as file extensions. Exact cloud export slices use `TranscriptBlock.separatorBefore` to preserve original whitespace, with legacy paragraphs retaining their existing separator behavior.
