@@ -10,7 +10,7 @@
     <string name="mistral_remove_key">Rimuovi chiave Mistral</string>
     <string name="mistral_verified">Chiave verificata senza inviare audio</string>
     <string name="mistral_model">Modello di trascrizione Mistral</string>
-    <string name="mistral_timing">Mistral restituisce tempi dei segmenti. I tempi delle singole parole sono stime finché non vengono allineati sul computer.</string>
+    <string name="mistral_timing">Mistral restituisce tempi dei segmenti. I tempi delle singole parole restano indisponibili finché l’allineamento sul computer non fornisce dati utilizzabili.</string>
     <string name="cloud_pinned_detail">Servizio e modello vengono fissati quando il lavoro entra in coda. Un limite o un errore non attiva altri servizi; Riprova conserva la scelta e i pezzi già completati.</string>
     <string name="cloud_job_model">Modello per questa trascrizione</string>
     <string name="cloud_account_changed">L’account è cambiato dopo l’accodamento. Torna all’account originale o avvia una nuova trascrizione.</string>

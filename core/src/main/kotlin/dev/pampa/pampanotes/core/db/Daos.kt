@@ -579,8 +579,8 @@ interface SourceDao {
 
 @Dao
 interface JobDao {
-  @Query("UPDATE jobs SET model = :model, optionsJson = :options, updatedAt = :now WHERE id = :id AND state = 'QUEUED' AND model IS :expectedModel AND optionsJson IS :expectedOptions")
-  suspend fun pinTranscription(id: String, model: String?, options: String, now: Long, expectedModel: String?, expectedOptions: String?): Int
+  @Query("UPDATE jobs SET model = :model, optionsJson = :options, updatedAt = :now WHERE id = :id AND state = 'QUEUED' AND provider = :expectedProvider AND model IS :expectedModel AND optionsJson IS :expectedOptions")
+  suspend fun pinTranscription(id: String, model: String?, options: String, now: Long, expectedProvider: String, expectedModel: String?, expectedOptions: String?): Int
   @Query("SELECT * FROM jobs ORDER BY createdAt DESC")
   fun observeAll(): Flow<List<JobEntity>>
 
@@ -667,9 +667,9 @@ interface JobDao {
    */
   @Query(
     "UPDATE jobs SET state = :state, model = :model, attempts = attempts + 1, phase = NULL, errorCode = NULL, " +
-      "errorMessage = NULL, updatedAt = :now WHERE id = :id AND state = 'QUEUED'",
+      "errorMessage = NULL, updatedAt = :now WHERE id = :id AND state = 'QUEUED' AND provider = :expectedProvider",
   )
-  suspend fun start(id: String, state: JobState, model: String?, now: Long): Int
+  suspend fun start(id: String, state: JobState, model: String?, now: Long, expectedProvider: String): Int
 
   /** Finito bene: solo le colonne dell'esito, senza riscrivere la riga con una copia vecchia. */
   @Query(

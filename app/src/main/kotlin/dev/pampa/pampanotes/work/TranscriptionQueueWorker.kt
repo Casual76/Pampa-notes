@@ -339,8 +339,19 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       return Step.Next
     }
 
-    val job = repository.pinForRun(job)
+    val queuedProvider = job.provider
+    val job = repository.pinForRun(job) ?: return Step.Next
     if (job.state != JobState.QUEUED) return Step.Next
+    if (job.provider != queuedProvider) {
+      scheduler.kick(job.provider)
+      return Step.Next
+    }
+    // Pinning can suspend for private storage or folder policy. Re-evaluate privacy before
+    // binding this authoritative provider/model; its own queue handles a migrated identity.
+    if (repository.effectiveProvider(job) != job.provider) {
+      if (repository.moveCloudTranscriptionsToComputer() > 0) scheduler.kick(OpenAiCompatProvider.ID)
+      return Step.Next
+    }
     val settings = settingsStore.current()
     val pinnedOptions = dev.pampa.pampanotes.core.repo.TranscribeOptions.decode(job.optionsJson)
     // Le impostazioni scelte da chi ha ritrascritto, per questo lavoro soltanto.
@@ -377,7 +388,11 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     }
     // Annullato o tolto mentre si sceglieva il modello: non si parte. Il passaggio e' condizionato,
     // cosi' un «Annulla» che arriva proprio adesso non viene riscritto da una copia vecchia.
-    if (!repository.start(job.id, JobState.PREPARING, model)) return Step.Next
+    if (!repository.start(job.id, JobState.PREPARING, model, job.provider)) {
+      repository.get(job.id)?.takeIf { it.state == JobState.QUEUED && it.provider != job.provider }
+        ?.let { scheduler.kick(it.provider) }
+      return Step.Next
+    }
     // Da qui si misura la velocita' della trascrizione: l'attesa in fila non e' lentezza di nessuno.
     val startedAt = System.currentTimeMillis()
 
@@ -628,7 +643,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     val options = refinement.decode(job.optionsJson)
 
     // Annullato mentre si sceglieva il modello: non si parte (il passaggio e' condizionato).
-    if (!repository.start(job.id, JobState.TRANSCRIBING, model)) return
+    if (!repository.start(job.id, JobState.TRANSCRIBING, model, job.provider)) return
     val latest = MutableStateFlow(job.copy(state = JobState.TRANSCRIBING, model = model, attempts = job.attempts + 1))
 
     try {

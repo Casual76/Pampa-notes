@@ -115,11 +115,40 @@ class CloudRequeueSqlTest(unittest.TestCase):
 
     def test_atomic_pin_cannot_overwrite_first_choice_from_a_stale_row(self):
         self.db.execute("UPDATE jobs SET state='QUEUED', model=NULL, optionsJson=NULL")
-        self.params.update(model="folder/A", options='{"cloudChunkMinutes":10}', expectedModel=None, expectedOptions=None)
+        self.params.update(model="folder/A", options='{"cloudChunkMinutes":10}', expectedProvider="mistral", expectedModel=None, expectedOptions=None)
         self.assertEqual(1, self.db.execute(query("pinTranscription"), self.params).rowcount)
         self.params["model"] = "changed/B"
         self.assertEqual(0, self.db.execute(query("pinTranscription"), self.params).rowcount)
         self.assertEqual("folder/A", self.row()["model"])
+
+    def test_privacy_migration_fences_stale_cloud_pin_and_start(self):
+        for global_model in ("", "cloud/global-B"):
+            with self.subTest(global_model=global_model):
+                self.db.execute("UPDATE jobs SET provider='openrouter', state='QUEUED', model=NULL, optionsJson=NULL")
+                self.params.update(model=global_model, options=None, expectedProvider="openrouter",
+                                   expectedModel=None, expectedOptions=None, **{"from": "openrouter", "to": "custom"})
+                self.assertEqual(1, self.db.execute(query("moveTranscription"), self.params).rowcount)
+                self.params["options"] = '{"cloudChunkMinutes":10}'
+                self.assertEqual(0, self.db.execute(query("pinTranscription"), self.params).rowcount)
+                self.params["state"] = "PREPARING"
+                self.assertEqual(0, self.db.execute(query("start"), self.params).rowcount)
+                self.assertEqual(("custom", None, None, "QUEUED"),
+                                 tuple(self.row()[key] for key in ("provider", "model", "optionsJson", "state")))
+                self.params.update(expectedProvider="custom", model="home/model")
+                self.assertEqual(1, self.db.execute(query("start"), self.params).rowcount)
+                self.assertEqual(("custom", "home/model", "PREPARING"),
+                                 tuple(self.row()[key] for key in ("provider", "model", "state")))
+
+    def test_privacy_migration_after_pin_clears_model_and_fences_old_start(self):
+        self.db.execute("UPDATE jobs SET provider='openrouter', state='QUEUED', model=NULL, optionsJson=NULL")
+        self.params.update(model="cloud/folder-A", options='{"cloudChunkMinutes":10}', expectedProvider="openrouter",
+                           expectedModel=None, expectedOptions=None, **{"from": "openrouter", "to": "custom"})
+        self.assertEqual(1, self.db.execute(query("pinTranscription"), self.params).rowcount)
+        self.assertEqual(1, self.db.execute(query("moveTranscription"), self.params).rowcount)
+        self.params["state"] = "PREPARING"
+        self.assertEqual(0, self.db.execute(query("start"), self.params).rowcount)
+        self.assertEqual(("custom", None, '{"cloudChunkMinutes":10}', "QUEUED"),
+                         tuple(self.row()[key] for key in ("provider", "model", "optionsJson", "state")))
 
     def test_cancel_during_result_save_is_finalized_without_success_or_restart(self):
         self.db.execute("UPDATE jobs SET state='STITCHING', phase='saving', finishedAt=NULL")

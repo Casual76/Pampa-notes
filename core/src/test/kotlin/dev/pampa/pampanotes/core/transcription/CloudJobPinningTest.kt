@@ -35,9 +35,9 @@ class CloudJobPinningTest {
     coEvery { jobs.upsert(any()) } answers { val job = firstArg<JobEntity>(); saved[job.id] = job }
     coEvery { jobs.get(any()) } answers { saved[firstArg()] }
     every { files.jobs } returns java.io.File(temp.root, "jobs")
-    coEvery { jobs.pinTranscription(any(), any(), any(), any(), any(), any()) } answers {
+    coEvery { jobs.pinTranscription(any(), any(), any(), any(), any(), any(), any()) } answers {
       val old = saved[firstArg<String>()] ?: return@answers 0
-      if (old.state != JobState.QUEUED || old.model != arg<String?>(4) || old.optionsJson != arg<String?>(5)) return@answers 0
+      if (old.state != JobState.QUEUED || old.provider != arg<String>(4) || old.model != arg<String?>(5) || old.optionsJson != arg<String?>(6)) return@answers 0
       saved[old.id] = old.copy(model = secondArg(), optionsJson = thirdArg())
       1
     }
@@ -133,7 +133,7 @@ class CloudJobPinningTest {
       coEvery { spending.policyForSession(any(), any(), any()) } returns EffectiveCloudPolicy(true, model = "fixture/folder-A")
       val old = JobEntity("legacy-$global-$options", "s", JobType.TRANSCRIBE, "openrouter", createdAt = 1, updatedAt = 1, optionsJson = options)
       saved[old.id] = old
-      val pinned = repo.pinForRun(old)
+      val pinned = requireNotNull(repo.pinForRun(old))
       assertEquals("fixture/folder-A", pinned.model)
       prefs = prefs.copy(openRouterTranscriptionModel = "fixture/changed")
       coEvery { spending.policyForSession(any(), any(), any()) } returns EffectiveCloudPolicy(true, model = "fixture/folder-changed")
@@ -155,7 +155,7 @@ class CloudJobPinningTest {
       val row = JobEntity(id as String, "s", JobType.TRANSCRIBE, "openrouter", model = known as String?, optionsJson = options as String?, attempts = attempts as Int, createdAt = 1, updatedAt = 1)
       if (attempts > 0) java.io.File(files.jobs, "$id/work.json").apply { parentFile!!.mkdirs(); writeText("openrouter|10|26214400|fixture/plan") }
       saved[row.id] = row
-      assertEquals(expected, repo.pinForRun(row).model)
+      assertEquals(expected, repo.pinForRun(row)!!.model)
     }
     coVerify(exactly = 0) { spending.policyForSession(any(), any(), any()) }
     coVerify(exactly = 0) { http.getJson(any(), any(), any()) }
@@ -166,10 +166,48 @@ class CloudJobPinningTest {
     prefs = prefs.copy(openRouterTranscriptionModel = "fixture/global", customOnly = true)
     val row = JobEntity("legacy", "s", JobType.TRANSCRIBE, "openrouter", createdAt = 1, updatedAt = 1)
     saved[row.id] = row
-    assertEquals("fixture/global", repo.pinForRun(row).model)
+    assertEquals("fixture/global", repo.pinForRun(row)!!.model)
     val manual = repo.enqueue("s", TranscriptionProviderId.OPENROUTER, TranscribeOverrides(provider = "openrouter", model = "fixture/manual"))!!
     assertEquals("openrouter", manual.provider)
-    assertEquals("fixture/manual", repo.pinForRun(manual).model)
+    assertEquals("fixture/manual", repo.pinForRun(manual)!!.model)
+  }
+
+  @Test fun `privacy migration during legacy policy lookup cannot pin a cloud model into companion row`() = runTest {
+    val repo = repository()
+    for (global in listOf("", "fixture/global")) {
+      prefs = prefs.copy(openRouterTranscriptionModel = global)
+      val old = JobEntity("migration-$global", "s", JobType.TRANSCRIBE, "openrouter", createdAt = 1, updatedAt = 1)
+      saved[old.id] = old
+      coEvery { spending.policyForSession(any(), any(), any()) } answers {
+        saved[old.id] = old.copy(provider = "custom", model = null)
+        EffectiveCloudPolicy(true)
+      }
+      val current = requireNotNull(repo.pinForRun(old))
+      assertEquals("custom", current.provider)
+      assertNull(current.model)
+      assertNull(current.optionsJson)
+      assertEquals(current, saved[old.id])
+    }
+    coVerify(exactly = 0) { http.getJson(any(), any(), any()) }
+  }
+
+  @Test fun `already migrated or removed rows never reuse a stale pinned cloud identity`() = runTest {
+    val repo = repository()
+    val old = repo.enqueue("s", TranscriptionProviderId.MISTRAL)!!
+    val moved = old.copy(provider = "custom", model = null)
+    saved[old.id] = moved
+    assertEquals(moved, repo.pinForRun(old))
+    coVerify(exactly = 0) { jobs.pinTranscription(any(), any(), any(), any(), any(), any(), any()) }
+    saved.remove(old.id)
+    assertNull(repo.pinForRun(old))
+    coVerify(exactly = 0) { jobs.pinTranscription(any(), any(), any(), any(), any(), any(), any()) }
+  }
+
+  @Test fun `start carries the expected provider to the atomic boundary`() = runTest {
+    val repo = repository()
+    coEvery { jobs.start(any(), any(), any(), any(), any()) } returns 0
+    assertFalse(repo.start("migrated", JobState.PREPARING, "cloud-model", "openrouter"))
+    coVerify(exactly = 1) { jobs.start("migrated", JobState.PREPARING, "cloud-model", any(), "openrouter") }
   }
 
   @Test fun `repository cancellation calls one atomic DAO operation for running queued terminal and missing rows`() = runTest {

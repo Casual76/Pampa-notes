@@ -1674,7 +1674,6 @@
   <string name="session_bundle_omitted_title">Audio non incluso nel pacchetto</string>
   <string name="session_bundle_omitted_detail">Chiedi a chi ha condiviso le note un pacchetto che includa le registrazioni, poi importalo scegliendo di aggiornare le note. Questi file non arriveranno automaticamente dal tuo computer.</string>
   <string name="provider_openrouter">OpenRouter</string>
-  <string name="error_credit_required">Il servizio richiede credito. Controlla il saldo del tuo account OpenRouter prima di riprovare.</string>
   <string name="openrouter_requirements">Trascrive nel cloud senza computer di casa. Servono una chiave OpenRouter e credito per il modello scelto; l’audio viene inviato a OpenRouter e al suo fornitore.</string>
   <string name="openrouter_key">Chiave API OpenRouter</string>
   <string name="openrouter_key_hint">Crea una chiave su openrouter.ai. Resta cifrata su questo dispositivo e non entra nel backup.</string>

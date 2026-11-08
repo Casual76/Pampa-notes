@@ -10,7 +10,7 @@
     <string name="mistral_remove_key">Remove Mistral key</string>
     <string name="mistral_verified">Key verified without sending audio</string>
     <string name="mistral_model">Mistral transcription model</string>
-    <string name="mistral_timing">Mistral provides segment times. Individual word times are estimates until aligned on your computer.</string>
+    <string name="mistral_timing">Mistral provides segment times. Individual word times remain unavailable until alignment on your computer provides usable evidence.</string>
     <string name="cloud_pinned_detail">The service and model are fixed when the job is queued. Limits and errors never activate another service; Retry keeps the choice and completed chunks.</string>
     <string name="cloud_job_model">Model for this transcription</string>
     <string name="cloud_account_changed">The account changed after this job was queued. Return to the original account or start a new transcription.</string>

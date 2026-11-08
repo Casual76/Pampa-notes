@@ -231,7 +231,12 @@ class TranscriptionRepository @Inject constructor(
   }
 
   /** Legacy rows are pinned once locally; new cloud jobs already carry a model at enqueue. */
-  suspend fun pinForRun(job: JobEntity): JobEntity {
+  suspend fun pinForRun(job: JobEntity): JobEntity? {
+    // Privacy migration can replace a queued cloud identity while this caller is suspended.
+    // Never derive or persist a model for a stale provider, including already-pinned rows.
+    val current = jobs.get(job.id) ?: return null
+    if (current.provider != job.provider || current.state != JobState.QUEUED) return current
+    val job = current
     val settings = settingsStore.current()
     val options = transcribeOptions(job)
     val context = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -253,8 +258,8 @@ class TranscriptionRepository @Inject constructor(
       spending.policyForSession(job.sessionId, allowExplicitCloud = options.overrides?.explicitlyChoosesCloud(job.provider) == true).model
     else null
     jobs.pinTranscription(job.id, job.model ?: legacyModel ?: modelAtEnqueue(job.provider, settings, options.overrides, folderModel),
-      json.encodeToString(TranscribeOptions.serializer(), pinned), System.currentTimeMillis(), job.model, job.optionsJson)
-    return jobs.get(job.id) ?: job
+      json.encodeToString(TranscribeOptions.serializer(), pinned), System.currentTimeMillis(), job.provider, job.model, job.optionsJson)
+    return jobs.get(job.id)
   }
 
   suspend fun queuedCount(providerId: String): Int = jobs.queuedCount(providerId)
@@ -441,8 +446,8 @@ class TranscriptionRepository @Inject constructor(
    * Il lavoro parte: da in fila a [state]. Falso se nel frattempo non era piu' in fila — annullato
    * un attimo prima, o preso da qualcun altro — e allora non e' piu' di chi chiama.
    */
-  suspend fun start(jobId: String, state: JobState, model: String?): Boolean =
-    jobs.start(jobId, state, model, System.currentTimeMillis()) > 0
+  suspend fun start(jobId: String, state: JobState, model: String?, expectedProvider: String): Boolean =
+    jobs.start(jobId, state, model, System.currentTimeMillis(), expectedProvider) > 0
 
   suspend fun markDone(jobId: String): Boolean {
     val now = System.currentTimeMillis()
