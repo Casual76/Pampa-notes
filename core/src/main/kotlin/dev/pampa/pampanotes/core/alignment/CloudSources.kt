@@ -259,12 +259,18 @@ object CloudSources {
     }.getOrDefault(false)
   }
 
-  /** Nullable legacy: single-part text boundaries are lossless, historical audio identity is not.
-   * Native null must stay null on transfer; later discovery cannot borrow current/replacement row
+  /** Timeline mutations must not silently reinterpret unsupported nonempty source metadata. */
+  internal fun forTimeline(raw: TranscriptEntity, parts: List<AudioPartEntity>): CloudSourceDocument? =
+    if (raw.cloudSourceJson.isNullOrEmpty()) legacy(raw, parts) else transferDocument(raw)
+
+  /** Null/empty legacy: single-part text boundaries are lossless, historical audio identity is not.
+   * Discovery retains the exact full before-image even when multipart boundaries are unknown.
+   * Transfer itself keeps null/empty distinct; discovery cannot borrow current/replacement row
    * hashes and turn a copy into an attested original. Only real saved source snapshots bind. */
   fun legacy(raw: TranscriptEntity, parts: List<AudioPartEntity>): CloudSourceDocument? {
-    if (!cloud(raw.provider) || raw.cloudSourceJson != null) return null
-    val mapped = parts.map { p -> CloudTextPart(p.id, "", if (parts.size == 1) raw.text else null, raw.language, raw.provider, raw.model) }
+    if (!cloud(raw.provider) || !raw.cloudSourceJson.isNullOrEmpty()) return null
+    val mapped = parts.map { p -> CloudTextPart(p.id, "", if (parts.size == 1) raw.text else null,
+      raw.language.takeIf { parts.size == 1 }, raw.provider, raw.model) }
     val doc = create(raw, raw.text, mapped)
     return doc.copy(alignmentBinding = "portable_unbound", originals = doc.originals.map { it.copy(contentScope = "portable_projection") })
   }

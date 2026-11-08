@@ -95,7 +95,7 @@ class CloudSourceTimelineTest {
     assertTrue(multi.parts.all { it.text == null })
     assertEquals(old.text, multi.originals.single().text)
     assertNull(CloudSources.decode(null)); assertNull(CloudSources.decode(""))
-    assertNull(CloudSources.legacy(old.copy(cloudSourceJson = ""), seed.parts))
+    assertEquals(multi, CloudSources.legacy(old.copy(cloudSourceJson = ""), seed.parts))
   }
   @Test fun `reject checksum version and malformed codec without overwriting nullable state`() {
     val seed = seed(); val doc = CloudSources.decode(seed.transcripts.single().cloudSourceJson)!!

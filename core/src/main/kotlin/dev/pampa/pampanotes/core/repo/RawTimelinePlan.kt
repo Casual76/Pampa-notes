@@ -58,8 +58,7 @@ internal object RawTimelinePlan {
 
     before.transcripts.filter { it.kind == TranscriptKind.RAW }.forEach { raw ->
       val original = own[raw.id].orEmpty()
-      val source = CloudSources.decode(raw.cloudSourceJson)?.takeIf { CloudSources.matches(it, raw) }
-        ?: CloudSources.legacy(raw, before.parts.filter { it.sessionId == raw.sessionId })
+      val source = CloudSources.forTimeline(raw, before.parts.filter { it.sessionId == raw.sessionId })
       val coverage = (original.map { it.partId } + source?.parts.orEmpty().map { it.id }).distinct().filter { it in byPart }
       val groups = coverage.groupBy { byPart.getValue(it).sessionId }.mapValues { (_, ids) -> original.filter { it.partId in ids } }
       val primary = when {
@@ -129,12 +128,15 @@ internal object RawTimelinePlan {
         val origins = chosen.map { rows.getValue(it) }
         val draft = origins.first().copy(id = id, sessionId = session.id, createdAt = now)
         val cloud = if (origins.any { it.cloudSourceJson != null }) {
-          val docs = origins.map { origin -> CloudSources.decode(origin.cloudSourceJson) ?: run {
+          val docs = origins.map { origin -> CloudSources.forTimeline(origin, ordered[session.id].orEmpty()) ?: run {
             val coveredIds = timed[origin.id].orEmpty().map { it.partId }.toSet()
             val mapped = ordered[session.id].orEmpty().filter { it.id in coveredIds }.map { p ->
-              CloudTextPart(p.id, p.sha256, if (coveredIds.size == 1) origin.text else null, origin.language, origin.provider, origin.model)
+              CloudTextPart(p.id, "", if (coveredIds.size == 1) origin.text else null,
+                origin.language.takeIf { coveredIds.size == 1 }, origin.provider, origin.model)
             }
-            CloudSources.create(origin, origin.text, mapped)
+            // Segment coverage is presentation evidence, never historical audio attestation.
+            CloudSources.create(origin, origin.text, mapped).let { doc -> doc.copy(alignmentBinding = "portable_unbound",
+              originals = doc.originals.map { it.copy(contentScope = "derived_presentation") }) }
           } }
           CloudSources.combine(draft, ordered[session.id].orEmpty(), docs, segments)
         } else null
