@@ -41,7 +41,9 @@ class RecordingActions @Inject constructor(
     val selected = valid.mapTo(HashSet()) { it.id }
     selected.forEach { runCatching { alignment.cancelSession(it) } }
     transcription.observeActive().first().filter { it.sessionId in selected }.forEach { transcription.requestCancel(it.id) }
-    valid.forEach { repository.deleteSession(it.id) }
+    // Cancellation suspends: a move/sync may have changed the note, session or folder scope.
+    // Core rechecks the current graph in the same transaction as the destructive writes.
+    repository.deletePersonalSessions(selected, folderId)
     // Keep the backing material, including body, tags, language and sources, even after the last session.
   }
 

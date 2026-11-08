@@ -170,7 +170,7 @@ class PampaBundleImporter @Inject constructor(
         } else if (sameAudio) {
           // Keep local identity/archive metadata even when recovering an evicted blob from staging.
           // Native duration/timing metadata takes precedence over an old MMR rounding estimate.
-          part.copy(fileName = if (files.audioFile(old.fileName).isFile) old.fileName else name ?: old.fileName,
+          PampaBundleRecordingOrigin.retain(old, part).copy(fileName = if (files.audioFile(old.fileName).isFile) old.fileName else name ?: old.fileName,
             archivedAt = old.archivedAt, originalName = old.originalName,
             durationMs = part.durationMs.takeIf { it > 0 } ?: old.durationMs, sizeBytes = old.sizeBytes)
         } else if (name == null && old != null) {

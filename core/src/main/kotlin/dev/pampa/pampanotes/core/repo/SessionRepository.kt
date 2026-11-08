@@ -224,14 +224,52 @@ class SessionRepository @Inject constructor(
   }
 
   suspend fun deleteSession(sessionId: String) {
-    val session = sessions.get(sessionId) ?: return
-    parts.bySession(sessionId).forEach { part ->
-      segments.deleteByPart(part.id)
-      runCatching { files.audioFile(part.fileName).delete() }
+    val names = db.withTransaction {
+      deleteSessionsNow(listOfNotNull(sessions.get(sessionId)))
     }
-    sessions.delete(sessionId)
-    renumberSessions(session.noteId)
-    notes.touch(session.noteId, System.currentTimeMillis())
+    deleteAudioFiles(names)
+  }
+
+  /** Final personal/current-folder fence, AFTER the caller has awaited job cancellations.
+   * Scope reads and all deletions share one transaction; denied/missing rows yield no file cleanup.
+   * Generic [deleteSession] remains available to school callers. */
+  suspend fun deletePersonalSessions(sessionIds: Set<String>, folderId: String?) {
+    if (sessionIds.isEmpty()) return
+    val names = db.withTransaction {
+      val personal = PersonalScope.folderIds(db.folders().all())
+      val selected = sessions.getAll(sessionIds.toList()).filter { session ->
+        session.id in sessionIds && notes.get(session.noteId)?.let { note ->
+          note.folderId in personal && (folderId == null || note.folderId == folderId)
+        } == true
+      }
+      deleteSessionsNow(selected)
+    }
+    deleteAudioFiles(names)
+  }
+
+  /** Transaction-only: keep the note's material and unselected siblings, and collect file names.
+   * Files cannot be removed here: a later DB failure must leave the rolled-back graph playable. */
+  private suspend fun deleteSessionsNow(selected: List<SessionEntity>): List<String> {
+    val names = linkedSetOf<String>()
+    selected.forEach { session ->
+      parts.bySession(session.id).forEach { part ->
+        names += part.fileName
+        segments.deleteByPart(part.id)
+      }
+      sessions.delete(session.id)
+    }
+    selected.map { it.noteId }.distinct().forEach { noteId ->
+      renumberSessions(noteId)
+      notes.touch(noteId, System.currentTimeMillis())
+    }
+    // Legacy graphs may share a stored path. Deleting one session must not remove a sibling's bytes.
+    if (names.isEmpty()) return emptyList()
+    val retained = parts.fileNames().toHashSet()
+    return names.filterNot { it in retained }
+  }
+
+  private fun deleteAudioFiles(names: List<String>) {
+    names.forEach { name -> runCatching { files.audioFile(name).delete() } }
   }
 
   // ---------------------------------------------------------------------------------------------

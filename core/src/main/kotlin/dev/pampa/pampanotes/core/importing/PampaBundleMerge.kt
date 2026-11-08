@@ -17,10 +17,11 @@ internal object PampaBundleMerge {
       local?.sessions.orEmpty().filter { it.id !in incomingSessions }.sortedWith(compareBy({ it.position }, { it.id })))
       .mapIndexed { index, s -> s.copy(position = index, transcribingOn = oldSessions[s.id]?.transcribingOn, transcribingSince = oldSessions[s.id]?.transcribingSince) }
 
-    val incomingParts = incoming.parts.associateBy { it.id }
+    val oldParts = local?.parts.orEmpty().associateBy { it.id }
+    val incomingParts = incoming.parts.associate { it.id to PampaBundleRecordingOrigin.retain(oldParts[it.id], it) }
     val allParts = (local?.parts.orEmpty().associateBy { it.id } + incomingParts).values
     val parts = sessions.flatMap { session ->
-      (incoming.parts.filter { it.sessionId == session.id }.sortedWith(compareBy({ it.position }, { it.id })) +
+      (incomingParts.values.filter { it.sessionId == session.id }.sortedWith(compareBy({ it.position }, { it.id })) +
         allParts.filter { it.sessionId == session.id && it.id !in incomingParts }.sortedWith(compareBy({ it.position }, { it.id })))
         .mapIndexed { index, p -> p.copy(position = index) }
     }
