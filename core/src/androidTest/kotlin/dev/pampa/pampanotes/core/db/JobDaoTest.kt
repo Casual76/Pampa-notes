@@ -75,7 +75,7 @@ class JobDaoTest {
 
     assertEquals(1, db.jobs().cancelIfQueued("lavoro", now))
     // Il worker arriva dopo: il lavoro non e' piu' suo.
-    assertEquals(0, db.jobs().start("lavoro", JobState.PREPARING, "large-v3", now))
+    assertEquals(0, db.jobs().start("lavoro", JobState.PREPARING, "large-v3", now, "custom"))
     assertEquals(JobState.CANCELLED, db.jobs().get("lavoro")?.state)
   }
 
@@ -85,7 +85,7 @@ class JobDaoTest {
     job("lavoro", JobState.QUEUED)
     val now = System.currentTimeMillis()
 
-    assertEquals(1, db.jobs().start("lavoro", JobState.PREPARING, "large-v3", now))
+    assertEquals(1, db.jobs().start("lavoro", JobState.PREPARING, "large-v3", now, "custom"))
     assertEquals(0, db.jobs().cancelIfQueued("lavoro", now))
     assertEquals(1, db.jobs().requestCancelIfRunning("lavoro", now))
     val row = db.jobs().get("lavoro")!!
@@ -99,7 +99,7 @@ class JobDaoTest {
     seedSession()
     job("lavoro", JobState.QUEUED)
     val now = System.currentTimeMillis()
-    db.jobs().start("lavoro", JobState.PREPARING, "large-v3", now)
+    db.jobs().start("lavoro", JobState.PREPARING, "large-v3", now, "custom")
 
     assertEquals(1, db.jobs().fail("lavoro", "network", "giu'", now))
     val failed = db.jobs().get("lavoro")!!
