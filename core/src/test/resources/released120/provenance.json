@@ -1,0 +1,252 @@
+{
+  "tag": "stable-pampa-notes-v1.2.0",
+  "commit": "e8c9ba4f2d0b7cc4a5f138e622be62da61979845",
+  "sources": [
+    {
+      "path": "core/src/main/kotlin/dev/pampa/pampanotes/core/db/Entities.kt",
+      "gitBlob": "34d6214a31d6978b6dea11e7d844b329b317e5d3",
+      "sha256": "c334a2c80ab6e45fd3986d57657e53d3e56fa4e3d0414b19101501d15dd2b386"
+    },
+    {
+      "path": "core/src/main/kotlin/dev/pampa/pampanotes/core/model/Ids.kt",
+      "gitBlob": "5bc5f431619cc5e10e2f4e0a4658b950298441e4",
+      "sha256": "b2e5a75eee20c6b8a92a4449dbdbd924dbf98a03324d751b205b8b519718c1b1"
+    },
+    {
+      "path": "core/src/main/kotlin/dev/pampa/pampanotes/core/importing/PampaBundleModel.kt",
+      "gitBlob": "0f53e4aa450078baa0395130d75650b466313568",
+      "sha256": "f2e209ffd172e8a18db0415faa270e8540669f11cae203e487b34d9e0a4d7bb9"
+    },
+    {
+      "path": "core/src/main/kotlin/dev/pampa/pampanotes/core/export/BundleLayout.kt",
+      "gitBlob": "a5200404e366c9804d49d1a0c924db5ccbe8566c",
+      "sha256": "0afa914473b8115c08f11e610cd745fc6e5c0b93917dc8ddc33894308d6b968b"
+    },
+    {
+      "path": "core/src/main/kotlin/dev/pampa/pampanotes/core/export/BundleWriter.kt",
+      "gitBlob": "65323147d5d05f4afb62915951d00e9d2df3685e",
+      "sha256": "a764857da05344b13852b462d7e80dfc183ac0dba94b69727f2eb7819137c9e5"
+    },
+    {
+      "path": "core/src/main/kotlin/dev/pampa/pampanotes/core/export/ChapterLines.kt",
+      "gitBlob": "5ab27f41c75afa3f53fabde277b0e6e56ce9b2a6",
+      "sha256": "50964760358efacce241947194ff33e03399f71b6c76b98bd468a032eb499f44"
+    },
+    {
+      "path": "core/src/main/kotlin/dev/pampa/pampanotes/core/export/ExportLabels.kt",
+      "gitBlob": "51993afe1f7c0e13bce34da86867fbc84910e9d7",
+      "sha256": "c32d3b6d57a034b221c2e3cd69d48d6cb4dc05044562a6b9e26119821e3f7d67"
+    },
+    {
+      "path": "core/src/main/kotlin/dev/pampa/pampanotes/core/export/ExportManifest.kt",
+      "gitBlob": "85464441395deff4e7fb9b8c38e65da24cbc47fb",
+      "sha256": "06435ef0a4efd886c07ba8c5e44c20e1e0032ac19c8fb90e96a1c787e7cf8c63"
+    },
+    {
+      "path": "core/src/main/kotlin/dev/pampa/pampanotes/core/export/ExportModel.kt",
+      "gitBlob": "76c1a302a3d7fd9f51b84d134812763568700482",
+      "sha256": "7357a98c4aebe5bc4d88a04bcdf55acb418cf5cf98ad4cee572886145f3173e4"
+    },
+    {
+      "path": "core/src/main/kotlin/dev/pampa/pampanotes/core/export/IndexWriter.kt",
+      "gitBlob": "609783a47d47d195f64f1d66fc10a34883856949",
+      "sha256": "0d5cd006488bebaa4290ea5c642b73febb0be1b2e926a7357907cd04a036687b"
+    },
+    {
+      "path": "core/src/main/kotlin/dev/pampa/pampanotes/core/export/MarkdownWriter.kt",
+      "gitBlob": "f52b1f30bd3f9df923200bed096a61e6f4189791",
+      "sha256": "acae7b74a6f34085fb03aa157cb5d8633b07d9987b6be27dd5de4f450984cd86"
+    },
+    {
+      "path": "core/src/main/kotlin/dev/pampa/pampanotes/core/export/PampaBundleExport.kt",
+      "gitBlob": "8eb1d0f794fb4d22d4040ed0162a79951dddfbf1",
+      "sha256": "038284b629abef179800b707e6a64774fd555568032d6e0e8f280958dd20a2b8"
+    },
+    {
+      "path": "core/src/main/kotlin/dev/pampa/pampanotes/core/export/SkillWriter.kt",
+      "gitBlob": "81d2c1a5ab77baf470a5207cbce26a71637e1d28",
+      "sha256": "4b78943178043da2d78985d515926d9af83b844bb568d2aceb1e74e94ef06b67"
+    },
+    {
+      "path": "core/src/main/kotlin/dev/pampa/pampanotes/core/transcription/TranscriptParagraphs.kt",
+      "gitBlob": "971ace5766cec149d768f30d4c9a55d6f8a81a08",
+      "sha256": "f5529f52001c9f818d479e3fce2656d4a0673d2cd7eb5886daa703bfb9b20580"
+    },
+    {
+      "path": "core/src/main/kotlin/dev/pampa/pampanotes/core/transcription/Chapters.kt",
+      "gitBlob": "c357b7d8ebf6b55981612289e2cb0733b5c1d39f",
+      "sha256": "72ac5f25b1b89938122c35470b76e94ed3dfd69888860dfc9fd26f5c3b60e92f"
+    },
+    {
+      "path": "core/src/main/kotlin/dev/pampa/pampanotes/core/transcription/VoiceNames.kt",
+      "gitBlob": "be5d099d7eecd1bedc9a554dd765b3e0d81f736e",
+      "sha256": "614bf527aff8fcc33f8f4757fe995cafc2c5083bf939c622a032b5b7bea50b54"
+    }
+  ],
+  "releaseMetadata": [
+    {
+      "path": "gradle/libs.versions.toml",
+      "gitBlob": "69cc1ff5ae6463e09d036febf375368f9e6462f2",
+      "sha256": "236dadf9fae6dac2de0b8d5fbfa15eda25506a6dbd5f02003b4fe7b785fa663e"
+    },
+    {
+      "path": "app/build.gradle",
+      "gitBlob": "c6bee8a31aa3bfd0395deefbe7bd0761cce2c698",
+      "sha256": "fc4f982f0ffcaa3e9048f773e7cb4235994d2d8a457d63fd1d06eeb6b3f2edde"
+    }
+  ],
+  "cachedDependencies": [
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib:2.2.20",
+      "sha256": "8836ccffd3585fadda9901244b20d42901d2f3cd581058d8434e2ffabcf3a3e7"
+    },
+    {
+      "coordinate": "org.jetbrains:annotations:13.0",
+      "sha256": "ace2a10dc8e2d5fd34925ecac03e4988b2c0f851650c94b8cef49ba1bd111478"
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.6.3",
+      "sha256": "29c821a8d4e25cbfe4f2ce96cdd4526f61f8f4e69a135f9612a34a81d93b65f1"
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.6.3",
+      "sha256": "d3234179bcff1886d53d67c11eca47f7f3cf7b63c349d16965f6db51b7f3dd9a"
+    },
+    {
+      "coordinate": "androidx.room:room-common-jvm:2.8.4",
+      "sha256": "dc7b4e1a75a790f29c97afd5516b8bf8002d9b6e83e295bc569b33566f3b1ec0"
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-compiler-embeddable:2.2.20",
+      "sha256": "1c6c3f810bfe6a41abcbc34b3a2ef639f1e3f4aeed3a953a4b0974eea4f41889"
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-script-runtime:2.2.20",
+      "sha256": "5c8bd5dd7ae1ea2eeb2778fdbeaa19a562184975f6cab8a0bb6779e4190731ae"
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-reflect:1.6.10",
+      "sha256": "3277ac102ae17aad10a55abec75ff5696c8d109790396434b496e75087854203"
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-daemon-embeddable:2.2.20",
+      "sha256": "7c5c8cd2f8beadd3283239bb9ca219a0cafa1af02682b407b181e1179718f2f7"
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.8.0",
+      "sha256": "9860906a1937490bf5f3b06d2f0e10ef451e65b95b269f22daf68a3d1f5065c5"
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.2.20",
+      "sha256": "8d8f93620184ac876cba8d3dfda17c25d403f90d2469ca87acd7efa31d84799f"
+    }
+  ],
+  "generatorSha256": "3a66b3676ee89095ac8c5d87f052dd16a2722e64aed61a62929331b55309aa3a",
+  "commands": {
+    "compile": [
+      "C:\\Program Files\\Microsoft\\jdk-17.0.18.8-hotspot\\bin\\java.exe",
+      "-Xmx384m",
+      "-XX:ActiveProcessorCount=2",
+      "-cp",
+      "C:\\Users\\casua\\.gradle\\caches\\modules-2\\files-2.1\\org.jetbrains.kotlin\\kotlin-stdlib\\2.2.20\\5380b19fa1924399b62ce3a1faffebb2b4f82272\\kotlin-stdlib-2.2.20.jar;C:\\Users\\casua\\.gradle\\caches\\modules-2\\files-2.1\\org.jetbrains\\annotations\\13.0\\919f0dfe192fb4e063e7dacadee7f8bb9a2672a9\\annotations-13.0.jar;C:\\Users\\casua\\.gradle\\caches\\modules-2\\files-2.1\\org.jetbrains.kotlin\\kotlin-compiler-embeddable\\2.2.20\\bb8331b7585e36ea311825b01a1c06860c055fd1\\kotlin-compiler-embeddable-2.2.20.jar;C:\\Users\\casua\\.gradle\\caches\\modules-2\\files-2.1\\org.jetbrains.kotlin\\kotlin-script-runtime\\2.2.20\\4c679cbeac0bb583b75c3a080013da8eaf240807\\kotlin-script-runtime-2.2.20.jar;C:\\Users\\casua\\.gradle\\caches\\modules-2\\files-2.1\\org.jetbrains.kotlin\\kotlin-reflect\\1.6.10\\1cbe9c92c12a94eea200d23c2bbaedaf3daf5132\\kotlin-reflect-1.6.10.jar;C:\\Users\\casua\\.gradle\\caches\\modules-2\\files-2.1\\org.jetbrains.kotlin\\kotlin-daemon-embeddable\\2.2.20\\feff12d48d7f1eb628742b0a721395e16f8755bf\\kotlin-daemon-embeddable-2.2.20.jar;C:\\Users\\casua\\.gradle\\caches\\modules-2\\files-2.1\\org.jetbrains.kotlinx\\kotlinx-coroutines-core-jvm\\1.8.0\\ac1dc37a30a93150b704022f8d895ee1bd3a36b3\\kotlinx-coroutines-core-jvm-1.8.0.jar",
+      "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
+      "@C:\\Users\\casua\\AppData\\Local\\Temp\\pn3-released120-generate-p82crqmu\\compile.args"
+    ],
+    "run": [
+      "C:\\Program Files\\Microsoft\\jdk-17.0.18.8-hotspot\\bin\\java.exe",
+      "-Xmx192m",
+      "-XX:ActiveProcessorCount=2",
+      "-Duser.timezone=UTC",
+      "-Duser.language=en",
+      "-Duser.country=US",
+      "-cp",
+      "C:\\Users\\casua\\AppData\\Local\\Temp\\pn3-released120-generate-p82crqmu\\released-writer.jar;C:\\Users\\casua\\.gradle\\caches\\modules-2\\files-2.1\\org.jetbrains.kotlin\\kotlin-stdlib\\2.2.20\\5380b19fa1924399b62ce3a1faffebb2b4f82272\\kotlin-stdlib-2.2.20.jar;C:\\Users\\casua\\.gradle\\caches\\modules-2\\files-2.1\\org.jetbrains\\annotations\\13.0\\919f0dfe192fb4e063e7dacadee7f8bb9a2672a9\\annotations-13.0.jar;C:\\Users\\casua\\.gradle\\caches\\modules-2\\files-2.1\\org.jetbrains.kotlinx\\kotlinx-serialization-core-jvm\\1.6.3\\6b6c17d0312ba7192893adea9d52959941d0119b\\kotlinx-serialization-core-jvm-1.6.3.jar;C:\\Users\\casua\\.gradle\\caches\\modules-2\\files-2.1\\org.jetbrains.kotlinx\\kotlinx-serialization-json-jvm\\1.6.3\\2241746853abf04073e3ab0dcd9e6729d363b313\\kotlinx-serialization-json-jvm-1.6.3.jar;C:\\Users\\casua\\.gradle\\caches\\modules-2\\files-2.1\\androidx.room\\room-common-jvm\\2.8.4\\3aeefef6615720bec8c860dd0786b48552ef3300\\room-common-jvm-2.8.4.jar",
+      "Released120FixtureKt",
+      "C:\\Users\\casua\\AppData\\Local\\Temp\\pn3-released120-generate-p82crqmu\\input",
+      "C:\\Users\\casua\\AppData\\Local\\Temp\\pn3-released120-generate-p82crqmu\\released120-synthetic.zip"
+    ]
+  },
+  "javaVersion": "openjdk version \"17.0.18\" 2026-01-20 LTS\r\nOpenJDK Runtime Environment Microsoft-13106358 (build 17.0.18+8-LTS)\r\nOpenJDK 64-Bit Server VM Microsoft-13106358 (build 17.0.18+8-LTS, mixed mode, sharing)\r\n",
+  "entries": [
+    {
+      "path": "pampa-notes-released120/SKILL.md",
+      "bytes": 2380,
+      "sha256": "e335640dcb42cb5141e1331a3f7e6d6b97f865747365e4a878ddfe3e6516a52b"
+    },
+    {
+      "path": "pampa-notes-released120/README-FOR-AI.md",
+      "bytes": 1993,
+      "sha256": "b53ccb4f1d0ed6813327432ea6fb8f41828fccd7092bae2984b44675fce87f3b"
+    },
+    {
+      "path": "pampa-notes-released120/INDEX.md",
+      "bytes": 1041,
+      "sha256": "2e6b004b415e680965cec532e04794b1e240adb9014caedb809ab2b50f17a451"
+    },
+    {
+      "path": "pampa-notes-released120/instructions.md",
+      "bytes": 2140,
+      "sha256": "77bef075d4304a5d4a3475fc247fba92054dc9b61972c5b3bbe62e69bfd47757"
+    },
+    {
+      "path": "pampa-notes-released120/manifest.json",
+      "bytes": 4852,
+      "sha256": "68f5ab91466e4896fb2c33a95472ca68b77ead3313d84d73868e729bb4933194"
+    },
+    {
+      "path": "pampa-notes-released120/native.json",
+      "bytes": 12058,
+      "sha256": "4c37ab3fa339655a31d2932b90baab814bf5e15e216637ae501b74f0a02d4265"
+    },
+    {
+      "path": "pampa-notes-released120/notes/laboratorio--fisica--energia-e-unita.md",
+      "bytes": 1592,
+      "sha256": "2696c523510ed6670cd1cf37bbc2ea1826e56a48d33dd1d415c8ea0ad77aecfb"
+    },
+    {
+      "path": "pampa-notes-released120/notes/laboratorio--fisica--energia-e-unita--2026-01-02.md",
+      "bytes": 820,
+      "sha256": "3ba7797de18f4e758168e6d75a0e6eb42a577f7845365ec65fbe9ff5e9ffbb03"
+    },
+    {
+      "path": "pampa-notes-released120/notes/laboratorio--fisica--energia-e-unita--2026-01-02-2.md",
+      "bytes": 815,
+      "sha256": "869b66b0bd47ffd3972370e980b17b42e4948693880fd2f4e2ee94fff4d53f89"
+    },
+    {
+      "path": "pampa-notes-released120/audio/laboratorio--fisica--energia-e-unita/2026-01-02-01-Tono 1.m4a",
+      "bytes": 5370,
+      "sha256": "1ba6b5929c65382d145c0887726a3deba6d81f528dcf590aed88f29642556452"
+    },
+    {
+      "path": "pampa-notes-released120/audio/laboratorio--fisica--energia-e-unita/2026-01-02-01-Tono 2.m4a",
+      "bytes": 5370,
+      "sha256": "1ba6b5929c65382d145c0887726a3deba6d81f528dcf590aed88f29642556452"
+    },
+    {
+      "path": "pampa-notes-released120/audio/laboratorio--fisica--energia-e-unita/2026-01-02-02-Tono 3.m4a",
+      "bytes": 5370,
+      "sha256": "1ba6b5929c65382d145c0887726a3deba6d81f528dcf590aed88f29642556452"
+    },
+    {
+      "path": "pampa-notes-released120/sources/laboratorio--fisica--energia-e-unita/r120-source-a.md",
+      "bytes": 60,
+      "sha256": "4c4c61dd1c19616665f3c818615834e21adac7efa946ccc93476013edf5fa7e4"
+    },
+    {
+      "path": "pampa-notes-released120/sources/laboratorio--fisica--energia-e-unita/r120-source-b.md",
+      "bytes": 60,
+      "sha256": "4c4c61dd1c19616665f3c818615834e21adac7efa946ccc93476013edf5fa7e4"
+    },
+    {
+      "path": "pampa-notes-released120/notes/laboratorio--solo-testo.md",
+      "bytes": 223,
+      "sha256": "e549abee503325b324c9ff3b4a9516f9251d1c74af653f00a8afe586784d3a56"
+    }
+  ],
+  "archive": {
+    "file": "released120-synthetic.zip",
+    "bytes": 28681,
+    "sha256": "25114f4834dc3b59bfc90b2d8c50a25d3361f9c492dcf214b3d2bb8078701481"
+  }
+}

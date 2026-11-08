@@ -1,0 +1,78 @@
+// Synthetic input only. Compiled against unmodified sources extracted from the released tag.
+import dev.pampa.pampanotes.core.db.*
+import dev.pampa.pampanotes.core.export.*
+import dev.pampa.pampanotes.core.importing.PampaBundleNote
+import dev.pampa.pampanotes.core.transcription.VoiceNames
+import java.io.File
+import java.security.MessageDigest
+import java.time.Instant
+
+private fun sha(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes)
+  .joinToString("") { "%02x".format(it) }
+
+fun main(args: Array<String>) {
+  val input = File(args[0])
+  val output = File(args[1])
+  val audio = File(input, "audio").apply { mkdirs() }
+  val sources = File(input, "sources").apply { mkdirs() }
+  val time = Instant.parse("2026-01-02T03:04:05Z").toEpochMilli()
+  val tone = File(input, "tone.m4a").readBytes()
+  val original = "# Fonte sintetica\nEnergia: E = mc².\nNessun dato personale.\n".toByteArray(Charsets.UTF_8)
+  val sourceFile = File(sources, "original.md").apply { writeBytes(original); check(setLastModified(time)) }
+  val root = FolderEntity("r120-root", "Laboratorio", tone = "Blue", icon = "science", createdAt = time, updatedAt = time + 1000)
+  val child = FolderEntity("r120-child", "Fisica", root.id, sortOrder = 2, tone = "Green", icon = "atom", createdAt = time + 100, updatedAt = time + 1100)
+  val note = NoteEntity("r120-note", child.id, "Energia e unità", "# Appunti sintetici\n\nEnergia: E = mc².\nUn caffè e un'unità: µs.\n", pinned = true, language = "it", createdAt = time + 200, updatedAt = time + 4000)
+  val plain = NoteEntity("r120-plain", root.id, "Solo testo", "Testo senza registrazioni.\n", language = "it", createdAt = time + 300, updatedAt = time + 3000)
+  val sessions = listOf(
+    SessionEntity("r120-ref-session", note.id, "Ripulita selezionata", "2026-01-02", 0, "r120-refined", time + 400, time + 2500,
+      voiceNames = VoiceNames.encode(mapOf("r120-a|SPEAKER_00" to "Voce sintetica"))),
+    SessionEntity("r120-raw-session", note.id, "Grezza selezionata", "2026-01-02", 1, "r120-raw", time + 500, time + 2600,
+      voiceNames = VoiceNames.encode(mapOf("r120-b|SPEAKER_01" to "Seconda voce", "r120-c|SPEAKER_01" to "Terza voce"))),
+  )
+  val parts = listOf("r120-a", "r120-b", "r120-c").mapIndexed { index, id ->
+    val file = File(audio, "$id.m4a").apply { writeBytes(tone); check(setLastModified(time)) }
+    AudioPartEntity(id, sessions[if (index == 0) 0 else 1].id, if (index == 0) 0 else index - 1,
+      file.name, "Tono ${index + 1}.m4a", "audio/mp4", tone.size.toLong(), 1000, sha(tone), time + 600 + index)
+  }
+  fun raw(id: String, session: String, text: String, words: Int) = TranscriptEntity(id, session, TranscriptKind.RAW,
+    "custom", "synthetic-no-inference", "it", text, wordCount = words, createdAt = time + 1500)
+  val refRaw = raw("r120-ref-raw", sessions[0].id, "Energia sintetica.", 2)
+  val raw = raw("r120-raw", sessions[1].id, "Prima parte. Seconda parte.", 4)
+  val refined = refRaw.copy(id = "r120-refined", kind = TranscriptKind.REFINED, text = "Energia sintetica, ripulita.",
+    preset = "CLEAN", promptHash = sha("synthetic-prompt".toByteArray()), parentId = refRaw.id, wordCount = 3, createdAt = time + 2000)
+  // These alternatives are deliberately supplied to the old writer; it exports only selected branches.
+  val unselectedRaw = raw.copy(id = "r120-unselected-raw", text = "Alternativa non selezionata.", wordCount = 3)
+  val unselectedRefinement = refined.copy(id = "r120-unselected-refined", text = "Altra ripulita non selezionata.", wordCount = 4)
+  fun segment(id: Long, transcript: String, part: String, offset: Long, text: String, words: String, speaker: String) =
+    SegmentEntity(id, transcript, part, 0, 100, 900, offset + 100, offset + 900, text,
+      noSpeechProb = 0.02f, avgLogProb = -0.1f, wordsJson = words, wordsEstimated = false, speaker = speaker)
+  val segments = listOf(
+    segment(101, refRaw.id, parts[0].id, 0, refRaw.text, "0,300,Energia\n400,800,sintetica.", "SPEAKER_00"),
+    segment(102, raw.id, parts[1].id, 0, "Prima parte.", "0,300,Prima\n400,800,parte.", "SPEAKER_01"),
+    segment(103, raw.id, parts[2].id, 1000, "Seconda parte.", "0,300,Seconda\n400,800,parte.", "SPEAKER_01"),
+  )
+  val sourceRows = listOf("r120-source-a", "r120-source-b").map { id ->
+    SourceEntity(id, note.id, SourceKind.MARKDOWN, "$id.md", "text/markdown", original.size.toLong(), sha(original),
+      sourceFile.name, extractedChars = original.toString(Charsets.UTF_8).length, detail = "Fixture sintetica", importedAt = time + 700)
+  }
+  val native = PampaBundleNote(note, tags = listOf("fisica", "sintetico"), sessions = sessions, parts = parts,
+    transcripts = listOf(refRaw, refined, raw, unselectedRaw, unselectedRefinement),
+    segments = segments + segments[1].copy(id = 104, transcriptId = unselectedRaw.id), sources = sourceRows)
+  val exportSessions = sessions.mapIndexed { index, session ->
+    val selected = if (index == 0) refined else raw
+    val parent = if (index == 0) refRaw else raw
+    var offset = 0L
+    ExportSession(session.id, index + 1, session.title, session.date,
+      parts.filter { it.sessionId == session.id }.map { part ->
+        ExportPart(part.id, part.originalName, part.fileName, part.durationMs, offset, part.sizeBytes).also { offset += part.durationMs }
+      }, selected, parent, segments.filter { it.transcriptId == parent.id }, VoiceNames.decode(session.voiceNames))
+  }
+  val exportedSources = sourceRows.map { row -> ExportSource(row.originalName, row.kind, row.sha256, row.sizeBytes,
+    row.storedFileName, row.status, row.extractedChars, id = row.id) }
+  val set = ExportSet("Compatibilità 1.2.0", "released120", listOf(
+    ExportNote(note, listOf(root.name, child.name), native.tags, exportedSources, exportSessions, native = native),
+    ExportNote(plain, listOf(root.name), emptyList(), emptyList(), emptyList(), native = PampaBundleNote(plain)),
+  ), "Pampa Notes 1.2.0", time + 10000, folders = listOf(root, child))
+  output.outputStream().use { BundleWriter(audio, sources).write(set, ExportTarget.AGENT.defaults(), it) }
+  println("Released BundleWriter wrote ${output.length()} bytes; audio=${sha(tone)}; source=${sha(original)}")
+}
