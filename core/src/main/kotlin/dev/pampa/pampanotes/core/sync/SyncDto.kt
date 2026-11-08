@@ -232,6 +232,9 @@ object SyncCodec {
   private val SEGMENTS = kotlinx.serialization.builtins.ListSerializer(SegmentEntity.serializer())
 
   private val TRANSCRIBING_KEYS = setOf("transcribingOn", "transcribingSince")
+  private val RECORDING_ORIGIN_KEYS = setOf(
+    "recordedAtEpochMs", "recordedAtLocal", "recordedAtZoneId", "recordedAtSource", "recordedAtPrecision",
+  )
 
   /** Il payload senza le colonne che non sono contenuto. `note.updatedAt` sta un livello sotto. */
   private fun strip(element: JsonElement): JsonElement {
@@ -247,6 +250,9 @@ object SyncCodec {
           // An absent import baseline keeps old note hashes stable; a present baseline syncs.
           key == "bundleBodyBase" && value is JsonNull -> Unit
           key == "bundleNativeAdopted" && value is JsonNull -> Unit
+          key == "cloudSourceJson" && value is JsonNull -> Unit
+          // Unknown per-part recording origins keep the exact pre-migration sync hash.
+          key in RECORDING_ORIGIN_KEYS && value is JsonNull -> Unit
           // Lo stesso per il segno «in trascrizione su» delle sessioni: vuoto, la sessione e' quella
           // di prima (senza, l'aggiornamento avrebbe sporcato tutte le sessioni di tutti). Pieno,
           // conta: e' cosi' che il segno sale e arriva agli altri.
