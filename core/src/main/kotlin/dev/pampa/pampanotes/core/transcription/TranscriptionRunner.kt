@@ -269,6 +269,7 @@ class TranscriptionRunner internal constructor(
     archiveUploads: Boolean = false,
     onArchived: suspend (partId: String, at: Long) -> Unit = { _, _ -> },
     onPartial: (SessionPartial) -> Unit = {},
+    beforeCloudUpload: suspend () -> Unit = {},
     onProgress: (TranscriptionProgress) -> Unit = {},
   ): SessionTranscript {
     require(parts.isNotEmpty()) { "una sessione senza parti non si trascrive" }
@@ -278,6 +279,10 @@ class TranscriptionRunner internal constructor(
       // Groq's existing cache signature stays compatible; its model is now pinned in the job.
       if (provider.id == OpenRouterTranscriptionProvider.ID || provider.id == MistralTranscriptionProvider.ID) "|${request.model}" else ""
     val workDir = storage.prepare(files.jobDir(jobId), signature, request, provider.id != OpenAiCompatProvider.ID)
+    if (provider.id != OpenAiCompatProvider.ID) {
+      CloudWorkRecovery.prepare(workDir, parts, storage)
+      if (storage.hasUncertainUpload(workDir)) throw UncertainCloudRequest()
+    }
     val transcripts = mutableListOf<PartTranscript>()
     val sorted = parts.sortedBy { it.position }
     val scale = ProgressScale(
@@ -322,6 +327,7 @@ class TranscriptionRunner internal constructor(
           .copy(cloudPartId = part.id, cloudSessionId = part.sessionId),
         chunkMinutes = chunkMinutes,
         scale = scale,
+        beforeCloudUpload = beforeCloudUpload,
         onProgress = onProgress,
       )
     }
@@ -545,25 +551,26 @@ class TranscriptionRunner internal constructor(
     request: TranscribeRequest,
     chunkMinutes: Int,
     scale: ProgressScale,
+    beforeCloudUpload: suspend () -> Unit,
     onProgress: (TranscriptionProgress) -> Unit,
   ): PartTranscript {
     val source = files.audioFile(part.fileName)
     val cloud = provider.id != OpenAiCompatProvider.ID
     val savedInput = if (cloud) storage.identity(workDir) else null
     if (savedInput != null && (savedInput.partId != part.id || savedInput.durationMs != part.durationMs))
-      throw java.io.IOException("Transcription input placement changed; paid results retained")
+      throw RetainedCloudWorkChanged("Transcription input placement changed; paid results retained")
     val existing = workDir.listFiles() ?: throw java.io.IOException("Cannot inspect saved transcription part")
     val hasPaidData = existing.any { it.name.startsWith("whole.json") || it.name.startsWith("chunk-") || it.name == "plan.json" || it.name == "audio.pcm" || it.name.endsWith(".pending") || it.name.endsWith(".tmp") }
     // Legacy paid results remain usable, but cannot acquire evidence from a retry's input.
     var input = savedInput
     fun checkedInput(): String? {
       if (!cloud) return null
-      if (input == null && hasPaidData) throw java.io.IOException("Unknown cached audio identity; paid results retained, no automatic retranscription")
+      if (input == null && hasPaidData) throw RetainedCloudWorkChanged("Unknown cached audio identity; paid results retained, no automatic retranscription")
       val hash = dev.pampa.pampanotes.core.alignment.AlignmentProtocol.sha256(source)
       if (dev.pampa.pampanotes.core.alignment.AlignmentProtocol.validHash(part.sha256) && part.sha256 != hash)
-        throw java.io.IOException("Transcription audio does not match its saved hash")
+        throw RetainedCloudWorkChanged("Transcription audio does not match its saved hash")
       if (input != null && input!!.sha256 != hash)
-        throw java.io.IOException("Original transcription audio changed; paid results retained")
+        throw RetainedCloudWorkChanged("Original transcription audio changed; paid results retained")
       if (input == null) {
         input = TranscriptionWorkStorage.Input(part.id, hash, part.durationMs)
         storage.recordInput(workDir, input!!)
@@ -628,18 +635,15 @@ class TranscriptionRunner internal constructor(
       val cached = File(workDir, "whole.json")
       val chunk = readStored(cached, spec, signature) ?: run {
         val hash = checkedInput()
-        val result = try {
-          upload(cached, provider) {
+        upload(cached, provider, beforeCloudUpload, persist = { result ->
+          ChunkTranscript(spec, result.segments, result.text.takeIf { result.segments.isEmpty() }.orEmpty(),
+            sourceText = result.text.takeIf { cloud }, language = result.language,
+            audioSha256 = hash?.takeIf { runCatching { dev.pampa.pampanotes.core.alignment.AlignmentProtocol.sha256(source) }.getOrNull() == it }, reportedLanguageKnown = cloud,
+            sourceProvider = provider.id.takeIf { cloud }, sourceModel = request.model.takeIf { cloud })
+            .also { writeStored(cached, it, signature); if (cloud) storage.finishUpload(cached) }
+        }) {
             sendWithRetry(provider, source, part.mime, request.copy(cloudDurationMs = part.durationMs), waitingReporter(onProgress), remote(1, 1), uploading(1, 1))
-          }
-        } catch (silent: TranscriptionError.NoSpeech) {
-          TranscriptResult("", emptyList(), null, null)
         }
-        ChunkTranscript(spec, result.segments, result.text.takeIf { result.segments.isEmpty() }.orEmpty(),
-          sourceText = result.text.takeIf { cloud }, language = result.language,
-          audioSha256 = hash?.takeIf { runCatching { dev.pampa.pampanotes.core.alignment.AlignmentProtocol.sha256(source) }.getOrNull() == it }, reportedLanguageKnown = cloud,
-          sourceProvider = provider.id.takeIf { cloud }, sourceModel = request.model.takeIf { cloud })
-          .also { writeStored(cached, it, signature); if (cloud) storage.finishUpload(cached) }
       }
       finished(1, 1)
       val stitched = if (provider.id == OpenAiCompatProvider.ID) TranscriptStitcher.stitch(listOf(chunk), request.prompt)
@@ -691,27 +695,19 @@ class TranscriptionRunner internal constructor(
         if (cloud) {
           checkedInput()
         }
-        val result = try {
-          upload(chunkFile(workDir, spec.index), provider) {
+        val chunk = upload(chunkFile(workDir, spec.index), provider, beforeCloudUpload, persist = { result ->
+          ChunkTranscript(spec, result.segments, result.text.takeIf { result.segments.isEmpty() }.orEmpty(),
+            sourceText = result.text.takeIf { cloud }, language = result.language,
+            audioSha256 = hash, reportedLanguageKnown = cloud,
+            sourceProvider = provider.id.takeIf { cloud }, sourceModel = request.model.takeIf { cloud })
+            .also { writeStoredChunk(workDir, it, signature); if (cloud) storage.finishUpload(chunkFile(workDir, spec.index)) }
+        }) {
             sendWithRetry(
               provider, encoded.file, encoded.mime, request.copy(cloudDurationMs = spec.endMs - spec.startMs), waitingReporter(onProgress),
               remote(chunkIndex, chunkCount), uploading(chunkIndex, chunkCount),
             )
-          }
-        } catch (silent: TranscriptionError.NoSpeech) {
-          // Dieci minuti di intervallo, o la classe che esce: un pezzo muto e' un pezzo vuoto, non
-          // una lezione fallita. Si salva vuoto, cosi' una ripresa non lo rimanda.
-          TranscriptResult("", emptyList(), null, null)
         }
         finished(chunkIndex, chunkCount)
-        val chunk = ChunkTranscript(spec, result.segments, result.text.takeIf { result.segments.isEmpty() }.orEmpty(),
-          sourceText = result.text.takeIf { cloud }, language = result.language,
-          audioSha256 = hash, reportedLanguageKnown = cloud,
-          sourceProvider = provider.id.takeIf { cloud }, sourceModel = request.model.takeIf { cloud })
-        // Prima su disco, poi in memoria: un processo ucciso fra le due cose deve poter ripartire
-        // da qui, non dal pezzo precedente.
-        writeStoredChunk(workDir, chunk, signature)
-        if (cloud) storage.finishUpload(chunkFile(workDir, spec.index))
         chunkTranscripts += chunk
       } finally {
         encoded.file.delete()
@@ -726,13 +722,22 @@ class TranscriptionRunner internal constructor(
     return assembled(stitched, chunkTranscripts)
   }
 
-  private suspend fun upload(resultFile: File, provider: TranscriptionProvider, send: suspend () -> TranscriptResult): TranscriptResult {
-    if (provider.id == OpenAiCompatProvider.ID) return send()
-    val context = CloudUploadContext(storage.beginUpload(resultFile), provider.id)
+  private suspend fun <T : Any> upload(resultFile: File, provider: TranscriptionProvider,
+    beforeCloudUpload: suspend () -> Unit, persist: (TranscriptResult) -> T, send: suspend () -> TranscriptResult): T {
+    suspend fun response() = try { send() } catch (_: TranscriptionError.NoSpeech) {
+      TranscriptResult("", emptyList(), null, null)
+    }
+    if (provider.id == OpenAiCompatProvider.ID) return persist(response())
+    var saved: T? = null
+    val context = CloudUploadContext(storage.beginUpload(resultFile), provider.id, beforeCloudUpload,
+      persistBody = { storage.write(File(resultFile.path + ".received"), it.toString()) }) { saved = persist(it) }
     try {
-      return kotlinx.coroutines.withContext(context) { send() }
+      kotlinx.coroutines.withContext(context) { context.received(response()) }
+      return checkNotNull(saved)
     } catch (error: Throwable) {
       context.refusedBeforeDispatch(error)
+      if (error !is kotlinx.coroutines.CancellationException && storage.hasUncertainUploadFor(resultFile))
+        throw UncertainCloudRequest(error)
       throw error
     }
   }
@@ -853,9 +858,14 @@ class TranscriptionRunner internal constructor(
     storage.write(file, StoredChunks.encode(chunk, signature))
   }
 
-  /** Butta tutto quello che il lavoro aveva lasciato in giro: si chiama quando finisce, in bene o in male. */
-  fun cleanUp(jobId: String) {
-    runCatching { files.jobDir(jobId).deleteRecursively() }
+  /** Retain paid responses and uncertain intents on every interruption, including cancellation. */
+  fun cleanUp(jobId: String) = cleanUp(jobId, completed = false)
+
+  fun cleanUp(jobId: String, completed: Boolean) {
+    runCatching {
+      val directory = File(files.jobs, jobId)
+      if (completed) directory.deleteRecursively() else storage.cleanUp(directory)
+    }
   }
 
   companion object {

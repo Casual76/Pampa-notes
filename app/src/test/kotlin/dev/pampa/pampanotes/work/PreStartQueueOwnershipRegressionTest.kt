@@ -35,6 +35,7 @@ class PreStartQueueOwnershipRegressionTest {
     val cooldowns = mockk<CloudCooldownStore>()
     val scheduler = mockk<WorkScheduler>(relaxed = true)
     val runner = mockk<TranscriptionRunner>(relaxed = true)
+    val files = mockk<AppFiles>()
     val old = JobEntity("job", "session", JobType.TRANSCRIBE, "openrouter", model = "chosen/model",
       optionsJson = """{"cloudChunkMinutes":10,"groqMaxUploadMb":25}""", createdAt = 1, updatedAt = 1)
     var row = old
@@ -45,6 +46,7 @@ class PreStartQueueOwnershipRegressionTest {
     val repository: TranscriptionRepository
     val worker: TranscriptionQueueWorker
     init {
+      every { files.jobs } returns File(temp.newFolder(), "jobs")
       coEvery { settings.current() } answers { prefs }
       coEvery { jobs.get("job") } answers { row }
       coEvery { sessions.get("session") } returns null
@@ -59,7 +61,7 @@ class PreStartQueueOwnershipRegressionTest {
         listOf(part)
       }
       repository = TranscriptionRepository(jobs, sessions, mockk(), parts, transcripts, mockk(), settings, keys, http,
-        mockk(), mockk(), mockk(), mockk(), mockk(), mockk<AppFiles>(), mockk<CloudSpending>(), mockk(), cooldowns)
+        mockk(), mockk(), mockk(), mockk(), mockk(), files, mockk<CloudSpending>(), mockk(), cooldowns)
       // Bypass CoroutineWorker's Android constructor; invoke only the real suspend body under test.
       val unsafeClass = Class.forName("sun.misc.Unsafe")
       val field = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }

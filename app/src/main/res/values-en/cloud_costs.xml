@@ -60,7 +60,7 @@
     <string name="cloud_cost_reset_detail">Local totals start again from now. Reservations and uncertain charges remain; history is retained. Provider charges are not refunded and provider limits do not change.</string>
     <string name="cloud_cost_storage_error">Cloud controls could not be read or saved. No new upload is authorized.</string>
     <string name="cloud_folder_title">Cloud permissions</string>
-    <string name="cloud_folder_scope">Applies here and in subfolders to Groq and OpenRouter. Your home computer remains available. The nearest explicit folder rule wins.</string>
+    <string name="cloud_folder_scope">Applies here and in subfolders to all cloud services. Your home computer remains available. The nearest explicit folder rule wins.</string>
     <string name="cloud_folder_inherit">Inherit from parent folder</string>
     <string name="cloud_folder_allow">Allow cloud transcription</string>
     <string name="cloud_folder_deny">Block cloud transcription</string>

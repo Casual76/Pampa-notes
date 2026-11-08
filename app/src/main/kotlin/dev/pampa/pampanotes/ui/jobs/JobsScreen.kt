@@ -2,8 +2,13 @@ package dev.pampa.pampanotes.ui.jobs
 
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -45,6 +50,8 @@ fun JobsRoute(
   viewModel: JobsViewModel = hiltViewModel(),
 ) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
+  var recoveryJob by remember { mutableStateOf<String?>(null) }
+  recoveryJob?.let { dev.pampa.pampanotes.ui.common.CloudRecoveryReader(it, onDismiss = { recoveryJob = null }) }
   val holes: HolesOfferViewModel = hiltViewModel()
   val offer by holes.offer.collectAsStateWithLifecycle()
   val tailscale: TailscaleReminderViewModel = hiltViewModel()
@@ -112,6 +119,7 @@ fun JobsRoute(
             FluidListRow(
               title = row.noteTitle.ifBlank { stringResource(R.string.jobs_unknown_note) },
               subtitle = when {
+                row.standing == FailureStanding.UNCERTAIN -> stringResource(R.string.cloud_request_uncertain)
                 superseded -> stringResource(R.string.job_superseded_detail)
                 silent -> stringResource(R.string.job_no_speech_title)
                 else -> row.job.errorCode?.let { jobErrorText(it, row.job.errorMessage, row.job.provider) } ?: jobStateLabel(row.job.state)
@@ -144,6 +152,11 @@ fun JobsRoute(
                 }
               },
             )
+            if (row.recoveryAvailable) {
+              FluidListDivider()
+              FluidListRow(title = stringResource(R.string.cloud_recovery_open),
+                subtitle = stringResource(R.string.cloud_recovery_local), onClick = { recoveryJob = row.job.id })
+            }
           }
         }
       }
@@ -170,6 +183,8 @@ fun JobsRoute(
           fillWidth = true,
           modifier = Modifier.fillMaxWidth(),
         )
+        Text(stringResource(R.string.cloud_recovery_clear_detail), style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant)
       }
     }
   }

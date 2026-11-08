@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="cloud_request_uncertain">L’esito finale di un invio non è confermato: il servizio potrebbe averlo ricevuto e addebitato. Il lavoro è fermo: Riprova non lo reinvia. Puoi leggere i risultati già ricevuti. Una nuova richiesta dalla registrazione richiede una scelta esplicita e potrebbe costare di nuovo; gli addebiti incerti restano protetti.</string>
+  <string name="cloud_recovery_title">Risultati ricevuti · lavoro interrotto</string>
+  <string name="cloud_recovery_open">Leggi i risultati ricevuti</string>
+  <string name="cloud_recovery_local">Recupero locale, senza caricare audio</string>
+  <string name="cloud_recovery_intro">Questi sono solo i risultati ricevuti da questo lavoro: puoi selezionare e copiare il testo. Non sono una trascrizione completa. Gli intervalli indicano il pezzo audio inviato, non i tempi delle parole. La cronologia e la versione selezionata restano quelle salvate.</string>
+  <string name="cloud_recovery_unavailable">Risultati in verifica o non disponibili per questo account e questa versione della registrazione. I file conservati non vengono cancellati né reinviati. Se sono cambiati account o audio, torna alla versione originale per recuperarli.</string>
+  <string name="cloud_recovery_window">Parte %1$d · audio %2$s – %3$s</string>
+  <string name="cloud_recovery_part">Parte %1$d · durata non verificata</string>
+  <string name="cloud_recovery_empty">Risposta ricevuta senza testo.</string>
+  <string name="cloud_recovery_missing">Risultato non ricevuto: questa porzione manca.</string>
+  <string name="cloud_recovery_window_uncertain">Risposta non salvata; invio dall’esito incerto. Questa porzione manca e non verrà reinviata automaticamente.</string>
+  <string name="cloud_recovery_window_unavailable">Risultato conservato ma non verificabile con questo audio o piano. Non è stato incluso né reinviato.</string>
+  <string name="cloud_recovery_new_request">Nuova richiesta…</string>
+  <string name="cloud_recovery_resend_warning">Una parte potrebbe essere già stata ricevuta e addebitata dal servizio. Questa è una nuova trascrizione e potrebbe addebitare di nuovo anche le parti già ricevute. Il vecchio lavoro resta fermo, i suoi risultati restano recuperabili e gli addebiti incerti non vengono liberati. Vuoi proseguire con i normali controlli per una nuova richiesta?</string>
+  <string name="cloud_recovery_cancelled">Lavoro annullato · risultati conservati</string>
+  <string name="cloud_recovery_clear_detail">Svuota la cronologia conserva i lavori con risultati o invii incerti. Elimina sul singolo lavoro rimuove il suo accesso al recupero locale.</string>
+</resources>

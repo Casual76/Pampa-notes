@@ -175,6 +175,7 @@ class TranscriptionHttp(
     var boundAccounting: CloudAttemptAccounting? = null
     val boundUpload = try {
       permit?.beforeRequest()
+      upload?.authorize()
       boundAccounting = accounting?.dispatch(connection.url.toString())
       upload?.dispatch(connection.url.toString())
     } catch (t: Throwable) {
@@ -212,6 +213,9 @@ class TranscriptionHttp(
     val stream = if (code in 200..299) connection.inputStream else connection.errorStream
     val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
     val parsed = runCatching { json.parseToJsonElement(text) }.getOrNull()
+    // Capture received text before accounting or the IO dispatcher return can suspend/cancel.
+    // The sending marker is kept until the runner commits a parsed result normally.
+    if (code in 200..299) upload?.receivedBody(parsed)
     // Capture usage.cost on both success and error responses before transcript/error parsing.
     // Failure to persist accounting propagates; the durable reservation remains conservative.
     accountResponse(onResponse, parsed, upload)

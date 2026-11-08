@@ -36,12 +36,12 @@ internal open class TranscriptionWorkStorage {
         if (!alternate.isDirectory && !alternate.mkdirs()) throw IOException("Cannot create companion work directory")
         return prepare(alternate, signature, request, cloud)
       }
-      throw IOException("Unstamped or changed transcription plan; paid data retained. Start a new manual job.")
+      throw RetainedCloudWorkChanged("Unstamped or changed transcription plan; paid data retained. Start a new manual job.")
     }
     val options = File(directory, "options.json")
     val encoded = json.encodeToString(Options.serializer(), Options(signature, request.model, request.language, request.prompt, request.temperature))
     if (options.exists()) {
-      if (options.readText() != encoded) throw IOException("Transcription options changed; paid data retained. Start a new manual job.")
+      if (options.readText() != encoded) throw RetainedCloudWorkChanged("Transcription options changed; paid data retained. Start a new manual job.")
     } else write(options, encoded)
     // This commit marker is written last, atomically, before any upload.
     if (previous == null) write(stamp, signature)
@@ -62,8 +62,9 @@ internal open class TranscriptionWorkStorage {
     val marker = File(resultFile.parentFile, "${resultFile.name}.sending")
     // A rejection replaces this exact attempt atomically. Legacy/unknown/interrupted writes
     // stay conservative; neither a provider cooldown nor an exception can unlock them.
-    if (marker.exists() && !marker.readText().matches(Regex("rejected:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")))
-      throw IOException("Uncertain previous paid request; results retained, automatic rerun refused")
+    if (marker.exists() && !rejectedMarker(marker))
+      throw UncertainCloudRequest()
+    if (File(marker.path + ".pending").exists()) throw UncertainCloudRequest()
     val token = UUID.randomUUID().toString()
     write(marker, "pending:$token")
     Upload(marker, token)
@@ -105,7 +106,40 @@ internal open class TranscriptionWorkStorage {
     if (marker.exists() && !marker.delete()) throw IOException("Cannot finish saved transcription request")
   }
 
+  /** Unknown/interrupted markers never become permission to resend, including after restart. */
+  fun hasUncertainUpload(directory: File): Boolean = synchronized(uploadLock) {
+    directory.walkTopDown().filter { it.isFile }.any { file ->
+      file.name.endsWith(".sending.pending") || (file.name.endsWith(".sending") && !rejectedMarker(file))
+    }
+  }
+
+  fun hasUncertainUploadFor(result: File): Boolean {
+    val marker = File(result.path + ".sending")
+    return File(marker.path + ".pending").exists() || (marker.exists() && !rejectedMarker(marker))
+  }
+
+  private fun rejectedMarker(file: File): Boolean = runCatching {
+    file.readText().matches(Regex("rejected:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
+  }.getOrDefault(false)
+
+  /** Explicit user recovery and sweeping share this predicate; scratch PCM alone is disposable. */
+  fun hasRetainedWork(directory: File): Boolean = hasUncertainUpload(directory) || directory.walkTopDown().any {
+    it.isFile && retainedResultName.matches(it.name)
+  }
+
+  /** Only derived audio is disposable after cancellation. Paid text and request evidence survive. */
+  fun cleanUp(directory: File) {
+    if (!hasRetainedWork(directory)) { directory.deleteRecursively(); return }
+    directory.walkTopDown().filter { it.isFile && (it.name == "audio.pcm" || it.extension in setOf("m4a", "wav")) }
+      .forEach { it.delete() }
+  }
+
+  fun savedModel(directory: File): String = json.decodeFromString(Options.serializer(), File(directory, "options.json").readText()).model
+
   @Serializable internal data class Input(val partId: String, val sha256: String, val durationMs: Long, val version: Int = 1)
   @Serializable private data class Options(val signature: String, val model: String, val language: String?, val prompt: String?, val temperature: Double)
-  private companion object { val uploadLock = Any() }
+  private companion object {
+    val uploadLock = Any()
+    val retainedResultName = Regex("(?:whole|chunk-[0-9]+)\\.json(?:\\.(?:pending|received(?:\\.pending)?))?")
+  }
 }

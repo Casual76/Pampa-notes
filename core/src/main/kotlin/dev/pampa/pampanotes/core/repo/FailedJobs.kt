@@ -24,6 +24,10 @@ enum class FailureStanding {
 
   /** La sessione non c'e' piu': non c'e' niente da rifare. */
   ORPHANED,
+
+  /** Paid POST may have completed. Same-job retry must stay blocked. */
+  UNCERTAIN,
+  RECOVERY_ONLY,
 }
 
 /**
@@ -46,6 +50,9 @@ object FailedJobs {
     sessionJobs: List<JobEntity>,
   ): FailureStanding {
     if (!sessionExists) return FailureStanding.ORPHANED
+    if (job.errorCode == "cloud_request_uncertain") return FailureStanding.UNCERTAIN
+    if (job.errorCode == "cloud_recovery_changed") return FailureStanding.RECOVERY_ONLY
+
     val producedKind = if (job.type == JobType.REFINE) TranscriptKind.REFINED else TranscriptKind.RAW
     val newerResult = transcripts.any { it.kind == producedKind && it.createdAt > job.createdAt }
     val newerJob = sessionJobs.any { other ->
@@ -66,4 +73,7 @@ object FailedJobs {
    */
   fun discardsWorkOnRetry(job: JobEntity): Boolean = job.type == JobType.TRANSCRIBE &&
     (job.provider == "custom" || job.errorCode == NO_SPEECH)
+
+  fun requiresNewRequest(job: JobEntity): Boolean = job.state == JobState.CANCELLED ||
+    job.errorCode in setOf("cloud_request_uncertain", "cloud_recovery_changed")
 }

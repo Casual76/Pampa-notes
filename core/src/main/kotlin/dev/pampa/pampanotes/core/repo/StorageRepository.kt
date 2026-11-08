@@ -341,7 +341,11 @@ class StorageRepository internal constructor(
     // while these queries are running. The sweep must still recognize that older snapshot.
     val snapshot = files.beginOrphanSweep()
     try {
-      val activeJobs = jobs.all().filter { !it.state.isTerminal }.map { it.id }.toSet()
+      // Terminal cloud jobs still own recoverable paid responses and uncertain POST evidence.
+      val work = dev.pampa.pampanotes.core.transcription.TranscriptionWorkStorage()
+      val activeJobs = jobs.all().filter { !it.state.isTerminal ||
+        (it.type == dev.pampa.pampanotes.core.db.JobType.TRANSCRIBE && it.provider != "custom" &&
+          work.hasRetainedWork(java.io.File(files.jobs, it.id))) }.map { it.id }.toSet()
       files.sweepOrphans(
         referencedAudio = audioParts.fileNames().toSet(),
         referencedSources = sources.storedFileNames().toSet(),

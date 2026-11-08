@@ -57,6 +57,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.ensureActive
@@ -96,6 +98,39 @@ class TranscriptionRepository @Inject constructor(
   fun observeBySession(sessionId: String): Flow<List<JobEntity>> = jobs.observeBySession(sessionId)
 
   suspend fun get(jobId: String): JobEntity? = jobs.get(jobId)
+
+  suspend fun hasRetainedCloudWork(job: JobEntity): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+    job.type == JobType.TRANSCRIBE && job.provider != OpenAiCompatProvider.ID &&
+      dev.pampa.pampanotes.core.transcription.TranscriptionWorkStorage().hasRetainedWork(java.io.File(files.jobs, job.id))
+  }
+
+  suspend fun uncertainCloudWork(job: JobEntity): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+    job.type == JobType.TRANSCRIBE && job.provider != OpenAiCompatProvider.ID &&
+      runCatching { dev.pampa.pampanotes.core.transcription.TranscriptionWorkStorage().hasUncertainUpload(java.io.File(files.jobs, job.id)) }.getOrDefault(true)
+  }
+
+  /** Account/session/audio changes revoke an open reader too. No provider, fetch, or DB writes. */
+  @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+  fun observeCloudRecovery(jobId: String): Flow<dev.pampa.pampanotes.core.transcription.RecoveredCloudWork?> =
+    jobs.observe(jobId).flatMapLatest { job ->
+      if (job == null || !job.state.isTerminal || job.type != JobType.TRANSCRIBE || job.provider == OpenAiCompatProvider.ID)
+        kotlinx.coroutines.flow.flowOf(null)
+      else combine(settingsStore.settings, sessions.observe(job.sessionId)) { settings, session -> settings to session }
+        .transformLatest { (settings, session) ->
+          emit(null)
+          if (session == null) return@transformLatest
+          val account = CloudRetry.fingerprint(settings.syncAccount)
+          val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+              if (cooldowns.contexts.get(job.id)?.accountFingerprint != account) null
+              else dev.pampa.pampanotes.core.transcription.CloudWorkRecovery.read(
+                java.io.File(files.jobs, job.id), job, session.partsSorted, files.audio,
+              )
+            }.getOrNull()
+          }
+          if (CloudRetry.fingerprint(settingsStore.current().syncAccount) == account) emit(result)
+        }
+    }
 
   /** La riga di un lavoro, viva: il worker la guarda per accorgersi di un «Annulla» mentre lavora. */
   fun observeJob(jobId: String): Flow<JobEntity?> = jobs.observe(jobId)
@@ -233,6 +268,7 @@ class TranscriptionRepository @Inject constructor(
 
   /** Legacy rows are pinned once locally; new cloud jobs already carry a model at enqueue. */
   suspend fun pinForRun(job: JobEntity): JobEntity? {
+    if (uncertainCloudWork(job)) throw TranscriptionError.UncertainOutcome()
     // Privacy migration can replace a queued cloud identity while this caller is suspended.
     // Never derive or persist a model for a stale provider, including already-pinned rows.
     val current = jobs.get(job.id) ?: return null
@@ -284,7 +320,10 @@ class TranscriptionRepository @Inject constructor(
     return failed.groupBy { it.sessionId }.flatMap { (sessionId, sessionFailed) ->
       val exists = sessions.get(sessionId) != null
       val sessionTranscripts = if (exists) transcripts.bySession(sessionId) else emptyList()
-      sessionFailed.map { job -> job.id to FailedJobs.standing(job, exists, sessionTranscripts, bySession[sessionId].orEmpty()) }
+      sessionFailed.map { job -> job.id to FailedJobs.standing(
+        if (uncertainCloudWork(job)) job.copy(errorCode = "cloud_request_uncertain") else job,
+        exists, sessionTranscripts, bySession[sessionId].orEmpty(),
+      ) }
     }.toMap()
   }
 
@@ -331,7 +370,8 @@ class TranscriptionRepository @Inject constructor(
     var moved = 0
     for (provider in TranscriptionProviderId.entries.filter { it != TranscriptionProviderId.CUSTOM }) {
       for (job in jobs.movableTranscriptions(provider.id)) {
-        if (!explicitCloud(job)) moved += jobs.moveTranscription(job.id, provider.id, OpenAiCompatProvider.ID, job.optionsJson, System.currentTimeMillis())
+        if (!explicitCloud(job) && !hasRetainedCloudWork(job))
+          moved += jobs.moveTranscription(job.id, provider.id, OpenAiCompatProvider.ID, job.optionsJson, System.currentTimeMillis())
       }
     }
     return moved
@@ -490,6 +530,13 @@ class TranscriptionRepository @Inject constructor(
     return false
   }
 
+  suspend fun markDone(job: JobEntity): Boolean = db.withTransaction {
+    val current = jobs.get(job.id) ?: return@withTransaction false
+    if (ownsDispatch(job, current)) return@withTransaction jobs.markDone(job.id, System.currentTimeMillis()) > 0
+    if (current.state == JobState.CANCEL_REQUESTED) markCancelled(job)
+    false
+  }
+
   /** Com'e' finito un lavoro che si voleva segnare fallito. */
   enum class FailOutcome {
     /** Segnato fallito: si dice all'utente. */
@@ -542,9 +589,13 @@ class TranscriptionRepository @Inject constructor(
    */
   suspend fun retry(jobId: String): JobEntity? {
     val job = jobs.get(jobId) ?: return null
+    if (job.state != JobState.FAILED || job.errorCode == "cloud_request_uncertain" || uncertainCloudWork(job)) return null
+    if (FailedJobs.standing(job, sessions.get(job.sessionId) != null, transcripts.bySession(job.sessionId),
+        jobs.all().filter { it.sessionId == job.sessionId }) != FailureStanding.RETRYABLE) return null
+    val provider = effectiveProvider(job)
+    if (provider != job.provider && hasRetainedCloudWork(job)) return null
     // Con lo stesso id «Riprova» rileggerebbe i pezzi del tentativo fallito — vuoti, o di un altro
     // piano — invece di chiedere di nuovo ([FailedJobs.discardsWorkOnRetry]).
-    if (FailedJobs.discardsWorkOnRetry(job)) runCatching { java.io.File(files.jobs, job.id).deleteRecursively() }
     // Il conto delle volte che il computer e' sparito riparte: chi riprova ha di solito rimesso a
     // posto il computer. Le opzioni di un raffinamento (il preset) invece restano, e le impostazioni
     // che chi ha ritrascritto aveva scelto per questo lavoro: «Riprova» e' la stessa richiesta.
@@ -553,13 +604,24 @@ class TranscriptionRepository @Inject constructor(
     } else {
       job.optionsJson
     }
-    jobs.retry(jobId, effectiveProvider(job), options, System.currentTimeMillis())
-    return jobs.get(jobId)
+    return db.withTransaction {
+      if (jobs.get(jobId) != job) return@withTransaction null
+      if (FailedJobs.discardsWorkOnRetry(job)) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        java.io.File(files.jobs, job.id).deleteRecursively()
+      }
+      jobs.retry(jobId, provider, options, System.currentTimeMillis())
+      jobs.get(jobId)
+    }
   }
 
   suspend fun delete(jobId: String) = jobs.delete(jobId)
 
-  suspend fun clearFinished() = jobs.deleteTerminal()
+  suspend fun clearFinished() {
+    // Keep recovery reachable. Individual Delete explicitly dismisses this result.
+    for (job in jobs.all().filter { it.state.isTerminal }) {
+      if (!hasRetainedCloudWork(job)) db.withTransaction { if (jobs.get(job.id) == job) jobs.delete(job.id) }
+    }
+  }
 
   /**
    * I lavori che il processo precedente ha lasciato «in corso» tornano in coda: erano in corso, non
@@ -578,8 +640,22 @@ class TranscriptionRepository @Inject constructor(
     return requeueLock.withLock {
       if (requeueDone.get()) return@withLock false
       jobs.requeueInterrupted(System.currentTimeMillis())
+      classifyUncertainCloudWork()
       requeueDone.set(true)
       true
+    }
+  }
+
+  /** Runs before any startup queue wake, independently of credentials/provider availability. */
+  internal suspend fun classifyUncertainCloudWork() {
+    for (job in jobs.all().filter { it.state == JobState.QUEUED || it.state == JobState.FAILED }) {
+      if (uncertainCloudWork(job)) {
+        if (job.state == JobState.QUEUED) fail(job, TranscriptionError.UncertainOutcome())
+        else db.withTransaction {
+          if (jobs.get(job.id) == job) jobs.update(job.copy(errorCode = "cloud_request_uncertain",
+            errorMessage = "Cloud request outcome uncertain; received results retained"))
+        }
+      }
     }
   }
 
@@ -796,6 +872,49 @@ class TranscriptionRepository @Inject constructor(
     result: SessionTranscript,
     originalParts: List<AudioPartEntity> = emptyList(),
   ): SavedTranscription? = sessionRepository.saveTranscription(sessionId, partIds, result, originalParts)
+
+  data class CloudSaveSnapshot(val activeId: String?, val transcripts: List<TranscriptEntity>)
+
+  suspend fun cloudSaveSnapshot(sessionId: String): CloudSaveSnapshot? = db.withTransaction {
+    val session = sessions.get(sessionId) ?: return@withTransaction null
+    CloudSaveSnapshot(session.activeTranscriptId, transcripts.bySession(sessionId))
+  }
+
+  /** Rechecked by the actual HTTP boundary after metadata and spending authorization suspend. */
+  suspend fun validateCloudDispatch(job: JobEntity, originalParts: List<AudioPartEntity>) {
+    if (!dev.pampa.pampanotes.core.transcription.CloudRecoveryFence.sameParts(originalParts, parts.bySession(job.sessionId)))
+      throw TranscriptionError.CloudControl("cloud_recovery_changed")
+    if (accountForJob(job.id) != CloudRetry.fingerprint(settingsStore.current().syncAccount))
+      throw TranscriptionError.CloudControl("cloud_account_changed")
+    val current = jobs.get(job.id)
+    if (current == null || !ownsDispatch(job, current)) throw kotlinx.coroutines.CancellationException("Cloud dispatch no longer owned")
+  }
+
+  /** Commit only into the same dispatch/input/history the worker actually started with. */
+  suspend fun saveOwnedCloudTranscript(job: JobEntity, originalParts: List<AudioPartEntity>,
+    snapshot: CloudSaveSnapshot, result: SessionTranscript): SavedTranscription? = db.withTransaction {
+    val current = jobs.get(job.id) ?: return@withTransaction null
+    if (!ownsDispatch(job, current)) return@withTransaction null
+    val account = CloudRetry.fingerprint(settingsStore.current().syncAccount)
+    if (accountForJob(job.id) != account) return@withTransaction null
+    val session = sessions.get(job.sessionId) ?: return@withTransaction null
+    if (session.activeTranscriptId != snapshot.activeId || transcripts.bySession(job.sessionId) != snapshot.transcripts ||
+        snapshot.transcripts.any { it.createdAt > job.createdAt }) return@withTransaction null
+    val currentParts = parts.bySession(job.sessionId)
+    if (!dev.pampa.pampanotes.core.transcription.CloudRecoveryFence.sameParts(originalParts, currentParts)) return@withTransaction null
+    val audioMatches = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+      originalParts.all { part ->
+        val source = result.sourceParts.singleOrNull { it.partId == part.id }
+        val hash = source?.audioSha256
+        val audio = files.audioFile(part.fileName)
+        hash != null && dev.pampa.pampanotes.core.alignment.AlignmentProtocol.validHash(hash) &&
+          (!dev.pampa.pampanotes.core.alignment.AlignmentProtocol.validHash(part.sha256) || part.sha256 == hash) &&
+          (!audio.exists() || dev.pampa.pampanotes.core.alignment.AlignmentProtocol.sha256(audio) == hash)
+      }
+    }
+    if (!audioMatches) return@withTransaction null
+    sessionRepository.saveTranscription(job.sessionId, originalParts.map { it.id }, result, originalParts)
+  }
 
   /**
    * La sessione del lavoro non c'e' piu', ma qualcuna delle sue parti si': e' stata unita a

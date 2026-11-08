@@ -399,9 +399,10 @@ class SessionViewModel @Inject constructor(
       job = (values[3] as List<JobEntity>).firstOrNull { it.state.isActive },
       // Una grezza (o una raffinata) arrivata dopo il fallimento — dal sync, da un altro dispositivo,
       // da un altro tentativo — lo supera: la stessa regola di «Riprova tutti» (FailedJobs).
-      failedJob = (values[3] as List<JobEntity>).firstOrNull()?.takeIf { failed ->
-        failed.state == JobState.FAILED &&
-          FailedJobs.standing(failed, sessionExists = true, transcripts, values[3] as List<JobEntity>) != FailureStanding.SUPERSEDED
+      failedJob = (values[3] as List<JobEntity>).firstOrNull { failed ->
+        (failed.state == JobState.FAILED &&
+          FailedJobs.standing(failed, sessionExists = true, transcripts, values[3] as List<JobEntity>) != FailureStanding.SUPERSEDED) ||
+          (failed.state == JobState.CANCELLED && transcription.hasRetainedCloudWork(failed))
       },
       siblings = values[4] as List<SessionEntity>,
       missing = values[6] as List<AudioPartEntity>?,
@@ -693,6 +694,10 @@ class SessionViewModel @Inject constructor(
   fun cancelJob(jobId: String) = viewModelScope.launch {
     runCatching { alignment.cancelSession(sessionId) }
     transcription.requestCancel(jobId)
+  }
+
+  fun retryJob(jobId: String) = viewModelScope.launch {
+    transcription.retry(jobId)?.let { scheduler.kick(it.provider) }
   }
 
   fun cancelAlignment() = viewModelScope.launch { runCatching { alignment.cancelSession(sessionId) } }

@@ -350,7 +350,15 @@ class TranscriptionQueueWorker @AssistedInject constructor(
   }
 
   private suspend fun recoverPrivacy(job: JobEntity): Step = withContext(NonCancellable) {
+    if (repository.get(job.id)?.state == JobState.CANCEL_REQUESTED) {
+      cancel(job)
+      return@withContext Step.Next
+    }
     if (retainCurrentOwner(job)) return@withContext Step.Next
+    if (repository.hasRetainedCloudWork(job)) {
+      fail(job, if (repository.uncertainCloudWork(job)) TranscriptionError.UncertainOutcome() else TranscriptionError.CompanionOnly())
+      return@withContext Step.Next
+    }
     repository.requeueStopped(job)
     repository.moveCloudTranscriptionsToComputer()
     repository.get(job.id)?.takeIf { it.state == JobState.QUEUED }?.let { scheduler.kick(it.provider) }
@@ -409,6 +417,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
     }
     // La fotografia delle parti: il risultato si salva per parte, dove ognuna sta quando arriva.
     val partIds = parts.map { it.id }
+    val cloudSnapshot = if (job.provider != OpenAiCompatProvider.ID) repository.cloudSaveSnapshot(job.sessionId) else null
 
     val model = job.model ?: repository.resolveModel(provider, settings)
     if (model.isBlank()) throw TranscriptionError.UnknownModel(model, "Select a transcription model in Services")
@@ -460,6 +469,7 @@ class TranscriptionQueueWorker @AssistedInject constructor(
             onArchived = repository::markPartArchived,
             // «Il testo che arriva a pezzi»: la sessione lo mostra «in arrivo» finche' il lavoro va.
             onPartial = { partial -> partials.publish(job.sessionId, partial) },
+            beforeCloudUpload = { repository.validateCloudDispatch(runningJob, parts) },
           ) { progress ->
             touch()
             latest.update { it.applyProgress(progress) }
@@ -468,30 +478,30 @@ class TranscriptionQueueWorker @AssistedInject constructor(
       }
 
       if (repository.get(job.id)?.state == JobState.CANCEL_REQUESTED) {
-        cancel(job)
+        cancel(runningJob)
         return Step.Next
       }
 
       repository.publishProgress(latest.value.copy(state = JobState.STITCHING, progress = 0.98f, phase = null))
-      val saved = repository.saveTranscript(job.sessionId, partIds, result, originalParts = parts)
+      val saved = if (job.provider == OpenAiCompatProvider.ID) repository.saveTranscript(job.sessionId, partIds, result, originalParts = parts)
+        else cloudSnapshot?.let { repository.saveOwnedCloudTranscript(runningJob, parts, it, result) }
       if (saved == null) {
-        // Nessuna delle parti esiste piu': la sessione e' stata cancellata mentre il computer
-        // trascriveva. Non c'e' niente da salvare, e non e' un fallimento da notificare — prima la
-        // chiave esterna faceva fallire il salvataggio, con una notifica d'errore e la cartella del
-        // lavoro lasciata su disco.
-        repository.markCancelled(job.id)
+        // Deleted/moved audio, changed owner/account or newer history wins. Cloud responses stay
+        // readable through recovery; never replace the newer selection with this late result.
+        repository.markCancelled(runningJob)
         runner.cleanUp(job.id)
         return Step.Next
       }
       // La riga puo' non esserci piu' (la sessione e' stata unita a un'altra, e la riga se n'e'
       // andata con lei): il risultato e' salvato lo stesso, e lo si dice.
-      if (!repository.markDone(job.id) && repository.get(job.id) != null) {
+      val done = if (job.provider == OpenAiCompatProvider.ID) repository.markDone(job.id) else repository.markDone(runningJob)
+      if (!done && repository.get(job.id) != null) {
         runner.cleanUp(job.id)
         return Step.Next
       }
       // Una registrazione tornata muta in mezzo a parti che parlano: la sessione lo dira'.
       repository.recordEmptyParts(job.id, result.emptyPartIds)
-      runner.cleanUp(job.id)
+      runner.cleanUp(job.id, completed = true)
       val transcript = saved.transcript
       val run = transcript?.let { repository.recordRun(job.copy(sessionId = saved.sessionId, model = model), startedAt, it) }
       AppNotifications.notifyDone(applicationContext, job.id, transcript?.wordCount ?: 0, run)
@@ -758,12 +768,13 @@ class TranscriptionQueueWorker @AssistedInject constructor(
    * lavoro che non c'e' piu' non ha niente da dire: niente notifica d'errore per nessuno dei due.
    */
   private suspend fun fail(job: JobEntity, error: TranscriptionError) {
-    when (withContext(NonCancellable) { repository.fail(job, error) }) {
+    val effective = if (repository.uncertainCloudWork(job)) TranscriptionError.UncertainOutcome(error) else error
+    when (withContext(NonCancellable) { repository.fail(job, effective) }) {
       TranscriptionRepository.FailOutcome.FAILED -> {
         // Muta: i pezzi messi da parte sono tutti vuoti, e tenerli farebbe fallire «Riprova» senza
         // chiedere niente a nessuno. Gli altri fallimenti li tengono, per riprendere da li'.
-        if (error is TranscriptionError.NoSpeech) runner.cleanUp(job.id)
-        AppNotifications.notifyFailed(applicationContext, job.id, error.code, job.provider)
+        if (effective is TranscriptionError.NoSpeech) runner.cleanUp(job.id, completed = true)
+        AppNotifications.notifyFailed(applicationContext, job.id, effective.code, job.provider)
       }
       TranscriptionRepository.FailOutcome.CANCELLED,
       TranscriptionRepository.FailOutcome.GONE,

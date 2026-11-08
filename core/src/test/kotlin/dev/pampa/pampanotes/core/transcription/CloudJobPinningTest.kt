@@ -1,5 +1,7 @@
 package dev.pampa.pampanotes.core.transcription
 
+import androidx.room.withTransaction
+
 import dev.pampa.pampanotes.core.db.*
 import dev.pampa.pampanotes.core.repo.FailedJobs
 import dev.pampa.pampanotes.core.repo.TranscribeOptions
@@ -12,6 +14,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.Rule
+import org.junit.After
 import org.junit.rules.TemporaryFolder
 
 class CloudJobPinningTest {
@@ -26,11 +29,19 @@ class CloudJobPinningTest {
   private var prefs = PampaSettings(preferredProvider = TranscriptionProviderId.MISTRAL, syncAccount = "fixture-account")
   private val http = mockk<TranscriptionHttp>()
   private val files = mockk<dev.pampa.pampanotes.core.files.AppFiles>()
+  private val transcripts = mockk<TranscriptDao>()
+  private val db = mockk<PampaDatabase>()
+  @After fun releaseTransactionMock() = unmockkStatic("androidx.room.RoomDatabaseKt")
   private fun repository(): TranscriptionRepository {
+    mockkStatic("androidx.room.RoomDatabaseKt")
+    coEvery { db.withTransaction<Any?>(any()) } coAnswers { secondArg<suspend () -> Any?>().invoke() }
     every { cooldowns.contexts } returns DurableCloudJobContexts(java.io.File(temp.root, "job-contexts.json"))
     coEvery { settings.current() } answers { prefs }
     coEvery { jobs.activeForSession(any()) } returns null
     coEvery { sessions.get(any()) } returns null
+    coEvery { sessions.get("s") } returns SessionEntity("s", "note", date = "2026-11-08", position = 0, createdAt = 0, updatedAt = 0)
+    coEvery { transcripts.bySession(any()) } returns emptyList()
+    coEvery { jobs.all() } answers { saved.values.toList() }
     coEvery { spending.policyForSession(any(), any(), any()) } returns EffectiveCloudPolicy(true)
     coEvery { jobs.upsert(any()) } answers { val job = firstArg<JobEntity>(); saved[job.id] = job }
     coEvery { jobs.get(any()) } answers { saved[firstArg()] }
@@ -46,8 +57,8 @@ class CloudJobPinningTest {
       saved[old.id] = old.copy(provider = secondArg(), optionsJson = thirdArg(), state = JobState.QUEUED)
       1
     }
-    return TranscriptionRepository(jobs, sessions, mockk(), mockk(), mockk(), mockk(), settings, mockk(),
-      http, mockk(), mockk(), mockk(), mockk(), mockk(), files, spending, credentials, cooldowns)
+    return TranscriptionRepository(jobs, sessions, mockk(), mockk(), transcripts, mockk(), settings, mockk(),
+      http, mockk(), db, mockk(), mockk(), mockk(), files, spending, credentials, cooldowns)
   }
 
   @Test fun `first automatic job pins provider model and plan despite changed defaults then retry`() = runTest {

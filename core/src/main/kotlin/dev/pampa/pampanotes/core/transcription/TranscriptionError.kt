@@ -5,6 +5,12 @@ import java.io.IOException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 
+/** Private disk evidence of a POST whose outcome cannot authorize another paid POST. */
+internal class UncertainCloudRequest(cause: Throwable? = null) : IOException(
+  "Previous cloud request outcome is uncertain; received results retained; automatic resend blocked", cause,
+)
+internal class RetainedCloudWorkChanged(message: String) : IOException(message)
+
 /**
  * Gli errori su cui la coda decide qualcosa: aspettare, riprovare, arrendersi, o dirlo all'utente.
  *
@@ -33,6 +39,8 @@ sealed class TranscriptionError(message: String, cause: Throwable? = null) : Exc
   class Server(val httpCode: Int, message: String, val retryAfterSec: Double? = null) : TranscriptionError(message)
 
   class Network(message: String, cause: Throwable? = null) : TranscriptionError(message, cause)
+
+  class UncertainOutcome(cause: Throwable? = null) : TranscriptionError("Cloud request outcome uncertain", cause)
 
   class Timeout(message: String, cause: Throwable? = null) : TranscriptionError(message, cause)
 
@@ -84,6 +92,7 @@ sealed class TranscriptionError(message: String, cause: Throwable? = null) : Exc
       is FileTooLarge -> "file_too_large"
       is Server -> "server"
       is Network -> "network"
+      is UncertainOutcome -> "cloud_request_uncertain"
       is Timeout -> "timeout"
       is Decode -> "decode"
       is Parse -> "parse"
@@ -123,6 +132,8 @@ sealed class TranscriptionError(message: String, cause: Throwable? = null) : Exc
       is AiError.Parse -> Parse(t.message.orEmpty(), t)
       is SocketTimeoutException -> Timeout(t.message ?: "tempo scaduto", t)
       is UnknownHostException -> Network(t.message ?: "server non raggiungibile", t)
+      is UncertainCloudRequest -> UncertainOutcome(t)
+      is RetainedCloudWorkChanged -> CloudControl("cloud_recovery_changed")
       is IOException -> Network(t.message ?: "errore di rete", t)
       is kotlinx.coroutines.CancellationException -> Cancelled()
       else -> Parse(t.message ?: t::class.java.simpleName, t)

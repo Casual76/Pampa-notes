@@ -60,7 +60,7 @@
     <string name="cloud_cost_reset_detail">Il conteggio locale riparte da adesso. Le riserve e gli addebiti incerti restano; lo storico è conservato. I costi del servizio non vengono rimborsati e i suoi limiti non cambiano.</string>
     <string name="cloud_cost_storage_error">Non riesco a leggere o salvare i controlli cloud. Nessun nuovo invio è autorizzato.</string>
     <string name="cloud_folder_title">Autorizzazioni cloud</string>
-    <string name="cloud_folder_scope">Vale qui e nelle sottocartelle per Groq e OpenRouter. Il computer di casa resta disponibile. La regola esplicita più vicina vince.</string>
+    <string name="cloud_folder_scope">Vale qui e nelle sottocartelle per tutti i servizi cloud. Il computer di casa resta disponibile. La regola esplicita più vicina vince.</string>
     <string name="cloud_folder_inherit">Eredita dalla cartella superiore</string>
     <string name="cloud_folder_allow">Consenti trascrizione cloud</string>
     <string name="cloud_folder_deny">Blocca trascrizione cloud</string>

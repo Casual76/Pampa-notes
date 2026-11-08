@@ -53,7 +53,7 @@ class CloudProvenanceRecoveryTest {
       assertEquals(doc, CloudSources.decode(CloudSources.encode(doc)))
     }
   }
-  @Test fun `paid A then B quota replacement retry save binding and rehash retain old input without another A upload`() = runBlocking {
+  @Test fun `paid A then B quota replacement blocks continuation until original restored without another A upload`() = runBlocking {
     val files = files(); val a = part(files); val b = part(files, "b", 1)
     var limited = true; val calls = mutableListOf<String>()
     val provider = provider("groq") { file ->
@@ -68,7 +68,12 @@ class CloudProvenanceRecoveryTest {
     limited = false
     val current = listOf(replacement, b)
     val runner = TranscriptionRunner(files, mockk())
-    val result = runner.transcribeSession("job", current, provider, request, 10)
+    val paid = files.jobs.resolve("job/part-a/whole.json"); val paidBytes = paid.readBytes()
+    assertTrue(runCatching { runner.transcribeSession("job", current, provider, request, 10) }.exceptionOrNull() is RetainedCloudWorkChanged)
+    assertEquals(listOf(a.fileName, b.fileName), calls); assertArrayEquals(paidBytes, paid.readBytes())
+    assertFalse(AlignmentAudio.verify(files.audio, listOf(AlignmentPlacement(a.id, a.sha256, 0, a.durationMs, a.fileName))))
+    files.audioFile(a.fileName).writeBytes(byteArrayOf(0, 42))
+    val result = runner.transcribeSession("job", listOf(a, b), provider, request, 10)
     val (text, doc) = save(result, current)
     assertEquals(listOf(a.fileName, b.fileName, b.fileName), calls)
     assertTrue(text.contains("paid ${a.fileName}"))
@@ -76,12 +81,12 @@ class CloudProvenanceRecoveryTest {
     assertEquals(a.sha256, doc.originals.single().parts.first().sha256)
     assertNull(CloudSources.bindSource(doc, current))
     assertNotNull(CloudSources.bindSource(doc, listOf(a, b)))
-    assertFalse(AlignmentAudio.verify(files.audio, listOf(AlignmentPlacement(a.id, a.sha256, 0, a.durationMs, a.fileName))))
     val persisted = CloudSources.encode(doc)
-    runner.cleanUp("job")
+    runner.cleanUp("job", completed = true)
     assertFalse(files.jobs.resolve("job").exists())
     assertEquals(a.sha256, CloudSources.decode(persisted)!!.originals.single().parts.first().sha256)
     // A separate explicitly created manual job can transcribe replacement audio.
+    files.audioFile(a.fileName).writeBytes(byteArrayOf(99))
     val fresh = runner.transcribeSession("manual-new", listOf(replacement), provider, request, 10)
     assertEquals(replacement.sha256, save(fresh, listOf(replacement)).second.parts.single().sha256)
   }
@@ -106,7 +111,7 @@ class CloudProvenanceRecoveryTest {
     val (body, doc) = save(result, listOf(a, b))
     assertEquals(result.text, body); assertTrue(doc.parts.all { it.sha256.isEmpty() })
     assertNull(CloudSources.bindSource(doc, listOf(a, b)))
-    val encoded = CloudSources.encode(doc); runner.cleanUp("job")
+    val encoded = CloudSources.encode(doc); runner.cleanUp("job", completed = true)
     val recovered = CloudSources.decode(encoded)!!
     assertEquals(exact, recovered.originals.single().parts.first().responses!!.map { it.text })
     val raw = TranscriptEntity("raw", "s", TranscriptKind.RAW, "groq", "pinned", null, body, wordCount = 0, createdAt = 1, cloudSourceJson = encoded)

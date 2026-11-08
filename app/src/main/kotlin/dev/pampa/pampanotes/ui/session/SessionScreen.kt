@@ -165,6 +165,7 @@ fun SessionRoute(
     transcribeChecking = transcribeChecking,
     transcribeError = transcribeError,
     onCancelJob = viewModel::cancelJob,
+    onRetrySavedJob = viewModel::retryJob,
     onCancelAlignment = viewModel::cancelAlignment,
     onDismissJob = { viewModel.dismissJob(it) },
     onFetchMissing = viewModel::fetchMissing,
@@ -207,6 +208,7 @@ private fun SessionScreen(
   transcribeChecking: Boolean,
   transcribeError: String?,
   onCancelJob: (String) -> Unit,
+  onRetrySavedJob: (String) -> Unit,
   onCancelAlignment: () -> Unit,
   onDismissJob: (String) -> Unit,
   onFetchMissing: () -> Unit,
@@ -237,6 +239,8 @@ private fun SessionScreen(
   // Una registrazione tolta puo' essere l'unica copia: si chiede, come per la sessione intera.
   var confirmingPartDelete by remember { mutableStateOf<String?>(null) }
   var confirmingRetranscribe by remember { mutableStateOf(false) }
+  var recoveryJob by remember { mutableStateOf<String?>(null) }
+  recoveryJob?.let { dev.pampa.pampanotes.ui.common.CloudRecoveryReader(it, onDismiss = { recoveryJob = null }) }
   var choosingTranscribeOptions by remember { mutableStateOf(false) }
   var showingCloudCosts by remember { mutableStateOf(false) }
   var refining by remember { mutableStateOf(false) }
@@ -569,7 +573,12 @@ private fun SessionScreen(
       }
     },
   ) {
-    jobItem(state, onCancelJob, onRetryJob = { if (it.type == JobType.REFINE) refining = true else onTranscribe() }, onDismissJob = onDismissJob)
+    jobItem(state, onCancelJob, onRetryJob = {
+      if (it.type == JobType.REFINE) refining = true
+      else if (FailedJobs.requiresNewRequest(it)) confirmingRetranscribe = true
+      else if (it.errorCode == FailedJobs.NO_SPEECH) onTranscribe()
+      else onRetrySavedJob(it.id)
+    }, onDismissJob = onDismissJob, onRecoverJob = { recoveryJob = it })
     val waitingForComputer = state.job?.let { JobPhase.parse(it.phase) } == JobPhase.Endpoint
     if (waitingForComputer) {
       tailscaleCard?.let { card ->
@@ -679,7 +688,8 @@ private fun SessionScreen(
     FluidAlert(
       onDismissRequest = { confirmingRetranscribe = false },
       title = stringResource(R.string.session_retranscribe_title),
-      message = stringResource(R.string.session_retranscribe_message),
+      message = stringResource(if (state.failedJob?.let { FailedJobs.requiresNewRequest(it) } == true)
+        R.string.cloud_recovery_resend_warning else R.string.session_retranscribe_message),
       actions = listOf(
         FluidAlertAction(
           label = retranscribeLabel,
@@ -766,6 +776,7 @@ private fun LazyListScope.jobItem(
   onCancelJob: (String) -> Unit,
   onRetryJob: (JobEntity) -> Unit,
   onDismissJob: (String) -> Unit,
+  onRecoverJob: (String) -> Unit,
 ) {
   val job = state.job
   val failed = state.failedJob
@@ -774,6 +785,8 @@ private fun LazyListScope.jobItem(
       // Una registrazione muta non e' un guasto: e' la risposta. Niente rosso, e il tasto dice che
       // rifarla da' con ogni probabilita' lo stesso risultato.
       val silent = failed.errorCode == FailedJobs.NO_SPEECH
+      val cancelled = failed.state == JobState.CANCELLED
+      val newRequest = FailedJobs.requiresNewRequest(failed)
       // Una ripulitura non riuscita, con la grezza li' sotto, non ha perso niente: la lezione si
       // legge lo stesso. Una scheda quieta, non l'allarme in cima alla pagina.
       val minor = failed.type == JobType.REFINE && state.raw != null
@@ -781,19 +794,25 @@ private fun LazyListScope.jobItem(
         Text(
           text = stringResource(
             when {
+              cancelled -> R.string.cloud_recovery_cancelled
               silent -> R.string.job_no_speech_title
               failed.type == JobType.REFINE -> R.string.job_failed_refine
               else -> R.string.job_failed_transcribe
             },
           ),
           style = MaterialTheme.typography.titleSmall,
-          color = if (silent || minor) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error,
+          color = if (silent || minor || cancelled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error,
         )
         Text(
-          text = jobErrorText(failed.errorCode ?: "unknown", failed.errorMessage, failed.provider),
+          text = if (cancelled) stringResource(R.string.cloud_recovery_local)
+            else jobErrorText(failed.errorCode ?: "unknown", failed.errorMessage, failed.provider),
           style = MaterialTheme.typography.bodyMedium,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (failed.type == JobType.TRANSCRIBE && failed.provider != "custom") {
+          FluidButton(text = stringResource(R.string.cloud_recovery_open), onClick = { onRecoverJob(failed.id) },
+            style = FluidButtonStyle.Tinted, fillWidth = true)
+        }
         // «Nascondi» toglie la riga del lavoro: senza, un fallimento restava in cima alla sessione
         // per sempre, anche deciso di lasciar perdere.
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -805,7 +824,11 @@ private fun LazyListScope.jobItem(
             modifier = Modifier.weight(1f),
           )
           FluidButton(
-            text = stringResource(if (silent) R.string.job_no_speech_retry else R.string.job_retry),
+            text = stringResource(when {
+              newRequest -> R.string.cloud_recovery_new_request
+              silent -> R.string.job_no_speech_retry
+              else -> R.string.job_retry
+            }),
             onClick = { onRetryJob(failed) },
             style = FluidButtonStyle.Plain,
             fillWidth = true,

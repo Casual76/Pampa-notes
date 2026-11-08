@@ -458,7 +458,7 @@
   <string name="provider_custom">Home computer</string>
 
   <string name="settings_custom_only">Home computer only</string>
-  <string name="settings_custom_only_detail">Never Groq or OpenRouter, even automatically: incoming audio waits for the computer to answer</string>
+  <string name="settings_custom_only_detail">Never cloud services, even automatically: incoming audio waits for the computer to answer</string>
   <string name="settings_auto_transcribe">Transcribe on import</string>
   <string name="settings_auto_transcribe_detail">When enabled, audio is sent to the chosen transcription service after every import. You can leave this off and transcribe later.</string>
   <string name="settings_chunk_minutes">Chunk length</string>
@@ -977,7 +977,7 @@
   <string name="onboarding_step_import">Import</string>
   <string name="onboarding_step_import_detail">Samsung Notes, PDF, Word, text and recordings</string>
   <string name="onboarding_step_transcribe">Transcribe</string>
-  <string name="onboarding_step_transcribe_detail">Groq, OpenRouter or your computer</string>
+  <string name="onboarding_step_transcribe_detail">Groq, OpenRouter, Mistral or your computer</string>
   <string name="onboarding_step_export">Export</string>
   <string name="onboarding_step_export_detail">A Markdown bundle with the rules for Claude, ChatGPT or Gemini</string>
   <string name="onboarding_welcome_recordings">An interview, a meeting, a trip: audio that is not school goes in Recordings, outside your subjects.</string>
@@ -1655,7 +1655,7 @@
   <string name="job_phase_awaiting_openrouter">OpenRouter is transcribing</string>
   <string name="recordings_transcribe_all_message_openrouter">%1$s of audio, transcribed by OpenRouter.</string>
   <string name="session_untimed">This model returned text without timestamps. The full text is preserved; synchronized highlighting and seeking to words are unavailable.</string>
-  <string name="services_setup_detail">Set up one service at a time. Groq and OpenRouter need internet and your own API key, without a computer. You can import, organize and export without configuring anything.</string>
+  <string name="services_setup_detail">Set up one service at a time. Groq, OpenRouter and Mistral need internet and your own API key, without a computer. You can import, organize and export without configuring anything.</string>
   <string name="services_choose_active">Choose the default service under Transcription. Opening these forms does not change who transcribes.</string>
   <string name="services_computer_missing">No computer connected. Set one up here, or choose Groq or OpenRouter under Transcription to use the cloud.</string>
   <string name="services_computer_setup">Computer addresses and connection</string>

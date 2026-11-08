@@ -45,7 +45,9 @@ class CloudTranscriptionGuard(
           beforeRequest()
           kotlinx.coroutines.currentCoroutineContext().ensureActive()
           accounting.invokingProvider()
-          provider.transcribe(file, mime, authorized, onProgress, onRemote)
+          provider.transcribe(file, mime, authorized, onProgress, onRemote).also {
+            kotlinx.coroutines.currentCoroutineContext()[CloudUploadContext]?.received(it)
+          }
         } finally {
           authorized.cloudAttemptFinished?.invoke()
         }

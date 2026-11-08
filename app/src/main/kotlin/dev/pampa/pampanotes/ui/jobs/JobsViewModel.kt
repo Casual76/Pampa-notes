@@ -26,6 +26,7 @@ data class JobRow(
   val sessionExists: Boolean = false,
   /** Per un lavoro fallito, che cosa vale ancora: «superata», muta, orfana, o da riprovare. */
   val standing: FailureStanding? = null,
+  val recoveryAvailable: Boolean = false,
 ) {
   val superseded: Boolean get() = standing == FailureStanding.SUPERSEDED
 
@@ -66,7 +67,7 @@ class JobsViewModel @Inject constructor(
     val standings = repository.failureStandings(jobs)
     val rows = jobs.map { job ->
       val (title, date, exists) = lookup[job.sessionId] ?: Triple("", "", false)
-      JobRow(job, title, date, exists, standings[job.id])
+      JobRow(job, title, date, exists, standings[job.id], job.state.isTerminal && repository.hasRetainedCloudWork(job))
     }
     JobsUiState(
       active = rows.filter { it.job.state.isActive },
@@ -78,8 +79,7 @@ class JobsViewModel @Inject constructor(
   fun cancel(jobId: String) = viewModelScope.launch { repository.requestCancel(jobId) }
 
   fun retry(jobId: String) = viewModelScope.launch {
-    repository.retry(jobId)
-    repository.get(jobId)?.let { scheduler.kick(it.provider) }
+    repository.retry(jobId)?.let { scheduler.kick(it.provider) }
   }
 
   fun delete(jobId: String) = viewModelScope.launch { repository.delete(jobId) }

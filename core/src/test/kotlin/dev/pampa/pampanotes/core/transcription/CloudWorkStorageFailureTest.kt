@@ -112,8 +112,14 @@ class CloudWorkStorageFailureTest {
       val observed = runCatching { TranscriptionRunner(files, mockk()).transcribeSession("job", listOf(p), provider, request, 10) }.exceptionOrNull()
       // Coroutine stack-trace recovery may copy the exception at withContext boundaries.
       // Preserve its type, message and original cause, rather than requiring wrapper identity.
-      assertEquals(failure.javaClass, observed?.javaClass)
-      assertEquals(failure.message, observed?.message)
+      if (failure is kotlinx.coroutines.CancellationException) {
+        assertEquals(failure.javaClass, observed?.javaClass)
+        assertEquals(failure.message, observed?.message)
+      } else {
+        assertTrue(observed is UncertainCloudRequest)
+        assertEquals("cloud_request_uncertain", TranscriptionError.from(observed!!).code)
+        assertFalse(TranscriptionError.from(observed).retryable)
+      }
       assertTrue(generateSequence(observed) { it.cause }.any { it === failure })
       assertEquals(1, provider.calls)
       provider.failure = null

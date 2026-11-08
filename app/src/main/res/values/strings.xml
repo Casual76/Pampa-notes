@@ -491,7 +491,7 @@
 
   <!-- Impostazioni: trascrizione -->
   <string name="settings_custom_only">Solo il computer di casa</string>
-  <string name="settings_custom_only_detail">Mai con Groq o OpenRouter, nemmeno in automatico: quello che arriva aspetta che il computer risponda</string>
+  <string name="settings_custom_only_detail">Mai con servizi cloud, nemmeno in automatico: quello che arriva aspetta che il computer risponda</string>
   <string name="settings_auto_transcribe">Trascrivi appena importi</string>
   <string name="settings_auto_transcribe_detail">Quando attivo, dopo ogni import l’audio viene inviato al servizio di trascrizione scelto. Puoi lasciarlo spento e trascrivere in seguito.</string>
   <string name="settings_chunk_minutes">Durata di un pezzo</string>
@@ -1012,7 +1012,7 @@
   <string name="onboarding_step_import">Importa</string>
   <string name="onboarding_step_import_detail">Samsung Notes, PDF, Word, testo e registrazioni</string>
   <string name="onboarding_step_transcribe">Trascrivi</string>
-  <string name="onboarding_step_transcribe_detail">Groq, OpenRouter o il tuo computer</string>
+  <string name="onboarding_step_transcribe_detail">Groq, OpenRouter, Mistral o il tuo computer</string>
   <string name="onboarding_step_export">Esporta</string>
   <string name="onboarding_step_export_detail">Un pacchetto Markdown con le regole per Claude, ChatGPT o Gemini</string>
   <string name="onboarding_welcome_recordings">Un\'intervista, una riunione, un viaggio: l\'audio che non è scuola va in Registrazioni, fuori dalle materie.</string>
@@ -1690,7 +1690,7 @@
   <string name="job_phase_awaiting_openrouter">OpenRouter trascrive</string>
   <string name="recordings_transcribe_all_message_openrouter">%1$s di audio, trascritte da OpenRouter.</string>
   <string name="session_untimed">Questo modello ha restituito testo senza tempi. Il testo è completo; evidenziazione e salti alle parole non sono disponibili.</string>
-  <string name="services_setup_detail">Configura un servizio alla volta. Groq e OpenRouter richiedono internet e una tua chiave API, senza computer. Puoi importare, organizzare ed esportare anche senza configurare nulla.</string>
+  <string name="services_setup_detail">Configura un servizio alla volta. Groq, OpenRouter e Mistral richiedono internet e una tua chiave API, senza computer. Puoi importare, organizzare ed esportare anche senza configurare nulla.</string>
   <string name="services_choose_active">Scegli il servizio predefinito in Trascrizione. Aprire questi moduli non cambia chi trascrive.</string>
   <string name="services_computer_missing">Nessun computer collegato. Configuralo qui oppure scegli Groq o OpenRouter in Trascrizione per usare il cloud.</string>
   <string name="services_computer_setup">Indirizzi e collegamento del computer</string>

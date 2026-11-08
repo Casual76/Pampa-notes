@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="cloud_request_uncertain">The final outcome of a request is unconfirmed: the service may have received and charged for it. This job is stopped: Retry cannot resend it. You can read the results already received. A new request from the recording requires an explicit choice and may cost again; uncertain charges stay protected.</string>
+  <string name="cloud_recovery_title">Received results · interrupted job</string>
+  <string name="cloud_recovery_open">Read received results</string>
+  <string name="cloud_recovery_local">Local recovery, without uploading audio</string>
+  <string name="cloud_recovery_intro">These are only the results received by this job: you can select and copy the text. This is not a complete transcript. Time ranges describe the uploaded audio window, not word timings. Saved history and the selected version are preserved.</string>
+  <string name="cloud_recovery_unavailable">Results are being checked or are unavailable for this account and version of the recording. Retained files are neither deleted nor resent. If the account or audio changed, return to the original version to recover them.</string>
+  <string name="cloud_recovery_window">Part %1$d · audio %2$s – %3$s</string>
+  <string name="cloud_recovery_part">Part %1$d · duration unverified</string>
+  <string name="cloud_recovery_empty">Response received without text.</string>
+  <string name="cloud_recovery_missing">No result received: this portion is missing.</string>
+  <string name="cloud_recovery_window_uncertain">Response not saved; request outcome uncertain. This portion is missing and will not be resent automatically.</string>
+  <string name="cloud_recovery_window_unavailable">Retained result cannot be verified against this audio or plan. It has not been included or resent.</string>
+  <string name="cloud_recovery_new_request">New request…</string>
+  <string name="cloud_recovery_resend_warning">The service may already have received and charged for a part. This is a new transcription and could charge again for parts already received. The old job stays stopped, its results remain recoverable, and uncertain charges are not released. Continue with the normal checks for a new request?</string>
+  <string name="cloud_recovery_cancelled">Job cancelled · results retained</string>
+  <string name="cloud_recovery_clear_detail">Clear history keeps jobs with results or uncertain requests. Delete on an individual job removes its local recovery access.</string>
+</resources>
