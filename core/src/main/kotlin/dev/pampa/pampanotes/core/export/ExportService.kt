@@ -24,6 +24,7 @@ import dev.pampa.pampanotes.core.db.TranscriptKind
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.files.FilesInUse
 import dev.pampa.pampanotes.core.model.slugify
+import dev.pampa.pampanotes.core.model.wordCount
 import dev.pampa.pampanotes.core.repo.FolderRepository
 import dev.pampa.pampanotes.core.repo.PersonalScope
 import dev.pampa.pampanotes.core.transcription.VoiceNames
@@ -507,12 +508,17 @@ class ExportService @Inject constructor(
 
       val versions = versionsBySession.getValue(row.session.id)
       // Text, words and segment timings follow the selected RAW or the selected refinement's parent.
-      val raw = dev.pampa.pampanotes.core.repo.RawTranscripts.forSelection(versions, row.session.activeTranscriptId)
+      val raw = dev.pampa.pampanotes.core.repo.RawTranscripts.forSelection(versions, row.session.activeTranscriptId)?.let { source ->
+        val projection = dev.pampa.pampanotes.core.alignment.CloudSources.portableProjection(source, row.partsSorted,
+          retainOriginals = selectedSessionIds == null, authorizedOriginalParts = sessionRows.flatMap { it.partsSorted })
+        source.copy(text = projection.text, cloudSourceJson = projection.cloudSourceJson,
+          wordCount = if (projection.text == source.text) source.wordCount else projection.text.wordCount())
+      }
       val chosen = when (options.transcript) {
         TranscriptChoice.RAW -> raw
         // La migliore: quella che l'utente sta guardando nell'app, altrimenti la grezza. Esportare
         // una versione diversa da quella a schermo sarebbe una sorpresa dentro un file.
-        TranscriptChoice.BEST -> versions.firstOrNull { it.id == row.session.activeTranscriptId } ?: raw
+        TranscriptChoice.BEST -> versions.firstOrNull { it.id == row.session.activeTranscriptId }?.let { if (it.id == raw?.id) raw else it } ?: raw
       }
 
       ExportSession(

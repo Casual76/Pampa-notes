@@ -58,7 +58,7 @@ Initial three delegates launched, all actual codex / gpt-6.1-sol / reasoningEffo
 | Android exact source / alignment | 6c6c919c-38ab-41d4-8da8-fa600c359921 | completed |
 | Per-part clock / session export | c7ae6aae-2896-4caf-9d3c-26ea4f5af7e5 | completed |
 | Exact cloud UI adapter | 7d965bb2-dda0-4574-afc7-cbe7ba9fad6b | completed |
-| Portable source adapters | e9c5ab5e-e70e-42f8-9a0e-895a576047fe | running |
+| Portable source adapters | e9c5ab5e-e70e-42f8-9a0e-895a576047fe | completed |
 
 Full task/child id prefix is node:delegated-task:command%3Amcp%3Aeb1c4ba6-cbfc-4f0c-bac9-1b3c1c7a2dc7%3Adelegate-task%3A plus suffix (child thread uses thread: in place of node:).
 No Gradle/device/GPU lease held. Timestamp/Android alignment agents remain queued until a slot frees and contracts are stable. PN export milestone 11a7cbc1750eb04e5e23d94950be0d34f453c2f5 acknowledged as unintegrated; future export adaptations must include PAMPA enum/options and relay attachment planning.
@@ -158,3 +158,11 @@ Global search now branches cloud sources to exact RAW text + nullable AlignmentP
 Coordinator found reported language labels were retained verbatim but the alignment protocol accepts ISO codes only. Added deterministic ISO2/ISO3/English-name conversion for the explicit provider-reported value, never language guessing from audio/text. Original RAW/source language remains unchanged; request/response uses canonical code, overlay retains source label. Unknown/auto stays unknown. Added3 pure tests, NOT EXECUTED yet. Source changes confined to new AlignmentLanguage, AlignmentRepository and AlignmentApplication, no CloudSources overlap.
 
 Parent PN Gradle batch released (reported1079JVMpass,1optionalWorker skip,0failure; lint0errors123warnings); this is PN-only evidence, not this workflow's tests. No heavy resource held here. Final own lease request waits until portable unit stops writing.
+
+## Portable source consolidated delivery and freeze
+
+Last implementation unit completed10owned files; report C4_NATIVE_PORTABILITY_INTEGRATION.md. Typed transfer adapters now wired through native ZIP export/copy/update/aliases. Exact scoped text and measured/missing overlays retained, transfers stay portable_unbound. Restricted exports exclude sibling originals/reportedText; whole authorized exports retain complete public history/reports. Identity mapping uses real source before-images and destination graph; independent local RAW provenance/history retained on conflict. Unsupported nonempty source codecs fail explicitly; null/empty remain distinct. Legacy source with no attested original hashes stays unbound/missing instead of adopting replacement current bytes.
+
+Standalone compilation+133fixture/regression tests+whitespace checks reported PASS; coordinator inspected actual OK133 log, source adapters and documented PN hooks. No Gradle/Hilt/Room/runtime/GPU/provider evidence from unit. All source writers now stopped. Full integrated source freeze follows this commit; no initial review launched before necessary checks.
+
+Actual shared Gradle lease requested and explicitly GRANTED by PN coordinator until release notification. PN holds no heavy resource; its3reviewers are read-only and forbidden Gradle/devices. This workflow now holds Gradle for necessary integrated2worker/no-parallel debug/JVM/Android-test compilation/lint batch under %LOCALAPPDATA%/PampaNotes/build-cloud-recordings. Device/emulator/GPU/server/livecloud remain prohibited. No publication/main merge.

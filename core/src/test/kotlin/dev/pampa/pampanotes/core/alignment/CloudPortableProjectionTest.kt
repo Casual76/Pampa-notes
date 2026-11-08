@@ -42,7 +42,7 @@ class CloudPortableProjectionTest {
     assertEquals(a, copied.text)
     assertTrue(CloudSources.validatePortable(copied, copiedParts))
     assertNull(CloudSources.bindSource(CloudSources.decode(copied.cloudSourceJson)!!, copiedParts))
-    assertFalse(copied.cloudSourceJson!!.contains("original-raw"))
+    assertEquals("copied-a", CloudSources.decode(copied.cloudSourceJson)!!.parts.single().id)
     assertFalse(CloudSources.validatePortable(copied.copy(id = "stale-raw-alias"), copiedParts))
     assertFalse(CloudSources.validatePortable(copied, listOf(copiedParts.single().copy(id = "stale-part-alias"))))
     assertFalse(CloudSources.validatePortable(copied, listOf(copiedParts.single().copy(sha256 = AlignmentProtocol.sha256("replacement")))))
@@ -58,15 +58,14 @@ class CloudPortableProjectionTest {
     assertEquals("portable_unbound", combined.alignmentBinding)
     assertNull(CloudSources.bindSource(combined, parts))
   }
-  @Test fun `unknown opaque JSON is safely replaced without hidden sibling fields or legacy auto adoption`() {
-    val opaque = raw.copy(text = a, cloudSourceJson = "{\"future\":\"$b\"}")
-    val projection = CloudSources.portableProjection(opaque, parts.take(1), "copy", mapOf("a" to "copy-a"))
-    assertEquals(a, projection.text)
-    assertFalse(projection.cloudSourceJson!!.contains(b))
-    val doc = CloudSources.decode(projection.cloudSourceJson)!!
-    assertEquals("portable_unbound", doc.alignmentBinding)
-    assertTrue(doc.parts.all { it.sha256.isEmpty() && it.text == null })
-    assertNull(CloudSources.bindSource(doc, listOf(parts[0].copy(id = "copy-a"))))
+  @Test fun `unsupported nonempty metadata fails without downgrade loss or legacy adoption`() {
+    for (value in listOf("{\"future\":\"secret\"}", "opaque legacy text", "null", raw.cloudSourceJson!!.dropLast(1) + ",\"jobId\":\"private\"}")) {
+      val opaque = raw.copy(cloudSourceJson = value)
+      try { CloudSources.portableProjection(opaque, parts); fail("Must preserve unsupported original by rejecting transfer") } catch (_: IllegalArgumentException) { }
+      assertEquals(value, opaque.cloudSourceJson)
+      assertNull(CloudSources.legacy(opaque, parts))
+      assertFalse(CloudSources.validatePortable(opaque, parts))
+    }
   }
   @Test fun `ambiguous legacy multipart subsets and identity collisions fail closed`() {
     val legacy = raw.copy(cloudSourceJson = null)
@@ -75,16 +74,85 @@ class CloudPortableProjectionTest {
     try { CloudSources.portableProjection(raw, parts, partIdRemap = mapOf("a" to "collision", "secret-audio-id" to "collision")); fail("Must reject aliases") } catch (_: IllegalArgumentException) { }
     assertNull(CloudSources.portableProjection(raw.copy(cloudSourceJson = null), parts).cloudSourceJson)
     assertEquals("", CloudSources.portableProjection(raw.copy(cloudSourceJson = ""), parts).cloudSourceJson)
+    val discovered = CloudSources.legacy(legacy, parts)!!
+    assertEquals("portable_unbound", discovered.alignmentBinding)
+    assertTrue(discovered.parts.all { it.sha256.isEmpty() })
+    assertNull(CloudSources.bindSource(discovered, parts))
   }
-  @Test fun `replaced selected audio never gains a borrowed source hash in portable metadata`() {
+  @Test fun `replaced selected audio never gains a borrowed source hash or retained timing`() {
     val replaced = listOf(parts[0].copy(sha256 = AlignmentProtocol.sha256("replacement")))
-    val projection = CloudSources.portableProjection(raw, replaced)
-    val json = projection.cloudSourceJson!!
-    val doc = CloudSources.decode(json)!!
-    assertEquals(a, projection.text)
-    assertEquals("", doc.parts.single().sha256)
-    assertFalse(json.contains(replaced.single().sha256))
-    assertFalse(json.contains(parts[0].sha256))
-    assertNull(CloudSources.bindSource(doc, replaced))
+    try { CloudSources.portableProjection(raw, replaced); fail("Must reject replacement audio") } catch (_: IllegalArgumentException) { }
+    assertEquals(parts[0].sha256, CloudSources.decode(raw.cloudSourceJson)!!.parts[0].sha256)
+  }
+
+  private fun overlaid(): TranscriptEntity {
+    val doc = CloudSources.decode(raw.cloudSourceJson)!!
+    val tokens = AlignmentProtocol.tokens(a)
+    val overlay = CloudOverlay("a", AlignmentProtocol.sha256(a), "it", tokens.mapIndexed { i, t ->
+      AlignmentTiming(t.first, t.last + 1, if (i == 0) 100L else null, if (i == 0) 500L else null,
+        if (i == 0) "measured" else "missing", if (i == 0) null else "unreliable")
+    })
+    return raw.copy(cloudSourceJson = CloudSources.encode(doc.copy(overlays = listOf(overlay))))
+  }
+  @Test fun `measured and missing overlays survive selected remap with exact UTF16 text`() {
+    val source = overlaid()
+    val p = CloudSources.portableProjection(source, parts.take(1), "copy", mapOf("a" to "copy-a"), 77)
+    val dest = source.copy(id = "copy", createdAt = 77, text = p.text, cloudSourceJson = p.cloudSourceJson)
+    val destParts = listOf(parts[0].copy(id = "copy-a"))
+    assertArrayEquals(a.toByteArray(), p.text.toByteArray())
+    assertTrue(CloudSources.validatePortable(dest, destParts))
+    val doc = CloudSources.decode(p.cloudSourceJson)!!
+    assertEquals("copy-a", doc.overlays.single().partId)
+    assertEquals(listOf("measured", "missing"), doc.overlays.single().timings.map { it.status })
+    assertEquals(a, CloudSources.display(doc.parts.single(), doc.overlays.single()).joinToString("") { it.text })
+    assertNull(CloudSources.bindSource(doc, destParts))
+    assertFalse(CloudSources.validatePortable(dest, destParts.map { it.copy(durationMs = 499) }))
+    assertFalse(CloudSources.validatePortable(dest.copy(createdAt = 78), destParts))
+    assertEquals(source.cloudSourceJson, overlaid().cloudSourceJson)
+  }
+  @Test fun `full authorized exports retain original history and runner report including deleted parts`() {
+    val source = overlaid()
+    val projectedLocal = CloudSources.project(CloudSources.decode(source.cloudSourceJson)!!, source, listOf("a"), emptyList())
+    val local = source.copy(text = projectedLocal.first, cloudSourceJson = CloudSources.encode(projectedLocal.second))
+    val p = CloudSources.portableProjection(local, parts.take(1), retainOriginals = true)
+    val doc = CloudSources.decode(p.cloudSourceJson)!!
+    assertEquals(CloudSources.decode(source.cloudSourceJson)!!.originals, doc.originals)
+    assertEquals("REPORTED_SECRET_WHOLE_RESPONSE", doc.originals.single().reportedText)
+    assertTrue(CloudSources.validatePortable(local.copy(cloudSourceJson = p.cloudSourceJson), parts.take(1)))
+    val restricted = CloudSources.portableProjection(local, parts.take(1))
+    assertFalse(restricted.cloudSourceJson!!.contains(b))
+    assertEquals("portable_projection", CloudSources.decode(restricted.cloudSourceJson)!!.originals.single().contentScope)
+  }
+  @Test fun `malformed hash unicode offsets timing and languages fail closed`() {
+    val source = overlaid()
+    val p = CloudSources.portableProjection(source, parts)
+    val dest = source.copy(cloudSourceJson = p.cloudSourceJson)
+    val doc = CloudSources.decode(p.cloudSourceJson)!!
+    fun rejects(changed: CloudSourceDocument) {
+      val encoded = AlignmentProtocol.json.encodeToString(CloudSourceDocument.serializer(), changed)
+      assertFalse(CloudSources.validatePortable(dest.copy(cloudSourceJson = encoded), parts))
+    }
+    rejects(doc.copy(parts = doc.parts.mapIndexed { i, p -> if (i == 0) p.copy(sha256 = "invalid") else p }))
+    rejects(doc.copy(overlays = doc.overlays.map { it.copy(language = "IT") }))
+    rejects(doc.copy(overlays = doc.overlays.map { it.copy(timings = it.timings.mapIndexed { i, t -> if (i == 0) t.copy(endMs = 3001) else t }) }))
+    rejects(doc.copy(overlays = doc.overlays.map { it.copy(timings = it.timings.mapIndexed { i, t -> if (i == 1) t.copy(textEnd = t.textEnd - 1) else t }) }))
+    val broken = source.copy(text = "bad\uD800")
+    try { CloudSources.portableProjection(broken, parts); fail("Invalid UTF16") } catch (_: IllegalArgumentException) { }
+  }
+  @Test fun `projected original provenance describes only selected providers models and languages`() {
+    val doc = CloudSources.decode(raw.cloudSourceJson)!!
+    val source = raw.copy(cloudSourceJson = CloudSources.encode(doc.copy(originals = doc.originals.map {
+      it.copy(provider = "groq + SIBLING_PROVIDER", model = "whisper + SIBLING_MODEL", language = "en")
+    })))
+    val p = CloudSources.portableProjection(source, parts.take(1))
+    val original = CloudSources.decode(p.cloudSourceJson)!!.originals.single()
+    assertEquals("groq", original.provider)
+    assertEquals("whisper", original.model)
+    assertEquals("it", original.language)
+    assertFalse(p.cloudSourceJson!!.contains("SIBLING_PROVIDER"))
+    assertFalse(p.cloudSourceJson.contains("SIBLING_MODEL"))
+    val whole = CloudSources.portableProjection(source, parts, retainOriginals = true)
+    assertEquals(doc.originals.single().copy(provider = "groq + SIBLING_PROVIDER", model = "whisper + SIBLING_MODEL", language = "en"),
+      CloudSources.decode(whole.cloudSourceJson)!!.originals.single())
   }
 }

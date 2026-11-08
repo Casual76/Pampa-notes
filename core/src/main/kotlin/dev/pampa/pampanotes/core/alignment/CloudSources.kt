@@ -4,6 +4,7 @@ import dev.pampa.pampanotes.core.db.AudioPartEntity
 import dev.pampa.pampanotes.core.db.SegmentEntity
 import dev.pampa.pampanotes.core.db.TranscriptEntity
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
 /** Public content only. No account, endpoint, job, relay, path, credential or retry state. */
 @Serializable data class CloudTextPart(
@@ -44,6 +45,8 @@ import kotlinx.serialization.Serializable
 )
 
 object CloudSources {
+  // Transfers must not silently discard fields introduced by an unsupported codec.
+  private val portableJson = Json { encodeDefaults = true; ignoreUnknownKeys = false }
   const val MAX_JSON = 32 * 1024 * 1024
   const val MAX_CONTENT = 4_000_000
   fun cloud(provider: String) = provider in setOf("groq", "openrouter", "mistral")
@@ -57,23 +60,26 @@ object CloudSources {
     return AlignmentProtocol.json.encodeToString(CloudSourceDocument.serializer(), value).also { require(it.length <= MAX_JSON) }
   }
   private fun validate(value: CloudSourceDocument) {
-    require(value.version == 1 && value.rawId.length in 1..128 && value.rawVersion > 0 && AlignmentProtocol.validHash(value.textSha256))
+    require(value.version == 1 && value.rawId.length in 1..128 && AlignmentProtocol.validUnicode(value.rawId) && value.rawVersion > 0 && AlignmentProtocol.validHash(value.textSha256))
     require(value.alignmentBinding in setOf("source_snapshot", "portable_unbound"))
     require(value.parts.size <= 1000 && value.parts.map { it.id }.distinct().size == value.parts.size)
     require(value.originals.size in 1..1000 && value.originals.map { it.rawId to it.rawVersion }.distinct().size == value.originals.size)
     fun checkParts(parts: List<CloudTextPart>) {
       require(parts.size <= 1000 && parts.map { it.id }.distinct().size == parts.size)
       parts.forEach { p ->
-        require(p.id.length in 1..128 && (p.sha256.isEmpty() || AlignmentProtocol.validHash(p.sha256)))
-        require(p.text == null || p.text.length <= MAX_CONTENT)
+        require(p.id.length in 1..128 && AlignmentProtocol.validUnicode(p.id) && (p.sha256.isEmpty() || AlignmentProtocol.validHash(p.sha256)))
+        require(p.text == null || p.text.length <= MAX_CONTENT && AlignmentProtocol.validUnicode(p.text))
         require(p.provider.length <= 128 && p.model.length <= 512 && (p.language?.length ?: 0) <= 64)
+        require(listOfNotNull(p.provider, p.model, p.language).all(AlignmentProtocol::validUnicode))
       }
     }
     checkParts(value.parts)
     var total = 0L
     value.originals.forEach { o ->
-      require(o.rawId.length in 1..128 && o.rawVersion > 0 && o.text.length <= MAX_CONTENT && AlignmentProtocol.sha256(o.text) == o.textSha256)
-      require((o.reportedText?.length ?: 0) <= MAX_CONTENT)
+      require(o.rawId.length in 1..128 && AlignmentProtocol.validUnicode(o.rawId) && o.rawVersion > 0 && o.text.length <= MAX_CONTENT && AlignmentProtocol.validUnicode(o.text) && AlignmentProtocol.sha256(o.text) == o.textSha256)
+      require((o.reportedText?.length ?: 0) <= MAX_CONTENT && (o.reportedText == null || AlignmentProtocol.validUnicode(o.reportedText)))
+      require(o.provider.length <= 128 && o.model.length <= 512 && (o.language?.length ?: 0) <= 64)
+      require(listOfNotNull(o.provider, o.model, o.language).all(AlignmentProtocol::validUnicode))
       require(o.contentScope in setOf("complete_original", "portable_projection"))
       checkParts(o.parts)
       total += o.text.length + (o.reportedText?.length ?: 0) + o.parts.sumOf { it.text?.length ?: 0 }
@@ -82,16 +88,16 @@ object CloudSources {
     require(value.overlays.size <= value.parts.size && value.overlays.map { it.partId }.distinct().size == value.overlays.size)
     value.overlays.forEach { overlay ->
       val part = value.parts.single { it.id == overlay.partId }
-      require(part.text != null && AlignmentProtocol.sha256(part.text) == overlay.textSha256 && part.language == overlay.language)
+      require(part.text != null && AlignmentProtocol.sha256(part.text) == overlay.textSha256 && part.language == overlay.language && AlignmentProtocol.validLanguage(overlay.language))
       require(validOverlay(part.text, overlay.timings))
     }
   }
   private fun validOverlay(text: String, timings: List<AlignmentTiming>): Boolean {
     val tokens = AlignmentProtocol.tokens(text)
-    if (text.length > AlignmentProtocol.MAX_TEXT || tokens.size != timings.size) return false
+    if (text.length > AlignmentProtocol.MAX_TEXT || !AlignmentProtocol.validUnicode(text) || tokens.size != timings.size) return false
     var lastEnd = 0L
     return tokens.zip(timings).all { (span, timing) ->
-      if (span.first != timing.textStart || span.last + 1 != timing.textEnd) false
+      if (span.first != timing.textStart || span.last + 1 != timing.textEnd || timing.reason?.let { it.length > 512 || !AlignmentProtocol.validUnicode(it) } == true) false
       else when (timing.status) {
         "missing" -> timing.startMs == null && timing.endMs == null
         "measured" -> {
@@ -119,71 +125,110 @@ object CloudSources {
   data class PortableProjection(val text: String, val cloudSourceJson: String?, val alignmentApplicable: Boolean = false)
 
   /**
-   * Export/copy boundary. Call with the SOURCE RAW and SOURCE graph before alias/ID remapping.
-   * Returns the exact selected text plus public metadata containing only selected part identities.
-   * Complete app-local originals/reportedText are deliberately never copied into portable content.
-   * Remapping never grants alignment applicability, even if row hashes happen to match.
+   * SOURCE RAW + SOURCE graph, before aliasing. Always consume BOTH returned fields.
+   * Restricted transfers retain only provably selected originals; whole-note/native transfers
+   * may retain complete public history (including deleted parts) with retainOriginals=true.
+   * Original RAW/version identities stay historical; part references follow explicit alias maps.
+   * Unsupported/opaque nonempty metadata fails without changing the source or adopting legacy.
    */
   fun portableProjection(raw: TranscriptEntity, selectedParts: List<AudioPartEntity>,
-    remapRawId: String = raw.id, partIdRemap: Map<String, String> = emptyMap(), remapRawVersion: Long = version(raw)): PortableProjection {
-    require(remapRawId.length in 1..128 && remapRawVersion > 0)
-    // Preserve nullable/empty legacy state; an unknown opaque codec cannot be safely scope-filtered.
+    remapRawId: String = raw.id, partIdRemap: Map<String, String> = emptyMap(), remapRawVersion: Long = version(raw),
+    retainOriginals: Boolean = false, authorizedOriginalParts: List<AudioPartEntity> = selectedParts): PortableProjection {
+    require(raw.text.length <= MAX_CONTENT && AlignmentProtocol.validUnicode(raw.text)) { "Invalid portable RAW text" }
+    require(remapRawId.length in 1..128 && AlignmentProtocol.validUnicode(remapRawId) && remapRawVersion > 0)
     if (raw.cloudSourceJson == null || raw.cloudSourceJson.isEmpty()) return PortableProjection(raw.text, raw.cloudSourceJson)
+    val doc = transferDocument(raw)
     val ordered = selectedParts.sortedWith(compareBy({ it.position }, { it.id }))
-    require(ordered.map { it.id }.distinct().size == ordered.size)
-    // Unsupported non-null metadata is replaced with an explicit unbound projection, never
-    // downgraded to a nullable legacy row that auto-discovery might adopt as an original.
-    val doc = decode(raw.cloudSourceJson)?.takeIf { matches(it, raw) } ?: create(raw, raw.text,
-      ordered.map { CloudTextPart(it.id, "", null, raw.language, raw.provider, raw.model) })
+    require(ordered.map { it.id }.distinct().size == ordered.size && ordered.all { it.sessionId == raw.sessionId }) { "Invalid source part graph" }
     val byId = doc.parts.associateBy { it.id }
     val selected = ordered.mapNotNull { byId[it.id] }
-    // A partial legacy multipart cannot be projected by guessing text boundaries.
     val whole = selected == doc.parts
     require(whole || selected.all { it.text != null }) { "Cannot losslessly scope unknown multipart cloud text" }
     val body = if (whole) raw.text else selected.joinToString("\n\n") { it.text!! }
-    val projected = selected.map { p ->
+    fun mapped(p: CloudTextPart): CloudTextPart {
       val id = partIdRemap[p.id] ?: p.id
       require(id.length in 1..128)
-      // Never export an old audio identity outside the selected graph or borrow a replacement hash.
-      val selectedHash = ordered.single { it.id == p.id }.sha256
-      p.copy(id = id, sha256 = p.sha256.takeIf { it == selectedHash }.orEmpty())
+      val row = ordered.single { it.id == p.id }
+      require(p.sha256.isEmpty() || p.sha256 == row.sha256) { "Cloud source audio identity conflicts with selected audio: ${p.id}" }
+      return p.copy(id = id)
     }
+    val projected = selected.map(::mapped)
     require(projected.map { it.id }.distinct().size == projected.size) { "Portable part identity collision" }
-    val provider = projected.map { it.provider }.distinct().joinToString(" + ").ifEmpty { raw.provider }
-    val model = projected.map { it.model }.distinct().joinToString(" + ").ifEmpty { raw.model }
-    val language = projected.map { it.language }.distinct().singleOrNull()
-    val original = CloudOriginal(remapRawId, remapRawVersion, body, AlignmentProtocol.sha256(body), provider, model, language,
-      projected, reportedText = null, contentScope = "portable_projection")
-    val portable = CloudSourceDocument(rawId = remapRawId, rawVersion = remapRawVersion, textSha256 = original.textSha256,
-      parts = projected, originals = listOf(original), overlays = emptyList(), alignmentBinding = "portable_unbound")
-    return PortableProjection(body, encode(portable))
+    val selectedIds = selected.mapTo(HashSet()) { it.id }
+    val authorized = authorizedOriginalParts.associateBy { it.id }
+    require(authorized.size == authorizedOriginalParts.size) { "Ambiguous authorized original graph" }
+    val originals = if (retainOriginals) doc.originals else doc.originals.mapNotNull { original ->
+      require(original.parts.isNotEmpty() || original.text.isEmpty() && original.reportedText.isNullOrEmpty()) {
+        "Cannot scope cloud original without part boundaries"
+      }
+      val included = original.parts.filter { it.id in authorized }
+      require(included.all { p -> authorized.getValue(p.id).sha256 == p.sha256 }) { "Cannot scope conflicting historical audio identity" }
+      if (included.isEmpty()) null
+      else if (included == original.parts) original
+      else {
+        require(included.all { it.text != null }) { "Cannot losslessly scope unknown original multipart cloud text" }
+        val text = included.joinToString("\n\n") { it.text!! }
+        original.copy(text = text, textSha256 = AlignmentProtocol.sha256(text), parts = included,
+          provider = included.map { it.provider }.distinct().joinToString(" + "),
+          model = included.map { it.model }.distinct().joinToString(" + "), language = included.map { it.language }.distinct().singleOrNull(),
+          reportedText = null, contentScope = "portable_projection")
+      }
+    }
+    // An empty selected branch is explicit; it must not resurrect an omitted original.
+    val history = originals.map { original -> original.copy(parts = original.parts.map { p -> p.copy(id = partIdRemap[p.id] ?: p.id) }) }
+      .ifEmpty { listOf(CloudOriginal(remapRawId, remapRawVersion, body, AlignmentProtocol.sha256(body),
+        raw.provider, raw.model, raw.language, projected, contentScope = "portable_projection")) }
+    val portable = doc.copy(rawId = remapRawId, rawVersion = remapRawVersion, textSha256 = AlignmentProtocol.sha256(body),
+      parts = projected, originals = history, overlays = doc.overlays.filter { it.partId in selectedIds }.map { it.copy(partId = partIdRemap[it.partId] ?: it.partId) },
+      alignmentBinding = "portable_unbound")
+    val result = PortableProjection(body, encode(portable))
+    val destinationParts = ordered.map { it.copy(id = partIdRemap[it.id] ?: it.id) }
+    require(validatePortable(raw.copy(id = remapRawId, createdAt = remapRawVersion, text = body, cloudSourceJson = result.cloudSourceJson), destinationParts)) {
+      "Invalid portable cloud evidence or graph"
+    }
+    return result
   }
 
-  /** Strict imported/exported graph validation; true still means UNBOUND, never alignment approval. */
+  private fun transferDocument(raw: TranscriptEntity): CloudSourceDocument {
+    val value = requireNotNull(raw.cloudSourceJson)
+    require(value.length <= MAX_JSON) { "Cloud source metadata exceeds portable limit" }
+    val doc = try { portableJson.decodeFromString(CloudSourceDocument.serializer(), value).also(::validate) }
+      catch (e: IllegalArgumentException) { throw IllegalArgumentException("Unsupported or invalid nonempty cloud source metadata; original retained", e) }
+    require(matches(doc, raw)) { "Cloud source RAW identity/text mismatch" }
+    return doc
+  }
+
+  /** Stored timing display only. True never authorizes scheduling a new alignment. */
   fun validatePortable(raw: TranscriptEntity, selectedParts: List<AudioPartEntity>): Boolean {
     val value = raw.cloudSourceJson ?: return true
     if (value.isEmpty()) return true
-    if (value.length > MAX_JSON) return false
     return runCatching {
-      val doc = kotlinx.serialization.json.Json.decodeFromString(CloudSourceDocument.serializer(), value)
-      validate(doc)
-      if (!matches(doc, raw) || doc.alignmentBinding != "portable_unbound" || doc.overlays.isNotEmpty() || doc.originals.size != 1) return false
-      val original = doc.originals.single()
-      if (original.contentScope != "portable_projection" || original.reportedText != null || original.rawId != raw.id ||
-        original.rawVersion != version(raw) || original.text != raw.text || original.parts != doc.parts) return false
-      if (doc.parts.all { it.text != null } && doc.parts.joinToString("\n\n") { it.text!! } != raw.text) return false
+      require(raw.kind == dev.pampa.pampanotes.core.db.TranscriptKind.RAW && raw.text.length <= MAX_CONTENT && AlignmentProtocol.validUnicode(raw.text))
+      val doc = transferDocument(raw)
+      require(doc.alignmentBinding == "portable_unbound")
       val ordered = selectedParts.sortedWith(compareBy({ it.position }, { it.id }))
+      require(ordered.map { it.id }.distinct().size == ordered.size && ordered.all { it.sessionId == raw.sessionId && it.durationMs >= 0 })
       val byId = ordered.associateBy { it.id }
-      if (ordered.map { it.id }.filter { id -> doc.parts.any { it.id == id } } != doc.parts.map { it.id }) return false
-      doc.parts.all { p -> byId[p.id]?.let { p.sha256.isEmpty() || it.sha256 == p.sha256 } == true }
+      require(ordered.map { it.id }.filter { id -> doc.parts.any { it.id == id } } == doc.parts.map { it.id })
+      require(doc.parts.all { p -> byId[p.id]?.let { p.sha256.isEmpty() || it.sha256 == p.sha256 } == true })
+      doc.overlays.forEach { overlay ->
+        val p = doc.parts.single { it.id == overlay.partId }
+        val row = byId.getValue(p.id)
+        require(AlignmentProtocol.validHash(p.sha256) && row.sha256 == p.sha256)
+        require(overlay.timings.filter { it.status == "measured" }.all { row.durationMs > 0 && it.endMs!! <= row.durationMs })
+      }
+      true
     }.getOrDefault(false)
   }
 
-  /** Nullable legacy: single-part boundaries are lossless. Never infer multipart boundaries. */
+  /** Nullable legacy: single-part text boundaries are lossless, historical audio identity is not.
+   * Native null must stay null on transfer; later discovery cannot borrow current/replacement row
+   * hashes and turn a copy into an attested original. Only real saved source snapshots bind. */
   fun legacy(raw: TranscriptEntity, parts: List<AudioPartEntity>): CloudSourceDocument? {
     if (!cloud(raw.provider) || raw.cloudSourceJson != null) return null
-    val mapped = parts.map { p -> CloudTextPart(p.id, p.sha256, if (parts.size == 1) raw.text else null, raw.language, raw.provider, raw.model) }
-    return create(raw, raw.text, mapped)
+    val mapped = parts.map { p -> CloudTextPart(p.id, "", if (parts.size == 1) raw.text else null, raw.language, raw.provider, raw.model) }
+    val doc = create(raw, raw.text, mapped)
+    return doc.copy(alignmentBinding = "portable_unbound", originals = doc.originals.map { it.copy(contentScope = "portable_projection") })
   }
   fun create(raw: TranscriptEntity, exactText: String, parts: List<CloudTextPart>, reportedText: String? = null): CloudSourceDocument {
     val original = CloudOriginal(raw.id, version(raw), exactText, AlignmentProtocol.sha256(exactText), raw.provider, raw.model, raw.language, parts,
