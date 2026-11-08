@@ -20,7 +20,6 @@ import dev.pampa.pampanotes.core.db.SegmentDao
 import dev.pampa.pampanotes.core.db.SessionDao
 import dev.pampa.pampanotes.core.db.SourceDao
 import dev.pampa.pampanotes.core.db.TranscriptDao
-import dev.pampa.pampanotes.core.db.TranscriptKind
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.files.FilesInUse
 import dev.pampa.pampanotes.core.model.slugify
@@ -80,13 +79,6 @@ data class ExportResult(
   val includedPages: Int = 0,
   /** Pagine scritte a mano che non sono entrate, per lo stesso motivo delle registrazioni. */
   val skippedPages: Int = 0,
-)
-
-/** Com'e' andato il prelievo dal computer di casa prima di scrivere. */
-data class ExportFetchOutcome(
-  val fetched: Int,
-  /** Quelli che non sono arrivati, col perche'. Comprende quelli che non si potevano nemmeno chiedere. */
-  val missing: List<MissingFile>,
 )
 
 /**
@@ -202,10 +194,14 @@ class ExportService @Inject constructor(
   }
 
   /** Vero se il file e' gia' su questo dispositivo. */
-  private fun isPresent(file: ExportFileRef): Boolean = when (file.kind) {
-    ExportFileKind.AUDIO -> files.audioFile(file.fileName).exists()
-    ExportFileKind.SOURCE, ExportFileKind.PAGE -> files.sourceFile(file.fileName).exists()
+  private fun isPresent(file: ExportFileRef): Boolean = file.fileName.isNotBlank() && when (file.kind) {
+    ExportFileKind.AUDIO -> files.audioFile(file.fileName).isFile
+    ExportFileKind.SOURCE, ExportFileKind.PAGE -> files.sourceFile(file.fileName).isFile
   }
+
+  private suspend fun relayAvailable(file: ExportFileRef): Boolean =
+    file.fileName.isNotBlank() && file.id.isNotBlank() &&
+      fetcher.relayAvailable(if (file.kind == ExportFileKind.AUDIO) RelayKind.AUDIO else RelayKind.SOURCE, file.id)
 
   /** Il nome su disco con cui [FilesInUse] tiene un file dell'export. */
   private fun heldName(file: ExportFileRef): String = when (file.kind) {
@@ -221,63 +217,39 @@ class ExportService @Inject constructor(
    * appena scaricato. La presa scade da sola se il pannello si chiude senza esportare.
    */
   suspend fun plan(set: ExportSet, options: ExportOptions): ExportFetchPlan = withContext(io) {
-    inUse.hold(ExportFiles.wanted(set, options).map(::heldName), PLAN_HOLD_MS)
+    inUse.hold(ExportFiles.wanted(set, options).filter { it.fileName.isNotBlank() }.map(::heldName), PLAN_HOLD_MS)
     val plan = ExportFiles.plan(set, options, ::isPresent)
-    val transferable = plan.unobtainable.filter { missing ->
-      fetcher.relayAvailable(if (missing.file.kind == ExportFileKind.AUDIO) RelayKind.AUDIO else RelayKind.SOURCE, missing.file.id)
-    }
-    // The export plan can obtain these bytes; the original archived flags stay untouched.
-    plan.copy(toFetch = plan.toFetch + transferable.map { it.file }, unobtainable = plan.unobtainable - transferable.toSet())
+    ExportAttachmentFetch.plan(plan, ::relayAvailable)
   }
 
   /**
    * Scarica dal computer di casa quello che [plan] ha trovato da scaricare.
    *
    * Prima di scrivere e non durante: se il computer non risponde lo si sa prima che esista un file a
-   * meta', e la persona puo' scegliere se esportare senza. Al primo «non risponde» ci si ferma — e'
-   * lo stesso computer per tutti, e gli altri aspetterebbero ognuno il suo timeout per fallire uguale.
+   * meta', e la persona puo' scegliere se esportare senza. Dopo un errore del PC si saltano soltanto
+   * i file senza un trasferimento cloud pronto; i trasferimenti indipendenti proseguono.
    * Un file che il computer dice di non avere, o che arriva diverso, riguarda quel file solo.
    */
   suspend fun fetchMissing(plan: ExportFetchPlan, onProgress: (FetchProgress) -> Unit = {}): ExportFetchOutcome = withContext(io) {
-    val missing = plan.unobtainable.toMutableList()
-    val total = plan.toFetch.size
-    var fetched = 0
-    var unreachable = false
-    plan.toFetch.forEachIndexed { index, file ->
-      if (unreachable) {
-        missing += MissingFile(file, MissingReason.UNREACHABLE)
-        return@forEachIndexed
-      }
-      onProgress(FetchProgress(index, total, file.name, index.toFloat() / total))
-      val within: (Long, Long) -> Unit = { received, size ->
-        val part = if (size > 0) (received.toFloat() / size).coerceIn(0f, 1f) else 0f
-        onProgress(FetchProgress(index, total, file.name, (index + part) / total))
-      }
-      try {
+    ExportAttachmentFetch.fetch(
+      plan = plan,
+      relayAvailable = ::relayAvailable,
+      fetch = { file, within ->
         when (file.kind) {
-          ExportFileKind.AUDIO -> {
-            val row = audioParts.get(file.id) ?: throw ArchiveMissing(file.name)
-            fetcher.fetchPart(row, within)
-          }
-
-          ExportFileKind.SOURCE, ExportFileKind.PAGE -> {
-            val row = sources.get(file.id) ?: throw ArchiveMissing(file.name)
-            fetcher.fetchSource(row, within)
-          }
+          ExportFileKind.AUDIO -> fetcher.fetchPart(audioParts.get(file.id) ?: throw ArchiveMissing(file.name), within)
+          ExportFileKind.SOURCE, ExportFileKind.PAGE -> fetcher.fetchSource(sources.get(file.id) ?: throw ArchiveMissing(file.name), within)
         }
-        fetched++
-      } catch (error: IOException) {
-        val reason = when {
+        if (!isPresent(file)) throw ArchiveMissing(file.name)
+      },
+      classify = { error ->
+        when {
           error is ArchiveMissing || error is RelayUnavailable -> MissingReason.NOT_ARCHIVED
           error !is ArchiveMismatch && ArchiveRepository.isUnreachable(error) -> MissingReason.UNREACHABLE
           else -> MissingReason.FAILED
         }
-        if (reason == MissingReason.UNREACHABLE) unreachable = true
-        missing += MissingFile(file, reason)
-      }
-    }
-    onProgress(FetchProgress(total, total, "", 1f))
-    ExportFetchOutcome(fetched, missing)
+      },
+      onProgress = { done, total, label, fraction -> onProgress(FetchProgress(done, total, label, fraction)) },
+    )
   }
 
   /** Scrive il pacchetto e torna dove lo ha messo. */
@@ -288,29 +260,41 @@ class ExportService @Inject constructor(
     labels: ExportLabels = ExportLabels(),
     onProgress: (Float) -> Unit = {},
   ): ExportResult = withContext(io) {
-    val held = ExportFiles.wanted(set, options).map(::heldName)
+    val coroutine = currentCoroutineContext()
+    var lastProgress = 0f
+    val report: (Float) -> Unit = { value ->
+      coroutine.ensureActive()
+      if (value.isFinite()) lastProgress = maxOf(lastProgress, value.coerceIn(0f, 1f))
+      onProgress(lastProgress)
+    }
+    val wanted = ExportFiles.wanted(set, options)
+    val held = wanted.filter { it.fileName.isNotBlank() }.map(::heldName)
     inUse.hold(held, WRITE_HOLD_MS)
-    val result = try {
-      write(
-        set = ExportFiles.withoutMissingPages(set) { files.sourceFile(it.storedFileName).exists() },
+    try {
+      val presentBefore = wanted.filter(::isPresent).toSet()
+      val result = write(
+        // PN must retain unavailable source metadata and every native historical version.
+        set = if (options.isPampa) set else ExportFiles.withoutMissingPages(set) { files.sourceFile(it.storedFileName).isFile },
         options = options,
         destination = destination,
         labels = labels,
-        onProgress = onProgress,
+        onProgress = report,
+      )
+      report(1f)
+      fun count(kind: ExportFileKind, present: Boolean) = wanted.count {
+        it.kind == kind && (it in presentBefore && isPresent(it)) == present
+      }
+      result.copy(
+        includedAudio = count(ExportFileKind.AUDIO, true),
+        includedSources = count(ExportFileKind.SOURCE, true),
+        includedPages = count(ExportFileKind.PAGE, true),
+        skippedAudio = count(ExportFileKind.AUDIO, false),
+        skippedSources = count(ExportFileKind.SOURCE, false),
+        skippedPages = count(ExportFileKind.PAGE, false),
       )
     } finally {
       inUse.release(held)
     }
-    // Quello che e' dentro davvero, contato adesso che e' scritto: la schermata dice questo, non
-    // quello che si era chiesto.
-    val wanted = ExportFiles.wanted(set, options)
-    fun count(kind: ExportFileKind, present: Boolean) = wanted.count { it.kind == kind && isPresent(it) == present }
-    result.copy(
-      includedAudio = count(ExportFileKind.AUDIO, true),
-      includedSources = count(ExportFileKind.SOURCE, true),
-      includedPages = count(ExportFileKind.PAGE, true),
-      skippedPages = count(ExportFileKind.PAGE, false),
-    )
   }
 
   private suspend fun write(
@@ -328,23 +312,22 @@ class ExportService @Inject constructor(
     val writer = BundleWriter(audioDir = files.audio, sourcesDir = files.sources, labels = labels, checkpoint = checkpoint)
     val format = options.format
     val name = fileName(set, format)
-    // Con l'indice in cloud una nota puo' avere le righe delle registrazioni e non i file: il
-    // pacchetto esce lo stesso, ma chi lo riceve deve sapere che e' piu' leggero di quello chiesto.
-    val skipped = if (format == ExportFormat.BUNDLE && options.includeAudio) {
-      set.notes.sumOf { note -> note.sessions.sumOf { session -> session.parts.count { !File(files.audio, it.fileName).exists() } } }
-    } else {
-      0
-    }
-    val skippedSources = if (format == ExportFormat.BUNDLE && options.includeSources) {
-      set.notes.sumOf { note -> note.sources.count { source -> source.storedFileName != null && !File(files.sources, source.storedFileName).exists() } }
-    } else {
-      0
-    }
-
     if (format == ExportFormat.FILES) return exportLoose(set, options, destination, writer, name, onProgress, checkpoint)
 
-    val single = format == ExportFormat.SINGLE
-    val mime = if (single) "text/markdown" else "application/zip"
+    val mime = when (format) {
+      ExportFormat.PAMPA -> PampaNoteFormat.MIME_TYPE
+      ExportFormat.SINGLE -> "text/markdown"
+      ExportFormat.BUNDLE, ExportFormat.FILES -> "application/zip"
+    }
+    val writeTo: (java.io.OutputStream) -> Unit = { out ->
+      when (format) {
+        ExportFormat.PAMPA -> PampaNoteWriter(audioDir = files.audio, sourcesDir = files.sources, checkpoint = checkpoint)
+          .write(set, out, onProgress)
+        ExportFormat.SINGLE -> out.write(writer.single(set, options).toByteArray(Charsets.UTF_8))
+        ExportFormat.BUNDLE -> writer.write(set, options, out, onProgress)
+        ExportFormat.FILES -> error("Loose files use exportLoose")
+      }
+    }
     return when (destination) {
       is ExportDestination.Share -> {
         val target = File(files.exports, name)
@@ -353,8 +336,7 @@ class ExportService @Inject constructor(
         val partial = File(files.exports, "$name.partial")
         try {
           partial.outputStream().use { out ->
-            if (single) out.write(writer.single(set, options).toByteArray(Charsets.UTF_8))
-            else writer.write(set, options, out, onProgress)
+            writeTo(out)
           }
           target.delete()
           if (!partial.renameTo(target)) throw IOException("rename")
@@ -363,7 +345,7 @@ class ExportService @Inject constructor(
           if (e is CancellationException) throw e
           throw ExportFailure(ExportFailure.Reason.WRITE, e)
         }
-        ExportResult(Uri.fromFile(target), name, target.length(), mime, set.notes.size, target, skippedAudio = skipped, skippedSources = skippedSources)
+        ExportResult(Uri.fromFile(target), name, target.length(), mime, set.notes.size, target)
       }
 
       is ExportDestination.Folder -> {
@@ -383,8 +365,7 @@ class ExportService @Inject constructor(
           val stream = context.contentResolver.openOutputStream(document.uri)
             ?: throw ExportFailure(ExportFailure.Reason.NOT_WRITABLE)
           stream.use { out ->
-            if (single) out.write(writer.single(set, options).toByteArray(Charsets.UTF_8))
-            else writer.write(set, options, out, onProgress)
+            writeTo(out)
           }
         } catch (e: Throwable) {
           // Un file a meta' e' peggio di nessun file: chi lo apre trova un archivio rotto e non sa
@@ -393,7 +374,7 @@ class ExportService @Inject constructor(
           if (e is CancellationException || e is ExportFailure) throw e
           throw ExportFailure(ExportFailure.Reason.INTERRUPTED, e)
         }
-        ExportResult(document.uri, name, document.length(), mime, set.notes.size, skippedAudio = skipped, skippedSources = skippedSources)
+        ExportResult(document.uri, name, document.length(), mime, set.notes.size)
       }
     }
   }
@@ -557,6 +538,10 @@ class ExportService @Inject constructor(
           archived = source.archivedAt > 0,
         )
       },
+      sourceFiles = allSources.map { source ->
+        ExportSource(source.originalName, source.kind, source.sha256, source.sizeBytes,
+          source.storedFileName, source.status, source.extractedChars, source.id, source.archivedAt > 0)
+      },
       sessions = gatheredSessions,
     )
   }
@@ -589,6 +574,7 @@ class ExportService @Inject constructor(
         ExportFormat.BUNDLE -> ".zip"
         ExportFormat.SINGLE -> ".md"
         ExportFormat.FILES -> ""
+        ExportFormat.PAMPA -> ".${PampaNoteFormat.EXTENSION}"
       }
     }
   }

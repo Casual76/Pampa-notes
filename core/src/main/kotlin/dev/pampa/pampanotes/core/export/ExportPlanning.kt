@@ -82,6 +82,7 @@ object ExportEstimator {
   const val CHAT_MAX_TOKENS = 180_000L
 
   fun estimate(set: ExportSet, options: ExportOptions): ExportEstimate {
+    if (options.isPampa) return estimatePampa(set, options)
     val noteWords = set.notes.sumOf { note -> note.note.body.wordCount().toLong() + WORDS_PER_NOTE }
     val transcriptWords = set.notes.sumOf { note -> note.sessions.sumOf { (it.transcript?.wordCount ?: 0).toLong() } }
     val rules = if (options.includeSkill || options.format != ExportFormat.BUNDLE) RULES_WORDS else 0
@@ -110,11 +111,35 @@ object ExportEstimator {
     )
   }
 
+  /** Approximate size before compression, not a compression measurement. No AI/Markdown duplication. */
+  private fun estimatePampa(set: ExportSet, options: ExportOptions): ExportEstimate {
+    val wanted = ExportFiles.wanted(set, options)
+    val audio = wanted.filter { it.kind == ExportFileKind.AUDIO }.sumOf { it.sizeBytes.coerceAtLeast(0) }
+    val sources = wanted.filter { it.kind == ExportFileKind.SOURCE }.sumOf { it.sizeBytes.coerceAtLeast(0) }
+    val pages = wanted.filter { it.kind == ExportFileKind.PAGE }
+    // Count every historical text and stored timing payload, including untimed RAW variants.
+    val textBytes = set.notes.sumOf { note ->
+      val native = note.native
+      note.note.body.toByteArray(Charsets.UTF_8).size.toLong() +
+        (native?.transcripts?.sumOf { it.text.toByteArray(Charsets.UTF_8).size.toLong() }
+          ?: note.sessions.sumOf { it.transcript?.text?.toByteArray(Charsets.UTF_8)?.size?.toLong() ?: 0L }) +
+        (native?.segments?.sumOf { it.text.toByteArray(Charsets.UTF_8).size.toLong() + (it.wordsJson?.toByteArray(Charsets.UTF_8)?.size ?: 0) + 256L } ?: 0L) +
+        2048L + (native?.transcripts?.size ?: note.sessions.size) * 512L +
+        (native?.sessions?.size ?: note.sessions.size) * 512L
+    }
+    return ExportEstimate(
+      bytes = 4096L + set.folders.size * 512L + wanted.size * 1024L + textBytes +
+        audio + sources + pages.sumOf { it.sizeBytes.coerceAtLeast(0) },
+      tokens = 0, words = 0, pages = pages.size, audioBytes = audio, sourceBytes = sources,
+    )
+  }
+
   /**
    * Gli avvisi, nell'ordine in cui dirli. Solo quelli che cambiano una decisione: un pacchetto per un
    * agente e' grande per costruzione, e dirlo ogni volta insegna a non leggere gli avvisi.
    */
   fun warnings(estimate: ExportEstimate, options: ExportOptions): List<ExportWarning> = buildList {
+    if (options.isPampa) return@buildList
     when (options.target) {
       ExportTarget.CHAT -> {
         if (estimate.bytes > CHAT_MAX_BYTES) add(ExportWarning.CHAT_TOO_HEAVY)
@@ -122,7 +147,7 @@ object ExportEstimator {
       }
 
       ExportTarget.PASTE -> if (estimate.tokens > CHAT_MAX_TOKENS) add(ExportWarning.PASTE_TOO_LONG)
-      ExportTarget.PROJECT, ExportTarget.AGENT -> Unit
+      ExportTarget.PROJECT, ExportTarget.AGENT, ExportTarget.PAMPA -> Unit
     }
     // Per la chat lo dice gia' il peso, se e' troppo; altrimenti le registrazioni sono poche e va bene.
     if (estimate.audioBytes > 0 && ExportWarning.CHAT_TOO_HEAVY !in this && options.target != ExportTarget.CHAT) {
@@ -143,7 +168,7 @@ data class ExportFileRef(
   /** La riga: `audio_parts.id` per una registrazione, `sources.id` per un originale o una pagina. */
   val id: String,
   val name: String,
-  /** Il nome in `audio/` o in `sources/`. */
+  /** Il nome in `audio/` o in `sources/`; vuoto quando resta soltanto il metadato della fonte. */
   val fileName: String,
   val sizeBytes: Long,
   /** Il computer di casa ce l'ha. */
@@ -160,6 +185,9 @@ enum class MissingReason {
 
   /** Il computer ha risposto, ma il file non e' arrivato intero. */
   FAILED,
+
+  /** Metadata survived, but no stored file reference is available to fetch. */
+  NO_FILE,
 }
 
 data class MissingFile(val file: ExportFileRef, val reason: MissingReason)
@@ -174,6 +202,8 @@ data class ExportFetchPlan(
   val toFetch: List<ExportFileRef>,
   /** Mancano e il computer non li ha: si sa gia' prima di provare. */
   val unobtainable: List<MissingFile>,
+  /** Ready temporary transfers are independent of the home computer's reachability. */
+  val relayReady: Set<ExportFileRef> = emptySet(),
 ) {
   val isEmpty: Boolean get() = toFetch.isEmpty() && unobtainable.isEmpty()
 }
@@ -186,6 +216,10 @@ object ExportFiles {
   /** I file che il pacchetto vuole dentro, con queste opzioni. */
   fun wanted(set: ExportSet, options: ExportOptions): List<ExportFileRef> = buildList {
     set.notes.forEach { note ->
+      if (options.isPampa) {
+        addAll(pampaFiles(note))
+        return@forEach
+      }
       // Le pagine a mano entrano sempre — sono appunti — tranne nel testo da incollare, dove
       // un'immagine non ci sta.
       if (options.format != ExportFormat.SINGLE) {
@@ -209,17 +243,45 @@ object ExportFiles {
     }
   }
 
+  /** The native graph is authoritative, not the reduced AI presentation of the note. */
+  private fun pampaFiles(note: ExportNote): List<ExportFileRef> = buildList {
+    val parts = note.sessions.flatMap { it.parts }.associateBy { it.id }
+    val sources = note.sourceFiles.associateBy { it.id }
+    val pages = note.handwriting.associateBy { it.id }
+    val native = note.native
+    if (native == null) {
+      parts.values.forEach { add(ExportFileRef(ExportFileKind.AUDIO, it.id, it.originalName, it.fileName, it.sizeBytes, it.archived)) }
+      sources.values.forEach { source ->
+        add(ExportFileRef(if (source.id in pages) ExportFileKind.PAGE else ExportFileKind.SOURCE,
+          source.id, source.originalName, source.storedFileName.orEmpty(), source.sizeBytes, source.archived))
+      }
+      pages.values.filter { it.id !in sources }.forEach {
+        add(ExportFileRef(ExportFileKind.PAGE, it.id, "${note.note.title} · ${it.page}", it.storedFileName, it.sizeBytes, it.archived))
+      }
+    } else {
+      native.parts.forEach { part ->
+        add(ExportFileRef(ExportFileKind.AUDIO, part.id, part.originalName, part.fileName, part.sizeBytes,
+          parts[part.id]?.archived ?: (part.archivedAt > 0)))
+      }
+      native.sources.forEach { source ->
+        add(ExportFileRef(if (source.derivedFromId != null) ExportFileKind.PAGE else ExportFileKind.SOURCE,
+          source.id, source.originalName, source.storedFileName.orEmpty(), source.sizeBytes,
+          sources[source.id]?.archived ?: pages[source.id]?.archived ?: (source.archivedAt > 0)))
+      }
+    }
+  }
+
   /**
    * Divide i file che mancano in quelli da scaricare e quelli che non si possono avere.
    *
    * @param isPresent se il file e' gia' su questo dispositivo.
    */
   fun plan(set: ExportSet, options: ExportOptions, isPresent: (ExportFileRef) -> Boolean): ExportFetchPlan {
-    val missing = wanted(set, options).filterNot(isPresent)
-    val (fetchable, stuck) = missing.partition { it.archived }
+    val missing = wanted(set, options).filter { it.fileName.isBlank() || !isPresent(it) }
+    val (fetchable, stuck) = missing.partition { it.archived && it.fileName.isNotBlank() }
     return ExportFetchPlan(
       toFetch = fetchable,
-      unobtainable = stuck.map { MissingFile(it, MissingReason.NOT_ARCHIVED) },
+      unobtainable = stuck.map { MissingFile(it, if (it.fileName.isBlank()) MissingReason.NO_FILE else MissingReason.NOT_ARCHIVED) },
     )
   }
 

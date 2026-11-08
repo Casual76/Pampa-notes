@@ -43,13 +43,16 @@ enum class ExportFormat {
    * non rompe niente.
    */
   FILES,
+
+  /** Trasferimento nativo completo fra installazioni di Pampa Notes, senza perdita. */
+  PAMPA,
 }
 
 enum class TranscriptChoice {
   /** La versione ripulita quando c'e', altrimenti la grezza. */
   BEST,
 
-  /** Sempre la grezza: e' l'unica che porta i tempi, e l'unica che nessun modello ha riscritto. */
+  /** Sempre la grezza, con i tempi soltanto quando presenti. */
   RAW,
 }
 
@@ -77,6 +80,9 @@ enum class ExportTarget {
 
   /** Un testo solo da incollare: per quando non si puo' allegare niente. */
   PASTE,
+
+  /** Note, cronologie e allegati in un solo file .pn da aprire in Pampa Notes. */
+  PAMPA,
   ;
 
   /** Le opzioni che questa risposta sceglie da sola. */
@@ -85,6 +91,7 @@ enum class ExportTarget {
     PROJECT -> ExportOptions(target = this, format = ExportFormat.FILES, includeSkill = true, includeAudio = false, includeSources = false)
     AGENT -> ExportOptions(target = this, format = ExportFormat.BUNDLE, includeSkill = true, includeAudio = true, includeSources = true)
     PASTE -> ExportOptions(target = this, format = ExportFormat.SINGLE, includeSkill = true, includeAudio = false, includeSources = false)
+    PAMPA -> ExportOptions(target = this, format = ExportFormat.PAMPA, includeSkill = false, includeAudio = true, includeSources = true)
   }
 
   companion object {
@@ -98,6 +105,7 @@ enum class ExportTarget {
     fun inferFrom(options: ExportOptions): ExportTarget = when (options.format) {
       ExportFormat.FILES -> PROJECT
       ExportFormat.SINGLE -> PASTE
+      ExportFormat.PAMPA -> PAMPA
       ExportFormat.BUNDLE -> if (options.includeAudio || options.includeSources) AGENT else CHAT
     }
   }
@@ -117,13 +125,17 @@ data class ExportOptions(
   val target: ExportTarget = ExportTarget.CHAT,
 ) {
   /** Vero se qualcosa e' stato cambiato rispetto a quello che [target] sceglie da solo. */
-  val isCustomized: Boolean get() = this != target.defaults()
+  val isCustomized: Boolean get() = !isPampa && this != target.defaults()
+
+  /** PN includes the full native graph; AI text and attachment switches never filter it. */
+  val isPampa: Boolean get() = format == ExportFormat.PAMPA
+  val wantsAudio: Boolean get() = isPampa || (carriesAttachments && includeAudio)
+  val wantsSources: Boolean get() = isPampa || (carriesAttachments && includeSources)
 
   /**
-   * Allegati e regole contano solo nello ZIP: i file sciolti e il testo da incollare non hanno dove
-   * mettere un m4a, e le regole le hanno gia' (in `instructions.md` e in cima al testo).
+   * ZIP e PN possono portare allegati. PN li include tutti; le opzioni IA riguardano solo lo ZIP.
    */
-  val carriesAttachments: Boolean get() = format == ExportFormat.BUNDLE
+  val carriesAttachments: Boolean get() = format == ExportFormat.BUNDLE || isPampa
 
   /**
    * Un'altra risposta a «Dove lo usi?».
@@ -152,7 +164,11 @@ object ExportOptionsCodec {
       val tree = json.parseToJsonElement(raw).jsonObject
       val options = json.decodeFromJsonElement(ExportOptions.serializer(), tree)
       // Scritto prima di «Dove lo usi?»: la risposta si ricava da quello che c'era.
-      if ("target" in tree) options else options.copy(target = ExportTarget.inferFrom(options))
+      when {
+        options.isPampa || options.target == ExportTarget.PAMPA -> options.copy(format = ExportFormat.PAMPA, target = ExportTarget.PAMPA)
+        "target" in tree -> options
+        else -> options.copy(target = ExportTarget.inferFrom(options))
+      }
     }.getOrDefault(ExportOptions())
   }
 
@@ -240,6 +256,8 @@ data class ExportNote(
   val sessions: List<ExportSession>,
   val handwriting: List<ExportImage> = emptyList(),
   val native: dev.pampa.pampanotes.core.importing.PampaBundleNote? = null,
+  /** All originals and derived sources, including unavailable ones. AI exports use [sources]. */
+  val sourceFiles: List<ExportSource> = sources,
 ) {
   val folderName: String get() = folderPath.lastOrNull().orEmpty()
   val audioDurationMs: Long get() = sessions.sumOf { it.durationMs }
