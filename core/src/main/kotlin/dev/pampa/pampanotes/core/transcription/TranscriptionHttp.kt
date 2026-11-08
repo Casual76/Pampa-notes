@@ -7,6 +7,9 @@ import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 
@@ -61,6 +64,7 @@ class TranscriptionHttp(
     onProgress: (UploadProgress) -> Unit = {},
     onResponse: ((JsonElement?) -> Unit)? = null,
   ): JsonElement? {
+    val upload = currentCoroutineContext()[CloudUploadContext]
     val permit = cloudGate?.permit(url, headers)
     val boundary = "----PampaNotes${System.nanoTime().toString(16)}"
     val prelude = buildPrelude(boundary, fields, fileName, fileMime)
@@ -68,7 +72,7 @@ class TranscriptionHttp(
     val total = prelude.size.toLong() + file.length() + epilogue.size
 
     val connection = open(url, "POST", headers, readTimeoutMillis.coerceAtLeast(1))
-    return connection.cancellable(io) { exchange(connection, onResponse, permit) {
+    return connection.cancellable(io) { exchange(connection, onResponse, permit, upload) { boundUpload ->
       connection.doOutput = true
       connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
       // A lunghezza fissa e non a blocchi: cosi' la barra ha un totale da cui calcolare, e il server
@@ -92,7 +96,7 @@ class TranscriptionHttp(
         counting.write(epilogue)
         counting.flush()
       }
-      readBody(connection, onResponse, permit)
+      readBody(connection, onResponse, permit, boundUpload)
     } }
   }
 
@@ -162,15 +166,18 @@ class TranscriptionHttp(
    * Annullati, non si traduce niente: [mapHttp] chiede il codice di risposta, e su una connessione
    * appena staccata `responseCode` rifarebbe la richiesta da capo.
    */
-  private suspend inline fun <T> exchange(connection: HttpURLConnection, noinline onResponse: ((JsonElement?) -> Unit)? = null, permit: CloudRequestGate.Permit? = null, block: () -> T): T {
+  private suspend inline fun <T> exchange(connection: HttpURLConnection, noinline onResponse: ((JsonElement?) -> Unit)? = null, permit: CloudRequestGate.Permit? = null, upload: CloudUploadContext? = null, block: (CloudUploadContext?) -> T): T {
     // A failed local gate must never fall through to mapHttp's responseCode network probe.
-    try { permit?.beforeRequest() } catch (t: Throwable) { connection.disconnect(); throw t }
+    val boundUpload = try {
+      permit?.beforeRequest()
+      upload?.dispatch(connection.url.toString())
+    } catch (t: Throwable) { connection.disconnect(); throw t }
     return try {
-      block()
+      block(boundUpload)
     } catch (t: Throwable) {
       // readBody already persisted any observed 429. Never probe responseCode on a cancelled socket.
       kotlinx.coroutines.currentCoroutineContext().ensureActive()
-      throw TranscriptionError.from(mapHttp(connection, t, onResponse, permit))
+      throw TranscriptionError.from(mapHttp(connection, t, onResponse, permit, boundUpload))
     } finally {
       connection.disconnect()
     }
@@ -187,12 +194,10 @@ class TranscriptionHttp(
     return connection
   }
 
-  private suspend fun readBody(connection: HttpURLConnection, onResponse: ((JsonElement?) -> Unit)? = null, permit: CloudRequestGate.Permit? = null): JsonElement? {
+  private suspend fun readBody(connection: HttpURLConnection, onResponse: ((JsonElement?) -> Unit)? = null, permit: CloudRequestGate.Permit? = null, upload: CloudUploadContext? = null): JsonElement? {
     val code = connection.responseCode
     // Record headers immediately, before body IO, usage callbacks or cancellation can fail.
-    val quota = if (code == 429 && permit != null)
-      permit.observed(httpFailure(code, connection.headerFields.orEmpty(), "") as TranscriptionError.RateLimited)
-    else null
+    val quota = observed(connection, code, permit, upload)
     val stream = if (code in 200..299) connection.inputStream else connection.errorStream
     val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
     val parsed = runCatching { json.parseToJsonElement(text) }.getOrNull()
@@ -207,19 +212,43 @@ class TranscriptionHttp(
   }
 
   /** Un errore durante la scrittura puo' nascondere una risposta gia' pronta: 413 arriva cosi'. */
-  private suspend fun mapHttp(connection: HttpURLConnection, t: Throwable, onResponse: ((JsonElement?) -> Unit)? = null, permit: CloudRequestGate.Permit? = null): Throwable {
+  private suspend fun mapHttp(connection: HttpURLConnection, t: Throwable, onResponse: ((JsonElement?) -> Unit)? = null, permit: CloudRequestGate.Permit? = null, upload: CloudUploadContext? = null): Throwable {
     if (t is kotlinx.coroutines.CancellationException) return t
     // Gia' tradotto da [readBody], col corpo della risposta: rileggerlo qui dava un corpo vuoto (lo
     // stream e' gia' consumato) e un «HTTP 404» al posto di quello che il server aveva detto.
     if (t is dev.antigravity.fluidengine.ai.net.AiError || t is TranscriptionError) return t
     val code = runCatching { connection.responseCode }.getOrNull() ?: return AiErrorMapper.wrap(t)
-    val quota = if (code == 429 && permit != null)
-      permit.observed(httpFailure(code, connection.headerFields.orEmpty(), "") as TranscriptionError.RateLimited)
-    else null
+    val quota = observed(connection, code, permit, upload)
     if (code in 200..299) return AiErrorMapper.wrap(t)
     val body = runCatching { connection.errorStream?.bufferedReader()?.use { it.readText() } }.getOrNull().orEmpty()
     onResponse?.invoke(runCatching { json.parseToJsonElement(body) }.getOrNull())
     return quota ?: httpFailure(code, connection.headerFields.orEmpty(), body)
+  }
+
+  /** Persist the quota first and then this POST's disposition in the SAME cancellation shield.
+   * In particular, returning from Permit.observed alone can resume into a cancelled coroutine.
+   * Any persistence failure leaves the intent uncertain and therefore cannot cause rebilling.
+   */
+  private suspend fun observed(connection: HttpURLConnection, code: Int, permit: CloudRequestGate.Permit?, upload: CloudUploadContext?): TranscriptionError.RateLimited? {
+    if (code != 401 && code != 402 && code != 429) return null
+    return withContext(NonCancellable + io) {
+      val quota = if (code == 429 && permit != null)
+        permit.observed(httpFailure(code, connection.headerFields.orEmpty(), "") as TranscriptionError.RateLimited)
+      else null
+      if (upload != null) upload.rejected()
+      else {
+        // A metadata refusal proves nothing about a dispatched audio POST. It can only
+        // settle this context's NEW intent while dispatch is still impossible. The CAS
+        // also closes dispatch before disk IO, including concurrent metadata callbacks.
+        val refusal = when (code) {
+          401 -> TranscriptionError.Unauthorized("Cloud authentication refused before audio upload")
+          402 -> TranscriptionError.CreditRequired("Cloud credit required before audio upload")
+          else -> quota ?: httpFailure(code, connection.headerFields.orEmpty(), "") as TranscriptionError.RateLimited
+        }
+        currentCoroutineContext()[CloudUploadContext]?.refusedBeforeDispatch(refusal)
+      }
+      quota
+    }
   }
 
   /**

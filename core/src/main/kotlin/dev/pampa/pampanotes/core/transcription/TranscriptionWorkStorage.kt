@@ -6,6 +6,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.util.UUID
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -57,17 +58,34 @@ internal open class TranscriptionWorkStorage {
 
   fun recordInput(directory: File, input: Input) = write(File(directory, "input.json"), json.encodeToString(Input.serializer(), input))
 
-  fun beginUpload(resultFile: File) {
+  fun beginUpload(resultFile: File): Upload = synchronized(uploadLock) {
     val marker = File(resultFile.parentFile, "${resultFile.name}.sending")
-    if (marker.exists()) throw IOException("Uncertain previous paid request; results retained, automatic rerun refused")
-    write(marker, "pending")
+    // A rejection replaces this exact attempt atomically. Legacy/unknown/interrupted writes
+    // stay conservative; neither a provider cooldown nor an exception can unlock them.
+    if (marker.exists() && !marker.readText().matches(Regex("rejected:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")))
+      throw IOException("Uncertain previous paid request; results retained, automatic rerun refused")
+    val token = UUID.randomUUID().toString()
+    write(marker, "pending:$token")
+    Upload(marker, token)
   }
 
-  fun finishUpload(resultFile: File) {
+  internal inner class Upload(private val marker: File, private val token: String) {
+    fun rejected() = synchronized(uploadLock) {
+      val previous = marker.readText()
+      if (previous == "rejected:$token") return@synchronized
+      if (previous != "pending:$token") throw IOException("Transcription request identity changed; automatic rerun refused")
+      // Keep evidence on disk, even if cancellation/process death prevents the runner's catch.
+      // write() refuses leftover .pending files and syncs before its atomic replacement.
+      write(marker, "rejected:$token")
+    }
+  }
+
+  fun finishUpload(resultFile: File) = synchronized(uploadLock) {
     val marker = File(resultFile.parentFile, "${resultFile.name}.sending")
     if (marker.exists() && !marker.delete()) throw IOException("Cannot finish saved transcription request")
   }
 
   @Serializable internal data class Input(val partId: String, val sha256: String, val durationMs: Long, val version: Int = 1)
   @Serializable private data class Options(val signature: String, val model: String, val language: String?, val prompt: String?, val temperature: Double)
+  private companion object { val uploadLock = Any() }
 }

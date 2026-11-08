@@ -628,12 +628,10 @@ class TranscriptionRunner internal constructor(
       val cached = File(workDir, "whole.json")
       val chunk = readStored(cached, spec, signature) ?: run {
         val hash = checkedInput()
-        if (cloud) storage.beginUpload(cached)
         val result = try {
-          sendWithRetry(provider, source, part.mime, request.copy(cloudDurationMs = part.durationMs), waitingReporter(onProgress), remote(1, 1), uploading(1, 1))
-        } catch (limited: TranscriptionError.RateLimited) {
-          if (cloud) storage.finishUpload(cached)
-          throw limited
+          upload(cached, provider) {
+            sendWithRetry(provider, source, part.mime, request.copy(cloudDurationMs = part.durationMs), waitingReporter(onProgress), remote(1, 1), uploading(1, 1))
+          }
         } catch (silent: TranscriptionError.NoSpeech) {
           TranscriptResult("", emptyList(), null, null)
         }
@@ -692,16 +690,14 @@ class TranscriptionRunner internal constructor(
       try {
         if (cloud) {
           checkedInput()
-          storage.beginUpload(chunkFile(workDir, spec.index))
         }
         val result = try {
-          sendWithRetry(
-            provider, encoded.file, encoded.mime, request.copy(cloudDurationMs = spec.endMs - spec.startMs), waitingReporter(onProgress),
-            remote(chunkIndex, chunkCount), uploading(chunkIndex, chunkCount),
-          )
-        } catch (limited: TranscriptionError.RateLimited) {
-          if (cloud) storage.finishUpload(chunkFile(workDir, spec.index))
-          throw limited
+          upload(chunkFile(workDir, spec.index), provider) {
+            sendWithRetry(
+              provider, encoded.file, encoded.mime, request.copy(cloudDurationMs = spec.endMs - spec.startMs), waitingReporter(onProgress),
+              remote(chunkIndex, chunkCount), uploading(chunkIndex, chunkCount),
+            )
+          }
         } catch (silent: TranscriptionError.NoSpeech) {
           // Dieci minuti di intervallo, o la classe che esce: un pezzo muto e' un pezzo vuoto, non
           // una lezione fallita. Si salva vuoto, cosi' una ripresa non lo rimanda.
@@ -728,6 +724,17 @@ class TranscriptionRunner internal constructor(
     val stitched = if (provider.id == OpenAiCompatProvider.ID) TranscriptStitcher.stitch(chunkTranscripts, request.prompt)
       else TranscriptStitcher.stitchCloud(chunkTranscripts)
     return assembled(stitched, chunkTranscripts)
+  }
+
+  private suspend fun upload(resultFile: File, provider: TranscriptionProvider, send: suspend () -> TranscriptResult): TranscriptResult {
+    if (provider.id == OpenAiCompatProvider.ID) return send()
+    val context = CloudUploadContext(storage.beginUpload(resultFile), provider.id)
+    try {
+      return kotlinx.coroutines.withContext(context) { send() }
+    } catch (error: Throwable) {
+      context.refusedBeforeDispatch(error)
+      throw error
+    }
   }
 
   /** Decodifica e pianifica, oppure rilegge il piano di un tentativo precedente. */
