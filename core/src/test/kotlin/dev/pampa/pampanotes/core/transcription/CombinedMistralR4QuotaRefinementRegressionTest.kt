@@ -195,8 +195,12 @@ class CombinedMistralR4QuotaRefinementRegressionTest {
       val blockWrite = { assertTrue(File(f.quota.path + ".tmp").mkdir()); Unit }
       if (boundary == "initial") f.atStatus = blockWrite else f.atHeaders = blockWrite
       val error = runCatching { f.run() }.exceptionOrNull()
-      assertTrue(error is TranscriptionError.CloudControl)
-      assertEquals("cloud_cost_storage", (error as TranscriptionError.CloudControl).code)
+      assertTrue(error is UncertainCloudRequest)
+      val storageError = generateSequence(error) { it.cause }.filterIsInstance<TranscriptionError.CloudControl>().firstOrNull()
+      assertNotNull(storageError)
+      assertEquals("cloud_cost_storage", storageError!!.code)
+      assertEquals("cloud_request_uncertain", TranscriptionError.from(error!!).code)
+      assertFalse(TranscriptionError.from(error).retryable)
       assertEquals(if (boundary == "initial") 0 else 1, f.headerReads)
       val a = f.result("a").readBytes(); val marker = f.marker().readBytes(); val ledger = f.charges()
       assertTrue(String(marker).startsWith("pending:"))

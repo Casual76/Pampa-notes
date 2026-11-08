@@ -20,8 +20,10 @@ class CombinedMistralR4ExactOriginalRegressionTest {
     for (body in invalid) {
       val f = CombinedMistralR4ClosureFixture(temp.newFolder()).also { it.body = body }
       val failure = runCatching { f.run() }.exceptionOrNull()
-      assertTrue("$body: $failure", failure is TranscriptionError.Parse)
-      assertFalse((failure as TranscriptionError.Parse).retryable)
+      assertTrue("$body: $failure", failure is UncertainCloudRequest)
+      assertTrue(generateSequence(failure) { it.cause }.any { it is TranscriptionError.Parse })
+      assertEquals("cloud_request_uncertain", TranscriptionError.from(failure!!).code)
+      assertFalse(TranscriptionError.from(failure).retryable)
       assertEquals(2, f.posts)
       val a = f.result("a").readBytes()
       assertEquals(CombinedMistralR4ClosureFixture.A_TEXT,

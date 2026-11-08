@@ -290,7 +290,11 @@ class CloudUploadOutcomeTest {
         error("unreachable")
       }
     }
-    assertTrue(runCatching { g.run(provider = wrapper) }.exceptionOrNull() is TranscriptionError.RateLimited)
+    val uncertain = runCatching { g.run(provider = wrapper) }.exceptionOrNull()
+    assertTrue(uncertain is UncertainCloudRequest)
+    assertTrue(generateSequence(uncertain) { it.cause }.any { it is TranscriptionError.RateLimited })
+    assertEquals("cloud_request_uncertain", TranscriptionError.from(uncertain!!).code)
+    assertFalse(TranscriptionError.from(uncertain).retryable)
     g.now = g.deadline() + 1
     assertTrue(runCatching { g.run() }.exceptionOrNull() is IOException); assertEquals(1, g.posts)
   }
