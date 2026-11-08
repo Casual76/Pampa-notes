@@ -52,6 +52,13 @@ class FilesInUse @Inject constructor() {
     return until.keys.toSet()
   }
 
+  /**
+   * Final, non-suspending check and deletion under the same lock as [hold]. Path identities are
+   * resolved by the caller, which knows the storage roots; stored keys alone are not identities.
+   */
+  @Synchronized
+  internal fun <T> withCurrent(action: (Set<String>) -> T): T = action(current())
+
   companion object {
     /** Il padrone di chi non ne dice uno: l'export, che tiene e rilascia sempre per conto suo. */
     private val DEFAULT_OWNER = Any()
