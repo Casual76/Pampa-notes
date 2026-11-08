@@ -172,7 +172,7 @@ class PampaCombinedVoiceOwnershipRoomTest {
     val result = apply(change, wire(audio.copy(sessionId = target.id, createdAt = 1)))
     assertEquals(2, result.skipped)
     assertEquals(source, db.sessions().get(source.id))
-    assertEquals(target, db.sessions().get(target.id))
+    assertEquals(target.copy(voiceNames = VoiceNames.withOwnershipOmission(null)), db.sessions().get(target.id))
     assertEquals(source.id, db.audioParts().get("p")!!.sessionId)
     assertEquals(raw(null, 300), pending().single().voiceNames)
     assertEquals(change.hash, db.sync().meta("sessions", target.id)!!.hash)

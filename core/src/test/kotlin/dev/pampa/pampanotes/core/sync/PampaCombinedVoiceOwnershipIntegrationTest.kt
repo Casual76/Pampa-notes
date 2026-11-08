@@ -143,7 +143,7 @@ class PampaCombinedVoiceOwnershipIntegrationTest {
     pages.page(listOf(target.copy(voiceNames = raw("Giulia", 300), updatedAt = 600)))
     pages.page() // Audio SKIP: actual ownership is unchanged.
     assertEquals(source, pages.get(source.id))
-    assertNull(pages.get(target.id).voiceNames)
+    assertEquals(marker, pages.get(target.id).voiceNames)
     assertEquals(raw("Giulia", 300), pages.pending.single().voiceNames)
     pages.page(next = mapOf("p" to third.id))
     assertEquals(raw("Alice"), pages.get(third.id).voiceNames)
