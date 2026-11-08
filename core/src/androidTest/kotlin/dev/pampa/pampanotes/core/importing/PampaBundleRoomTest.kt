@@ -84,12 +84,37 @@ class PampaBundleRoomTest {
     importer.import(bundle(true))
     val oldFiles = files.audio.listFiles()!!.map { it.name }.toSet()
     val before = db.notes().all().single()
+    var injectedInsidePersistence = false
     try {
-      importer.import(bundle(true, "Should rollback"), onProgress = { progress, _ -> if (progress >= 1f) error("Injected failure") })
+      importer.import(bundle(true, "Should rollback"), onProgress = { progress, event ->
+        if (event.phase == PampaBundlePhase.IMPORTING_NOTES && progress >= 0.7f && progress < 1f) {
+          injectedInsidePersistence = true
+          error("Injected failure inside persistence")
+        }
+      })
       fail("Expected failure")
     } catch (_: IllegalStateException) { }
+    assertTrue(injectedInsidePersistence)
     assertEquals(before, db.notes().all().single())
     assertEquals(oldFiles, files.audio.listFiles()!!.map { it.name }.toSet())
+  }
+
+  @Test fun observer_failure_after_commit_retains_committed_database_and_files() = runTest {
+    importer.import(bundle(true))
+    var injectedAfterCommit = false
+    try {
+      importer.import(bundle(true, "Committed title"), onProgress = { progress, event ->
+        if (event.phase == PampaBundlePhase.IMPORTING_NOTES && progress == 1f) {
+          injectedAfterCommit = true
+          error("Injected observer failure after commit")
+        }
+      })
+      fail("Expected observer failure")
+    } catch (_: IllegalStateException) { }
+    assertTrue(injectedAfterCommit)
+    assertEquals("Committed title", db.notes().all().single().title)
+    val part = db.audioParts().all().single()
+    assertArrayEquals(byteArrayOf(1, 2, 3), files.audioFile(part.fileName).readBytes())
   }
 
   private fun graph(vararg groups: Pair<String, List<String>>): PampaBundleNote {
