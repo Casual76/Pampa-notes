@@ -72,6 +72,23 @@ object VoiceNames {
   /** Explicit per-recording authority, including empty maps. Missing entries use the owner clock. */
   fun clocks(raw: String?): Map<String, Long> = (decode(raw) as? DecodedNames)?.clocks.orEmpty()
 
+  /** Structured omissions are ownership evidence, never a legacy null removal. */
+  fun hasClockMetadata(raw: String?): Boolean = (decode(raw) as? DecodedNames)?.clocked == true
+
+  /** A projection can omit a pending owner's maps without publishing a legacy null removal. */
+  fun withOwnershipOmission(raw: String?): String {
+    if (hasClockMetadata(raw)) return requireNotNull(raw)
+    val names = encode(decode(raw))?.let { json.parseToJsonElement(it) as JsonObject } ?: JsonObject(emptyMap())
+    return JsonObject(names + (CLOCKS to JsonObject(emptyMap()))).toString()
+  }
+
+  /** Keep an existing last-recording ownership marker through an empty projection. */
+  fun preserveOwnershipOmission(encoded: String?, vararg originals: String?): String? = encoded
+    ?: EMPTY_CLOCKS.takeIf { originals.any { raw ->
+      val value = decode(raw) as? DecodedNames
+      value?.clocked == true && value.names.isEmpty() && value.clocks.isEmpty()
+    } }
+
   /**
    * La colonna, dai nomi. Null quando non ci sono nomi ne' clock, salvo l'omissione strutturata
    * dopo uno spostamento: null resta il valore delle vecchie sessioni,
@@ -150,7 +167,8 @@ object VoiceNames {
       chosenClocks[part] = time
       if (explicit || time != fallback) clocked = true
     }
-    return encode(names, if (clocked) chosenClocks else emptyMap())
+    val encoded = encode(names, if (clocked) chosenClocks else emptyMap())
+    return if (chosenClocks.isEmpty()) preserveOwnershipOmission(encoded, localRaw, incomingRaw) else encoded
   }
 
   /**

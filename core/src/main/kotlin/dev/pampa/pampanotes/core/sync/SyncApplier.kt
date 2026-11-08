@@ -146,8 +146,10 @@ class SyncApplier @Inject constructor(
         // transazionale, quindi anche questo torna indietro se qualcosa va storto.
         if (big) SEARCH_TRIGGER_NAMES.forEach { db.openHelper.writableDatabase.execSQL("DROP TRIGGER IF EXISTS $it") }
         try {
-          val sessionVoices = if (latest.any { it.tbl == "sessions" || it.tbl == "audio_parts" })
-            SyncSessionVoiceMerge(db.sessions().all(), db.audioParts().all().associate { it.id to it.sessionId }) else null
+          val sessionVoices = if (latest.any { it.tbl == "sessions" || it.tbl == "audio_parts" ||
+              (it.isDelete && it.tbl in setOf("notes", "folders")) })
+            SyncSessionVoiceMerge(db.sessions().all(), db.audioParts().all().associate { it.id to it.sessionId },
+              SyncPendingVoiceJournal.load(sync, ownerId)) else null
           val tally = Tally(ownerId, deviceName, deviceNames, trash, created, fileWrites, revive)
           var pending: List<WireChange> = upserts
           while (pending.isNotEmpty()) {
@@ -160,11 +162,13 @@ class SyncApplier @Inject constructor(
           // SKIP and moves. Bookkeeping already remembers the exact remote hash as the base.
           if (sessionVoices != null) {
             val owners = db.audioParts().all().associate { it.id to it.sessionId }
-            for (session in sessionVoices.resolve(db.sessions().all(), owners)) {
+            val deletedParts = latest.filter { it.tbl == "audio_parts" && it.isDelete && it.id !in owners }.mapTo(mutableSetOf()) { it.id }
+            for (session in sessionVoices.resolve(db.sessions().all(), owners, deletedParts)) {
               db.sessions().upsert(session)
               if (payloads.encode("sessions", session.id)?.hash != sync.meta("sessions", session.id)?.hash)
                 sync.markDirty(SyncOutboxEntity(tbl = "sessions", rowId = session.id, op = WireChange.OP_UPSERT))
             }
+            SyncPendingVoiceJournal.replace(sync, ownerId, sessionVoices.pendingVoices)
           }
           // Sync retains RAW histories and their refinements. Shared audio coverage does not prove
           // equivalent words/timings, and a later page may reference any of these versions.

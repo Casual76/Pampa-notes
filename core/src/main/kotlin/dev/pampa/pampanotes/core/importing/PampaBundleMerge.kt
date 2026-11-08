@@ -131,8 +131,10 @@ internal object PampaBundleMerge {
       val active = choices.firstOrNull { it != null && transcripts[it]?.sessionId == s.id }
         ?: transcripts.values.filter { it.sessionId == s.id && it.kind == TranscriptKind.RAW }.maxWithOrNull(compareBy({ it.createdAt }, { it.id }))?.id
       s.copy(activeTranscriptId = active,
-        voiceNames = VoiceNames.encode(names.filterKeys { partMap[it.substringBefore('|')]?.sessionId == s.id },
-          if (s.id in clockedSessions) voiceTimes.filterKeys { partMap[it]?.sessionId == s.id } else emptyMap()))
+        voiceNames = VoiceNames.preserveOwnershipOmission(
+          VoiceNames.encode(names.filterKeys { partMap[it.substringBefore('|')]?.sessionId == s.id },
+            if (s.id in clockedSessions) voiceTimes.filterKeys { partMap[it]?.sessionId == s.id } else emptyMap()),
+          s.voiceNames))
     }
     return incoming.copy(
       note = if (preserveLocalNote) requireNotNull(local).note else n.copy(
