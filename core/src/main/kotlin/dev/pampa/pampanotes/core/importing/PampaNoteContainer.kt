@@ -176,7 +176,8 @@ internal object PampaNoteContainer {
     }
     if (verifyAttachments) references.values.filter { it.path !in texts }.forEach { ref ->
       checkpoint()
-      zip.getInputStream(zip.getEntry(ref.path)).use { PampaBundleArchive.verify(it, ref.bytes, ref.sha256, checkpoint) }
+      val entry = zip.getEntry(ref.path)
+      zip.getInputStream(entry).use { PampaBundleArchive.verify(it, ref.bytes, ref.sha256, checkpoint, expectedCrc = entry.crc) }
     }
     return data
   }

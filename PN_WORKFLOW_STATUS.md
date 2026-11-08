@@ -4,7 +4,7 @@
 
 - Richiesta 2026-11-08: formato dedicato .pn, compressione senza perdita, tutti i dati disponibili e tempi audio, importazione semplice/affidabile; valutare il riuso della sync manuale cloud senza PC.
 - Caso segnalato: mittente e destinatario probabilmente su 1.2.0; nessun file, messaggio d'errore o punto di blocco più preciso disponibile. Non attribuire una causa al caso reale senza evidenza.
-- Configurazione corrente: GPT-6.1 Sol/xhigh per tutti, tetto utente di4 implementatori per ciascun gruppo e reviewer pari ai criteri:8 per PN, uno per criterio. Massimo ambiente4 agenti incluso coordinatore, quindi3 figli attivi e review in ondate. I conteggi precedenti restano storici. Criteri delegati riusati/adattati all'incarico. Massimo3 giri di correzione dopo review iniziale; attualmente correzione3/3, verifica integrata passata e nuove review da raccogliere.
+- Configurazione corrente: GPT-6.1 Sol/xhigh per tutti, tetto utente di4 implementatori per ciascun gruppo e reviewer pari ai criteri:8 per PN, uno per criterio. Massimo ambiente4 agenti incluso coordinatore, quindi3 figli attivi e review in ondate. I conteggi precedenti restano storici. Criteri delegati riusati/adattati all'incarico. Massimo3 giri di correzione dopo review iniziale; review3/3completa8/8, snapshot337b87enonapprovato con5P2+3P3, in attesa di decisione utente sul limite.
 - Base verificata: main ea4e0a2, app 1.3.1/code20, engine3.0.5; include OpenRouter e relay cloud aggiunti dopo 1.2.0. Preservare la cancellazione locale preesistente companion/tools/__pycache__/holes.cpython-311.pyc.
 - Skill: agentic-workflow aggiornata (tabelle individuali e aggregate obbligatorie), fluid-engine, material3-expressive. L'utente ha escluso emulatori/dispositivi: test Android soltanto compilati, nessuna esecuzione runtime richiesta o attribuita.
 
@@ -602,3 +602,190 @@ Decisione: NON approvato,5P2+3P3 distinti. Correzione3/3 autorizzata nel limite 
 - Worker15 test offline passati sul sorgente corrente già in32368a5; nessun edit Worker successivo. TypeScript cached noEmit rieseguito dopo integrazione: exit0, riga esito archiviata in %TEMP%\pampa-pn-correction3-worker-typecheck.log, heap192MiB/singlethread, nessun servizio/deploy.
 - Main verificato separatamente: soloPN_WORKFLOW_STATUS modificato e cancellazione preesistente cache PythonD preservata. Engine/versione/schema/manifest-release invariati da questi fix; feature code ancora solo nel worktree PN. Nessun push/pubblicazione/PR.
 - LeaseGradle esplicitamente rilasciato al coordinatoreCLOUD dopo exit0 effettivo e verifiche finali; nessun processo Gradle/dispositivo/GPU/server/cloud rimasto attivo qui. Commit locale del risultato stabilizzato e manifest fonti/evidenze prima di8 review fresche indipendenti sul medesimo snapshot. Nessuna approvazione dai soli test: prossimo verdetto completo decide il passaggio o domanda utente se restano rilievi, senza quarto giro automatico.
+
+### Snapshot review correzione3
+
+- Congelato337b87e27402173134ab0223cba77e94f26fdc3d in t3/add-pampa-notes-export/t3-533d8448, checkout/index puliti. Include piccoli fix32368a5 e tutti gli hook/contributi stabilizzati; confronto funzionaleea4e0a2 e precedente review725d6ac.
+- Manifest fonti/evidenze in %TEMP%\pampa-pn-correction3-evidence.json lega HEAD, SHA256 degli input versionati app/core/worker/schema/config e log/XML/lint finali; esclude documento stato con voti per evitare esposizioni accidentali dei nuovi critic. Manifest non è runtime Android/cloud e non prova da solo ogni comportamento.
+-8 nuovi critic Sol/xhigh, un criterio PN1–PN8 ciascuno, medesima rubrica0–10/NA/NV, massimo3 figli attivi. Vietato aprirePN_WORKFLOW_STATUS nelle review: criteri/requisiti/evidenze nel brief autosufficiente, nessun verdetto passato da confermare. Nessun autore è reviewer. Tabella generale finale dopo tutti8; nessuna correzione/scrittura nel congelato durante le review.
+- Ordine prima ondataR1/PN1 fedeltà,R4/PN4 aggiornamenti,R7/PN7 integrità. PoiR2/PN2,R3/PN3,R5/PN5,R6/PN6,R8/PN8 agli slot liberati; contesti freschi, nessun polling. Modello/reasoning richiesti ed effettivi vanno registrati dai tool.
+
+### Review correzione3: prima ondata avviata
+
+- Avviati effettivamenteR1/PN1,R4/PN4,R7/PN7, tutti target/result GPT-6.1 Sol/xhigh,3contesti freschi su337b87e. Nessun autore come critic, nessun voto ancora disponibile. RestantiR2/R3/R5/R6/R8 da lanciare soltanto a slot liberati.
+- Manifest effettivo515input/150artefatti. Nuovi brief vietano lettura del documento di stato e report/sonde altrui, per prevenire l'esposizione storica segnalata nel giro2. Requisiti/rubrica/evidenze trasferiti direttamente, stesso snapshot e un solo criterio approfondito ciascuno.
+- Nessuna scrittura nel checkout congelato fino agli8 report. Stato/documento corrente solo inmain; source/test/indice congelati puliti. Gradle rilasciato e nessuna risorsa pesante mantenuta. Sempre correzione3/3: nessun quarto giro automatico se la review finale lascia rilievi.
+
+### Review correzione3: R7 ricevuto (1/8)
+
+R7 effettivo GPT-6.1 Sol/xhigh,337b87e invariato/checkout pulito. Non consultati stato/report/sonde/verdetti altrui; ricerca preliminare memoria ha esposto soltanto titoli storici senza voti/conclusioni, non usati.35 JVM mirati passati più sonde su produzione cached; runner personali leggeri, fixture AppFiles suTEMP viaReflection/Unsafe. Nessuna compilazione sorgenti produttivi/runtime Android/cloud.
+
+| Criterio | Voto R7 | Stato della verifica | Motivazione ed evidenze | Problemi e gravità |
+|---|---:|---|---|---|
+| PN7 |6/10|Sorgenti/JVM propri e artefatti parent|Staging PN protetto su owner/snapshot obsoleti/cancellazione, hash/path/limiti verificati; due violazioni ancora riprodotte.|P2copie sync, P3CRCmedia|
+| PN1–PN6, PN8 |NA|Fuori assegnazione|Nessun voto attribuito.|NA|
+
+- R7-1 P2: SyncLocalFiles.selectName crea copia indipendenteB daA ma non la registra nel nuovo AppFileWriteProtection. Snapshot sweep acquisito prima dei riferimenti che citano soloA, copiaB, sweep ripreso con tempo simulato+60min: B cancellata eAintatta, per audio/fonti (sweepDeleted=1 targetExists=false donorIntact=true). Persist SyncApplier salva nomeB dedotto dal sorgente, Room non eseguito; anche commit/rilascio non ha generazione protetta per queste copie. Richiede owner prima creazione e rilascio dopo commit/cleanup nello stesso registro. Nessun fix durante il congelamento né quarto giro implicito.
+- R7-2 P3: PN valido con bit delCRCcentraldirectory blobmedia alterato, bytes/size/SHA256immutati: fullread e staging accettano e producono4file. Metadata/testo già verificanoCRC, media no. Nessuna corruzione del contenuto nella sonda, SHA256 lo protegge; gravitàP3, requisito validazione contenitore. ControllareCRCduranteverifica/copia media nella correzione solo se autorizzata dopo verdetto completo.
+- Confermati nei controlli stagingPN attivo/owner distinti/generazioni dopo release, cleanup interruzione/observer, rifiuto hash/troncamenti/UTF8/duplicati/references e limitiheader primaiterazione. Rollback/postcommitAndroid solo verificati a sorgente e compilati dalparent, non eseguiti.
+- Parent ha letto le sonde in %TEMP%\pn7-r7-review-c97e1e7b54854c1e9cd33ea6d6aa6e09\{probe,additional-probe}.log e il ramoSyncLocalFiles senza owner, non ha rieseguito. Reviewer conferma manifest515input150artefatti,1158pass/1skip/0fail,lint0error123warning,TypeScriptexit0 eAPKcompilati. RuntimeAndroid/Room/migrazione/UI/cloud NON ESEGUITI e dispensati.
+- SlotR7liberato; avviato nuovoR2/PN2Solxhigh. Restano attiviR1/R4/R2 (massimo3), ancora da avviareR3/R5/R6/R8.1/8report,1P2+1P3distinti nel giro3; nessun voto finale/approvazione e nessuna domanda sul limite prima del riepilogo completo degli8report.
+
+### Review correzione3: R1 ricevuto (2/8)
+
+R1 effettivo GPT-6.1 Sol/xhigh, stesso337b87e, checkout/index/665hash(input+artefatti) invariati.32JVM mirati passati e sonde produttive end-to-end codec/merge/reexport,1CPU/heap128MiB. Nessun voto/conclusione altrui visto; ricerca memoria ha esposto solo titoli/percorsi storici non aperti/usati, PN_WORKFLOW_STATUS non consultato.
+
+| Criterio | Voto R1 | Stato della verifica | Motivazione ed evidenze | Problemi e gravità |
+|---|---:|---|---|---|
+| PN1 |6/10|Sorgenti/JVM propri e artefatti parent|Codec conserva grafo completo/clock/sorgente esatta, ma passaggi dopo lettura alterano RAW e autorità voci.|2P2 sotto|
+| PN2–PN8 |NA|Fuori assegnazione|Nessun voto attribuito.|NA|
+
+- R1-1 P2: PampaBundleMerge.kt89, RAW First.\\n\\nSecond!\\n suA; update inserisceL primaA senza sostituire trascrizioni. Offset segmenti correttamente0→1000, ma confronto unchanged include offset e rigenera First. Second!. Eseguito writer/read su entrambi input, merge ePNriletto; refined/cloudsource conservati. Distinguere ribasamento puro da variazione sequenza/contenuto nella futura correzione solo se autorizzata dopo limite.
+- R1-2 P2: SyncApplier.kt515/SyncMerge106: localeSession.updatedAt10,nomeAlice/clockA100; remoto titolo50,nomeStaleAlice/clockA20. PNmerge diretto conservaAlice100, syncdecideAPPLY eTranscribingMarker.mergeInto conserva colonna remotaStaleAlice20, anche nel reexport. JVMproduttive eseguite; scrittura DB dedotta dal sorgente, Room non eseguito. Integrare scelta voce per registrazione nel sync senza legarla alclock metadata, solo dopo decisione limite/verdettocompleto.
+- Parent ha letto log %TEMP%\pn-r1-337b87e-0250a4ab\independent-probes.log e ramo sessioni SyncApplier, senza riesecuzione. Reviewer conferma515input150artefatti,1158pass/1skip/0fail,lint0error123warning,46nuoviTest,TypeScriptexit0 eAPKcompilati. RuntimeAndroid/Room/migrazione/UI/cloud NON ESEGUITI e dispensati; causa amico ignota.
+- SlotR1liberato; avviato nuovoR3/PN3Solxhigh. R2PN2attivo suffix10cca352-71d2-4e3b-8091-bb806832e2c5. Ora attiviR4/R2/R3, ancora da avviareR5/R6/R8.2/8report,3P2+1P3distinti nel giro3, nessuna modifica al congelato. Limite3giri mantenuto: completare8report poi domanda utente se rimangono rilievi, non quarto giro automatico.
+
+### Review correzione3: R4 ricevuto (3/8)
+
+R4 effettivo GPT-6.1 Sol/xhigh, stesso337b87e, worktree/index/manifest515input150artefatti invariati.91JVM distinti passati (dueJARDataStorecached aggiunti al launcher personale dopo primo classpath incompleto) più sonda concorrente e2prove derivedFrom. Nessuna modifica parent/Gradle/device. Ricerca memoria ha esposto frammenti storici esclusi; documento stato non aperto.
+
+| Criterio | Voto R4 | Stato della verifica | Motivazione ed evidenze | Problemi e gravità |
+|---|---:|---|---|---|
+| PN4 |6/10|Sorgenti/JVM propri e artefatti parent|Conservazione/copy/multi-hop/legacy A+B/cicli/storie passano nei casi controllati; aggiunta audio sovrascrive un edit concorrente.|1P2 sotto|
+| PN1–PN3, PN5–PN8 |NA|Fuori assegnazione|Nessun voto attribuito.|NA|
+
+- R4-1 P2: AudioImporter.kt144–148 legge sessione poi sospende in parts.bySession prima di upsert della copia. Durante sospensione viene salvato nuovo titolo e rimozioneA/clock100. La scrittura finale ripristina vecchio titolo/Alice/clock10 pur con import riuscito. Sonda usa veroAudioImporter conDAO controllati e fileTEMP, nonRoom; interleavingproduttivoRoom è dedotto dal fatto che l'intera lettura-modifica-scrittura non è in transazione. Richiede serializzare lettura/capture/upsert con altre operazioni locali e regressione interleaving. Nessun fix prima del verdetto8/8 e scelta limite.
+- R4 conferma A100/B10→20→50 corretto nel mergePN, crescita legacyA+B audio/fonti nei due ordini, deriveA/B e idempotenza, ambiguità rifiutate, body/metadata/gerarchia/rekey/RAW/refined/hashnull. Non li usa per ignorare la nuova violazione concorrente.
+- Parent ha letto output %TEMP%\pn4-r4-337b87e-lid381k9\probe.log e ramoAudioImporter senza transazione, non rieseguito. Artefatti parent confermati1158pass/1skip/0fail,lint0error123warning,46nuoviTest,TypeScriptexit0,APKsolo compilati. RuntimeAndroid/Room/migrazione/UI/cloud NON ESEGUITI e dispensati.
+- SlotR4liberato, avviato nuovoR5/PN5Solxhigh. R3PN3attivo suffix788cd6e2-d9b5-493c-9d28-c2240b9357d8. Ora attiviR2/R3/R5, ancora da avviareR6/R8.3/8report,4P2+1P3distinti nel giro3. Nessuna modifica del congelato, nessun quarto giro automatico.
+
+### Review correzione3: R2 eR3 ricevuti (5/8)
+
+R2 eR3 effettivi GPT-6.1 Sol/xhigh, stesso337b87e echeckout/index invariati. R2 nessuna esposizione a voti, R3 ricerca memoria interrotta dopo riferimenti/sintesi storiche senza voti non usate; stato/report altrui non aperti. Nessuna scrittura parent/Gradle/device/cloud.
+
+| Criterio | Voto R2 | Stato della verifica | Motivazione ed evidenze | Problemi e gravità |
+|---|---:|---|---|---|
+| PN2 |8/10|Sorgenti/JVM propri e sonde|18 prove mirate passate, bytes AAC/WAV/PNG, dedup/identità/file indipendenti, cancellazione/chunk/limiti;16MiBmedia4entità1blobverificato.|P3fileless sotto|
+| PN1, PN3–PN8 |NA|Fuori assegnazione|Nessun voto attribuito.|NA|
+
+- R2-1 P3: SyncLocalFiles42/SyncApplier551, fonteSHARE text/plain genuinamente fileless e reference locali/remoti null, altroID con file stessohash/size. Donor select crea copia56byte e nuovoPN dichiara path anzichéfileless:true. Nessuna perdita byte, ma originale fittizio/consumo superfluo e perdita semantica. Probe helper/writer produttivi eseguito, persistenza DB dedotta, Room non eseguito. Richiede saltare donor per positivamente fileless/null mantenendo recupero originali veri; nessun fix al congelato.
+- Log/runner in %TEMP%\pn2-r2-round3-a063664891b94ddd89cbf9a6e8a80f2d. Parent ha letto challenge.log: before=true after=false createdFiles=1 createdBytes=56, donor/copia indipendenti corretti;media16777216byte/4entità/1blob/hashidentico.128MiB/1CPU. Verificati150artefatti e41inputpertinenti,1158pass/1skip/0fail,lint0error123warning,APKcompilati.
+
+| Criterio | Voto R3 | Stato della verifica | Motivazione ed evidenze | Problemi e gravità |
+|---|---:|---|---|---|
+| PN3 |9/10|Sorgenti/JVM propri e provenienzafixture|36/36 prove mirate passate(28legacy/sniff/copy/staging+8PNselezionati), instradamentoMIME/PN/ClipData/caption/errori/cancellazione eprotezione persist tracciati.|Nessun finding concreto nel perimetro|
+| PN1, PN2, PN4–PN8 |NA|Fuori assegnazione|Nessun voto attribuito.|NA|
+
+- R3 conferma515input150artefattihash,16sorgenti originali+2metadatafixture1.2 controGit, testo fixture sintetico/non exportAPK. Log personali %TEMP%\pn3-r3-independent-m0pzhx22\{junit,selected-pn}.log.1CPU/heap128MiB, solo piccolo runner inTEMPcompilato; niente suiteintegrale. Limitelegacy64MiBdocumentato nonnuovogate, caso amico ignoto.
+- Entrambi tengono distinti i risultati parent1158/1skip/lint123 e i propri test. RuntimeAndroid/Room/migrazione/UI/provider reali/cloud NON ESEGUITI e dispensati.
+- SlotR2/R3liberati, avviati nuoviR6/PN6 eR8/PN8Solxhigh; ora tutti8 critic del giro3 avviati effettivamente, restano attiviR5/R6/R8.5/8report,4P2+2P3distinti finora. R5attivo suffixc37eaa66-b61b-4018-9728-e64626e60963. Nessuna modifica del337b87e né quarto giro automatico.
+
+### Lease Gradle CLOUD/RECORDINGS correzione2
+
+- Richiesta effettiva dopo fine di tutti3 i suoi writer; root conferma/riserva Gradle al flussoCLOUD per un solo batch dopo ispezione/commit/canonical-referencecleanup, max2workers/no-parallel/no-watch-fs, debug/JVM/AndroidTestsolo compilazione/lint inbuild-cloud-recordings esterno. Fonte richiesta: nessunGradle ancora avviato al momento del messaggio.
+- PN non ha processiGradle, codice congelato e sole review/sonde leggere. Nessuna risorsa device/GPU/server/cloudreale. Attendere rilascio effettivo prima di futuri batchPN; nessuna consegna funzionale dedotta dalla riserva.
+
+### Review correzione3: R5 ricevuto (6/8)
+
+R5 effettivo GPT-6.1 Sol/xhigh, stesso337b87e echeckout/index/manifest invariati.15Worker offline+33JVMselezionati passati e sonde mirate relay/journal/clock. Nessuno stato/report altrui aperto; memoria ha esposto solo titoli storici senza voti/verdetti non usati. Nessun Gradle/device/server/cloud, connessioni relay solo inmemoria.
+
+| Criterio | Voto R5 | Stato della verifica | Motivazione ed evidenze | Problemi e gravità |
+|---|---:|---|---|---|
+| PN5 |6/10|Sorgenti/JVM/WorkerSQLite propri|Relay/account/hash/TTL, journal, originali null e nuovi campi origin/cloudsource solidi nei controlli; clock delle voci persi nel sync.|2P2,uno duplicatoR1-2|
+| PN1–PN4, PN6–PN8 |NA|Fuori assegnazione|Nessun voto attribuito.|NA|
+
+- R5-1 P2 nuovo: Worker sync.ts318 keepMissing protegge voiceNames quando manca interamente, non metadata annidato. A conpMarco/qAnna clockp100/q500; Bvecchio rinomina soltantoinqGiulia ricodificando le stringhe e perdendo _pampaVoiceClocks; C prima delritornoA riceve nomi senza clock. Anche voiceNames:null da rimozione ultimo nome perde clock delle mappe vuote. Push/pull produzioneSQLite riprodotto; VoiceNames.merge con fallbackSession600 rifiuta poi pAlicia200 invece di accettarlo conclockp100preservato. Servirà retention strutturata e distinzione edit effettivi/mappe invariate sulWorker, solo dopo decisione limite/verdettocompleto.
+- R5-2 P2 coincide conR1-2 (stessa radice SyncMerge/SyncApplier sessioni): basepMarco/qAnna100, A rimuovep200, B rinominaqGiulia300 mapmap100 per p. APPLY/markermerge restaB e resuscitaMarco; VoiceNames.merge diretto conserva rimozionep+Giulia. JVMproduzione eseguita, scritturaRoom solo inferita dal sorgente. Duplicato contato UNA volta nel totale, mantenuto il votoR5 autonomo.
+- Probe personali %TEMP%\pn5-r5-337b87e-0z_thf6l\voice-clock-probe.mjs eSyncVoiceProbe.java; root ha letto report e keepMissingWorker, nessuna riesecuzione. Relay inmemoria prova byte, riavvio/eviction, corruzione,TTLsenza rinnovo/accountswitch;6test parent null→export ispezionati, non esecuzioni proprie.
+- Artefatti parent515input150file confermati,1158pass/1skip/0fail,lint0error123warning,46Testnuovi,TypeScriptexit0,AndroidAPKcompilati. RuntimeAndroid/Room/migrazione/UI/cloud NON ESEGUITI e dispensati.
+-6/8report; restano attiviR6/R8, nessun altro lancio/polling. R6suffix18540764-135c-4c7c-a1d6-a94371fb45fa,R8suffixcb331906-a4e9-4b3e-b450-caf243aec27a. Totale deduplicato5P2+2P3 nel giro3. Congelato337b87e invariato; dopo tutti8serve scelta utente sul limite, non un quarto giro implicito.
+
+### Review correzione3: R8 ricevuto (7/8)
+
+R8 effettivo GPT-6.1 Sol/xhigh,337b87e/branch/worktree/index invariati e puliti. Nessuno stato/report altrui aperto ed esposizione a voti assente. Nessun finding P1/P2/P3 nel proprio perimetro.
+
+| Criterio | Voto R8 | Stato della verifica | Motivazione ed evidenze | Problemi e gravità |
+|---|---:|---|---|---|
+| PN8 |9/10|Sorgenti/artefatti verificati e sonde mirate proprie|515input/150artefatti ricalcolati prima/dopo,46nuoviJVMnegliXML,build/lint/schema/migrazione/fixture/APKcoerenti;16JVM+15Worker passati.|Nessun finding concreto nell'assegnazione;limiti sotto|
+| PN1–PN7 |NA|Fuori assegnazione|Nessun voto implicito sugli altri criteri.|NA|
+
+- R8 riconta145XML:1114corepass/1skip+44app=1158/1skip/0failure/error.46nuovi metodi ciascuno una volta/passato. LogfinaleBUILD SUCCESSFUL2m18s(26executed439uptodate), produzionegiàcompilata in tentativo1, failed1–2nonsono esito corrente. Lint0error123warning,APK/DEXcon3nuoveRoom/MigrationTest presenti: prova compilazione/confezionamento, nonruntime.
+-16JVMproduttivi cached eseguiti(7compat1.2+2protezione+7clockRAW),1CPU/128MiB/no ricompilazione;15Worker Node singlethread/64MiB SQLlocale passed, nonD1/HTTP/Cloudflare. Nessuna riesecuzione TypeScript:logparent exit0corrispondeSHAmanifest ma da solo non documenta comando completo/versionecompilatore; limite dichiarato, nonfinding.
+- Schema14→15stesse18tabelle,solo6nullable; generatedsource+bytecode6ALTER DEFAULTNULL coerenti, nessun nuovo schema dalgiro2 evoiceclocknelJSONesistente. Entityclassrealicampipresenti/JVM61Java17/metadataKotlin2.2.0.
+- Fixture1.2tag/commit16blobproduttivi+2metadata/version1.2/code18/15entry verificati e7testeseguiti; ricetta ispezionata nonrigenerata, fixture sintetica/nonAPK/nonfileamico. Storie non selezionate omesse dalwritervecchio non possonoessereprovatecomeconservate daquestafixture. Causa amicoignota.
+- RuntimeAndroid/UI/Room/migrazione/cloud/device/GPU/modelli NON ESEGUITI e dispensati, mai trasformati in gate.7/8report,restasoloR6ITEN attivo;nessun nuovo lancio/polling/fix/congelamentomodificato. Totale5P2+2P3immutato; giudizio complessivo/decisionelimite dopo8/8.
+
+### Review correzione3: R6 ricevuto (8/8)
+
+R6 effettivo GPT-6.1 Sol/xhigh, stesso337b87e echeckout/index/515input150artefatti invariati.19JVM mirati passati e243riferimenti risorse ITEN controllati senza chiavi/placeholdermancanti. Stato/report altrui mai aperti, memoria solo titoli senza voti/verdetti non usati. Nessun Gradle/device/cloud o modifica parent.
+
+| Criterio | Voto R6 | Stato della verifica | Motivazione ed evidenze | Problemi e gravità |
+|---|---:|---|---|---|
+| PN6 |8/10|Sorgenti/JVM propri e risorse|ExportPN/IA, omissioni/fileless, destinazioni update/copy, messaggio uscita atomico e refresh relay coerenti nei controlli.|P3etichetteFluiditaliane inEN|
+| PN1–PN5, PN7–PN8 |NA|Fuori assegnazione|Nessun voto attribuito.|NA|
+
+- R6-1 P3: MainApp.kt122 non fornisceLocalFluidLabels soprahost; ImportScreen245 usaFluidInlineMessage senza titolo, defaultengineMessaggio, chiusuraexport/indietroimport ereditanoChiudi/Indietro peraccessibilitàancheinEN. Ispezioneproduttivaeseguita, effettoUI/TalkBack inferito senza runtime. Fornireetichette secondo linguaapp(sostituzioneprovider), solo se autorizzata correzione oltrelimite. Root ha verificato provider e defaultengine in sola lettura.
+- Log personale %TEMP%\pn6-r6-round3-5ad003ac3c074d67acb2fbd9faeb440e\junit-pn6.log. Artefatti parent1158pass/1skip/0fail,lint0error123warning,TypeScriptexit0,APKcompilati confermati. Android/Room/migrazione/UI/cloud NON ESEGUITI e dispensati. Nessun nuovo gate.
+
+### Tabella generale finale ROUND3 — fase PN integration
+
+Snapshot337b87e27402173134ab0223cba77e94f26fdc3d,8report completi. R1–R8 tuttiGPT-6.1Sol/xhigh effettivi; un criterio assegnato ciascuno. NAfuori perimetro, nessun voto provvisorio/NV convertito innumero; media/minimo su1votoverificato/1assegnato perriga, nessuna media fra criteri o giri. Limiti source/JVM autorizzati e runtime dispensati invariati.
+
+| Criterio | R1 | R2 | R3 | R4 | R5 | R6 | R7 | R8 | Media | Minimo | Esito e problemi aperti |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| PN1 Fedeltà |6|NA|NA|NA|NA|NA|NA|NA|6 (1/1)|6|RAW suoffset eautoritàvoci sync,2P2(F1/F2) |
+| PN2 Compressione |NA|8|NA|NA|NA|NA|NA|NA|8 (1/1)|8|Fontefileless materializzata dalsync,P3(F7) |
+| PN3 Compatibilità |NA|NA|9|NA|NA|NA|NA|NA|9 (1/1)|9|Nessun rilievo proprio, limiti dichiarati |
+| PN4 Aggiornamenti |NA|NA|NA|6|NA|NA|NA|NA|6 (1/1)|6|Aggiuntaaudio sovrascrive editconcorrente,P2(F4) |
+| PN5 Cloud/sync |NA|NA|NA|NA|6|NA|NA|NA|6 (1/1)|6|ClockWorker persiP2(F3), syncvoci duplicatoF2 |
+| PN6 Flussi ITEN |NA|NA|NA|NA|NA|8|NA|NA|8 (1/1)|8|DefaultFluiditaliani inEN,P3(F8) |
+| PN7 Integrità |NA|NA|NA|NA|NA|NA|6|NA|6 (1/1)|6|SweepcopieSyncP2(F5),CRCmediaP3(F6) |
+| PN8 Evidenze |NA|NA|NA|NA|NA|NA|NA|9|9 (1/1)|9|Evidenze verificate, nessun rilievo proprio |
+
+Deduplicazione finale5P2+3P3:
+
+- F1P2: solo ribasamento offset elimina formattazioneRAW (R1-1), senza cambio sequenza/contenuto.
+- F2P2: syncLWW sessioni ignora clockvoci per parte epuò riportare nomi/rimozioni vecchi (R1-2 eR5-2stessaradicestessosnapshot,contato1volta).
+- F3P2: Worker riscritturaJSONda vecchi client perde _pampaVoiceClocks efalsefreschezzasu mappe invariate(R5-1).
+- F4P2: AudioImporter legge/cattura/upsert fuori transazione, sovrascrive editconcorrente salvato durante la queryparti(R4-1).
+- F5P2: copie indipendenti delSync non registrate nella protezione sweep/generazioni, cancellabili con snapshotvecchio(R7-1).
+- F6P3: CRCdeclaredblobmediaalterato vieneaccettato conbytes/size/SHAcorretti(R7-2), nessuna perdita contenuto osservata.
+- F7P3: donorrecovery sync creaoriginalefittizio perprovenienzatestualefileless conreferencesnull(R2-1), bytesindipendentiintatti ma consumo/semantica alterati.
+- F8P3: LocalFluidLabels defaultitaliani ancheinflowinglese/title/accessibilità(R6-1), effettoUI inferitostaticamente.
+
+Decisione coordinatore: snapshotNONapprovato, nessun passaggio automatico compensato dai voti9/1.158testpassati. Tre giri autorizzati esauriti; nessuna quarta correzione o pubblicazione del PN non approvato senza scelta utente. SKILL.md agentic-workflow85: «al raggiungimento del limite dei giri, o quando manca una decisione necessaria, chiedi come procedere». Domanda finale preparata: ulteriore unico giro mirato consigliato, oppure accettazione esplicita dello snapshot con limiti documentati, oppure mantenere PN fermo. Nessuna risposta dedotta dal tempo.
+
+Tutti8 i reviewer terminati, nessun figlio PN attivo né Gradle/device/GPU/server. Checkout337b87e congelato pulito e manifest intatto; sola documentazione di coordinamento aggiornata inmain, cancellazione cache preesistente preservata. Integrazione finale conCLOUD e release restano successive al verdetto/decisione, senza considerare chiusi i rispettivi criteri.
+
+### Lease CLOUD/RECORDINGS correzione2 retry
+
+- Nuovo aggiornamento coordinatore: processoC2concluso exit1/BUILDFAILED1m06s sucore:compileDebugKotlin prima deiJVM; lease rilasciato effettivamente, log/manifestsorgentifalliti conservati. Fonte coordinatore, non risultato PN e non pass.
+- Confermato/riservato un solo retry integratoCLOUD dopo correzione deldiagnosticoesatto, max2workers/no-parallel/no-watch-fs/buildrootesterno/AndroidTestsolocompilazione, nessun device/GPU/server/cloud reale. PN non ha batch attivi o pianificati in attesa decisione limite. Chiesto rilascio dopo effettiva conclusione, nessuna consegna funzionale presunta.
+
+## Decisione utente 2026-11-08 — ultimo giro PN e consegna unificata
+
+Autorizzato un quarto e ultimo giro autonomo PN sullo snapshot 337b87e, per i cinque P2 e tre P3 aperti. Il precedente limite 3/3 è stato esteso espressamente di un solo giro; non si azzera il contatore. Dopo questo giro si procede all'integrazione della consegna consolidata CLOUD/RECORDINGS del thread mcp:launch:1da3c0e4a84975480edac1d82c9425a7555cb4b73530905dedd0474543710be8, alla review finale dell'insieme e alla pubblicazione stable già autorizzata quando il lavoro e i controlli sono conclusi.
+
+Configurazione invariata: Sol/xhigh, implementatori massimo quattro per pool con tre slot figli effettivi; otto reviewer PN distinti, uno per criterio. Android/Room/UI runtime ed emulatore dispensati; compilazione AndroidTest conservata. Lease Gradle corrente riservata al retry CLOUD/RECORDINGS; PN esegue solo modifiche sorgente fino a rilascio effettivo.
+
+Round4 da verificare: RAW esatto durante semplice ribasamento; clock voce Android e Worker legacy; atomicità dell'aggiunta audio; protezione copie sync contro sweep; CRC media; fonti veramente fileless; LocalFluidLabels IT/EN. Nessun esito di correzione o test ancora attribuito.
+
+Avviate tre unità fresche Sol/xhigh round4: (1) clock voci Android/Worker; (2) copie sync protette e fileless; (3) RAW esatto e aggiunta audio atomica. Root integra i contratti e corregge CRC/FluidLabels. Nessuna build PN avviata. Ricevuto rilascio effettivo Gradle CLOUD/RECORDINGS: retry exit0 su 3f88762, 1244 pass/1 skip, lint0/128; questi sono esiti dell'altro workflow, non prove PN o integrazione combinata.
+
+### Round4 — consegna copie sync / fix root preparati
+
+Unità copie sync conclusa: WriteOwner esplicito, registrazione prima della creazione, rilascio generazionale e guardia positiva fileless; 10 JVM + 3 Room preparati, non compilati/eseguiti. Root collegherà owner/Tally/cleanup in SyncApplier dopo la conclusione dell'autore dei merge voce, che possiede attualmente quel file.
+
+Root ha corretto CRC media in lettura completa PN/schema3 e primo passaggio staging, senza decompressioni aggiuntive per blob condivisi. Tre regressioni preparate per CRC alterato PN/ZIP e CRC zero dei blob vuoti, ancora non eseguite. LocalFluidLabels ora fornito sopra gli host tramite risorse booleane IT/EN, conservando il fallback locale delle risorse. XML validi e git diff --check passato; nessun risultato Gradle attribuito. Altre due unità ancora attive; nessuna build PN avviata.
+
+### Round4 — consegna RAW e atomicità audio
+
+Seconda unità conclusa: confronto RAW ignora gli offset di sessione durante il semplice ribasamento, ma mantiene il rilevamento dei veri riordini; il touch finale AudioImporter acquisisce DB Room obbligatorio e racchiude lettura/capture/upsert in withTransaction. Copie/probe restano fuori dalla transazione breve. Adattati due call site esistenti. Preparati 10 JVM + 3 Room, solo controlli statici eseguiti. Nessuna compilazione/test comportamentale ancora attribuita al round4.
+
+### Round4 — integrazione sorgenti pronta, verifica pendente
+
+Tutte e tre le unità Sol/xhigh sono concluse. Android risolve i nomi voce dopo la proprietà audio realmente applicata nella pagina, sui percorsi APPLY/SKIP; Worker conserva le autorità per registrazione nei passaggi da client legacy e nei move paginati. L'autore ha eseguito 28 test offline Node/helper/SQL produttivo: tutti passati; preparati 10 JVM + 9 Room. Root ha aggiunto una regressione per pulizia sorgente dopo un move già applicato, escludendo mappe riferite a registrazioni di altro proprietario noto.
+
+Root ha collegato WriteOwner a Tally e ai due selectName; la protezione precede la creazione e termina in NonCancellable dopo il controllo dei riferimenti committati, anche su cancellazione/fallimento. Guard positiva fileless soltanto per vere fonti testuali senza riferimenti in entrambe le versioni. Nessun timestamp pubblico viene alzato per il solo file locale.
+
+Lease Gradle PN round4 riservata dopo rilascio effettivo CLOUD. Batch previsto: assembleDebug, core/app JVM, core/app APK AndroidTest solo compilazione/package e lint app; max2workers, no-parallel, no-watch-fs, build-pn-workflow esterno. Nessun dispositivo/runtime/cloud reale. Esiti della build ancora pendenti.

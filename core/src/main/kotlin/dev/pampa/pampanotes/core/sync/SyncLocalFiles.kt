@@ -1,7 +1,10 @@
 package dev.pampa.pampanotes.core.sync
 
+import dev.pampa.pampanotes.core.db.SourceEntity
 import dev.pampa.pampanotes.core.db.SyncDao
 import dev.pampa.pampanotes.core.db.SyncMetaEntity
+import dev.pampa.pampanotes.core.files.AppFileWriteProtection
+import dev.pampa.pampanotes.core.importing.PampaBundleSourceFiles
 import java.io.File
 import java.io.IOException
 import java.io.OutputStream
@@ -15,6 +18,43 @@ import kotlinx.serialization.json.buildJsonObject
 
 /** Local attachment names are references to this device's bytes, never portable identity. */
 internal object SyncLocalFiles {
+  /**
+   * One page's file lifetime. Create before its Room transaction; close in NonCancellable finally
+   * AFTER the committed-reference cleanup attempt, including rollback/cancellation/query failures.
+   * Uses the same release generations as PN staging, so precommit sweep snapshots stay safe.
+   */
+  class WriteOwner internal constructor() : AutoCloseable {
+    private val token = Any()
+    private var closed = false
+
+    @Synchronized
+    internal fun requireOpen() = check(!closed) { "Sync file write owner is closed" }
+
+    @Synchronized
+    internal fun hold(file: File) {
+      requireOpen()
+      AppFileWriteProtection.hold(file, token)
+    }
+
+    @Synchronized
+    override fun close() {
+      if (closed) return
+      AppFileWriteProtection.release(token)
+      closed = true
+    }
+  }
+
+  fun beginWrites(): WriteOwner = WriteOwner()
+
+  /**
+   * Null references alone never waive a missing original. PN omitted attachments have an expected
+   * missing-* reference; binary, archived and derived sources must remain eligible for recovery.
+   * Check both versions so a formerly file-backed local source cannot be mistaken for pasted text.
+   */
+  fun preserveFilelessSource(local: SourceEntity?, incoming: SourceEntity): Boolean =
+    incoming.storedFileName == null && local?.storedFileName == null &&
+      PampaBundleSourceFiles.isFileless(incoming) && (local == null || PampaBundleSourceFiles.isFileless(local))
+
   private fun nameKey(table: String): String? = when (table) {
     "audio_parts" -> "fileName"
     "sources" -> "storedFileName"
@@ -22,15 +62,32 @@ internal object SyncLocalFiles {
   }
 
   /**
-   * Retain a verified, exclusively owned reference. Bytes borrowed from another entity always
-   * get a fresh file: ordinary part/source deletion is allowed to unlink its file unconditionally.
-   * Even a missing remote name must not collide with another row's future recovery destination.
+   * Compatibility helper for callers without a page transaction. Its temporary owner always
+   * closes, including failed/cancelled copies; transactional callers must pass their page owner.
    */
   fun selectName(
     root: File, remoteName: String?, size: Long, sha: String, ownName: String?,
     otherNames: Collection<String>, candidates: Sequence<String?>, created: MutableList<File>,
     checkpoint: () -> Unit = {},
+  ): String? = beginWrites().use { owner ->
+    selectName(root, remoteName, size, sha, ownName, otherNames, candidates, created, owner, checkpoint = checkpoint)
+  }
+
+  /**
+   * Retain a verified, exclusively owned reference. Bytes borrowed from another entity always
+   * get a fresh file: ordinary part/source deletion is allowed to unlink its file unconditionally.
+   * Even a missing remote name must not collide with another row's future recovery destination.
+   * [preserveFileless] is only for sources positively classified by [preserveFilelessSource].
+   */
+  fun selectName(
+    root: File, remoteName: String?, size: Long, sha: String, ownName: String?,
+    otherNames: Collection<String>, candidates: Sequence<String?>, created: MutableList<File>,
+    owner: WriteOwner,
+    preserveFileless: Boolean = false,
+    checkpoint: () -> Unit = {},
   ): String? {
+    owner.requireOpen()
+    if (preserveFileless && ownName == null && remoteName == null) return null
     val canonicalRoot = root.canonicalFile
     val occupied = otherNames.map { File(root, it).canonicalFile }.filter { it.parentFile == canonicalRoot }.toSet()
     fun reserved(name: String): Boolean {
@@ -41,7 +98,7 @@ internal object SyncLocalFiles {
     verifiedName(root, size, sha, direct, checkpoint)?.let { return it }
     val donor = verifiedName(root, size, sha, sequenceOf(ownName, remoteName) + candidates, checkpoint)
     if (donor != null) {
-      val target = freshFile(root, ::reserved, create = true)
+      val target = freshFile(root, ::reserved, create = true, owner = owner)
       created += target // Record ownership before a cancellation checkpoint or any write.
       safeFile(root, donor)!!.inputStream().use { input ->
         target.outputStream().use { output ->
@@ -57,11 +114,16 @@ internal object SyncLocalFiles {
     return freshFile(root, ::reserved, create = false).name
   }
 
-  private fun freshFile(root: File, reserved: (String) -> Boolean, create: Boolean): File {
+  private fun freshFile(root: File, reserved: (String) -> Boolean, create: Boolean, owner: WriteOwner? = null): File {
     while (true) {
       val name = "sync-${UUID.randomUUID()}.bin"
       val file = safeFile(root, name) ?: throw IOException("Cannot resolve local sync attachment directory")
-      if (!reserved(name) && (if (create) file.createNewFile() else !file.exists())) return file
+      if (reserved(name) || file.exists()) continue
+      if (!create) return file
+      // Registration must precede creation, not just the first copy checkpoint. Keep the hold
+      // until the page's committed-reference cleanup, however long copying/Room takes.
+      requireNotNull(owner).hold(file)
+      if (file.createNewFile()) return file
     }
   }
 

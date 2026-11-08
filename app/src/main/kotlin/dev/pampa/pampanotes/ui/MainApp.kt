@@ -31,6 +31,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.booleanResource
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.layout
@@ -59,6 +60,8 @@ import dev.antigravity.fluidengine.ui.fluid.FluidMotionPolicyProvider
 import dev.antigravity.fluidengine.ui.fluid.FluidNotification
 import dev.antigravity.fluidengine.ui.fluid.FluidNotificationHost
 import dev.antigravity.fluidengine.ui.fluid.FluidNotificationTone
+import dev.antigravity.fluidengine.ui.fluid.FluidLabels
+import dev.antigravity.fluidengine.ui.fluid.LocalFluidLabels
 import dev.pampa.pampanotes.ui.nav.SettingsSection
 import kotlinx.coroutines.launch
 import dev.antigravity.fluidengine.ui.fluid.FluidPaneScaffold
@@ -120,6 +123,7 @@ fun MainApp(
   PampaTheme(settings = engineSettings, subject = subjects.current) {
     val chromeController = rememberFluidChromeController()
     CompositionLocalProvider(
+      LocalFluidLabels provides if (booleanResource(R.bool.fluid_labels_english)) FluidLabels.english() else FluidLabels(),
       LocalFluidNotificationHostState provides notificationHostState,
       LocalFluidGlassModalHostState provides glassModalHostState,
       LocalSubjectRegistry provides subjects,

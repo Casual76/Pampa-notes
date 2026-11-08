@@ -518,6 +518,66 @@ class PampaNoteContainerTest {
     rejected(badCrc, true)
   }
 
+  @Test fun `media CRC tampering rejects full PN read and cleans protected staging`() {
+    val valid = write(listOf(graph()))
+    val preview = PampaBundleArchive.read(valid, false)
+    val path = preview.data.notes.single().attachments.first().path!!
+    val corrupt = corruptCentralCrc(valid, path)
+    // Preview intentionally does not decompress media. Full verification and staging both must.
+    val read = PampaBundleArchive.read(corrupt, false)
+    assertEquals(preview.data.notes, read.data.notes)
+    rejected(corrupt)
+    val stage = PampaBundleStaging(temp.newFolder("crc-audio"), temp.newFolder("crc-sources"))
+    assertThrows(IllegalArgumentException::class.java) {
+      stage.stage(corrupt, read.root, read.data.notes.flatMap { it.attachments }, {}, {})
+    }
+    assertTrue(stage.files.isNotEmpty())
+    assertTrue(stage.files.none { it.exists() })
+  }
+
+  @Test fun `schema three ZIP media CRC is checked on full read and staging`() {
+    val valid = temp.newFile().also { file ->
+      file.outputStream().use { BundleWriter(audio, sources).write(set(listOf(graph())), ExportOptions(includeAudio = true, includeSources = true), it) }
+    }
+    val original = PampaBundleArchive.read(valid, false)
+    val corrupt = corruptCentralCrc(valid, original.root + original.data.notes.single().attachments.first().path!!)
+    val read = PampaBundleArchive.read(corrupt, false)
+    rejected(corrupt)
+    val stage = PampaBundleStaging(temp.newFolder("zip-crc-audio"), temp.newFolder("zip-crc-sources"))
+    assertThrows(IllegalArgumentException::class.java) {
+      stage.stage(corrupt, read.root, read.data.notes.flatMap { it.attachments }, {}, {})
+    }
+    assertTrue(stage.files.none { it.exists() })
+  }
+
+  @Test fun `zero CRC empty media remains valid including shared blob staging`() {
+    val valid = write(listOf(graph(byteArrayOf())))
+    val read = PampaBundleArchive.read(valid)
+    val stage = PampaBundleStaging(temp.newFolder("empty-crc-audio"), temp.newFolder("empty-crc-sources"))
+    try {
+      val stored = stage.stage(valid, read.root, read.data.notes.flatMap { it.attachments }, {}, {})
+      assertEquals(4, stored.size)
+      assertEquals(4, stage.files.size)
+      assertTrue(stage.files.all { it.isFile && it.length() == 0L })
+    } finally { stage.cleanup() }
+  }
+
+  private fun corruptCentralCrc(valid: File, path: String): File {
+    val raw = valid.readBytes()
+    var changed = false
+    for (i in 0 until raw.size - 46) {
+      if (raw[i] != 0x50.toByte() || raw[i + 1] != 0x4b.toByte() || raw[i + 2] != 1.toByte() || raw[i + 3] != 2.toByte()) continue
+      val length = (raw[i + 28].toInt() and 255) + ((raw[i + 29].toInt() and 255) shl 8)
+      if (String(raw, i + 46, length, Charsets.UTF_8) == path) {
+        raw[i + 16] = (raw[i + 16].toInt() xor 1).toByte()
+        changed = true
+        break
+      }
+    }
+    assertTrue("Expected media central-directory entry", changed)
+    return temp.newFile().also { it.writeBytes(raw) }
+  }
+
   @Test fun `already compressed media and lossless fixtures measured against actual AI ZIP`() {
     val wav = waveFixture()
     val png = java.util.Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")

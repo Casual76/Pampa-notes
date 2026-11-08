@@ -1,0 +1,4 @@
+<resources>
+  <!-- Follow the resolved app resources, including the Italian fallback for other locales. -->
+  <bool name="fluid_labels_english">false</bool>
+</resources>

@@ -1,10 +1,12 @@
 package dev.pampa.pampanotes.core.importing
 
+import androidx.room.withTransaction
 import dev.pampa.pampanotes.core.db.*
 import dev.pampa.pampanotes.core.files.AppFiles
 import dev.pampa.pampanotes.core.transcription.VoiceNames
 import io.mockk.*
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Rule
@@ -18,12 +20,15 @@ class AudioImporterVoiceClockRoundThreeTest {
   private val sessions = mockk<SessionDao>()
   private val parts = mockk<AudioPartDao>()
   private val files = mockk<AppFiles>()
+  private val db = mockk<PampaDatabase>()
   private var session = SessionEntity("session", "note", date = "2026-11-08", position = 0, createdAt = 1, updatedAt = 10)
   private val rows = mutableListOf<AudioPartEntity>()
-  private val importer = AudioImporter(files, sessions, parts)
+  private val importer = AudioImporter(files, sessions, parts, db)
   private lateinit var audio: File
 
   @Before fun setup() {
+    mockkStatic("androidx.room.RoomDatabaseKt")
+    coEvery { db.withTransaction<Any?>(any()) } coAnswers { secondArg<suspend () -> Any?>().invoke() }
     audio = temp.newFolder()
     rows += AudioPartEntity("A", session.id, 0, "old.m4a", "old.m4a", "audio/mp4", 3, 1000, "a".repeat(64), 1)
     coEvery { sessions.get(any()) } coAnswers { session.takeIf { it.id == firstArg<String>() } }
@@ -34,6 +39,8 @@ class AudioImporterVoiceClockRoundThreeTest {
     every { files.newAudioName(any(), any(), any()) } answers { firstArg<String>() + ".m4a" }
     every { files.audioFile(any()) } answers { File(audio, firstArg<String>()) }
   }
+
+  @After fun cleanup() { unmockkStatic("androidx.room.RoomDatabaseKt") }
 
   private fun candidate(file: File? = temp.newFile().also { it.writeBytes(byteArrayOf(1, 2, 3)) }) =
     ImportCandidate("candidate", null, file, "new.m4a", SourceKind.AUDIO, "audio/mp4", 3, "b".repeat(64), durationMs = 1000)

@@ -90,7 +90,7 @@ object PampaBundleArchive {
         val previous = verified.putIfAbsent(path, metadata)
         require(previous == null || previous == metadata) { "Conflicting attachment references: $path" }
         // Schema 1/2 already stream/hash here to derive stable content identity in legacy().
-        if (manifest.schema == 3 && verifyAttachments && previous == null) zip.getInputStream(entry).use { verify(it, a.bytes, a.sha256, checkpoint) }
+        if (manifest.schema == 3 && verifyAttachments && previous == null) zip.getInputStream(entry).use { verify(it, a.bytes, a.sha256, checkpoint, expectedCrc = entry.crc) }
       }
     }
     val warnings = buildList {
@@ -142,14 +142,16 @@ object PampaBundleArchive {
   private fun readText(zip: ZipFile, path: String, checkpoint: () -> Unit = {}): String =
     PampaNoteContainer.utf8(PampaNoteContainer.readEntry(zip, path, TEXT_LIMIT.toLong(), checkpoint))
 
-  internal fun verify(input: InputStream, bytes: Long, hash: String?, checkpoint: () -> Unit, output: java.io.OutputStream? = null) {
+  internal fun verify(input: InputStream, bytes: Long, hash: String?, checkpoint: () -> Unit, output: java.io.OutputStream? = null, expectedCrc: Long? = null) {
     require(bytes in 0..PampaNoteContainer.MAX_TOTAL_BYTES && hash?.matches(Regex("[a-fA-F0-9]{64}")) == true) { "Invalid attachment metadata" }
     val digest = MessageDigest.getInstance("SHA-256"); val buffer = ByteArray(65536); var size = 0L
+    val crc = expectedCrc?.let { java.util.zip.CRC32() }
     while (true) {
       if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException("Pampa attachment verification interrupted")
-      checkpoint(); val n = input.read(buffer); if (n < 0) break; size += n; require(size <= bytes) { "Attachment size mismatch" }; digest.update(buffer, 0, n); output?.write(buffer, 0, n)
+      checkpoint(); val n = input.read(buffer); if (n < 0) break; size += n; require(size <= bytes) { "Attachment size mismatch" }; digest.update(buffer, 0, n); crc?.update(buffer, 0, n); output?.write(buffer, 0, n)
     }
     require(size == bytes && digest.digest().joinToString("") { "%02x".format(it) }.equals(hash, true)) { "Attachment integrity mismatch" }
+    require(crc == null || crc.value == expectedCrc) { "Attachment ZIP CRC mismatch" }
   }
 
   internal fun validate(data: PampaBundleData, checkpoint: () -> Unit = {}) {

@@ -61,7 +61,7 @@ class ImportCoordinatorTest {
     val settings = PampaSettingsStore(context)
     val computerOnly = ComputerOnlyScope(settings, db.folders(), db.sync())
     val extractors = TextExtractorRegistry(PlainTextExtractor(), PdfTextExtractor(context), DocxTextExtractor())
-    val audio = AudioImporter(files, db.sessions(), db.audioParts())
+    val audio = AudioImporter(files, db.sessions(), db.audioParts(), db)
     val resolver = EndpointResolver()
     val http = ArchiveHttp(userAgent = "PampaNotes-test")
     // Senza account e senza codice: il companion qui non viene mai chiamato.

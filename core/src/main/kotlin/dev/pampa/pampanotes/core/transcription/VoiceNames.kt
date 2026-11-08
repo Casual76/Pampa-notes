@@ -35,8 +35,9 @@ object VoiceNames {
 
   private val json = Json { ignoreUnknownKeys = true }
 
-  // Still a Map<String, String> for UI/share consumers; encode(decode(raw)) also keeps clocks.
-  private class DecodedNames(val names: Map<String, String>, val clocks: Map<String, Long>) : Map<String, String> by names {
+  // Still a Map<String, String> for UI/share consumers; encode(decode(raw)) also keeps clocks
+  // and a modern ownership omission (an empty clock object after the last recording moves).
+  private class DecodedNames(val names: Map<String, String>, val clocks: Map<String, Long>, val clocked: Boolean) : Map<String, String> by names {
     override fun equals(other: Any?): Boolean = names == other
     override fun hashCode(): Int = names.hashCode()
     override fun toString(): String = names.toString()
@@ -65,19 +66,24 @@ object VoiceNames {
       val time = primitive.takeUnless { it.isString }?.longOrNull
       if (part.isBlank() || time == null || time < 0) null else part to time
     }.toMap()
-    return DecodedNames(out, clocks)
+    return DecodedNames(out, clocks, obj[CLOCKS] is JsonObject)
   }
 
   /** Explicit per-recording authority, including empty maps. Missing entries use the owner clock. */
   fun clocks(raw: String?): Map<String, Long> = (decode(raw) as? DecodedNames)?.clocks.orEmpty()
 
   /**
-   * La colonna, dai nomi. Null quando non ci sono nomi ne' clock: e' il valore delle vecchie sessioni,
+   * La colonna, dai nomi. Null quando non ci sono nomi ne' clock, salvo l'omissione strutturata
+   * dopo uno spostamento: null resta il valore delle vecchie sessioni,
    * ed e' quello che tiene l'impronta della sessione uguale a prima dell'aggiornamento (vedi
    * `SyncCodec.strip`). Le chiavi in ordine, perche' due dispositivi che danno gli stessi nomi
    * scrivano lo stesso testo, e quindi la stessa impronta.
    */
-  fun encode(names: Map<String, String>): String? = encode(names, (names as? DecodedNames)?.clocks.orEmpty())
+  fun encode(names: Map<String, String>): String? {
+    val decoded = names as? DecodedNames
+    return if (decoded?.clocked == true && names.isEmpty() && decoded.clocks.isEmpty()) EMPTY_CLOCKS
+      else encode(names, decoded?.clocks.orEmpty())
+  }
 
   /** Encode visible names and complete-map clocks without inventing speaker names for metadata. */
   fun encode(names: Map<String, String>, partClocks: Map<String, Long>): String? {
@@ -215,7 +221,10 @@ object VoiceNames {
     val movingClocks = sourceClocks.filterKeys { it in ids }
     if (moving.isEmpty() && movingClocks.isEmpty()) return sourceRaw to targetRaw
     val movingIds = moving.keys.map(::partOf).toSet() + movingClocks.keys
+    // A last-recording move is an ownership omission, not a legacy null name-removal. Keep that
+    // distinction even when sessions and audio must be pushed in different bounded batches.
     val newSource = encode(source - moving.keys, sourceClocks - ids)
+      ?: EMPTY_CLOCKS.takeIf { sourceClocks.isNotEmpty() }
     val newTarget = encode(decode(targetRaw).filterKeys { partOf(it) !in movingIds } + moving,
       clocks(targetRaw).filterKeys { it !in movingIds } + movingClocks)
     return newSource to newTarget
@@ -261,6 +270,7 @@ object VoiceNames {
   private const val SEPARATOR = "|"
 
   private const val CLOCKS = "_pampaVoiceClocks"
+  private const val EMPTY_CLOCKS = "{\"_pampaVoiceClocks\":{}}"
 
   private val SPACES = Regex(" {2,}")
 }

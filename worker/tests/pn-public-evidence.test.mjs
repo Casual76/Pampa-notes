@@ -15,7 +15,7 @@ import { RECORDING_ORIGIN_FIELDS, retainPublicEvidence } from "../src/sync-publi
 // TypeScript's bundler imports omit extensions; resolve only this production helper for Node.
 const syncUrl = new URL("../src/sync.ts", import.meta.url).href;
 registerHooks({ resolve(specifier, context, nextResolve) {
-  return nextResolve(context.parentURL === syncUrl && specifier === "./sync-public-evidence" ? `${specifier}.ts` : specifier, context);
+  return nextResolve(context.parentURL === syncUrl && ["./sync-public-evidence", "./sync-voice-clocks"].includes(specifier) ? `${specifier}.ts` : specifier, context);
 } });
 const { push, pull } = await import(syncUrl);
 const schema = readFileSync(new URL("../schema.sql", import.meta.url), "utf8");

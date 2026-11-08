@@ -62,11 +62,15 @@ internal class PampaBundleStaging(private val audioDir: File, private val source
           // historical two-directory staging constructor and separate AppFiles instances.
           AppFileWriteProtection.hold(target, owner)
           files += target
-          (verified?.inputStream() ?: zip.getInputStream(entry)).use { input ->
+          // Only the first reference reads ZIP bytes; later independent copies use this verified
+          // file. ZipFile does not compare media CRCs itself, so validate it in that same pass.
+          val archivedInput = if (verified == null) java.util.zip.CheckedInputStream(zip.getInputStream(entry), java.util.zip.CRC32()) else null
+          (archivedInput ?: verified!!.inputStream()).use { input ->
             ImportFileCopy.copy(input, target, reference.bytes, reference.sha256, checkpoint) { count ->
               completed += count
               onProgress((completed.toDouble() / total.coerceAtLeast(1)).toFloat())
             }
+            require(archivedInput == null || archivedInput.checksum.value == entry.crc) { "Attachment ZIP CRC mismatch" }
           }
           if (verified == null) verified = target
           if (reference.bytes == 0L) completed++

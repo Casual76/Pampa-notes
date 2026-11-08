@@ -82,12 +82,17 @@ internal object PampaBundleMerge {
 
     transcripts.values.toList().filter { it.kind == TranscriptKind.RAW && it.id in hadSegments }.forEach { t ->
       val segments = rebased.filter { it.transcriptId == t.id }
-      val text = segments.joinToString(" ") { it.text }
-      // Preserve exact exported RAW text if its segment sequence and layout did not change.
+      // Session offsets can change when untranscribed audio is inserted before/between these
+      // segments. They do not change the RAW wording; only compare the ordered recording-local
+      // content. Canonical ordering still detects a genuine change to the transcript sequence.
       val original = incomingTranscripts[t.id] ?: local?.transcripts?.find { it.id == t.id }
       val originalSegments = if (t.id in incomingTranscripts) incoming.segments.filter { it.transcriptId == t.id } else previousSegments.filter { it.transcriptId == t.id }
-      val unchanged = originalSegments.sortedWith(segmentOrder).map { it.copy(id = 0) } == segments.map { it.copy(id = 0) }
-      transcripts[t.id] = if (unchanged && original != null) original else t.copy(text = text, wordCount = text.split(Regex("\\s+")).count { it.isNotBlank() })
+      val unchanged = originalSegments.sortedWith(segmentOrder).map { it.copy(id = 0, sessionStartMs = 0, sessionEndMs = 0) } ==
+        segments.map { it.copy(id = 0, sessionStartMs = 0, sessionEndMs = 0) }
+      transcripts[t.id] = if (unchanged && original != null) original else {
+        val text = segments.joinToString(" ") { it.text }
+        t.copy(text = text, wordCount = text.split(Regex("\\s+")).count { it.isNotBlank() })
+      }
     }
 
     // A voice map is a complete user edit, including absent keys (intentional removals).
