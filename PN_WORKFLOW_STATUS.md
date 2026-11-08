@@ -1279,3 +1279,21 @@ Primo processo terminato effettivamente exit1/BUILD FAILED4m26s a core:testDebug
 Input536 e XML/log falliti archiviati separatamente: pampa-precloud-failed-54c192e-inputs.json, pampa-precloud-failed-54c192e-tests.zip, pampa-precloud-integration-1.log. Produzione core/app e Kotlin AndroidTest compilati durante il processo; la suite completa e lint non dichiarati passati. Lease rilasciata dopo l'uscita effettiva; necessario un nuovo batch per completare i controlli.
 
 Preflight pubblicazione: publisher disponibile; probe rileva versione1.3.1/code20 e nessun token nelle env. ghCLI è già autenticato comeCasual76 nel keyring con scope repo/workflow; il publisher potrà ricevere il token soltanto in variabile di processo, senza stamparlo/persistirlo. Nessuna richiesta di nuove credenziali e nessuna pubblicazione effettuata.
+
+### Verifica locale PN residua completata —32a1605, consegna CLOUD ancora pendente
+
+Retry effettivamente concluso exit0/BUILD SUCCESSFUL2m27s,465task(39eseguiti/5cache/421aggiornati): debug assemble, core/appJVM, core/appAPKAndroidTest(solo compile/package),lintapp. XML:core1161pass+1skip,app44pass=1205pass/1skip/0failure/error. Tutte le regressioni dei seiP2/dueP3 implementate nel candidato passano nei controlli JVM pertinenti; Room/restart reale sono compilati e ispezionati, non eseguiti come dispensato. Non equivale a nuova approvazione indipendente dell'intero insieme.
+
+Worker32/32 offline e TypeScriptnoEmit0 eseguiti dal parent; nessun D1/cloud/server reale. Lint0errori/124warning: il solo aumento rispetto123 è Typos sulla parola italiana «possibile» in values/pn_import.xml14, falso positivo del correttore inglese, nessun fix prodotto necessario.
+
+Manifest %TEMP%\pampa-precloud-integration-evidence.json lega536input versionati e164artefatti; tutti input ricalcolati invariati rispetto all'avvio. Archivio immutabile %TEMP%\pampa-precloud-evidence-32a1605.zip(55.8MiB) conserva i164artefatti con nomi univoci indicati da archiveEntry nel manifest e SHA256. Questo evita perdere i report o gli APK storici quando build-pampa-integration verrà riusato per l'unione completa. Logfinale pampa-precloud-integration-2.log; tentativo fallito54c192e conservato separatamente.
+
+Nessun push/versionbump/pubblicazione. Lease Gradle rilasciata dopo la reale uscita. Solo cancellazione preesistente.pyc resta fuori dai commit; engine invariato. Previsione merge-tree sola lettura sul freeze CLOUD351e3fd individua nove conflitti(documentoCLOUD,SessionViewModel,ExportModel/Service,AppFiles,PNImporter/Merge,SessionRepository,RekeyPersistenceTest), nessuna integrazione CLOUD ancora applicata. La consegna consolidata dopo nove review rimane la prossima dipendenza; poi risoluzione conflitti, test e review finale unificata prima della stable.
+
+## Consegna consolidata CLOUD/RECORDINGS acquisita
+
+Ramo t3/cloud-recordings-parallel, delivery426cbb48442fc21ee0733f07814e9a77cccb6966, rangeea4e0a2..426cbb4(43commit). Sorgenti verificate351e3fd44bf64b07d6437b1d1c8b533a7bf9c79f, ultimo commit solo documenti/report/probe. Letti handoff/contrattiC4/C7 e confermato nessun diffapp/core/companion/worker fra review e delivery, checkout pulito. Hash manifest sorgenti34e5d9db... e verifica63103ba9... coerenti con consegna.
+
+Nove review Sol/xhigh complete: C1=6,C2=6,C3=6,C4=6,C5=9,C6=6,C7=8,C8=9,C9=9;1/1verificato per criterio, NA esclusi. Non approvato per release. Registro obbligatorio aggiunto all'integrazione: B01P1 prenotazioni spesa dopo rifiuto certo; B02P2 errore pre-start dopo migrazione privacy→PC; B03P2 status429 noto perso durante lettura header fallita/cancellazione; B04P2 stringa provider assente/spazi certificata esatta dopo ricostruzione; B05P2 overlay riscrive e perde campi pubblici sconosciuti; B06P1 evizione con riferimenti DB divenuti obsoleti durante letture protezione sospendibili. TreP3 follow-up: onboardingMistral, labelsFluid(già fixroot da verificare combinato), filename numerico data senza estensione.
+
+Build separata1306pass/1skip/0fail,lint0/127 e compilazione AndroidTest soltanto;88testcompanion mock correnti+21prove reviewerC5 non acustiche. Non sono esiti della futura unione. User-waived runtime/Room/GPU/provider/livecloud invariati. Parent ora integra il range e corregge ledger senza altri giri autonomi dei singoli workflow.
