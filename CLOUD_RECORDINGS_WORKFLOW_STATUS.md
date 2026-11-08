@@ -48,4 +48,23 @@ Implementers return changed files, actual checks, limitations and API contracts;
 
 ## Delegate ledger
 
-Pending initial three launches.
+Initial three delegates launched, all actual codex / gpt-6.1-sol / reasoningEffort=xhigh, shared checkout with disjoint source ownership. T3 returned running for each, no backend exception or extra slot assumed. Each next instruction says completion wakes coordinator; end turn without polling.
+
+| Unit | Task suffix | State |
+|---|---|---|
+| Cloud/pinning/retry | 6041ac2a-8dfd-4b5a-920d-ae8c1c6ef2c0 | running |
+| Recordings-first UX | d883446a-3153-48a8-857c-8d9ac1ee4944 | running |
+| Python alignment API | 0f90a2ea-4831-4a5f-ba6f-89d1686b5a93 | running |
+
+Full task/child id prefix is node:delegated-task:command%3Amcp%3Aeb1c4ba6-cbfc-4f0c-bac9-1b3c1c7a2dc7%3Adelegate-task%3A plus suffix (child thread uses thread: in place of node:).
+No Gradle/device/GPU lease held. Timestamp/Android alignment agents remain queued until a slot frees and contracts are stable. PN export milestone 11a7cbc1750eb04e5e23d94950be0d34f453c2f5 acknowledged as unintegrated; future export adaptations must include PAMPA enum/options and relay attachment planning.
+
+## Coordinator public metadata contract (2026-11-08)
+
+Parent ACK before source edits: five AudioPartEntity nullable fields, all default null / migrated SQL NULL: recordedAtEpochMs (UTC recording-start instant only when source supplies one), recordedAtLocal (source ISO local date or date-time), recordedAtZoneId (explicit source IANA zone/offset only), recordedAtSource (media_metadata/samsung_recording/filename/file_modified, last-modified at most date-only), recordedAtPrecision (day/minute/second/millisecond). Unknown old rows stay null, no inferred backfill, no creation/import/noon time reuse. Per-part origin is independent of session offsets and gaps.
+
+TranscriptEntity.cloudSourceJson:String?=null is public immutable exact-source provenance only, never credentials/jobs/relay/account data. Fresh Android alignment integration owns source codec and SessionRepository/RawTimelinePlan behavior. Cloud unit exposes exact sourceParts and cache data; segment rows alone currently normalize whitespace. Empty/null source remain distinct. PN coordinator will externalize large source JSON into a hashed text blob and retain exact null/empty/string state.
+
+Room source migration14->15 adds only these six nullable columns. Coordinator owns generation of core/schemas/15.json once shared Gradle lease is released. Source contract commit is not a completed or verified migration until generated schema and checks land. New JVM payload/hash tests and14->15 instrumented migration test prepared, NOT YET EXECUTED. Scoped git diff --check passed.
+
+Current resource reservations: PN owns Gradle and Pampa_Tablet emulator/device until explicit release; no compute/GPU lease requested here. Three implementers remain running. Companion first25 mocked/pure forced-alignment tests reported pass by implementer, not yet independently executed or reviewed; existing suite/API doc still in progress. Review round not started;0/3 correction rounds used.

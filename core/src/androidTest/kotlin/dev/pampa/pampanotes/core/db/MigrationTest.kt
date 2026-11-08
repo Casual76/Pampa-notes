@@ -30,6 +30,42 @@ class MigrationTest {
   )
 
   @Test
+  fun migration14to15_preserves_part_data_and_leaves_recording_origin_unknown() {
+    helper.createDatabase(NAME, 14).use { db ->
+      db.execSQL("INSERT INTO folders (id, name, sortOrder, createdAt, updatedAt) VALUES ('f', 'Personal', 0, 1, 1)")
+      db.execSQL("INSERT INTO notes (id, folderId, title, body, pinned, createdAt, updatedAt) VALUES ('n', 'f', 'Interview', 'Legacy material', 0, 1, 1)")
+      db.execSQL("INSERT INTO sessions (id, noteId, title, date, position, createdAt, updatedAt) VALUES ('s', 'n', '', '2026-09-18', 0, 1, 1)")
+      db.execSQL(
+        "INSERT INTO audio_parts (id, sessionId, position, fileName, originalName, mime, sizeBytes, durationMs, sha256, createdAt, archivedAt) " +
+          "VALUES ('p', 's', 0, 'p.m4a', 'Voice.m4a', 'audio/mp4', 10, 1000, 'audio-hash', 999999, 123)",
+      )
+      db.execSQL(
+        "INSERT INTO transcripts (id, sessionId, kind, provider, model, text, wordCount, status, createdAt) " +
+          "VALUES ('t', 's', 'RAW', 'openrouter', 'cloud', '  Original, text!  ', 2, 'OK', 1)",
+      )
+    }
+    helper.runMigrationsAndValidate(NAME, 15, true).use { db ->
+      db.query("SELECT sha256, createdAt, archivedAt, recordedAtEpochMs, recordedAtLocal, recordedAtZoneId, recordedAtSource, recordedAtPrecision FROM audio_parts WHERE id = 'p'").use { cursor ->
+        assertEquals(1, cursor.count)
+        cursor.moveToFirst()
+        assertEquals("audio-hash", cursor.getString(0))
+        assertEquals(999999L, cursor.getLong(1))
+        assertEquals(123L, cursor.getLong(2))
+        (3..7).forEach { assertTrue("Unknown origin column $it must remain NULL", cursor.isNull(it)) }
+      }
+      db.query("SELECT text, cloudSourceJson FROM transcripts WHERE id = 't'").use { cursor ->
+        cursor.moveToFirst()
+        assertEquals("  Original, text!  ", cursor.getString(0))
+        assertTrue(cursor.isNull(1))
+      }
+      db.query("SELECT body FROM notes WHERE id = 'n'").use { cursor ->
+        cursor.moveToFirst()
+        assertEquals("Legacy material", cursor.getString(0))
+      }
+    }
+  }
+
+  @Test
   fun migrazione1a2_tiene_i_segmenti_e_da_un_default_alle_parole() {
     helper.createDatabase(NAME, 1).use { db ->
       db.execSQL("INSERT INTO folders (id, name, sortOrder, createdAt, updatedAt) VALUES ('f', 'Storia', 0, 1, 1)")
