@@ -92,10 +92,26 @@ class TranscriptionRepository @Inject constructor(
   private val cooldowns: CloudCooldownStore,
 ) {
 
-  fun observeAll(): Flow<List<JobEntity>> = jobs.observeAll()
+  fun observeAll(): Flow<List<JobEntity>> = displayJobs(jobs.observeAll())
   fun observeActive(): Flow<List<JobEntity>> = jobs.observeActive()
   fun observeActiveCount(): Flow<Int> = jobs.observeActiveCount()
-  fun observeBySession(sessionId: String): Flow<List<JobEntity>> = jobs.observeBySession(sessionId)
+  fun observeBySession(sessionId: String): Flow<List<JobEntity>> = displayJobs(jobs.observeBySession(sessionId))
+
+  /** Presentation follows privacy changes even when the terminal database row does not change. */
+  private fun displayJobs(rows: Flow<List<JobEntity>>): Flow<List<JobEntity>> =
+    combine(rows, settingsStore.settings) { all, settings -> all.map { recoveryPresentation(it, settings) } }
+      .distinctUntilChanged()
+
+  /** Does not change the persisted dispatch, paid evidence, or permission to resend. */
+  private suspend fun recoveryPresentation(job: JobEntity, settings: PampaSettings): JobEntity {
+    if (job.state != JobState.FAILED || job.type != JobType.TRANSCRIBE || job.provider == OpenAiCompatProvider.ID) return job
+    return when {
+      uncertainCloudWork(job) -> job.copy(errorCode = "cloud_request_uncertain")
+      !explicitCloud(job) && settings.providerForJob(job.provider, transcription = true) != job.provider &&
+        hasRetainedCloudWork(job) -> job.copy(errorCode = "cloud_recovery_changed")
+      else -> job
+    }
+  }
 
   suspend fun get(jobId: String): JobEntity? = jobs.get(jobId)
 
@@ -317,11 +333,12 @@ class TranscriptionRepository @Inject constructor(
     val failed = all.filter { it.state == JobState.FAILED }
     if (failed.isEmpty()) return emptyMap()
     val bySession = all.groupBy { it.sessionId }
+    val settings = settingsStore.current()
     return failed.groupBy { it.sessionId }.flatMap { (sessionId, sessionFailed) ->
       val exists = sessions.get(sessionId) != null
       val sessionTranscripts = if (exists) transcripts.bySession(sessionId) else emptyList()
       sessionFailed.map { job -> job.id to FailedJobs.standing(
-        if (uncertainCloudWork(job)) job.copy(errorCode = "cloud_request_uncertain") else job,
+        recoveryPresentation(job, settings),
         exists, sessionTranscripts, bySession[sessionId].orEmpty(),
       ) }
     }.toMap()

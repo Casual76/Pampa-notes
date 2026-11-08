@@ -813,9 +813,10 @@ private fun LazyListScope.jobItem(
         if (failed.type == JobType.TRANSCRIBE && failed.provider != "custom") {
           FluidButton(text = stringResource(R.string.cloud_recovery_open), onClick = { onRecoverJob(failed.id) },
             style = FluidButtonStyle.Tinted, fillWidth = true)
+          Text(text = stringResource(R.string.cloud_recovery_hide_detail), style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        // «Nascondi» toglie la riga del lavoro: senza, un fallimento restava in cima alla sessione
-        // per sempre, anche deciso di lasciar perdere.
+        // Hiding the card must not discard received results or their owner row.
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
           FluidButton(
             text = stringResource(R.string.job_dismiss),

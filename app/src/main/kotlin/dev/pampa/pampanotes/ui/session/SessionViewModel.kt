@@ -250,6 +250,7 @@ class SessionViewModel @Inject constructor(
   val transcribeError: StateFlow<String?> = cloudError
 
   private val savedState = savedStateHandle
+  private val dismissedJobs = savedStateHandle.getStateFlow<List<String>>(DISMISSED_JOBS, emptyList())
 
   /** Aperta da «Riprendi ad ascoltare» o da «Ascolta»: il lettore parte da solo ([resumeIfAsked]). */
   private val resumeRequested: Boolean = savedStateHandle.get<String>("play") == "1"
@@ -380,6 +381,7 @@ class SessionViewModel @Inject constructor(
     partials.bySession.map { it[sessionId] }.distinctUntilChanged(),
     _relayParts,
     _relayProblem,
+    dismissedJobs,
   ) { values ->
     @Suppress("UNCHECKED_CAST")
     val withParts = values[0] as SessionWithParts?
@@ -400,9 +402,9 @@ class SessionViewModel @Inject constructor(
       // Una grezza (o una raffinata) arrivata dopo il fallimento — dal sync, da un altro dispositivo,
       // da un altro tentativo — lo supera: la stessa regola di «Riprova tutti» (FailedJobs).
       failedJob = (values[3] as List<JobEntity>).firstOrNull { failed ->
-        (failed.state == JobState.FAILED &&
+        failed.id !in (values[13] as List<String>) && ((failed.state == JobState.FAILED &&
           FailedJobs.standing(failed, sessionExists = true, transcripts, values[3] as List<JobEntity>) != FailureStanding.SUPERSEDED) ||
-          (failed.state == JobState.CANCELLED && transcription.hasRetainedCloudWork(failed))
+          (failed.state == JobState.CANCELLED && transcription.hasRetainedCloudWork(failed)))
       },
       siblings = values[4] as List<SessionEntity>,
       missing = values[6] as List<AudioPartEntity>?,
@@ -769,8 +771,10 @@ class SessionViewModel @Inject constructor(
     super.onCleared()
   }
 
-  /** Cancella la riga di un lavoro fallito: «Nascondi» sulla scheda del fallimento. */
-  fun dismissJob(jobId: String) = viewModelScope.launch { transcription.delete(jobId) }
+  /** Hides this card only. Jobs and its local recovery remain available in the Jobs page. */
+  fun dismissJob(jobId: String) {
+    savedState[DISMISSED_JOBS] = (dismissedJobs.value + jobId).distinct()
+  }
 
   private companion object {
     /**
@@ -783,6 +787,7 @@ class SessionViewModel @Inject constructor(
     const val RESUME_CONSUMED = "resumeConsumed"
     const val JUMP_SEEK_USED = "jumpSeekUsed"
     const val JUMP_SEARCH_USED = "jumpSearchUsed"
+    const val DISMISSED_JOBS = "dismissedJobs"
     /** Quanto resta a schermo «saltati 16 min»: il tempo di leggerlo, non di aspettarlo. */
     const val NOTICE_MS = 2_500L
   }

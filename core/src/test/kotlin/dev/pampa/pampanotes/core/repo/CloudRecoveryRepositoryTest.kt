@@ -68,6 +68,57 @@ class CloudRecoveryRepositoryTest {
     files.jobs.resolve("job/part-a/whole.json.sending").writeText("pending:11111111-1111-4111-8111-111111111111")
   }
 
+  private fun receivedWork() {
+    val root = files.jobDir(row.id); val storage = TranscriptionWorkStorage()
+    val signature = StoredChunks.signature("groq", TranscriptionCapabilities(null, false, false), 10)
+    storage.prepare(root, signature, TranscribeRequest("model"), true)
+    CloudWorkRecovery.prepare(root, original, storage)
+    val dir = root.resolve("part-a").also { it.mkdirs() }; val part = original.single()
+    storage.recordInput(dir, TranscriptionWorkStorage.Input(part.id, part.sha256, part.durationMs))
+    storage.write(dir.resolve("whole.json"), StoredChunks.encode(ChunkTranscript(ChunkSpec(0, 0, 1000), emptyList(),
+      sourceText = "Paid local text", audioSha256 = part.sha256), signature))
+  }
+
+  @Test fun `terminal received results follow privacy changes in both consumers without changing dispatch or bytes`() = runTest {
+    receivedWork()
+    row = row.copy(state = JobState.FAILED, errorCode = "unauthorized")
+    val persisted = row
+    val paid = files.jobs.resolve("job/part-a/whole.json"); val bytes = paid.readBytes()
+    val prefsFlow = MutableStateFlow(prefs)
+    every { settings.settings } returns prefsFlow
+    every { jobs.observeAll() } returns MutableStateFlow(listOf(row))
+    every { jobs.observeBySession("session") } returns MutableStateFlow(listOf(row))
+    for (consumer in listOf(repo.observeAll(), repo.observeBySession("session"))) {
+      prefs = prefs.copy(customOnly = false); prefsFlow.value = prefs
+      consumer.test {
+        assertEquals("unauthorized", awaitItem().single().errorCode)
+        prefs = prefs.copy(customOnly = true); prefsFlow.value = prefs
+        val displayed = awaitItem().single()
+        assertEquals("cloud_recovery_changed", displayed.errorCode)
+        assertTrue(FailedJobs.requiresNewRequest(displayed))
+        assertEquals(FailureStanding.RECOVERY_ONLY, repo.failureStandings(listOf(persisted))[row.id])
+        assertNull(repo.retry(row.id))
+        assertEquals(persisted, row); assertArrayEquals(bytes, paid.readBytes())
+        prefs = prefs.copy(customOnly = false); prefsFlow.value = prefs
+        assertEquals("unauthorized", awaitItem().single().errorCode)
+        cancelAndIgnoreRemainingEvents()
+      }
+    }
+    coVerify(exactly = 0) { jobs.retry(any(), any(), any(), any()) }
+    coVerify(exactly = 0) { jobs.delete(any()) }
+  }
+
+  @Test fun `computer only can still retry a known failure with no received or uncertain work`() = runTest {
+    prefs = prefs.copy(customOnly = true)
+    row = row.copy(state = JobState.FAILED, errorCode = "unauthorized")
+    coEvery { jobs.retry(any(), any(), any(), any()) } answers {
+      row = row.copy(provider = arg(1), state = JobState.QUEUED, errorCode = null, optionsJson = arg(2)); 1
+    }
+    assertEquals(FailureStanding.RETRYABLE, repo.failureStandings(listOf(row))[row.id])
+    assertEquals("custom", repo.retry(row.id)?.provider)
+    coVerify(exactly = 1) { jobs.retry(row.id, "custom", any(), any()) }
+  }
+
   @Test fun `late cloud completion cannot replace newer history or a changed selection`() = runTest {
     val snapshot = repo.cloudSaveSnapshot("session")!!
     val local = TranscriptEntity("local", "session", TranscriptKind.RAW, "custom", "local", text = "New local result", wordCount = 3, createdAt = 200)
