@@ -1,5 +1,6 @@
 package dev.pampa.pampanotes.ui.importing
 
+import android.util.Log
 import dev.pampa.pampanotes.core.db.FolderEntity
 import dev.pampa.pampanotes.core.db.SourceKind
 import dev.pampa.pampanotes.core.importing.*
@@ -19,8 +20,12 @@ import org.junit.rules.TemporaryFolder
 class ImportDiagnosticFlowTest {
   @get:Rule val temp = TemporaryFolder()
   private val dispatcher = StandardTestDispatcher()
-  @Before fun setup() { Dispatchers.setMain(dispatcher) }
-  @After fun cleanup() { Dispatchers.resetMain() }
+  @Before fun setup() {
+    Dispatchers.setMain(dispatcher)
+    mockkStatic(Log::class)
+    every { Log.w(any<String>(), any<String>(), any<Throwable>()) } returns 0
+  }
+  @After fun cleanup() { unmockkStatic(Log::class); Dispatchers.resetMain() }
 
   private fun model(coordinator: ImportCoordinator, folders: FolderRepository, importer: PampaBundleImporter): ImportViewModel {
     val requests = ImportRequestHolder().also { it.offer(ImportRequest(uris = listOf(mockk()))) }
@@ -37,6 +42,7 @@ class ImportDiagnosticFlowTest {
     assertEquals("IMPORT_PREPARE_CORRUPT", model.uiState.value.errorDiagnostic)
     assertNull(model.uiState.value.error)
     assertNotNull(model.uiState.value.errorRes)
+    coVerify(exactly = 1) { coordinator.inspect(any()) }
   }
 
   @Test fun failingBundlePrecommitReportsLocalFileCodeAndPreservesTheArchiveOwner() = runTest {
@@ -59,5 +65,6 @@ class ImportDiagnosticFlowTest {
     assertNull(model.uiState.value.error)
     // The wizard owns only its inspected temporary copy; original provider files are never referenced here.
     assertFalse(requireNotNull(candidate.file).exists())
+    coVerify(exactly = 1) { importer.import(any(), any(), any(), any()) }
   }
 }
