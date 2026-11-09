@@ -64,6 +64,11 @@ length exceeds 32,768 UTF-16 code units, they also use `text`/`words` blob refer
 and conflicting inline value are rejected. A null word timing string stays null; an empty string
 stays empty. No timing is generated.
 
+Word timing strings store offsets relative to their segment. A measured word may start before
+or end after the coarse segment boundary; it remains valid when its absolute interval lies
+inside the owning audio part. Negative relative offsets are preserved in that case. Export and
+import validate against the audio part without clipping, estimating or rewriting these values.
+
 Blob paths derive only from SHA-256, never entity IDs or remote/local filenames. Identical bytes
 can serve multiple audio/source entities or text fields. Every entity keeps its own ID, position,
 relationships, dates, MIME and original name. Deduplication does not merge recordings, sources,

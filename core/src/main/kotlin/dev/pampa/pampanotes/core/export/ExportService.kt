@@ -89,6 +89,8 @@ data class ExportResult(
  * lingua dell'app. Dal modulo `:core` le stringhe dell'app non si leggono.
  */
 class ExportFailure(val reason: Reason, cause: Throwable? = null) : IOException(reason.name, cause) {
+  val diagnosticCode: String get() = ExportDiagnostics.code(this)
+
   enum class Reason {
     /** Il file (o i file sciolti) nella cache non si sono scritti. */
     WRITE,

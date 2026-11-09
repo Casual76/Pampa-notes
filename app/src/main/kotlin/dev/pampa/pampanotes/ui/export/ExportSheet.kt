@@ -221,9 +221,11 @@ private fun ColumnScope.ConfiguringBody(state: ExportUiState, viewModel: ExportV
 
   if (state.historyScope == null && state.stage == ExportStage.FAILED) {
     val fallback = stringResource(R.string.export_failure_write)
+    val message = state.failure?.let { exportFailureText(it) } ?: state.error?.takeIf { it.isNotBlank() } ?: fallback
+    val diagnostic = state.failureCode?.let { stringResource(R.string.export_failure_diagnostic, it) }
     FluidInlineMessage(
       title = stringResource(R.string.export_failed),
-      message = state.failure?.let { exportFailureText(it) } ?: state.error?.takeIf { it.isNotBlank() } ?: fallback,
+      message = listOfNotNull(message, diagnostic).joinToString("\n"),
       tone = FluidTone.Danger,
     )
   }

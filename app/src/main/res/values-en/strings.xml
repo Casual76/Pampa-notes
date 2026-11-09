@@ -1045,7 +1045,7 @@
   <string name="export_failure_create">The chosen folder didn\'t allow creating the file.</string>
   <string name="export_failure_not_writable">No permission to write to that folder.</string>
   <string name="export_failure_folder_gone">The chosen folder can no longer be reached.</string>
-  <string name="export_failure_interrupted">Writing stopped halfway: the incomplete file was removed.</string>
+  <string name="export_failure_interrupted">Could not finish creating the package in the selected folder.</string>
   <string name="link_confirm_sync_title">Connect sync?</string>
   <string name="link_confirm_sync_message">Your notes, folders and transcripts will be sent to %1$s.\n\n%2$s\n\nOnly connect if it\'s your own service or one you trust.</string>
   <string name="link_confirm_endpoint_title">Connect this computer?</string>

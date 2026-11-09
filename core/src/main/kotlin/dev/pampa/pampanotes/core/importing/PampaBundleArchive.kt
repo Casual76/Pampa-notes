@@ -194,8 +194,14 @@ object PampaBundleArchive {
         require(s.sessionStartMs == offset + s.partStartMs && s.sessionEndMs == offset + s.partEndMs) { "Inconsistent session offsets" }
         s.wordsJson?.let { encoded ->
           val words = dev.pampa.pampanotes.core.transcription.WordTimings.decode(encoded, 0)
-          val duration = s.partEndMs - s.partStartMs
-          require(words.size == encoded.lineSequence().count { it.isNotBlank() } && words.all { it.startMs >= 0 && it.endMs >= it.startMs && it.endMs <= duration }) { "Invalid word timings" }
+          // Providers align words independently of coarse segment boundaries. Their offsets are
+          // relative to the segment, and can legitimately be negative or exceed its duration.
+          // Bound the original observations by the audio part, without clipping or regenerating.
+          val earliest = -s.partStartMs
+          val latest = p.durationMs - s.partStartMs
+          require(words.size == encoded.lineSequence().count { it.isNotBlank() } && words.all {
+            it.startMs >= earliest && it.endMs >= it.startMs && it.endMs <= latest
+          }) { "Invalid word timings" }
         }
       }
       n.sessions.forEach { session ->

@@ -277,8 +277,8 @@ class PampaNoteContainerTest {
     val bad = listOf(
       g.copy(segments = g.segments.map { it.copy(partEndMs = 1001) }),
       g.copy(segments = g.segments.map { it.copy(sessionStartMs = 99999) }),
-      g.copy(segments = g.segments.map { it.copy(wordsJson = "-1,100,Hello") }),
-      g.copy(segments = g.segments.map { it.copy(wordsJson = "0,701,Hello") }),
+      g.copy(segments = g.segments.map { it.copy(wordsJson = "-101,100,Hello") }),
+      g.copy(segments = g.segments.map { it.copy(wordsJson = "0,901,Hello") }),
       g.copy(transcripts = g.transcripts.map { if (it.id == "refined1") it.copy(parentId = "absent") else it }),
       g.copy(segments = g.segments + g.segments.first()),
     )
@@ -294,7 +294,7 @@ class PampaNoteContainerTest {
       "\"partEndMs\":800" to "\"partEndMs\":1001",
       "\"activeTranscriptId\":\"refined1\"" to "\"activeTranscriptId\":\"missing-version\"",
       "\"derivedFromId\":\"source\"" to "\"derivedFromId\":\"page\"",
-      "0,300,Hello" to "-1,300,Hello",
+      "0,300,Hello" to "-101,300,Hello",
     )
     replacements.forEach { (before, after) ->
       var changed = false

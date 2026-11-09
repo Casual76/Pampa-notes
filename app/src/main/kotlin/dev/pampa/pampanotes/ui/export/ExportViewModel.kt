@@ -58,6 +58,7 @@ data class ExportUiState(
   val error: String? = null,
   /** Il perche' di un export fallito, quando si sa: la schermata lo dice con le sue parole. */
   val failure: ExportFailure.Reason? = null,
+  val failureCode: String? = null,
   /** L'URI SAF della cartella scelta in precedenza, se c'e': il salvataggio non richiede altro. */
   val folderUri: String = "",
   val folderName: String = "",
@@ -138,6 +139,7 @@ class ExportViewModel @Inject constructor(
           result = null,
           error = null,
           failure = null,
+          failureCode = null,
           progress = 0f,
           estimate = null,
           warnings = emptyList(),
@@ -201,7 +203,7 @@ class ExportViewModel @Inject constructor(
     gathering?.cancel()
     // Invalidate synchronously: no click can export the previous scope/format snapshot.
     _uiState.update { it.copy(stage = ExportStage.CONFIGURING, set = null, estimate = null,
-      warnings = emptyList(), historyScope = null, error = null, failure = null, confirmingWholeNotes = false) }
+      warnings = emptyList(), historyScope = null, error = null, failure = null, failureCode = null, confirmingWholeNotes = false) }
     gathering = viewModelScope.launch { gather(_uiState.value.options) }
   }
 
@@ -245,7 +247,7 @@ class ExportViewModel @Inject constructor(
 
   fun dismissResult() {
     _uiState.update {
-      it.copy(stage = ExportStage.CONFIGURING, result = null, error = null, failure = null, progress = 0f, fetch = null, fetched = 0, missing = emptyList())
+      it.copy(stage = ExportStage.CONFIGURING, result = null, error = null, failure = null, failureCode = null, progress = 0f, fetch = null, fetched = 0, missing = emptyList())
     }
   }
 
@@ -309,7 +311,7 @@ class ExportViewModel @Inject constructor(
     running?.cancel()
     pending = null
     running = viewModelScope.launch {
-      _uiState.update { it.copy(stage = ExportStage.FETCHING, error = null, failure = null, fetch = null, fetched = 0, missing = emptyList(), progress = 0f) }
+      _uiState.update { it.copy(stage = ExportStage.FETCHING, error = null, failure = null, failureCode = null, fetch = null, fetched = 0, missing = emptyList(), progress = 0f) }
       try {
         val plan = service.plan(set, options)
         val outcome = if (plan.toFetch.isEmpty()) {
@@ -341,7 +343,7 @@ class ExportViewModel @Inject constructor(
   private suspend fun write(destination: ExportDestination) {
     val set = _uiState.value.set ?: return
     val options = _uiState.value.options
-    _uiState.update { it.copy(stage = ExportStage.RUNNING, progress = 0f, error = null, failure = null) }
+    _uiState.update { it.copy(stage = ExportStage.RUNNING, progress = 0f, error = null, failure = null, failureCode = null) }
     try {
       val result = service.export(
         set = set,
@@ -356,7 +358,8 @@ class ExportViewModel @Inject constructor(
     } catch (failure: Throwable) {
       val reason = (failure as? ExportFailure)?.reason
       _uiState.update { it.copy(stage = ExportStage.FAILED, historyScope = failure as? PampaHistoryScopeException,
-        error = if (reason == null && failure !is PampaHistoryScopeException) failure.message.orEmpty() else null, failure = reason) }
+        error = if (reason == null && failure !is PampaHistoryScopeException) failure.message.orEmpty() else null,
+        failure = reason, failureCode = (failure as? ExportFailure)?.diagnosticCode) }
     }
   }
 

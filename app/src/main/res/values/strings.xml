@@ -1080,7 +1080,7 @@
   <string name="export_failure_create">La cartella scelta non ha lasciato creare il file.</string>
   <string name="export_failure_not_writable">Non ho il permesso di scrivere in quella cartella.</string>
   <string name="export_failure_folder_gone">La cartella scelta non è più raggiungibile.</string>
-  <string name="export_failure_interrupted">La scrittura si è interrotta a metà: il file incompleto è stato tolto.</string>
+  <string name="export_failure_interrupted">Non sono riuscito a completare il pacchetto nella cartella scelta.</string>
   <string name="link_confirm_sync_title">Collegare la sincronizzazione?</string>
   <string name="link_confirm_sync_message">Le tue note, le cartelle e le trascrizioni verranno mandate a %1$s.\n\n%2$s\n\nCollega solo se è un servizio tuo o di cui ti fidi.</string>
   <string name="link_confirm_endpoint_title">Collegare questo computer?</string>
