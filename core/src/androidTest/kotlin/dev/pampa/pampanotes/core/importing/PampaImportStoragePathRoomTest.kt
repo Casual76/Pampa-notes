@@ -64,7 +64,7 @@ class PampaImportStoragePathRoomTest {
       assertArrayEquals(content, files.sourceFile(db.sources().get(source.id)!!.storedFileName!!).readBytes())
     } finally {
       db.close()
-      Os.unlink(alias.absolutePath) // Never traverse a directory symlink during cleanup.
+      java.nio.file.Files.delete(alias.toPath()) // Never traverse a directory symlink during cleanup.
       root.deleteRecursively()
     }
   }
@@ -78,15 +78,15 @@ class PampaImportStoragePathRoomTest {
     try {
       Os.symlink(outside.absolutePath, audio.absolutePath)
       assertFalse(PampaBundleFileIntegrity.verified(audio, source.name, 3, sha, true))
-      Os.unlink(audio.absolutePath)
+      java.nio.file.Files.delete(audio.toPath())
       assertTrue(audio.mkdir())
       val leaf = File(audio, "redirect.bin")
       Os.symlink(source.absolutePath, leaf.absolutePath)
       assertFalse(PampaBundleFileIntegrity.verified(audio, leaf.name, 3, sha, true))
       assertArrayEquals(content, source.readBytes())
-      Os.unlink(leaf.absolutePath)
+      java.nio.file.Files.delete(leaf.toPath())
     } finally {
-      if (java.nio.file.Files.isSymbolicLink(audio.toPath())) Os.unlink(audio.absolutePath)
+      if (java.nio.file.Files.isSymbolicLink(audio.toPath())) java.nio.file.Files.delete(audio.toPath())
       root.deleteRecursively()
     }
   }
