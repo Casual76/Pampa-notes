@@ -23,14 +23,22 @@
       "sizeBytes": 13506621
     },
     "beta": {
-      "version": "1.4.2-beta.1",
+      "version": "1.4.2-beta.2",
       "releaseDate": "2026-11-09",
-      "changelog": "Beta per verificare l?importazione dei pacchetti .pn: corretta la verifica degli allegati quando Android espone la memoria privata tramite percorsi equivalenti.\nGli errori di importazione mostrano ora un codice per l?assistenza, senza testo delle note o percorsi privati.",
-      "releaseTag": "beta-pampa-notes-v1.4.2-beta.1",
-      "apkAsset": "pampa-notes-1.4.2-beta.1.apk",
-      "sizeBytes": 13524018
+      "changelog": "Pampa Notes 1.4.2-beta.2\n\nCorregge il trasferimento .pn delle trascrizioni con segmenti o parole oltre la durata indicata nei metadati audio, che poteva fermarsi con PN_SEGMENT_TIMINGS.\nI tempi originali, le durate, i testi, tutte le cronologie e la selezione restano conservati. Restano attivi i controlli su riferimenti, intervalli, offset, overflow e integrità dei file.\nInclude la correzione della beta precedente per l'importazione attraverso i percorsi locali dell'app.\nPer importare i pacchetti che contengono questi tempi, aggiorna anche l'app di destinazione alla beta2: le versioni precedenti possono ancora rifiutarli come non validi. La stable resta 1.4.1.",
+      "releaseTag": "beta-pampa-notes-v1.4.2-beta.2",
+      "apkAsset": "pampa-notes-1.4.2-beta.2.apk",
+      "sizeBytes": 13524021
     },
     "history": [
+      {
+        "version": "1.4.2-beta.1",
+        "releaseDate": "2026-11-09",
+        "changelog": "Beta per verificare l?importazione dei pacchetti .pn: corretta la verifica degli allegati quando Android espone la memoria privata tramite percorsi equivalenti.\nGli errori di importazione mostrano ora un codice per l?assistenza, senza testo delle note o percorsi privati.",
+        "releaseTag": "beta-pampa-notes-v1.4.2-beta.1",
+        "apkAsset": "pampa-notes-1.4.2-beta.1.apk",
+        "sizeBytes": 13524018
+      },
       {
         "version": "1.4.1",
         "releaseDate": "2026-11-09",
