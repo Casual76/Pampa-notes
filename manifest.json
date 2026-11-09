@@ -23,14 +23,22 @@
       "sizeBytes": 13506621
     },
     "beta": {
-      "version": "1.4.1",
+      "version": "1.4.2-beta.1",
       "releaseDate": "2026-11-09",
-      "changelog": "Corretto un blocco dell'esportazione .pn con alcune trascrizioni parola per parola, sia condividendo sia salvando. I tempi originali, le cronologie e la selezione vengono conservati.\nGli errori di esportazione mostrano ora un codice per l'assistenza, senza includere dati delle note. Migliorato il messaggio del salvataggio non completato.",
-      "releaseTag": "stable-pampa-notes-v1.4.1",
-      "apkAsset": "pampa-notes-1.4.1.apk",
-      "sizeBytes": 13506621
+      "changelog": "Beta per verificare l?importazione dei pacchetti .pn: corretta la verifica degli allegati quando Android espone la memoria privata tramite percorsi equivalenti.\nGli errori di importazione mostrano ora un codice per l?assistenza, senza testo delle note o percorsi privati.",
+      "releaseTag": "beta-pampa-notes-v1.4.2-beta.1",
+      "apkAsset": "pampa-notes-1.4.2-beta.1.apk",
+      "sizeBytes": 13524018
     },
     "history": [
+      {
+        "version": "1.4.1",
+        "releaseDate": "2026-11-09",
+        "changelog": "Corretto un blocco dell'esportazione .pn con alcune trascrizioni parola per parola, sia condividendo sia salvando. I tempi originali, le cronologie e la selezione vengono conservati.\nGli errori di esportazione mostrano ora un codice per l'assistenza, senza includere dati delle note. Migliorato il messaggio del salvataggio non completato.",
+        "releaseTag": "stable-pampa-notes-v1.4.1",
+        "apkAsset": "pampa-notes-1.4.1.apk",
+        "sizeBytes": 13506621
+      },
       {
         "version": "1.4.0",
         "releaseDate": "2026-11-09",
