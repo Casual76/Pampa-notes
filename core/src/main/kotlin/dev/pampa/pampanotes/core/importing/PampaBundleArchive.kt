@@ -189,20 +189,10 @@ object PampaBundleArchive {
       n.segments.forEach { s ->
         checkpoint()
         val p = parts[s.partId] ?: error("Missing segment part")
-        require(transcripts[s.transcriptId]?.sessionId == p.sessionId && s.indexInPart >= 0 && s.partStartMs >= 0 && s.partEndMs >= s.partStartMs && s.partEndMs <= p.durationMs) { "Invalid segment timing/reference" }
+        require(transcripts[s.transcriptId]?.sessionId == p.sessionId && s.indexInPart >= 0) { "Invalid segment timing/reference" }
         val offset = offsets.getValue(p.id)
+        PampaBundleTimings.validate(s, offset)
         require(s.sessionStartMs == offset + s.partStartMs && s.sessionEndMs == offset + s.partEndMs) { "Inconsistent session offsets" }
-        s.wordsJson?.let { encoded ->
-          val words = dev.pampa.pampanotes.core.transcription.WordTimings.decode(encoded, 0)
-          // Providers align words independently of coarse segment boundaries. Their offsets are
-          // relative to the segment, and can legitimately be negative or exceed its duration.
-          // Bound the original observations by the audio part, without clipping or regenerating.
-          val earliest = -s.partStartMs
-          val latest = p.durationMs - s.partStartMs
-          require(words.size == encoded.lineSequence().count { it.isNotBlank() } && words.all {
-            it.startMs >= earliest && it.endMs >= it.startMs && it.endMs <= latest
-          }) { "Invalid word timings" }
-        }
       }
       n.sessions.forEach { session ->
         val keys = dev.pampa.pampanotes.core.transcription.VoiceNames.decode(session.voiceNames).keys

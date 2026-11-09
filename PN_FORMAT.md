@@ -64,10 +64,20 @@ length exceeds 32,768 UTF-16 code units, they also use `text`/`words` blob refer
 and conflicting inline value are rejected. A null word timing string stays null; an empty string
 stays empty. No timing is generated.
 
-Word timing strings store offsets relative to their segment. A measured word may start before
-or end after the coarse segment boundary; it remains valid when its absolute interval lies
-inside the owning audio part. Negative relative offsets are preserved in that case. Export and
-import validate against the audio part without clipping, estimating or rewriting these values.
+Audio `durationMs` is media metadata used to place the following part in the session. Segment
+and word times are independent transcription observations, not proof of the media duration or
+of acoustic accuracy. Providers accepted by the recording pipeline can return observations
+beyond that metadata duration. Export and import preserve both values exactly; neither clamps
+timestamps, increases the duration, nor applies a guessed tolerance. This can retain overlapping
+observations at a part boundary. Playback duration and part offsets still use the original metadata.
+
+Word timing strings store offsets relative to their segment. A word may start before or end
+after the coarse segment boundary, including a negative relative offset. Segment and word
+intervals must remain nonnegative and ordered in absolute part time, and every absolute part
+and session timestamp must fit a signed 64-bit millisecond integer. Part-duration accumulation
+must also fit. Export, import and merge validate those bounds before adding offsets, preserve
+the original strings and estimated flags, and enforce the original identities, references and
+session-offset equations. Structural validity does not certify transcription accuracy.
 
 Blob paths derive only from SHA-256, never entity IDs or remote/local filenames. Identical bytes
 can serve multiple audio/source entities or text fields. Every entity keeps its own ID, position,

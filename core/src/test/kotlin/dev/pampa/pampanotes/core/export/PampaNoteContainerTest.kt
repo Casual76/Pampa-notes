@@ -278,7 +278,7 @@ class PampaNoteContainerTest {
       g.copy(segments = g.segments.map { it.copy(partEndMs = 1001) }),
       g.copy(segments = g.segments.map { it.copy(sessionStartMs = 99999) }),
       g.copy(segments = g.segments.map { it.copy(wordsJson = "-101,100,Hello") }),
-      g.copy(segments = g.segments.map { it.copy(wordsJson = "0,901,Hello") }),
+      g.copy(segments = g.segments.map { it.copy(wordsJson = "0,${Long.MAX_VALUE},Hello") }),
       g.copy(transcripts = g.transcripts.map { if (it.id == "refined1") it.copy(parentId = "absent") else it }),
       g.copy(segments = g.segments + g.segments.first()),
     )

@@ -75,7 +75,7 @@ internal object PampaBundleMerge {
         hadSegments += transcript.id
       }
       val offset = offsets.getValue(part.id)
-      require(segment.partStartMs >= 0 && segment.partEndMs >= segment.partStartMs && segment.partEndMs <= part.durationMs) { "Retained audio incompatible with incoming timing" }
+      PampaBundleTimings.validate(segment, offset)
       segment.copy(id = 0, transcriptId = transcript.id, sessionStartMs = Math.addExact(offset, segment.partStartMs), sessionEndMs = Math.addExact(offset, segment.partEndMs))
     }.distinctBy { listOf(it.transcriptId, it.partId, it.indexInPart, it.partStartMs, it.partEndMs, it.text, it.wordsJson, it.speaker) }
       .sortedWith(segmentOrder)

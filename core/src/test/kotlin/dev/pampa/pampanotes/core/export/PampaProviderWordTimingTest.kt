@@ -68,9 +68,9 @@ class PampaProviderWordTimingTest {
     assertEquals(segment.wordsJson, read.segments.single().wordsJson)
   }
 
-  @Test fun `negative absolute reversed out of audio malformed and overflow word timings remain rejected`() {
+  @Test fun `negative absolute reversed malformed and overflow word timings remain rejected`() {
     val original = graph("invalid")
-    for (encoded in listOf("-101,0,early", "0,901,late", "100,99,reversed", "bad,100,broken", "${Long.MIN_VALUE},0,overflow", "0,${Long.MAX_VALUE},overflow")) {
+    for (encoded in listOf("-101,0,early", "100,99,reversed", "bad,100,broken", "${Long.MIN_VALUE},0,overflow", "0,${Long.MAX_VALUE},overflow")) {
       val changed = original.copy(segments = original.segments.map { it.copy(wordsJson = encoded) })
       val error = assertThrows(IllegalArgumentException::class.java) { write(listOf(changed)) }
       assertEquals("Invalid word timings", error.message)
@@ -80,7 +80,7 @@ class PampaProviderWordTimingTest {
   @Test fun `segment and session timeline integrity remain enforced`() {
     val original = graph("segment")
     for (segment in listOf(original.segments.single().copy(partStartMs = -1),
-      original.segments.single().copy(partEndMs = 1001), original.segments.single().copy(sessionStartMs = 99))) {
+      original.segments.single().copy(partEndMs = 99), original.segments.single().copy(sessionStartMs = 99))) {
       assertThrows(IllegalArgumentException::class.java) { write(listOf(original.copy(segments = listOf(segment)))) }
     }
   }
