@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pn_import_local_files">Non sono riuscito a verificare gli allegati sul dispositivo. Riprova l’importazione.</string>
+    <string name="pn_import_diagnostic_code">Codice per l’assistenza: %1$s</string>
+</resources>

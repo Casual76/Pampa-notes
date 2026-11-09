@@ -130,7 +130,8 @@ class ImportCoordinator @Inject constructor(
             if (error is kotlinx.coroutines.CancellationException) throw error
             android.util.Log.w("PampaNotes", "Import inspection failed", error)
             ImportCandidate(Ids.newId(), uri, null, runCatching { queryDisplayName(uri) }.getOrNull() ?: "import", SourceKind.OTHER,
-              "application/octet-stream", 0, "", inspectionError = ImportFailure.of(error).name)
+              "application/octet-stream", 0, "", inspectionError = ImportFailure.of(error).name,
+              inspectionDiagnostic = ImportDiagnostics.code(error, ImportDiagnosticStage.INSPECT))
           }
         }
         inspected

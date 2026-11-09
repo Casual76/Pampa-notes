@@ -12,7 +12,16 @@ internal object PampaBundleFileIntegrity {
     if (name.isBlank() || name == "." || name == ".." || name.any { it == '/' || it == '\\' || it == ':' || it.isISOControl() } || File(name).isAbsolute) return null
     val file = File(directory, name).absoluteFile
     return try {
-      file.takeIf { it.canonicalFile == it && it.parentFile?.canonicalFile == directory.canonicalFile }
+      // Android may expose the private app directory through /data/user/0 -> /data/data.
+      // Normalize the trusted parent before comparing paths. Keep the storage directory itself
+      // and the individual attachment bound to their expected names: neither may redirect out.
+      val absoluteDirectory = directory.absoluteFile
+      val parent = absoluteDirectory.parentFile ?: return null
+      val expectedDirectory = File(parent.canonicalFile, absoluteDirectory.name)
+      file.takeIf {
+        absoluteDirectory.canonicalFile == expectedDirectory &&
+          it.canonicalFile == File(expectedDirectory, name)
+      }
     } catch (_: IOException) { null }
   }
 

@@ -8,7 +8,7 @@ import java.util.zip.ZipException
 /** Stable UI codes. Never display archive paths, provider URIs or parser messages to users. */
 enum class ImportFailure {
   ACCESS, UNAVAILABLE, EMPTY, UNSUPPORTED_ARCHIVE, VERSION, CORRUPT, TOO_LARGE,
-  NO_SPACE, DESTINATION, ACTIVE_JOB, CONFLICT, FAILED;
+  NO_SPACE, LOCAL_FILES, DESTINATION, ACTIVE_JOB, CONFLICT, FAILED;
 
   companion object {
     fun fromCode(code: String?): ImportFailure = entries.firstOrNull { it.name == code } ?: FAILED
@@ -23,6 +23,9 @@ enum class ImportFailure {
       return when {
         "enospc" in message || "no space left" in message || "database or disk is full" in message -> NO_SPACE
         "eacces" in message -> ACCESS
+        causes.any { it.message?.substringBefore(':') in setOf("Included attachment integrity unavailable",
+          "Retained attachment integrity unavailable", "Invalid staged attachment reference",
+          "Included attachment was not staged", "Unknown staged attachment", "Bundle staging is not protected") } -> LOCAL_FILES
         "destination" in message -> DESTINATION
         "active legacy session job" in message -> ACTIVE_JOB
         "unsupported" in message && ("schema" in message || "version" in message || "payload" in message || "format" in message) -> VERSION

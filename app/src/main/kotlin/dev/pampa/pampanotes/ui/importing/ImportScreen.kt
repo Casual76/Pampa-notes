@@ -130,10 +130,10 @@ internal fun ImportScreen(
     ambient = FluidAmbient(tone = FluidHeroTone.TertiaryToPrimary, motif = FluidHeroMotif.Cards),
   ) {
     state.error?.let { message ->
-      item { FluidInlineMessage(message = message, title = stringResource(R.string.import_problem), tone = FluidTone.Danger) }
+      item { FluidInlineMessage(message = importDiagnosticText(message, state.errorDiagnostic), title = stringResource(R.string.import_problem), tone = FluidTone.Danger) }
     }
     state.errorRes?.takeIf { state.error == null }?.let { res ->
-      item { FluidInlineMessage(message = stringResource(res), title = stringResource(R.string.import_problem), tone = FluidTone.Danger) }
+      item { FluidInlineMessage(message = importDiagnosticText(stringResource(res), state.errorDiagnostic), title = stringResource(R.string.import_problem), tone = FluidTone.Danger) }
     }
 
     when (state.step) {
@@ -156,7 +156,7 @@ internal fun ImportScreen(
             item {
               FluidListGroup {
                 FluidListRow(title = candidate.displayName,
-                  subtitle = stringResource(dev.pampa.pampanotes.core.importing.ImportFailure.fromCode(candidate.inspectionError).messageRes()))
+                  subtitle = importDiagnosticText(stringResource(dev.pampa.pampanotes.core.importing.ImportFailure.fromCode(candidate.inspectionError).messageRes()), candidate.inspectionDiagnostic))
               }
             }
           }
@@ -853,7 +853,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.doneStep(
     item {
       FluidEmptyState(
         title = stringResource(R.string.import_failed_title),
-        detail = state.error ?: stringResource(state.errorRes ?: R.string.import_failed_detail),
+        detail = importDiagnosticText(state.error ?: stringResource(state.errorRes ?: R.string.import_failed_detail), state.errorDiagnostic),
       )
     }
   } else {

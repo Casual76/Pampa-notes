@@ -69,6 +69,8 @@ data class ImportCandidate(
   val sequence: Int? = null,
   /** Actual source evidence, independent of [recordedAtMillis] (which may be guessed noon). */
   val recordingOrigin: RecordingOrigin? = null,
+  /** Fixed support code for failed inspection, independent of the localized failure category. */
+  val inspectionDiagnostic: String? = null,
 ) {
   val isAudio: Boolean get() = kind == SourceKind.AUDIO
 

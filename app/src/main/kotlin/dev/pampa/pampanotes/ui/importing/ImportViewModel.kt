@@ -13,6 +13,8 @@ import dev.pampa.pampanotes.core.importing.AudioPlacement
 import dev.pampa.pampanotes.core.importing.ImportCandidate
 import dev.pampa.pampanotes.core.importing.ImportCoordinator
 import dev.pampa.pampanotes.core.importing.ImportFailure
+import dev.pampa.pampanotes.core.importing.ImportDiagnostics
+import dev.pampa.pampanotes.core.importing.ImportDiagnosticStage
 import dev.pampa.pampanotes.core.importing.ImportOutcome
 import dev.pampa.pampanotes.core.importing.SdocxUpdate
 import dev.pampa.pampanotes.core.importing.PampaBundleImporter
@@ -69,6 +71,7 @@ data class ImportUiState(
   val error: String? = null,
   /** Un errore che l'app sa dire con le sue parole; [error] e' quello che arriva da sotto, cosi' com'e'. */
   @param:androidx.annotation.StringRes val errorRes: Int? = null,
+  val errorDiagnostic: String? = null,
   /** Come dividere le registrazioni. Nasce entrando nel passo audio, e segue le esclusioni. */
   val grouping: AudioGrouping? = null,
 ) {
@@ -283,7 +286,8 @@ class ImportViewModel @Inject constructor(
       } catch (error: Exception) {
         if (error is kotlinx.coroutines.CancellationException) throw error
         android.util.Log.w("PampaNotes", "Import preparation failed", error)
-        _uiState.update { it.copy(step = ImportStep.DONE, error = null, errorRes = ImportFailure.of(error).messageRes()) }
+        _uiState.update { it.copy(step = ImportStep.DONE, error = null, errorRes = ImportFailure.of(error).messageRes(),
+          errorDiagnostic = ImportDiagnostics.code(error, ImportDiagnosticStage.PREPARE)) }
       }
     }
   }
@@ -455,7 +459,8 @@ class ImportViewModel @Inject constructor(
       } catch (error: Exception) {
         if (error is kotlinx.coroutines.CancellationException) throw error
         android.util.Log.w("PampaNotes", "Bundle import failed", error)
-        _uiState.update { it.copy(step = ImportStep.DONE, error = null, errorRes = ImportFailure.of(error).messageRes()) }
+        _uiState.update { it.copy(step = ImportStep.DONE, error = null, errorRes = ImportFailure.of(error).messageRes(),
+          errorDiagnostic = ImportDiagnostics.code(error, ImportDiagnosticStage.PERSIST)) }
       } finally {
         candidate.file?.delete()
       }
@@ -492,7 +497,7 @@ class ImportViewModel @Inject constructor(
       else -> null
     }
     if (target == null) {
-      _uiState.update { it.copy(step = ImportStep.REVIEW, errorRes = dev.pampa.pampanotes.R.string.import_error_no_target) }
+      _uiState.update { it.copy(step = ImportStep.REVIEW, errorRes = dev.pampa.pampanotes.R.string.import_error_no_target, errorDiagnostic = null) }
       return
     }
     val placement = state.appendToSessionId
@@ -524,7 +529,8 @@ class ImportViewModel @Inject constructor(
       }.onFailure { error ->
         if (error is kotlinx.coroutines.CancellationException) throw error
         android.util.Log.w("PampaNotes", "Import failed", error)
-        _uiState.update { it.copy(step = ImportStep.DONE, error = null, errorRes = dev.pampa.pampanotes.R.string.import_error_failed) }
+        _uiState.update { it.copy(step = ImportStep.DONE, error = null, errorRes = dev.pampa.pampanotes.R.string.import_error_failed,
+          errorDiagnostic = ImportDiagnostics.code(error, ImportDiagnosticStage.PERSIST)) }
       }
     }
   }

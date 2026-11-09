@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pn_import_local_files">I couldn’t verify the attachments on this device. Try importing again.</string>
+    <string name="pn_import_diagnostic_code">Support code: %1$s</string>
+</resources>
