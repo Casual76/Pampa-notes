@@ -15,20 +15,20 @@
       "ref": "main"
     },
     "stable": {
-      "version": "1.4.1",
+      "version": "1.4.2",
       "releaseDate": "2026-11-09",
-      "changelog": "Corretto un blocco dell'esportazione .pn con alcune trascrizioni parola per parola, sia condividendo sia salvando. I tempi originali, le cronologie e la selezione vengono conservati.\nGli errori di esportazione mostrano ora un codice per l'assistenza, senza includere dati delle note. Migliorato il messaggio del salvataggio non completato.",
-      "releaseTag": "stable-pampa-notes-v1.4.1",
-      "apkAsset": "pampa-notes-1.4.1.apk",
-      "sizeBytes": 13506621
+      "changelog": "Pampa Notes 1.4.2\n\nCorrette esportazione e importazione dei pacchetti .pn con trascrizioni dal computer e dal cloud.\nI tempi originali di segmenti e parole sono conservati anche quando superano la durata indicata nei metadati audio, insieme a testi, cronologie e selezioni.\nCorretta la verifica degli allegati nei percorsi equivalenti della memoria privata Android. Gli errori di importazione mostrano un codice per l'assistenza.\nRestano attivi i controlli di integrità, riferimenti, intervalli e limiti numerici.\n\nConfermata funzionante dall'utente dopo la beta2.\nPer leggere questi pacchetti, aggiorna anche l'app di destinazione alla 1.4.2 o successiva.",
+      "releaseTag": "stable-pampa-notes-v1.4.2",
+      "apkAsset": "pampa-notes-1.4.2.apk",
+      "sizeBytes": 13524005
     },
     "beta": {
-      "version": "1.4.2-beta.2",
+      "version": "1.4.2",
       "releaseDate": "2026-11-09",
-      "changelog": "Pampa Notes 1.4.2-beta.2\n\nCorregge il trasferimento .pn delle trascrizioni con segmenti o parole oltre la durata indicata nei metadati audio, che poteva fermarsi con PN_SEGMENT_TIMINGS.\nI tempi originali, le durate, i testi, tutte le cronologie e la selezione restano conservati. Restano attivi i controlli su riferimenti, intervalli, offset, overflow e integrità dei file.\nInclude la correzione della beta precedente per l'importazione attraverso i percorsi locali dell'app.\nPer importare i pacchetti che contengono questi tempi, aggiorna anche l'app di destinazione alla beta2: le versioni precedenti possono ancora rifiutarli come non validi. La stable resta 1.4.1.",
-      "releaseTag": "beta-pampa-notes-v1.4.2-beta.2",
-      "apkAsset": "pampa-notes-1.4.2-beta.2.apk",
-      "sizeBytes": 13524021
+      "changelog": "Pampa Notes 1.4.2\n\nCorrette esportazione e importazione dei pacchetti .pn con trascrizioni dal computer e dal cloud.\nI tempi originali di segmenti e parole sono conservati anche quando superano la durata indicata nei metadati audio, insieme a testi, cronologie e selezioni.\nCorretta la verifica degli allegati nei percorsi equivalenti della memoria privata Android. Gli errori di importazione mostrano un codice per l'assistenza.\nRestano attivi i controlli di integrità, riferimenti, intervalli e limiti numerici.\n\nConfermata funzionante dall'utente dopo la beta2.\nPer leggere questi pacchetti, aggiorna anche l'app di destinazione alla 1.4.2 o successiva.",
+      "releaseTag": "stable-pampa-notes-v1.4.2",
+      "apkAsset": "pampa-notes-1.4.2.apk",
+      "sizeBytes": 13524005
     },
     "history": [
       {
