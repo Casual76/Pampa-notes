@@ -184,13 +184,24 @@ class PampaBundleRoundtripTest {
 
   private fun rejected(file: File) { try { PampaBundleArchive.read(file); fail("Expected rejection") } catch (_: IllegalArgumentException) {} catch (_: IllegalStateException) {} }
 
-  @Test fun `word timings must remain inside their segment including exact boundaries`() {
+  @Test fun `word timings must remain inside their audio part including exact boundaries`() {
     val value = native()
-    val duration = value.segments.first().partEndMs - value.segments.first().partStartMs
-    val exact = value.copy(segments = value.segments.map { it.copy(wordsJson = "0,$duration,Hello") })
+    val parts = value.parts.associateBy { it.id }
+    val exact = value.copy(segments = value.segments.map { segment ->
+      val end = parts.getValue(segment.partId).durationMs - segment.partStartMs
+      segment.copy(wordsJson = "${-segment.partStartMs},$end,Hello")
+    })
     assertEquals(exact.segments, PampaBundleArchive.read(write(value = exact)).data.notes.single().segments)
-    listOf("900000,900001,Hello", "0,${duration + 1},Hello", "-1,0,Hello").forEach { timings ->
-      rejected(write(value = value.copy(segments = value.segments.map { it.copy(wordsJson = timings, wordsEstimated = false) })))
+    for (case in 0..2) {
+      val invalid = value.copy(segments = value.segments.map { segment ->
+        val timings = when (case) {
+          0 -> "900000,900001,Hello"
+          1 -> "0,${parts.getValue(segment.partId).durationMs - segment.partStartMs + 1},Hello"
+          else -> "${-segment.partStartMs - 1},0,Hello"
+        }
+        segment.copy(wordsJson = timings, wordsEstimated = false)
+      })
+      rejected(write(value = invalid))
     }
   }
 
