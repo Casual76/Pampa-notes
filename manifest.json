@@ -2,7 +2,7 @@
   "app": {
     "id": "pampa-notes",
     "name": "Pampa Notes",
-    "description": "Raccoglie appunti e registrazioni da altre app, li trascrive con Whisper e li esporta come fonti pronte per Claude, ChatGPT o Gemini.",
+    "description": "Appunti, documenti e registrazioni organizzati. Trascrivi sul computer o con servizi cloud, trasferisci note complete in .pn ed esporta fonti per Claude, ChatGPT e Gemini.",
     "packageName": "dev.pampa.pampanotes",
     "iconUrl": "",
     "category": "Produttività",
@@ -15,22 +15,30 @@
       "ref": "main"
     },
     "stable": {
-      "version": "1.3.1",
-      "releaseDate": "2026-11-07",
-      "changelog": "Per ogni ritrascrizione scegli computer di casa, Groq o OpenRouter e consulta la previsione dei costi. La scelta vale solo per quel lavoro, anche se è attivo solo computer di casa; restano validi i limiti di spesa e le regole delle cartelle.",
-      "releaseTag": "stable-pampa-notes-v1.3.1",
-      "apkAsset": "pampa-notes-1.3.1.apk",
-      "sizeBytes": 13219195
+      "version": "1.4.0",
+      "releaseDate": "2026-11-09",
+      "changelog": "Nuovo formato .pn per trasferire appunti, allegati, tutte le versioni delle trascrizioni e tempi disponibili, con compressione senza perdita.\nImportazione PN e ZIP migliorata, aggiornamenti conservativi e recupero degli allegati tramite trasferimenti temporanei.\nAggiunto Mistral: il servizio e il modello scelti restano fissati al lavoro, senza passaggi automatici ad altri provider; attesa automatica dei limiti e protezioni dei tentativi e del budget.\nInterrompere un lavoro cloud conserva i risultati ricevuti, leggibili e copiabili dal dispositivo. Gli invii dall'esito incerto non vengono ripetuti automaticamente.\nAllineamento sul computer di casa delle trascrizioni cloud supportate, conservando il testo originale e distinguendo le parole senza tempi misurati.\nRaccolta Registrazioni per sessioni, cartelle facoltative ed export delle registrazioni scelte. Se una vecchia cronologia non è separabile, l'app chiede esplicitamente se includere la nota intera.\nData e ora del parlato opzionali negli export quando l'origine della registrazione le rende conoscibili.\nMigliorata la conservazione di file locali, cronologie, nomi delle voci e metadati durante importazione, aggiornamenti e sincronizzazione.\nBackup con contenuti e cronologie completi, senza trasportare code di lavoro o identità operative del dispositivo.",
+      "releaseTag": "stable-pampa-notes-v1.4.0",
+      "apkAsset": "pampa-notes-1.4.0.apk",
+      "sizeBytes": 13506157
     },
     "beta": {
-      "version": "1.3.1",
-      "releaseDate": "2026-11-07",
-      "changelog": "Per ogni ritrascrizione scegli computer di casa, Groq o OpenRouter e consulta la previsione dei costi. La scelta vale solo per quel lavoro, anche se è attivo solo computer di casa; restano validi i limiti di spesa e le regole delle cartelle.",
-      "releaseTag": "stable-pampa-notes-v1.3.1",
-      "apkAsset": "pampa-notes-1.3.1.apk",
-      "sizeBytes": 13219195
+      "version": "1.4.0",
+      "releaseDate": "2026-11-09",
+      "changelog": "Nuovo formato .pn per trasferire appunti, allegati, tutte le versioni delle trascrizioni e tempi disponibili, con compressione senza perdita.\nImportazione PN e ZIP migliorata, aggiornamenti conservativi e recupero degli allegati tramite trasferimenti temporanei.\nAggiunto Mistral: il servizio e il modello scelti restano fissati al lavoro, senza passaggi automatici ad altri provider; attesa automatica dei limiti e protezioni dei tentativi e del budget.\nInterrompere un lavoro cloud conserva i risultati ricevuti, leggibili e copiabili dal dispositivo. Gli invii dall'esito incerto non vengono ripetuti automaticamente.\nAllineamento sul computer di casa delle trascrizioni cloud supportate, conservando il testo originale e distinguendo le parole senza tempi misurati.\nRaccolta Registrazioni per sessioni, cartelle facoltative ed export delle registrazioni scelte. Se una vecchia cronologia non è separabile, l'app chiede esplicitamente se includere la nota intera.\nData e ora del parlato opzionali negli export quando l'origine della registrazione le rende conoscibili.\nMigliorata la conservazione di file locali, cronologie, nomi delle voci e metadati durante importazione, aggiornamenti e sincronizzazione.\nBackup con contenuti e cronologie completi, senza trasportare code di lavoro o identità operative del dispositivo.",
+      "releaseTag": "stable-pampa-notes-v1.4.0",
+      "apkAsset": "pampa-notes-1.4.0.apk",
+      "sizeBytes": 13506157
     },
     "history": [
+      {
+        "version": "1.3.1",
+        "releaseDate": "2026-11-07",
+        "changelog": "Per ogni ritrascrizione scegli computer di casa, Groq o OpenRouter e consulta la previsione dei costi. La scelta vale solo per quel lavoro, anche se è attivo solo computer di casa; restano validi i limiti di spesa e le regole delle cartelle.",
+        "releaseTag": "stable-pampa-notes-v1.3.1",
+        "apkAsset": "pampa-notes-1.3.1.apk",
+        "sizeBytes": 13219195
+      },
       {
         "version": "1.3.0",
         "releaseDate": "2026-11-07",
