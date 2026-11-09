@@ -184,7 +184,7 @@ class PampaBundleRoundtripTest {
 
   private fun rejected(file: File) { try { PampaBundleArchive.read(file); fail("Expected rejection") } catch (_: IllegalArgumentException) {} catch (_: IllegalStateException) {} }
 
-  @Test fun `word timings must remain inside their audio part including exact boundaries`() {
+  @Test fun `word timings preserve metadata boundaries and observations beyond them but reject negative absolute time`() {
     val value = native()
     val parts = value.parts.associateBy { it.id }
     val exact = value.copy(segments = value.segments.map { segment ->
@@ -193,7 +193,7 @@ class PampaBundleRoundtripTest {
     })
     assertEquals(exact.segments, PampaBundleArchive.read(write(value = exact)).data.notes.single().segments)
     for (case in 0..2) {
-      val invalid = value.copy(segments = value.segments.map { segment ->
+      val observation = value.copy(segments = value.segments.map { segment ->
         val timings = when (case) {
           0 -> "900000,900001,Hello"
           1 -> "0,${parts.getValue(segment.partId).durationMs - segment.partStartMs + 1},Hello"
@@ -201,7 +201,9 @@ class PampaBundleRoundtripTest {
         }
         segment.copy(wordsJson = timings, wordsEstimated = false)
       })
-      rejected(write(value = invalid))
+      if (case < 2) {
+        assertEquals(observation.segments, PampaBundleArchive.read(write(value = observation)).data.notes.single().segments)
+      } else rejected(write(value = observation))
     }
   }
 
